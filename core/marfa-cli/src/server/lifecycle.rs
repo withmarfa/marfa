@@ -2,6 +2,9 @@
 
 use std::path::Path;
 
+use marfa_rules::server_log::{
+    DatabaseUpgrade, RefusedUpgrade, UpgradeRefusal, last_upgrade, refused_upgrade,
+};
 use serde_json::{Value, json};
 
 use super::backups;
@@ -78,7 +81,7 @@ fn upgrade_native(
     let unchanged = target == state.release;
     if !unchanged {
         steps.say(&format!(
-            "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
+            "If {target} has a newer database schema, the server copies the database beside it, when it holds data, and then updates it in place."
         ));
     }
     if !unchanged {
@@ -92,13 +95,11 @@ fn upgrade_native(
         mark,
     };
     if let Err(error) = wait_until_healthy(&watch, state.port, args.wait) {
-        if unchanged || !service.log_tail(40).contains(REFUSED_DATABASE) {
-            return Err(error);
-        }
-        return Err(CliError::Install(format!(
-            "{error}\n\n{}",
-            refused_update_note(&target, &state.release, &folder.dir)
-        )));
+        let note = match (unchanged, watch.log(40).as_deref().and_then(refused_update)) {
+            (false, Some(refusal)) => refusal.note(&target, &state.release, &folder.dir),
+            _ => return Err(error),
+        };
+        return Err(CliError::Install(format!("{error}\n\n{note}")));
     }
     if !unchanged {
         if !out.json {
@@ -112,26 +113,15 @@ fn upgrade_native(
             folder.forget_applied(dotenv, kept)?;
         }
     }
-    let update = database_update(&service.log_tail(200));
-    let copy_note = update.as_ref().map(|update| {
-        format!(
-            " The server's log records that it updated the database from schema version {} to {}. A copy of the database as it was is at {}, and stays until you remove it.",
-            update.schema_from,
-            update.schema_to,
-            update.copy,
-        )
-    });
+    let update = native_update(&watch, &service, &target, unchanged);
     let report = json!({
         "name": state.name,
         "from": state.release,
         "release": target,
         "runtime": "native",
         "changed": !unchanged,
-        "database_update": update.as_ref().map(|update| json!({
-            "schema_from": update.schema_from,
-            "schema_to": update.schema_to,
-            "copy": update.copy,
-        })),
+        "database_update": update.json(),
+        "log_read": update.read(),
     });
     out.report(&report, |_| {
         let moved = if unchanged {
@@ -139,11 +129,40 @@ fn upgrade_native(
         } else {
             format!("Upgraded from {} to {target}.", state.release)
         };
-        match &copy_note {
-            Some(note) => format!("{moved}{note}"),
+        match update.words(None) {
+            Some(words) => format!("{moved} {words}"),
             None => moved,
         }
     })
+}
+
+/// What a native start's log says of the database update. `MARFA_RELEASE` is written only once the
+/// server is healthy, so a run after one whose wait ended early restarts the server, and a first
+/// start that finished the update after that wait leaves nothing in this start's log: the
+/// update is then looked for further back, among the lines of the release being installed.
+fn native_update(watch: &Watch, service: &Service, target: &str, unchanged: bool) -> Update {
+    let Some(log) = watch.log(2000) else {
+        return Update::Unread;
+    };
+    if let Some(update) = last_upgrade(&log, None) {
+        return Update::Made {
+            update,
+            earlier: false,
+        };
+    }
+    if unchanged {
+        return Update::Unknown;
+    }
+    match service.log_held(5000) {
+        None => Update::Unread,
+        Some(held) => match last_upgrade(&held, Some(target)) {
+            Some(update) => Update::Made {
+                update,
+                earlier: true,
+            },
+            None => Update::Unknown,
+        },
+    }
 }
 
 fn upgrade_docker(
@@ -173,7 +192,7 @@ fn upgrade_docker(
     }
     if !unchanged {
         steps.say(&format!(
-            "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
+            "If {target} has a newer database schema, the server copies the database beside it, when it holds data, and then updates it in place."
         ));
         dotenv.set("MARFA_RELEASE", &target)?;
         files::write_if_changed(
@@ -189,29 +208,38 @@ fn upgrade_docker(
         name: &state.name,
     };
     if let Err(error) = wait_until_healthy(&watch, state.port, args.wait) {
-        if unchanged || !docker.logs_tail(&state.name).contains(REFUSED_DATABASE) {
-            return Err(error);
-        }
+        let refusal = match (unchanged, watch.log(40).as_deref().and_then(refused_update)) {
+            (false, Some(refusal)) => refusal,
+            _ => return Err(error),
+        };
         return Err(CliError::Install(format!(
-            "{error}\n\n{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it: to go back, set MARFA_RELEASE={from} in {env} and run `marfa server start`.",
+            "{error}\n\n{target} {} A refused update leaves the database as it was, so {from} still reads it: to go back, set MARFA_RELEASE={from} in {env} and run `marfa server start`.",
+            refusal.words(),
             from = state.release,
             env = folder.path(files::DOTENV).display(),
         )));
     }
-    // A retry finds the env file already on the target, though the update
-    // happened after the first run's wait ended, so the log is read either way.
-    let update = database_update(&docker.logs(&state.name));
+    // A retry finds the env file already on the target and the container running, though the
+    // update happened after the first run's wait ended, so the log of the container's current
+    // run is read whole, since requests since then would push the line out of a tail.
+    let update = match docker.run_log(&state.name, None) {
+        None => Update::Unread,
+        Some(log) => match last_upgrade(&log, None) {
+            Some(update) => Update::Made {
+                update,
+                earlier: false,
+            },
+            None => Update::Unknown,
+        },
+    };
     let report = json!({
         "name": state.name,
         "from": state.release,
         "release": target,
         "runtime": "docker",
         "changed": !unchanged,
-        "database_update": update.as_ref().map(|update| json!({
-            "schema_from": update.schema_from,
-            "schema_to": update.schema_to,
-            "copy": update.copy,
-        })),
+        "database_update": update.json(),
+        "log_read": update.read(),
     });
     out.report(&report, |_| {
         let moved = if unchanged {
@@ -219,52 +247,133 @@ fn upgrade_docker(
         } else {
             format!("Upgraded from {} to {target}.", state.release)
         };
-        match &update {
-            Some(update) => format!(
-                "{moved} The server's log records that it updated the database from schema version {} to {}. A copy of the database as it was is at {copy} in the volume {name}-data, and stays until you remove it; `docker cp {name}:{copy} .` copies it out.",
-                update.schema_from,
-                update.schema_to,
-                copy = update.copy,
-                name = state.name,
-            ),
+        match update.words(Some(&state.name)) {
+            Some(words) => format!("{moved} {words}"),
             None => moved,
         }
     })
 }
 
-/// What the server logged of the update it made to the database on start.
-struct DatabaseUpdate {
-    schema_from: u64,
-    schema_to: u64,
-    copy: String,
+/// What the server's log says of the update it made to the database.
+enum Update {
+    /// The server updated the database, on this start or, when `earlier`, on one before it.
+    Made {
+        update: DatabaseUpgrade,
+        earlier: bool,
+    },
+    /// The log was read and records no update.
+    Unknown,
+    /// The log could not be read.
+    Unread,
 }
 
-/// The update the server's log reports, read from its JSON lines: the last
-/// one, since a log holds every start it made.
-fn database_update(log: &str) -> Option<DatabaseUpdate> {
-    log.lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-        .filter(|entry| {
-            entry["message"]
-                .as_str()
-                .is_some_and(|m| m.starts_with("Updated "))
+impl Update {
+    fn json(&self) -> Value {
+        match self {
+            Update::Made { update, earlier } => json!({
+                "schema_from": update.from,
+                "schema_to": update.to,
+                "copy": update.copy,
+                "earlier_start": earlier,
+            }),
+            Update::Unknown | Update::Unread => Value::Null,
+        }
+    }
+
+    /// Whether the log could be read: a `null` update from a log that was not read says nothing
+    /// of whether the database was updated.
+    fn read(&self) -> bool {
+        !matches!(self, Update::Unread)
+    }
+
+    /// What the owner is told of the update the server made to the database. A Docker install
+    /// names its container, since the copy is in that container's volume.
+    fn words(&self, container: Option<&str>) -> Option<String> {
+        let (update, earlier) = match self {
+            Update::Made { update, earlier } => (update, *earlier),
+            Update::Unknown => return None,
+            Update::Unread => {
+                return Some(
+                    "The log could not be read, so whether the server updated the database, and kept a copy, is not known."
+                        .to_string(),
+                );
+            }
+        };
+        let moved = format!(
+            "{} the database from schema version {} to {}.",
+            if earlier {
+                "An earlier start of this release, before this run, updated"
+            } else {
+                "The server updated"
+            },
+            update.from,
+            update.to
+        );
+        let Some(copy) = &update.copy else {
+            return Some(format!(
+                "{moved} The database held no data, so no copy was made."
+            ));
+        };
+        Some(match container {
+            Some(name) => format!(
+                "{moved} It first copied the database to {copy} in the volume {name}-data, and the next update of the database replaces that copy; `docker cp {name}:{copy} .` copies it out."
+            ),
+            None => format!(
+                "{moved} It first copied the database to {copy}, and the next update of the database replaces that copy."
+            ),
         })
-        .filter_map(|entry| {
-            Some(DatabaseUpdate {
-                schema_from: entry["schema_from"].as_u64()?,
-                schema_to: entry["schema_to"].as_u64()?,
-                copy: entry["backup_path"].as_str()?.to_string(),
-            })
-        })
-        .next_back()
+    }
 }
 
-// The idle supervisor must stop before the earlier release can start.
-fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
-    let dir = format!("'{}'", dir.display().to_string().replace('\'', "'\\''"));
-    format!(
-        "{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it. The service stays up and idle after a refusal, so run `marfa server stop --dir {dir}`, install {from} again, then run `marfa server start --dir {dir}`."
-    )
+/// A start of the new release that stopped before it changed the database.
+pub(super) enum Refusal {
+    /// The database is one this release will not run on.
+    Database,
+    /// The server declined to update the database and says why.
+    Upgrade(RefusedUpgrade),
+}
+
+/// The refusal a log, read from this start only, ends on.
+pub(super) fn refused_update(log: &str) -> Option<Refusal> {
+    if log.contains(REFUSED_DATABASE) {
+        return Some(Refusal::Database);
+    }
+    refused_upgrade(log).map(Refusal::Upgrade)
+}
+
+impl Refusal {
+    pub(super) fn words(&self) -> String {
+        match self {
+            Refusal::Database => {
+                "did not update the database, and the server says why above.".to_string()
+            }
+            Refusal::Upgrade(refused) => {
+                let cause = match refused.refusal {
+                    UpgradeRefusal::CopyNotMade => "the copy kept first could not be made",
+                    UpgradeRefusal::SettingsUnreadable => {
+                        "the settings stored in the database could not be used"
+                    }
+                };
+                format!(
+                    "did not update the database, because {cause}: {}",
+                    refused.error
+                )
+            }
+        }
+    }
+
+    // The idle supervisor must stop before the earlier release can start.
+    fn note(&self, target: &str, from: &str, dir: &Path) -> String {
+        let dir = format!("'{}'", dir.display().to_string().replace('\'', "'\\''"));
+        let after = match self {
+            Refusal::Database => "The service stays up and idle after a refusal".to_string(),
+            Refusal::Upgrade(_) => format!("The service keeps trying to start {target}"),
+        };
+        format!(
+            "{target} {} A refused update leaves the database as it was, so {from} still reads it. {after}, so run `marfa server stop --dir {dir}`, install {from} again, then run `marfa server start --dir {dir}`.",
+            self.words()
+        )
+    }
 }
 
 // ---- start and stop -----------------------------------------------------
@@ -780,26 +889,99 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
 mod tests {
     use super::*;
 
+    fn made(copy: Option<&str>, earlier: bool) -> Update {
+        Update::Made {
+            update: DatabaseUpgrade {
+                from: 1,
+                to: 2,
+                copy: copy.map(str::to_string),
+            },
+            earlier,
+        }
+    }
+
+    fn update_words(update: &Update, container: Option<&str>) -> String {
+        update.words(container).unwrap()
+    }
+
     #[test]
-    fn the_last_update_the_log_reports_is_the_one_read() {
-        let log = [
-            r#"{"message":"Updated /d/marfa.db, keeping a copy at /a","schema_from":3,"schema_to":4,"backup_path":"/a"}"#,
-            "not json",
-            r#"{"message":"Updated /d/marfa.db, keeping a copy at /b","schema_from":4,"schema_to":5,"backup_path":"/b"}"#,
-            r#"{"message":"Listening"}"#,
-        ]
-        .join("\n");
-        let update = database_update(&log).unwrap();
-        assert_eq!(
-            (update.schema_from, update.schema_to, update.copy.as_str()),
-            (4, 5, "/b")
+    fn an_update_names_its_copy_and_says_the_next_update_replaces_it() {
+        let words = update_words(&made(Some("/d/marfa.db.before-upgrade"), false), None);
+        assert!(words.contains("from schema version 1 to 2"), "{words}");
+        assert!(words.contains("/d/marfa.db.before-upgrade"), "{words}");
+        assert!(
+            words.contains("next update of the database replaces that copy"),
+            "{words}"
         );
-        assert!(database_update("{}").is_none());
+        let docker = update_words(
+            &made(Some("/data/marfa.db.before-upgrade"), false),
+            Some("marfa"),
+        );
+        assert!(docker.contains("the volume marfa-data"), "{docker}");
+        assert!(
+            docker.contains("docker cp marfa:/data/marfa.db.before-upgrade ."),
+            "{docker}"
+        );
+    }
+
+    #[test]
+    fn an_update_from_an_earlier_start_says_so_and_an_unread_log_claims_nothing() {
+        let words = update_words(&made(Some("/d/marfa.db.before-upgrade"), true), None);
+        assert!(words.contains("An earlier start"), "{words}");
+        assert!(words.contains("/d/marfa.db.before-upgrade"), "{words}");
+        let unread = update_words(&Update::Unread, None);
+        assert!(unread.contains("log could not be read"), "{unread}");
+        assert!(!unread.contains("no copy was made"), "{unread}");
+        assert!(Update::Unknown.words(None).is_none());
+        assert_eq!(Update::Unread.json(), Value::Null);
+        assert!(!Update::Unread.read() && Update::Unknown.read());
+    }
+
+    #[test]
+    fn an_update_of_an_empty_database_says_no_copy_was_made() {
+        let words = update_words(&made(None, false), None);
+        assert!(words.contains("no copy was made"), "{words}");
+        assert!(!words.contains("replaces"), "{words}");
+    }
+
+    #[test]
+    fn a_refusal_is_read_from_the_field_the_server_names_it_in() {
+        use marfa_rules::server_log::{ERROR, REFUSED, START_FAILED};
+        let line = |refusal: Option<UpgradeRefusal>, error: &str| {
+            let mut line = serde_json::json!({ "message": START_FAILED, ERROR: error });
+            if let Some(refusal) = refusal {
+                line[REFUSED] = refusal.name().into();
+            }
+            line.to_string()
+        };
+        let copy = line(Some(UpgradeRefusal::CopyNotMade), "no space");
+        let words = refused_update(&copy).unwrap().words();
+        assert!(
+            words.contains("because the copy kept first could not be made: no space"),
+            "{words}"
+        );
+        let settings = line(
+            Some(UpgradeRefusal::SettingsUnreadable),
+            "reserve is not a number",
+        );
+        let words = refused_update(&settings).unwrap().words();
+        assert!(
+            words.contains("because the settings stored in the database could not be used"),
+            "{words}"
+        );
+        assert!(!words.contains("copy kept"), "{words}");
+        // Witness: prose that reads like a refusal, on a line that does not name one, is none.
+        let port = line(None, "was not upgraded. Nothing was changed.");
+        assert!(refused_update(&port).is_none());
+        assert!(matches!(
+            refused_update("marfa-server will not start on the database (exit status 78)"),
+            Some(Refusal::Database)
+        ));
     }
 
     #[test]
     fn a_refused_update_says_to_stop_the_idle_service_before_starting_it_again() {
-        let note = refused_update_note("0.0.71", "0.0.70", Path::new("/srv/marfa one"));
+        let note = Refusal::Database.note("0.0.71", "0.0.70", Path::new("/srv/marfa one"));
         let stop = note
             .find("`marfa server stop --dir '/srv/marfa one'`")
             .unwrap();

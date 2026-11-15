@@ -4782,7 +4782,7 @@ marfa server install [OPTIONS]
 
 Move the server to the release now installed, and update its database.
 
-A native server runs the `marfa-server` installed beside this `marfa`, so install the release you want first (Homebrew, or the install script), then run this. A Docker install moves to the release you name with `--release`, or to this binary's own. A release whose database schema is newer copies the database beside it first, then updates it. It refuses an older release than the one installed, because an older release does not know what a newer one changed in the database.
+A native server runs the `marfa-server` installed beside this `marfa`, so install the release you want first (Homebrew, or the install script), then run this. A Docker install moves to the release you name with `--release`, or to this binary's own. A release whose database schema is newer copies the database beside it first, when it holds data, then updates it. The copy is the database file's name with `.before-upgrade` added, beside it, and the next such update replaces it. The command says where the copy is. It refuses an older release than the one installed, because an older release does not know what a newer one changed in the database.
 
 ```text
 marfa server upgrade [OPTIONS]

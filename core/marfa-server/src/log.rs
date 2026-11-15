@@ -10,6 +10,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{Layer, fmt};
 
+use marfa_rules::server_log::UpgradeRefusal;
+
 use crate::telemetry::{Logs, REQUEST_TARGET};
 
 static LOGS: OnceLock<Logs> = OnceLock::new();
@@ -146,8 +148,55 @@ pub fn local_only(message: &str) {
     }));
 }
 
+/// The line the server writes as it stops for a failure to start, which the command line reads.
+pub fn start_failed(failure: &crate::failure::Failure) {
+    use marfa_rules::server_log::{ERROR, REFUSED, START_FAILED};
+    tracing::error!(
+        { ERROR } = %failure,
+        { REFUSED } = failure.refusal.map(UpgradeRefusal::name),
+        "{}",
+        START_FAILED
+    );
+}
+
 /// A request that ended in a fault no refusal foresaw. `error` is the fault's
 /// message, which holds nothing a statement was given.
 pub fn unhandled(request_id: &str, method: &str, path: &str, route: Option<&str>, error: &str) {
     tracing::error!(request_id, method, path, route, error, "Unhandled error");
+}
+
+/// What `f` logs, as the server writes it.
+#[cfg(test)]
+pub(crate) fn captured<R>(f: impl FnOnce() -> R) -> (R, String) {
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Buffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl MakeWriter<'_> for Buffer {
+        type Writer = Buffer;
+
+        fn make_writer(&self) -> Buffer {
+            self.clone()
+        }
+    }
+
+    let buffer = Buffer::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(fmt::layer().event_format(Lines).with_writer(buffer.clone()));
+    let result = tracing::subscriber::with_default(subscriber, f);
+    let log = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    (result, log)
 }

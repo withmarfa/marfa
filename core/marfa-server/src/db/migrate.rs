@@ -32,7 +32,7 @@ pub enum Standing {
     Behind(u32),
 }
 
-fn latest(migrations: &[Migration]) -> u32 {
+pub(super) fn latest(migrations: &[Migration]) -> u32 {
     migrations.last().map_or(0, |migration| migration.version)
 }
 

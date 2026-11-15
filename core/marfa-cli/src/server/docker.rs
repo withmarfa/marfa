@@ -23,6 +23,8 @@ pub struct Docker {
 pub struct ContainerState {
     pub status: String,
     pub health: Option<String>,
+    /// When the container's current run began, on the engine's clock.
+    pub started_at: Option<String>,
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -241,6 +243,7 @@ impl Docker {
         Ok(Some(ContainerState {
             status: value["Status"].as_str().unwrap_or("unknown").to_string(),
             health: value["Health"]["Status"].as_str().map(str::to_string),
+            started_at: value["StartedAt"].as_str().map(str::to_string),
         }))
     }
 
@@ -265,11 +268,28 @@ impl Docker {
         })
     }
 
-    /// Everything the container logged, on both streams.
-    pub fn logs(&self, name: &str) -> String {
-        self.output(&["logs", name])
-            .map(|output| format!("{}\n{}", text(&output.stdout), text(&output.stderr)))
-            .unwrap_or_default()
+    /// What the container's current run has logged, on both streams: all of it, or its last
+    /// `lines`. An earlier run of the container is not this one, so a container whose start
+    /// cannot be read gives `None`, which is not the same as a run that logged nothing.
+    pub fn run_log(&self, name: &str, lines: Option<usize>) -> Option<String> {
+        let started_at = self.container(name).ok().flatten()?.started_at?;
+        self.log_since(name, &started_at, lines)
+    }
+
+    /// As `run_log`, for a run that began at `started_at`, which the caller has already read.
+    pub fn log_since(&self, name: &str, started_at: &str, lines: Option<usize>) -> Option<String> {
+        let tail = lines.map(|lines| lines.to_string());
+        let mut args = vec!["logs", "--since", started_at];
+        if let Some(tail) = &tail {
+            args.extend(["--tail", tail]);
+        }
+        args.push(name);
+        let output = self.output(&args).ok().filter(|o| o.status.success())?;
+        Some(
+            format!("{}\n{}", text(&output.stdout), text(&output.stderr))
+                .trim()
+                .to_string(),
+        )
     }
 
     pub fn logs_tail(&self, name: &str) -> String {

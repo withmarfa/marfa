@@ -5,6 +5,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use marfa_rules::server_log::{UpgradeRefusal, upgraded};
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 use super::migrate::{self, Migration, Standing};
@@ -240,10 +241,13 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, Failure> {
     let key = DISK_RESERVE_BYTES.entry.key;
     let unread = |error: rusqlite::Error| {
-        Failure::start(format!(
-            "{label} was not upgraded, because its stored settings could not be read: {error}. \
-             Nothing was changed."
-        ))
+        Failure::refused_upgrade(
+            UpgradeRefusal::SettingsUnreadable,
+            format!(
+                "{label} was not upgraded, because its stored settings could not be read: {error}. \
+                 Nothing was changed."
+            ),
+        )
     };
     let has_settings: bool = conn
         .query_row(
@@ -267,11 +271,14 @@ fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, 
         .collect();
     let resolved = Snapshot::resolve(&Seeds::new(), &rows, 0);
     if resolved.unreadable().contains(&key) {
-        return Err(Failure::start(format!(
-            "{label} was not upgraded, because its stored setting {key} does not read as {}. \
-             Correct that row, then start again. Nothing was changed.",
-            DISK_RESERVE_BYTES.entry.words().to_lowercase()
-        )));
+        return Err(Failure::refused_upgrade(
+            UpgradeRefusal::SettingsUnreadable,
+            format!(
+                "{label} was not upgraded, because its stored setting {key} does not read as {}. \
+                 Correct that row, then start again. Nothing was changed.",
+                DISK_RESERVE_BYTES.entry.words().to_lowercase()
+            ),
+        ));
     }
     Ok(match resolved.stored(DISK_RESERVE_BYTES.entry) {
         Some(_) => resolved.get(DISK_RESERVE_BYTES),
@@ -279,8 +286,8 @@ fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, 
     })
 }
 
-/// Writes the file as it stands to `<file>.before-upgrade`, in place of the last such copy,
-/// or refuses the start with nothing changed beside it.
+/// Writes the file as it stands to `<file>.before-upgrade`, in place of the last such copy, and
+/// returns its path, or refuses the start with nothing changed beside it.
 fn copy_before_upgrade(
     conn: &Connection,
     path: &Path,
@@ -288,15 +295,18 @@ fn copy_before_upgrade(
     faults: &Faults,
     label: &str,
     from: u32,
-) -> Result<(), Failure> {
+) -> Result<PathBuf, Failure> {
     let copy = sibling(path, BEFORE_UPGRADE);
     let partial = sibling(path, &format!("{BEFORE_UPGRADE}.partial"));
     let refused = |why: String| {
-        Failure::start(format!(
-            "{label} was not upgraded from schema version {from}, because the copy kept \
-             before an upgrade could not be written to {}: {why}. Nothing was changed.",
-            copy.display()
-        ))
+        Failure::refused_upgrade(
+            UpgradeRefusal::CopyNotMade,
+            format!(
+                "{label} was not upgraded from schema version {from}, because the copy kept \
+                 before an upgrade could not be written to {}: {why}. Nothing was changed.",
+                copy.display()
+            ),
+        )
     };
     let pages = |pragma: &str| {
         conn.pragma_query_value(None, pragma, |row| row.get::<_, i64>(0))
@@ -334,8 +344,7 @@ fn copy_before_upgrade(
         let _ = std::fs::remove_file(&partial);
         return Err(refused(error.to_string()));
     }
-    tracing::info!(copy = %copy.display(), from, "The database was copied before its upgrade");
-    Ok(())
+    Ok(copy)
 }
 
 /// On macOS only the full flush gets past the drive's cache.
@@ -424,8 +433,11 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
     writer.busy_timeout(options.write_wait).map_err(refused)?;
     keep_log(&writer, &label, file.is_some())?;
     prepare_writer(&writer).map_err(refused)?;
+    let mut copy = None;
     if let (Standing::Behind(from), true, Target::File(path)) = (&standing, judged.copy, &target) {
-        copy_before_upgrade(&writer, path, options, faults, &label, *from)?;
+        copy = Some(copy_before_upgrade(
+            &writer, path, options, faults, &label, *from,
+        )?);
     }
     match standing {
         Standing::Current => {}
@@ -438,6 +450,16 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
             migrate::upgrade(&mut writer, options.migrations, from)
                 .map_err(|error| unapplied(Some(from), error))?;
             move_schema_into_file(&writer);
+            tracing::info!(
+                { upgraded::SCHEMA_FROM } = from,
+                { upgraded::SCHEMA_TO } = migrate::latest(options.migrations),
+                { upgraded::RELEASE } = env!("CARGO_PKG_VERSION"),
+                { upgraded::COPY } = copy
+                    .as_ref()
+                    .map(|copy| copy.to_string_lossy().into_owned()),
+                "{}",
+                upgraded::MESSAGE
+            );
         }
     }
 

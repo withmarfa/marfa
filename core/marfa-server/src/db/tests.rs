@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use marfa_rules::server_log::{
+    DatabaseUpgrade, RefusedUpgrade, UpgradeRefusal, last_upgrade, refused_upgrade, upgraded,
+};
 use rusqlite::{Connection, Transaction, ffi};
 use tempfile::TempDir;
 
@@ -569,6 +572,112 @@ async fn an_older_database_holding_rows_is_copied_beside_it_then_upgraded() {
         .collect::<rusqlite::Result<_>>()
         .unwrap();
     assert_eq!(kept, ["id", "body"]);
+}
+
+fn logged_while_opening(file: &Path, migrations: &'static [Migration]) -> (Db, String) {
+    crate::log::captured(|| opened(file, migrations, Arc::default()))
+}
+
+fn upgrade_lines(log: &str) -> Vec<serde_json::Value> {
+    log.lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|line| line["message"] == upgraded::MESSAGE)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_upgrade_logs_one_line_naming_its_versions_and_its_copy() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+
+    let (db, log) = logged_while_opening(&place.file, TWO);
+    db.close().await;
+    let lines = upgrade_lines(&log);
+    assert_eq!(lines.len(), 1, "{log}");
+    assert_eq!(
+        last_upgrade(&log, None),
+        Some(DatabaseUpgrade {
+            from: 1,
+            to: 2,
+            copy: Some(copy_of(&place.file).to_string_lossy().into_owned()),
+        })
+    );
+    assert!(copy_of(&place.file).exists());
+    assert_eq!(
+        last_upgrade(&log, Some(env!("CARGO_PKG_VERSION"))).map(|up| up.to),
+        Some(2),
+        "the line names the release that wrote it: {log}"
+    );
+
+    let (db, log) = logged_while_opening(&place.file, TWO);
+    db.close().await;
+    assert!(upgrade_lines(&log).is_empty(), "{log}");
+}
+
+#[tokio::test]
+async fn an_upgrade_of_a_database_with_no_rows_logs_its_versions_and_no_copy() {
+    let place = folder();
+    open(&place.file).close().await;
+
+    let (db, log) = logged_while_opening(&place.file, TWO);
+    db.close().await;
+    let lines = upgrade_lines(&log);
+    assert_eq!(lines.len(), 1, "{log}");
+    assert!(lines[0].get(upgraded::COPY).is_none(), "{log}");
+    assert_eq!(
+        last_upgrade(&log, None),
+        Some(DatabaseUpgrade {
+            from: 1,
+            to: 2,
+            copy: None
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_refused_copy_logs_no_upgrade_and_names_its_refusal() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    let faults = Arc::new(Faults::default());
+    faults.set("free:database", Some("4096")).unwrap();
+    let (result, log) = crate::log::captured(|| db_open(&options(&place.file, TWO), faults));
+    let failure = result.err().expect("the upgrade was not refused");
+    assert!(upgrade_lines(&log).is_empty(), "{log}");
+    assert_eq!(failure.refusal, Some(UpgradeRefusal::CopyNotMade));
+
+    // The line the server writes as it stops carries the refusal the command line reads.
+    let (_, stopped) = crate::log::captured(|| crate::log::start_failed(&failure));
+    assert_eq!(
+        refused_upgrade(&stopped),
+        Some(RefusedUpgrade {
+            refusal: UpgradeRefusal::CopyNotMade,
+            error: failure.message.clone()
+        }),
+        "{stopped}"
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_stored_setting_is_refused_as_unreadable_settings() {
+    let place = folder();
+    with_stored_reserve(&place.file, "plenty").await;
+    let failure = refused(&place.file, SETTINGS_TWO);
+    assert_eq!(failure.refusal, Some(UpgradeRefusal::SettingsUnreadable));
+}
+
+#[tokio::test]
+async fn a_failure_that_is_not_a_refused_upgrade_names_no_refusal() {
+    let place = folder();
+    open(&place.file).close().await;
+    let failure = refused(&place.file, &[]);
+    assert_eq!(failure.refusal, None);
+    let (_, stopped) = crate::log::captured(|| crate::log::start_failed(&failure));
+    assert_eq!(refused_upgrade(&stopped), None, "{stopped}");
+    assert!(stopped.contains("Failed to start server"), "{stopped}");
 }
 
 #[tokio::test]
