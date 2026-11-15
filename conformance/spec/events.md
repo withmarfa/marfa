@@ -6,7 +6,9 @@ Every rule about a stream is about the plain stream unless it says otherwise. Th
 
 ## Event types
 
-Every event and stream frame the server sends is a row of the table below, and an event is also the `event:` of its frame. A row names the statements that hold each write to its event, and each of them has a fixture. A write that no row names announces nothing: those the contract states are the writes of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`, and a write that changes nothing (`versions/unchanged-silent`).
+Every event and stream frame the server sends is a row of the table below, which is written from the server's own event names and so cannot differ from them. An event is also the `event:` of its frame. A row names the statements that hold each write to its event, and each of them has a fixture. A write that no row names announces nothing: those the contract states are the writes of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`, and a write that changes nothing (`versions/unchanged-silent`).
+
+<!-- event-types-table:start -->
 
 | Event                | Sent to              | When it is sent                                                                                                                                                                                                                                                                                                  |
 | -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,6 +29,8 @@ Every event and stream frame the server sends is a row of the table below, and a
 | `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                                                                                                                                                                                                                         |
 | `cursor_ahead`       | Streams              | Last, when the `Last-Event-ID` the client sent is past the latest event in the log.                                                                                                                                                                                                                              |
 | `reach_changed`      | Streams              | Last on a copy stream, when its reach changes.                                                                                                                                                                                                                                                                   |
+
+<!-- event-types-table:end -->
 
 ## Opening a stream
 
