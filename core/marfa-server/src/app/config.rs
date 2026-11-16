@@ -14,7 +14,7 @@ use super::refusal::{Code, Refusal, Result};
 use super::sources;
 use super::{App, instance, stored};
 use crate::settings::registry::{
-    ADDRESSES, BACKUP_PATH, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS,
+    ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS,
 };
 use crate::settings::sealed::Sealer;
 use crate::settings::together::{self, Breach};
@@ -418,6 +418,16 @@ impl Plan {
         origins(&self.before) != origins(&self.after)
     }
 
+    /// A key that may change the configuration must not reach the owner's network.
+    fn private_addresses_change(&self, app: &App) -> bool {
+        let allowed = |rows: &Rows| {
+            app.settings
+                .candidate(&pairs(rows))
+                .get(ALLOW_PRIVATE_ADDRESSES)
+        };
+        allowed(&self.before) != allowed(&self.after)
+    }
+
     /// What the change does to the addresses, and whether it needs a person to
     /// confirm it. This is the one place that decides.
     fn addresses_at(&self, app: &App, tx: &Transaction<'_>) -> Result<Moved> {
@@ -591,7 +601,10 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 let plan = Plan::of(&request, before);
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
-                if moved.sign_in_moves || plan.origins_change(&writing) {
+                if moved.sign_in_moves
+                    || plan.origins_change(&writing)
+                    || plan.private_addresses_change(&writing)
+                {
                     unit.caller.require_local()?;
                 }
                 if moved.confirm && !request.confirmed {

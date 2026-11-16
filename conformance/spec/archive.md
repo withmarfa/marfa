@@ -282,17 +282,17 @@ If a `source` line of an archive is not an object, holds a `source` code that `k
 
 ### `archive/archive-settings`
 
-When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from a secret and those that describe this machine: `sign_in_address`, `addresses`, `backup_path`, the `object_store_` settings and `webhook_allow_private_addresses`.
+When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from a secret and those that describe this machine: `sign_in_address`, `addresses`, `backup_path`, the `object_store_` settings and `allow_private_addresses`.
 
-**Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The addresses name where this instance answers and the destination where it keeps copies and backups, which a move changes, and whether webhooks may reach private addresses depends on the network around the machine. The instance's name is its own to set again, so no `setting` line carries it.
+**Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The addresses name where this instance answers and the destination where it keeps copies and backups, which a move changes, and whether the server may send to private addresses depends on the network around the machine. The instance's name is its own to set again, so no `setting` line carries it.
 
 **Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`, `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`.
 
 ### `archive/archive-secret-named`
 
-When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line holding the `key` and `secret` `true`, and no `value`, for each secret setting stored on the instance.
+When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line holding the `key` and `secret` `true`, and no `value`, for each secret setting stored on the instance other than `object_store_secret_access_key`.
 
-**Reason:** an archive leaves the machine, and the key that seals a secret never does, so the line says only that the secret was set, for a restore to report (`archive/restore-secrets-to-set`).
+**Reason:** an archive leaves the machine, and the key that seals a secret never does, so the line says only that the secret was set, for a restore to report (`archive/restore-secrets-to-set`). The object store's secret belongs to this machine as the store's other settings do, so a restore onto another machine does not ask for it.
 
 **Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
 

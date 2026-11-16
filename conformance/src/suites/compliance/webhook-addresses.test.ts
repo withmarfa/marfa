@@ -7,6 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { PUBLIC_ONLY } from "../../utils/own-blob-server.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 /**
@@ -21,8 +22,8 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  * the subscription under a server that allows private addresses and then
  * starting the same data again under one that does not.
  */
-const SETTING = "webhook_allow_private_addresses";
-const SEED = "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES";
+const SETTING = "allow_private_addresses";
+const SEED = "MARFA_ALLOW_PRIVATE_ADDRESSES";
 let server: FreshServer | undefined;
 let working: MarfaClient;
 let receiver: Receiver;
@@ -54,9 +55,7 @@ const special = [
 ];
 
 beforeAll(async () => {
-  server = await bootFreshServer("webhook-addresses", {
-    MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: "false",
-  });
+  server = await bootFreshServer("webhook-addresses", PUBLIC_ONLY);
   working = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,

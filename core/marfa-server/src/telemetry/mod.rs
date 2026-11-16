@@ -43,6 +43,7 @@ pub struct Finished<'a> {
     pub reporting: bool,
     /// Where `error_webhook_url` sends a notice of the fault, if it is set.
     pub webhook: Option<&'a str>,
+    pub private_allowed: bool,
     pub timestamp: &'a str,
 }
 
@@ -182,6 +183,7 @@ impl Telemetry {
                     active.webhook.offer(Notice {
                         report: report.clone(),
                         url: url.to_string(),
+                        private_allowed: done.private_allowed,
                     });
                 }
                 if let Some(lane) = &active.exceptions {

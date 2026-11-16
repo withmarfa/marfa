@@ -822,7 +822,7 @@ fn select<W: RowSink>(
             let Some(entry) = registry::entry(&key) else {
                 continue;
             };
-            if entry.is_secret() {
+            if entry.named_without_value() {
                 settings.push((
                     print(&json!({ "setting": { "key": key, "secret": true } }))?,
                     needing(Some(Permission::ConfigManage)),

@@ -525,7 +525,7 @@ impl FakeS3 {
         FakeS3 { endpoint, held }
     }
 
-    /// The settings that name this store, in `bucket` under `prefix`.
+    /// The settings that name this store, in `bucket` under `prefix`. It listens on loopback.
     pub fn settings(&self, bucket: &str, prefix: &str) -> Vec<(String, String)> {
         [
             ("MARFA_OBJECT_STORE_BUCKET", bucket),
@@ -533,6 +533,7 @@ impl FakeS3 {
             ("MARFA_OBJECT_STORE_ENDPOINT", self.endpoint.as_str()),
             ("MARFA_OBJECT_STORE_ACCESS_KEY_ID", "test-key"),
             ("MARFA_OBJECT_STORE_SECRET_ACCESS_KEY", "test-secret"),
+            ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value.to_string()))

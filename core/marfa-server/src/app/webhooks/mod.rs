@@ -121,7 +121,7 @@ pub async fn check_address(app: &App, maker: &Maker, address: &request::Address)
     if app
         .settings
         .live()
-        .get(crate::settings::registry::WEBHOOK_ALLOW_PRIVATE_ADDRESSES)
+        .get(crate::settings::registry::ALLOW_PRIVATE_ADDRESSES)
     {
         return Ok(());
     }
@@ -136,7 +136,7 @@ pub async fn check_address(app: &App, maker: &Maker, address: &request::Address)
         Reach::NotPublic => Err(invalid(
             "url",
             "url names a host that is not a public address. An instance whose receivers are on a \
-             private network allows them by setting webhook_allow_private_addresses to true.",
+             private network allows them by setting allow_private_addresses to true.",
         )),
         Reach::Targets(_) | Reach::Unresolved | Reach::NoSlot => Ok(()),
     }

@@ -276,7 +276,7 @@ async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Opti
     let private_allowed = app
         .settings
         .live()
-        .get(crate::settings::registry::WEBHOOK_ALLOW_PRIVATE_ADDRESSES);
+        .get(crate::settings::registry::ALLOW_PRIVATE_ADDRESSES);
     let reached = outbound::reach(&app.faults, &url, private_allowed, Asker::Delivery(maker));
     let targets = match reached.await {
         Reach::Targets(targets) => targets,

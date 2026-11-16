@@ -6347,8 +6347,8 @@ export interface components {
              * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
              */
             object_store_access_key_id?: string;
-            /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. */
-            webhook_allow_private_addresses?: boolean;
+            /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. */
+            allow_private_addresses?: boolean;
             /**
              * @description The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.
              * @example [
@@ -34359,8 +34359,8 @@ export interface operations {
                      * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
                      */
                     object_store_access_key_id?: string;
-                    /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. */
-                    webhook_allow_private_addresses?: boolean;
+                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. */
+                    allow_private_addresses?: boolean;
                     /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
                     object_store_secret_access_key?: string;
                     /**
@@ -34425,7 +34425,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
-             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, which only the private local command can do.
+             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, or changes `allow_private_addresses`, which only the private local command can do.
              */
             403: {
                 headers: {
@@ -34623,8 +34623,8 @@ export interface operations {
                      * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
                      */
                     object_store_access_key_id?: string | null;
-                    /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. `null` removes it, so the server's default applies. */
-                    webhook_allow_private_addresses?: boolean | null;
+                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. `null` removes it, so the server's default applies. */
+                    allow_private_addresses?: boolean | null;
                     /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it. */
                     object_store_secret_access_key?: string | null;
                     /**
@@ -34689,7 +34689,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
-             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, which only the private local command can do.
+             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, or changes `allow_private_addresses`, which only the private local command can do.
              */
             403: {
                 headers: {

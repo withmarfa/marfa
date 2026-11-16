@@ -350,7 +350,7 @@ async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() 
     let retentions = [
         ("MARFA_AUDIT_RETENTION_DAYS", "2"),
         ("MARFA_EVENT_LOG_RETENTION_DAYS", "2"),
-        ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&retentions).await;
     instance.dead_delivery().await;
@@ -394,7 +394,7 @@ async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothin
         ("MARFA_VERSION_MAX_VERSIONS", "1"),
         ("MARFA_AUDIT_RETENTION_DAYS", "2"),
         ("MARFA_EVENT_LOG_RETENTION_DAYS", "2"),
-        ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&settings).await;
     let app = &instance.app;
@@ -462,7 +462,7 @@ async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothin
 async fn redelivery_follows_a_retention_committed_before_it_is_live() {
     let settings = [
         ("MARFA_AUDIT_RETENTION_DAYS", "2"),
-        ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&settings).await;
     let webhook = instance.dead_delivery().await;
@@ -625,7 +625,7 @@ async fn credential_cleanup_takes_a_revoked_key_a_second_past_its_thirty_days() 
 
 #[tokio::test]
 async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes() {
-    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let instance = Instance::start(&[("MARFA_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
     let type_id = expiring(&instance).await;
     let feed = instance.item(feed_item(type_id, "feed")).await;
     let binned = instance.binned(1).await.remove(0);

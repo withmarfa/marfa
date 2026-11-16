@@ -45,7 +45,7 @@ pnpm marfa:up
 set -a; . .marfa-state/env; set +a
 ```
 
-`marfa:up` boots `MARFA_SERVER_BIN` on `127.0.0.1` under a supervisor, claims the owner through the private socket, mints the fixture keys and writes `.marfa-state/env`. It turns off the rate limiter, enrichment and OCR and allows private webhook addresses. Vitest reads only `conformance/.env` itself, so source the state's env file. Pass `--state <dir>` and `--port <n>` to change where and on which port; `TARGET-INTERFACE.md`, "What `marfa:up` does", has the rest.
+`marfa:up` boots `MARFA_SERVER_BIN` on `127.0.0.1` under a supervisor, claims the owner through the private socket, mints the fixture keys and writes `.marfa-state/env`. It turns off the rate limiter, enrichment and OCR and allows private addresses, so receivers and the object store on loopback are reached. Vitest reads only `conformance/.env` itself, so source the state's env file. Pass `--state <dir>` and `--port <n>` to change where and on which port; `TARGET-INTERFACE.md`, "What `marfa:up` does", has the rest.
 
 ## 4. Build the device, for device and CLI fixtures
 

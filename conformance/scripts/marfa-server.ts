@@ -271,7 +271,7 @@ const SEEDED_BY_NAME: Record<string, "text" | "boolean"> = {
   MARFA_OBJECT_STORE_SECRET_ACCESS_KEY: "text",
   MARFA_HEARTBEAT_URL: "text",
   MARFA_ERROR_WEBHOOK_URL: "text",
-  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: "boolean",
+  MARFA_ALLOW_PRIVATE_ADDRESSES: "boolean",
 };
 
 function storedFrom(env: Record<string, string | undefined>) {
@@ -604,11 +604,12 @@ async function startServer(args: BootOptions): Promise<Started> {
     // default here: `marfa:up` says `false` outright, so an ambient
     // variable cannot flip the instance every other file shares.
     MARFA_RATE_LIMIT_ENABLED: process.env.MARFA_RATE_LIMIT_ENABLED || "false",
-    // Every webhook fixture delivers to a receiver on loopback, which a
-    // server refuses by default. On unless the caller says otherwise, so the
-    // fixture about that refusal can boot a server of its own with it off.
-    MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
-      process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
+    // Every webhook fixture delivers to a receiver on loopback, and the run's
+    // object store listens there, which a server refuses by default. On
+    // unless the caller says otherwise, so the fixtures about that refusal
+    // can boot a server of their own with it off.
+    MARFA_ALLOW_PRIVATE_ADDRESSES:
+      process.env.MARFA_ALLOW_PRIVATE_ADDRESSES || "true",
   };
   // The program carries its test hooks, unless the run says it is a release
   // build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
@@ -858,25 +859,22 @@ export async function bootServer(args: BootOptions): Promise<void> {
     managementKey = management.body.key;
   }
   if (status.body.claimed !== true && hookFreeRun()) {
-    const set = await fetch(`${url}/config`, {
+    // Through the private local process: only it changes `allow_private_addresses`.
+    const set = await controlRequest(controlSocket, "/config", {
       method: "PATCH",
-      headers: {
-        authorization: `Bearer ${managementKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
+      body: {
         ...MEASURING_SETTINGS,
         ...storedFrom({
           ...process.env,
-          MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
-            process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
+          MARFA_ALLOW_PRIVATE_ADDRESSES:
+            process.env.MARFA_ALLOW_PRIVATE_ADDRESSES || "true",
           ...args.env,
         }),
-      }),
+      },
     });
-    if (!set.ok) {
+    if (set.status !== 200) {
       throw new Error(
-        `Setting the instance up for measuring answered ${String(set.status)}: ${(await set.text()).slice(0, 300)}`,
+        `Setting the instance up for measuring answered ${String(set.status)}: ${JSON.stringify(set.body).slice(0, 300)}`,
       );
     }
   }

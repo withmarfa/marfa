@@ -3,12 +3,13 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::registry::{
-    ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, ERROR_WEBHOOK_URL, HEARTBEAT_ENABLED,
-    HEARTBEAT_URL, OBJECT_STORE_BUCKET, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS,
-    VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, ERROR_WEBHOOK_URL,
+    HEARTBEAT_ENABLED, HEARTBEAT_URL, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT, Snapshot,
+    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::start::Fixed;
 use crate::app::addresses::Address;
+use crate::app::outbound::address::names_private_literal;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Breach {
@@ -71,6 +72,17 @@ pub const TOGETHER: &[Together] = &[
         description: "The backup folder must be outside the data directory and the blob folder, since a backup there is lost with what it backs up.",
         keys: &["backup_path"],
         judge: backup_path_outside_the_data,
+    },
+    Together {
+        name: "destinations_are_public",
+        description: "While allow_private_addresses is false, heartbeat_url, error_webhook_url and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
+        keys: &[
+            "allow_private_addresses",
+            "heartbeat_url",
+            "error_webhook_url",
+            "object_store_endpoint",
+        ],
+        judge: destinations_are_public,
     },
     Together {
         name: "sign_in_is_an_address",
@@ -185,6 +197,42 @@ fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
             .to_string(),
         })
         .collect()
+}
+
+/// A secret's value never reaches the message.
+fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
+    let after = judged.after;
+    if after.get(ALLOW_PRIVATE_ADDRESSES) {
+        return Vec::new();
+    }
+    let switch_named = judged.names(ALLOW_PRIVATE_ADDRESSES.entry.key);
+    [
+        (
+            HEARTBEAT_URL.entry.key,
+            after.get(HEARTBEAT_URL).map(|url| url.expose().to_string()),
+        ),
+        (
+            ERROR_WEBHOOK_URL.entry.key,
+            after
+                .get(ERROR_WEBHOOK_URL)
+                .map(|url| url.expose().to_string()),
+        ),
+        (
+            OBJECT_STORE_ENDPOINT.entry.key,
+            after.get(OBJECT_STORE_ENDPOINT),
+        ),
+    ]
+    .into_iter()
+    .filter(|(key, url)| {
+        (switch_named || judged.names(key)) && url.as_deref().is_some_and(names_private_literal)
+    })
+    .map(|(path, _)| Breach {
+        path,
+        message: "names an address that is not public; only the private local command can allow \
+                  one, by setting allow_private_addresses to true"
+            .to_string(),
+    })
+    .collect()
 }
 
 fn one_backup_destination(judged: &Judged) -> Vec<Breach> {

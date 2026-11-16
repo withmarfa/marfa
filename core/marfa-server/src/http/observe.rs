@@ -21,7 +21,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
 use crate::log;
-use crate::settings::registry::ERROR_REPORTING_ENABLED;
+use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 use crate::telemetry::Finished;
 
 #[derive(Default)]
@@ -234,6 +234,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
             fault: fault.as_ref(),
             reporting,
             webhook: webhook.as_deref(),
+            private_allowed: live.get(ALLOW_PRIVATE_ADDRESSES),
             timestamp: &timestamp,
         },
     );

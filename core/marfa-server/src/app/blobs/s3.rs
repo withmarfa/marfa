@@ -23,10 +23,11 @@ use uuid::Uuid;
 
 use super::hash::Hash;
 use super::store::Answer;
+use crate::app::outbound::store::PublicOnly;
 use crate::settings::Snapshot;
 use crate::settings::registry::{
-    OBJECT_STORE_ACCESS_KEY_ID, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT,
-    OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION,
+    ALLOW_PRIVATE_ADDRESSES, OBJECT_STORE_ACCESS_KEY_ID, OBJECT_STORE_BUCKET,
+    OBJECT_STORE_ENDPOINT, OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION,
     OBJECT_STORE_SECRET_ACCESS_KEY,
 };
 use crate::settings::sealed::Secret;
@@ -41,6 +42,7 @@ pub struct ObjectStoreSettings {
     pub secret_access_key: Option<Secret>,
     pub path_style: bool,
     pub prefix: String,
+    pub private_allowed: bool,
 }
 
 impl std::fmt::Debug for ObjectStoreSettings {
@@ -70,6 +72,7 @@ impl ObjectStoreSettings {
             prefix: settings
                 .get(OBJECT_STORE_PREFIX)
                 .unwrap_or_else(|| "marfa".to_string()),
+            private_allowed: settings.get(ALLOW_PRIVATE_ADDRESSES),
         })
     }
 }
@@ -241,6 +244,7 @@ impl S3 {
             max_retries: 2,
             retry_timeout: Duration::from_secs(10),
         };
+        let connect_timeout = Duration::from_secs(5);
         let mut builder = AmazonS3Builder::new()
             .with_bucket_name(&settings.bucket)
             .with_region(&settings.region)
@@ -250,8 +254,11 @@ impl S3 {
             .with_client_options(
                 ClientOptions::new()
                     .with_timeout_disabled()
-                    .with_connect_timeout(Duration::from_secs(5)),
+                    .with_connect_timeout(connect_timeout),
             );
+        if !settings.private_allowed {
+            builder = builder.with_http_connector(PublicOnly { connect_timeout });
+        }
         if let Some(endpoint) = &settings.endpoint {
             builder = builder
                 .with_endpoint(endpoint)

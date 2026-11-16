@@ -20,6 +20,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * A secret setting is written through `/config` and never read back: each
@@ -55,6 +56,14 @@ async function listed(server: FreshServer, key: string): Promise<Listed> {
   return entry!;
 }
 
+async function setFrom(
+  operator: ReturnType<typeof clientsFor>["operator"],
+  changes: Record<string, unknown>,
+): Promise<void> {
+  const set = await operator.patchConfig(changes);
+  expect(set.status, JSON.stringify(set.error)).toBe(200);
+}
+
 async function config(server: FreshServer): Promise<Record<string, unknown>> {
   const answer = await clientsFor(server).operator.getConfig();
   expect(answer.status, JSON.stringify(answer.error)).toBe(200);
@@ -84,6 +93,12 @@ describe("a secret setting", () => {
   it(
     "is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown",
     async () => {
+      const endpoint = process.env.MARFA_OBJECT_STORE_ENDPOINT;
+      if (!endpoint) {
+        throw new Error(
+          "MARFA_OBJECT_STORE_ENDPOINT is required: source the env file `pnpm garage:up` writes.",
+        );
+      }
       const folder = mkdtempSync(join(tmpdir(), "marfa-secret-backups-"));
       const server = await bootFreshServer("secret-witness", {
         ...DISK,
@@ -92,7 +107,9 @@ describe("a secret setting", () => {
       try {
         const { operator } = clientsFor(server);
         const witness = `witness-${randomUUID()}`;
+        const beat = `https://beat-${randomUUID()}.example.test/`;
         const visible = `visible-${randomUUID()}`;
+        const secrets = [witness, beat];
         const answers: string[] = [];
         const keep = (answer: {
           status: number;
@@ -109,6 +126,7 @@ describe("a secret setting", () => {
         const set = keep(
           await operator.patchConfig({
             [SECRET]: witness,
+            heartbeat_url: beat,
             object_store_access_key_id: visible,
             trash_retention_days: 7,
           }),
@@ -117,7 +135,7 @@ describe("a secret setting", () => {
         // The witness: a value that is no secret is shown back on the same path.
         expect(set.data).toMatchObject({
           object_store_access_key_id: visible,
-          secrets_set: [SECRET],
+          secrets_set: [SECRET, "heartbeat_url"],
         });
         const refused = keep(
           await operator.patchConfig({ [SECRET]: ` ${witness} ` }),
@@ -127,7 +145,9 @@ describe("a secret setting", () => {
         keep(await operator.getConfig());
         keep(await operator.rawRequest("/config/settings"));
         keep(await operator.listAudit({ kind: "settings" }));
-        for (const answer of answers) expect(answer).not.toContain(witness);
+        for (const answer of answers) {
+          for (const secret of secrets) expect(answer).not.toContain(secret);
+        }
         const audit = await operator.listAudit({ kind: "settings" });
         expect(JSON.stringify(audit.data)).toContain(SECRET);
 
@@ -142,19 +162,23 @@ describe("a secret setting", () => {
           bytes,
           "instance",
         ).flatMap((line) => (line.setting ? [line.setting] : []));
-        expect(settings).toContainEqual({ key: SECRET, secret: true });
+        expect(settings).toContainEqual({ key: "heartbeat_url", secret: true });
         expect(settings).toContainEqual({
           key: "trash_retention_days",
           value: 7,
         });
-        expect(Buffer.from(bytes).toString("latin1")).not.toContain(witness);
-        expect(JSON.stringify(settings)).not.toContain(witness);
+        // The object store's secret belongs to this machine, as its bucket does.
+        expect(settings.map((line) => line.key)).not.toContain(SECRET);
+        for (const secret of secrets) {
+          expect(Buffer.from(bytes).toString("latin1")).not.toContain(secret);
+          expect(JSON.stringify(settings)).not.toContain(secret);
+        }
 
         const run = await ownerOf(server).runBackup();
         expect(run.status, JSON.stringify(run.error)).toBe(200);
         const backup = filesUnder(folder);
-        expect(backup).toContain(`"${SECRET}"`);
-        expect(backup).not.toContain(witness);
+        expect(backup).toContain(`"heartbeat_url"`);
+        for (const secret of secrets) expect(backup).not.toContain(secret);
 
         const data = dirname(server.sqlitePath);
         const pages = ["marfa.db", "marfa.db-wal"]
@@ -163,13 +187,32 @@ describe("a secret setting", () => {
           .map((path) => readFileSync(path).toString("latin1"))
           .join("");
         expect(pages).toContain(visible);
-        expect(pages).not.toContain(witness);
-        for (const log of ["server.log", "server.stderr"]) {
-          const path = join(server.stateDir, log);
-          if (existsSync(path)) {
-            expect(readFileSync(path, "utf8"), log).not.toContain(witness);
-          }
-        }
+        for (const secret of secrets) expect(pages).not.toContain(secret);
+
+        // An object store the secret cannot open is logged, and the log names
+        // the store's bucket, which is no secret, and never the secret.
+        const bucket = `witness-bucket-${randomUUID()}`;
+        await setFrom(operator, {
+          backup_path: null,
+          object_store_bucket: bucket,
+          object_store_endpoint: endpoint,
+        });
+        await waitFor("the store to be reported unusable", async () => {
+          const said = await clientsFor(server).operator.rawRequest<{
+            backups: Record<string, unknown>;
+          }>("/health");
+          return said.data.backups.reason === "destination_unusable"
+            ? true
+            : undefined;
+        });
+        const logs = ["server.log", "server.stderr"]
+          .map((name) => join(server.stateDir, name))
+          .filter((path) => existsSync(path))
+          .map((path) => readFileSync(path, "utf8"));
+        expect(logs.length).toBeGreaterThan(0);
+        const logged = logs.join("\n");
+        expect(logged).toContain(bucket);
+        for (const secret of secrets) expect(logged).not.toContain(secret);
       } finally {
         await server.stop();
         rmSync(folder, { recursive: true, force: true });
@@ -237,9 +280,11 @@ describe("a secret setting", () => {
       const origin = await bootFreshServer("secret-restore-origin", DISK);
       const target = await bootFreshServer("secret-restore-target", DISK);
       try {
+        const beat = () => `https://beat-${randomUUID()}.example.test/`;
         const set = await clientsFor(origin).operator.patchConfig({
           [SECRET]: `origin-${randomUUID()}`,
-          error_webhook_url: `http://127.0.0.1:9/${randomUUID()}`,
+          heartbeat_url: beat(),
+          error_webhook_url: `https://${randomUUID()}.example.test/errors`,
         });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         const archive = await (
@@ -252,13 +297,14 @@ describe("a secret setting", () => {
 
         // The witness: a secret the restoring instance holds already is not reported.
         const held = await clientsFor(target).operator.patchConfig({
-          [SECRET]: `target-${randomUUID()}`,
+          heartbeat_url: beat(),
         });
         expect(held.status, JSON.stringify(held.error)).toBe(200);
         const restored = await ownerOf(target).restoreArchive(
           new Uint8Array(archive.data),
         );
         expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        // The object store's secret belongs to the machine, so it is not asked for.
         expect(restored.data.secrets_to_set).toEqual(["error_webhook_url"]);
 
         expect(await listed(target, "error_webhook_url")).toMatchObject({
@@ -266,7 +312,9 @@ describe("a secret setting", () => {
           unreadable: true,
           stored: null,
         });
-        expect((await listed(target, SECRET)).set).toBe(true);
+        expect((await listed(target, "heartbeat_url")).set).toBe(true);
+        expect(await listed(target, SECRET)).toMatchObject({ set: false });
+        expect((await listed(target, SECRET)).unreadable).not.toBe(true);
         const concerns = (await attentionOf(target)).filter(
           (concern) => concern.kind === "setting",
         );
@@ -275,7 +323,7 @@ describe("a secret setting", () => {
         ]);
 
         const mended = await clientsFor(target).operator.patchConfig({
-          error_webhook_url: `http://127.0.0.1:9/${randomUUID()}`,
+          error_webhook_url: `https://${randomUUID()}.example.test/errors`,
         });
         expect(mended.status, JSON.stringify(mended.error)).toBe(200);
         expect(

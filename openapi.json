@@ -9085,9 +9085,9 @@
             "description": "The access key ID for the object store.",
             "example": "01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37"
           },
-          "webhook_allow_private_addresses": {
+          "allow_private_addresses": {
             "type": "boolean",
-            "description": "`true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`."
+            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`."
           },
           "secrets_set": {
             "type": "array",
@@ -58979,9 +58979,9 @@
                     "description": "The access key ID for the object store.",
                     "example": "01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37"
                   },
-                  "webhook_allow_private_addresses": {
+                  "allow_private_addresses": {
                     "type": "boolean",
-                    "description": "`true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`."
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`."
                   },
                   "object_store_secret_access_key": {
                     "type": "string",
@@ -59077,7 +59077,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, which only the private local command can do.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, or changes `allow_private_addresses`, which only the private local command can do.",
             "content": {
               "application/json": {
                 "schema": {
@@ -59562,12 +59562,12 @@
                     "description": "The access key ID for the object store. `null` removes it, so the server's default applies.",
                     "example": "01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37"
                   },
-                  "webhook_allow_private_addresses": {
+                  "allow_private_addresses": {
                     "type": [
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. `null` removes it, so the server's default applies."
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. `null` removes it, so the server's default applies."
                   },
                   "object_store_secret_access_key": {
                     "type": [
@@ -59672,7 +59672,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, which only the private local command can do.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, or changes `allow_private_addresses`, which only the private local command can do.",
             "content": {
               "application/json": {
                 "schema": {

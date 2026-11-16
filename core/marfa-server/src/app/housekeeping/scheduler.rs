@@ -17,7 +17,7 @@ use super::jobs::JOBS;
 use super::schedule::{self, Finish, Wanted};
 use super::{Active, Ended, Job, Report, Run};
 use crate::db::Write;
-use crate::settings::registry::ERROR_REPORTING_ENABLED;
+use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 use crate::telemetry::{Fault, Finished};
 
 /// How long after a pass that failed the next one waits.
@@ -306,6 +306,7 @@ fn report(app: &App, name: &str, fault: &Arc<Fault>) {
             fault: Some(fault),
             reporting: live.get(ERROR_REPORTING_ENABLED),
             webhook: webhook.as_deref(),
+            private_allowed: live.get(ALLOW_PRIVATE_ADDRESSES),
             timestamp: &timestamp,
         },
     );

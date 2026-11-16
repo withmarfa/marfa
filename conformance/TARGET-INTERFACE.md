@@ -214,8 +214,9 @@ and a value passed for one replaces its own:
   names, it is unset unless the last boot of the same state had it there.
   `MARFA_SIGN_IN_ADDRESS=` boots with none.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
-  webhook delivery to private addresses allowed, so the fixtures can use a
-  receiver on the loopback address.
+  private addresses allowed (`allow_private_addresses`), so the fixtures can
+  use a receiver and the object store on the loopback address. A release build
+  without hooks takes the setting through the private socket.
 - `MARFA_TEST_HOOKS` true.
 
 ## Stopping a server nobody stopped

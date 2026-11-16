@@ -15,6 +15,18 @@ export const DISK_ONLY: Record<string, string> = {
 };
 
 /**
+ * The settings of a server of a fixture's own that sends to no address that
+ * is not public, as a server does by default. The run's object store listens
+ * on loopback, and the server refuses to start seeded with an endpoint it
+ * may not reach, so the store is left unattached.
+ */
+export const PUBLIC_ONLY: Record<string, string> = {
+  MARFA_ALLOW_PRIVATE_ADDRESSES: "false",
+  MARFA_OBJECT_STORE_BUCKET: "",
+  MARFA_OBJECT_STORE_ENDPOINT: "",
+};
+
+/**
  * The settings of a server of a fixture's own that attaches the run's object
  * store under a prefix no other server uses. A store's id is read from a
  * marker under its prefix, so a server of its own sharing the run's prefix

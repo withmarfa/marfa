@@ -841,6 +841,7 @@ async fn a_start_whose_object_store_never_answered_serves_from_the_disk_and_repo
     let dir = TempDir::new().unwrap();
     let endpoint = closed_endpoint().await;
     let env = [
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
         ("MARFA_OBJECT_STORE_BUCKET", BUCKET),
         ("MARFA_OBJECT_STORE_ENDPOINT", endpoint.as_str()),
         ("MARFA_OBJECT_STORE_ACCESS_KEY_ID", "test-key"),

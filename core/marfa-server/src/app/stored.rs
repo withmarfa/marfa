@@ -233,7 +233,7 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, Archived)> {
     let Some(entry) = registry::entry(key) else {
         return Ok((key.to_string(), Archived::Unknown));
     };
-    if entry.is_secret() {
+    if entry.named_without_value() {
         if line.get("value").is_some() || line.get("secret") != Some(&serde_json::Value::Bool(true))
         {
             return Err(refused(format!("{key} that is a secret, with its value")));
@@ -472,10 +472,13 @@ mod tests {
             "sign_in_address",
             "backup_path",
             "object_store_bucket",
-            "webhook_allow_private_addresses",
+            "allow_private_addresses",
         ] {
             assert!(archived(&line(machine)).is_err(), "{machine}");
         }
+        let machine_secret =
+            serde_json::json!({ "key": "object_store_secret_access_key", "secret": true });
+        assert!(archived(&machine_secret).is_err());
         assert_eq!(
             archived(&serde_json::json!({ "key": "heartbeat_url", "secret": true })).unwrap(),
             ("heartbeat_url".to_string(), Archived::Secret)
