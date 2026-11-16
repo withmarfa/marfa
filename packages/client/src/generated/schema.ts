@@ -34922,7 +34922,7 @@ export interface operations {
                      *         },
                      *         {
                      *           "code": "add_passkey",
-                     *           "sentence": "Add a passkey at the new address. Passkeys made for the old address work only there.",
+                     *           "sentence": "Add a passkey at the new address. Passkeys made for the old address work again only if the sign-in address moves back.",
                      *           "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
                      *         }
                      *       ]

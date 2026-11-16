@@ -30,10 +30,10 @@ pub struct WriteArgs {
     #[command(flatten)]
     body: BodySource,
     /// Confirm a change to the sign-in address, which signs out every browser
-    /// and app, and leaves passkeys working only at the old address. It needs
-    /// a sign-in from the last five minutes, or the private local command
-    /// (`--socket`). Without this the server answers what the change would do
-    /// and writes nothing.
+    /// and app, and leaves passkeys made for the old address unusable until it
+    /// moves back. It needs a sign-in from the last five minutes, or the private
+    /// local command (`--socket`). Without this the server answers what the
+    /// change would do and writes nothing.
     #[arg(long)]
     confirm_address_change: bool,
 }
