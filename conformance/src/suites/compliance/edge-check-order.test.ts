@@ -900,7 +900,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
       version: edge.version,
     });
     expect(alone.status).toBe(400);
-    expect(alone.error?.error.code).toBe("invalid_properties");
+    expect(alone.error?.error.code).toBe("validation_error");
   });
 
   it("refuses a move of both ends before it looks up the edge type", async () => {

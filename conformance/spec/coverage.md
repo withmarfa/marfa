@@ -309,6 +309,7 @@ The sign-in pages and what they post, under `/auth/` and `/setup`, are outside t
 Every other covered operation's success body is validated against the served document by `expectMatchesSchema`; `src/utils/schema-coverage.test.ts` fails when one is not. These answer something the document's JSON schemas cannot describe.
 
 - `GET /blobs/{hash}`: the bytes themselves, `application/octet-stream`.
+- `HEAD /blobs/{hash}`: the headers of that read, with no body.
 - `GET /owner/avatar`: the owner's picture, `image/png`, `image/jpeg` or `image/webp`.
 - `GET /connectors/{id}/deliveries/{delivery_id}/body`: a delivery's bytes as they arrived, `application/octet-stream`.
 - `GET /export`: newline-delimited JSON, or a gzip archive.

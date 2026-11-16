@@ -3016,11 +3016,7 @@ impl Core {
     }
 
     /// Writes the item's tags whole, dropping any not named.
-    pub fn replace_tags(
-        &self,
-        id: String,
-        tags: Vec<String>,
-    ) -> Result<QueuedWrite, MarfaError> {
+    pub fn replace_tags(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite, MarfaError> {
         let write = marfa_core::TagsWrite { tags };
         queued(self.inner.replace_tags(&id, &write)?)
     }

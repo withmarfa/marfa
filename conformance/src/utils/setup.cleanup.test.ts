@@ -425,12 +425,12 @@ describe("type tracking records accepted dependencies", () => {
   function clientStub(): Record<string, unknown> {
     return {
       registerType: (schema: { id: string }) =>
-        Promise.resolve({ ok: true, status: 201, data: { type: schema } }),
+        Promise.resolve({ ok: true, status: 201, data: schema }),
       replaceType: (id: string, schema: object) =>
         Promise.resolve({
           ok: true,
           status: 200,
-          data: { type: { id, ...schema } },
+          data: { id, ...schema },
         }),
     };
   }

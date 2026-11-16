@@ -192,8 +192,9 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
       name.endsWith("List") ||
       (name.endsWith("Page") &&
         named.data?.type !== "array" &&
-        !((schema.allOf ?? []) as Json[]).some((branch) =>
-          String(branch.$ref ?? "").endsWith("Page"),
+        !((schema.allOf ?? []) as Json[]).some(
+          (branch) =>
+            typeof branch.$ref === "string" && branch.$ref.endsWith("Page"),
         ))
     ) {
       found.listSchemaName.push(name);

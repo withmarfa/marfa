@@ -24,13 +24,15 @@ afterAll(async () => {
 
 const SPELLINGS = ["1", "0", "yes", "no", "TRUE", "True", ""];
 
-const DOORS: {
+interface Door {
   name: string;
   as: "owner" | "key";
   method: string;
   path: (value: string) => string;
   body?: Record<string, unknown>;
-}[] = [
+}
+
+const DOORS: Door[] = [
   {
     name: "force on DELETE /types/{id}",
     as: "owner",
@@ -65,29 +67,47 @@ const DOORS: {
 ];
 
 describe("a boolean in the query", () => {
-  for (const door of DOORS) {
-    it(`takes true, and refuses every other spelling, for ${door.name}`, async () => {
-      const caller = door.as === "owner" ? owner : client;
-      // The witness: the same request with `true` gets past the check.
-      if (door.as === "owner") {
-        const taken = await caller.rawRequest<unknown>(door.path("true"), {
-          method: door.method,
-          ...(door.body ? { body: door.body } : {}),
-        });
-        expect(taken.status, door.name).not.toBe(400);
-      }
-      for (const value of SPELLINGS) {
-        const refused = await caller.rawRequest<unknown>(door.path(value), {
-          method: door.method,
-          ...(door.body ? { body: door.body } : {}),
-        });
-        expect(refused.status, `${door.name}=${value}`).toBe(400);
-        expect(refused.error?.error.code, `${door.name}=${value}`).toBe(
-          "validation_error",
-        );
-      }
-    });
+  async function refusesEverySpellingBut(door: Door): Promise<void> {
+    const caller = door.as === "owner" ? owner : client;
+    // The witness: the same request with `true` gets past the check.
+    if (door.as === "owner") {
+      const taken = await caller.rawRequest<unknown>(door.path("true"), {
+        method: door.method,
+        ...(door.body ? { body: door.body } : {}),
+      });
+      expect(taken.status, door.name).not.toBe(400);
+    }
+    for (const value of SPELLINGS) {
+      const refused = await caller.rawRequest<unknown>(door.path(value), {
+        method: door.method,
+        ...(door.body ? { body: door.body } : {}),
+      });
+      expect(refused.status, `${door.name}=${value}`).toBe(400);
+      expect(refused.error?.error.code, `${door.name}=${value}`).toBe(
+        "validation_error",
+      );
+    }
   }
+
+  it("takes true, and refuses every other spelling, for force on DELETE /types/{id}", async () => {
+    await refusesEverySpellingBut(DOORS[0]!);
+  });
+
+  it("takes true, and refuses every other spelling, for force on PUT /types/{id}", async () => {
+    await refusesEverySpellingBut(DOORS[1]!);
+  });
+
+  it("takes true, and refuses every other spelling, for force on DELETE /edge-types/{id}", async () => {
+    await refusesEverySpellingBut(DOORS[2]!);
+  });
+
+  it("takes true, and refuses every other spelling, for files on GET /export", async () => {
+    await refusesEverySpellingBut(DOORS[3]!);
+  });
+
+  it("takes true, and refuses every other spelling, for copy on GET /events", async () => {
+    await refusesEverySpellingBut(DOORS[4]!);
+  });
 
   it("takes false on the doors that read a whole archive and a stream", async () => {
     const archive = await client.rawRequest<unknown>(
