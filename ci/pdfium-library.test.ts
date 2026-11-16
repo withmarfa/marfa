@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const NATIVE = join(ROOT, "core", "marfa-enrichment", "native");
@@ -214,5 +215,36 @@ describe("native/pdfium.sh on a saved library", () => {
     expect(result.status).toBe(0);
     expect(result.installed).toBe(true);
     expect(result.output).toContain(`${target} ${result.hash}`);
+  });
+});
+
+describe("the Xcode the macOS hash holds for", () => {
+  interface Step {
+    name?: string;
+    run?: string;
+    uses?: string;
+  }
+  const job = (
+    parse(
+      readFileSync(join(ROOT, ".github", "workflows", "release.yml"), "utf8"),
+    ) as {
+      jobs: Record<string, { env?: Record<string, string>; steps: Step[] }>;
+    }
+  ).jobs["programs-macos"]!;
+
+  it("is selected by name, not left to the image's default", () => {
+    const version = job.env?.XCODE_VERSION ?? "";
+    expect(version).toMatch(/^\d+(\.\d+)+$/);
+    expect(job.env?.DEVELOPER_DIR).toBe(
+      `/Applications/Xcode_${version}.app/Contents/Developer`,
+    );
+  });
+
+  it("is checked by the first step, which names the Xcode when it is missing", () => {
+    const first = job.steps[0]!;
+    expect(first.uses).toBeUndefined();
+    expect(first.run).toContain("xcodebuild -version");
+    expect(first.run).toContain('"$XCODE_VERSION"');
+    expect(first.run).toContain("::error::");
   });
 });
