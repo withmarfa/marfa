@@ -642,9 +642,9 @@ While the keychain is off, if the server still accepts an access token after `lo
 
 ### `cli/command-logout-off-confirmed`
 
-While the keychain is off, when the server refuses an access token after `logout` asked for its revocation, the CLI MUST report `revoked: true`.
+While the keychain is off, when the server refuses an access token after `logout` asked for its revocation, the CLI MUST report `accepted: false`.
 
-**Reason:** a refusal is the only proof the token no longer works; a refresh token has no such check.
+**Reason:** a refusal is the only proof the token no longer works, and it does not show this revocation ended it, as a token that had expired is refused alike; a refresh token has no such check.
 
 **Tests:** `device/credential-locks.test.ts › revokes the token it is handed when the keychain is off, and says so only when the server then refuses it`.
 

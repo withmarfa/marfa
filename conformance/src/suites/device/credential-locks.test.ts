@@ -819,7 +819,9 @@ describe("a kept credential", ON_MACOS, () => {
         expect(out.code, `${name}: ${out.stdout}`).toBe(1);
       } else {
         expect(out.code, `${name}: ${out.stderr}`).toBe(0);
-        expect(JSON.parse(out.stdout), name).toMatchObject({ revoked: true });
+        expect(JSON.parse(out.stdout), name).toMatchObject({
+          accepted: false,
+        });
       }
     }
     expect(keychainFile()).toBe(before);

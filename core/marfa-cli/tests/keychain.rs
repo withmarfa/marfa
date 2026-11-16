@@ -554,7 +554,7 @@ fn logging_out_with_the_keychain_off_revokes_the_token_it_is_handed() {
     );
     assert!(ran.status.success(), "{ran:?}");
     let said: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
-    assert_eq!(said["revoked"], true, "{said}");
+    assert_eq!(said["accepted"], false, "{said}");
     let sent = door.received();
     assert_eq!(sent.len(), 3);
     assert!(sent[1].path().ends_with("/revoke"), "{}", sent[1].path());
@@ -603,7 +603,7 @@ fn logging_out_with_the_keychain_off_revokes_the_token_it_is_handed() {
     );
     assert!(ran.status.success(), "{ran:?}");
     let said: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
-    assert!(said["revoked"].is_null(), "{said}");
+    assert!(said["accepted"].is_null(), "{said}");
     let sent = door.received();
     assert_eq!(sent.len(), 2);
     assert!(sent[1].body.contains("token_type_hint=refresh_token"));
@@ -621,4 +621,91 @@ fn logging_out_with_the_keychain_off_revokes_the_token_it_is_handed() {
         std::fs::read(keychain.keychain_path()).unwrap() == before,
         "a logout with the keychain off changed it"
     );
+}
+
+#[test]
+fn logging_out_with_the_keychain_off_sends_a_token_only_where_a_key_would_go() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let keychain = keychain_holding("logout-off-guards", "https://elsewhere.example");
+    let door = Door::open(vec![]);
+
+    // A profile has a credential of its own, so the environment's token is not handed on.
+    let home = keychain.directory().join("home");
+    let profiles = home.join("Library/Application Support/Marfa/profiles.toml");
+    std::fs::create_dir_all(profiles.parent().unwrap()).unwrap();
+    std::fs::write(&profiles, format!("[demo]\nurl = \"{}\"\n", door.url)).unwrap();
+    std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let ran = keychain
+        .marfa()
+        .env("HOME", &home)
+        .env("MARFA_NO_KEYCHAIN", "1")
+        .env("MARFA_API_KEY", "marfa_at_handed")
+        .args([
+            "--json",
+            "--profile",
+            "demo",
+            "logout",
+            "--client-id",
+            "registered",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(ran.status.code(), Some(2), "{ran:?}");
+    assert!(
+        String::from_utf8_lossy(&ran.stderr).contains("a profile's credential is its own"),
+        "{ran:?}"
+    );
+
+    // MARFA_API_KEY is the server MARFA_API_URL names, not the one --url does.
+    let ran = keychain
+        .marfa()
+        .env("MARFA_NO_KEYCHAIN", "1")
+        .env("MARFA_API_KEY", "marfa_at_handed")
+        .env("MARFA_API_URL", "https://other.example")
+        .args([
+            "--json",
+            "--url",
+            &door.url,
+            "logout",
+            "--client-id",
+            "registered",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(ran.status.code(), Some(2), "{ran:?}");
+    assert!(
+        String::from_utf8_lossy(&ran.stderr).contains("MARFA_API_KEY is for the server"),
+        "{ran:?}"
+    );
+    assert_eq!(
+        door.received().len(),
+        0,
+        "a token was sent to the wrong server"
+    );
+
+    // The witness: with MARFA_API_URL naming the same server, the token is sent.
+    let door = Door::open_at(|origin| {
+        vec![
+            Answer::json("200 OK", &discovery(origin)),
+            Answer::json("200 OK", "{}"),
+        ]
+    });
+    let ran = keychain
+        .marfa()
+        .env("MARFA_NO_KEYCHAIN", "1")
+        .env("MARFA_API_KEY", "marfa_rt_handed")
+        .env("MARFA_API_URL", &door.url)
+        .args([
+            "--json",
+            "--url",
+            &door.url,
+            "logout",
+            "--client-id",
+            "registered",
+        ])
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{ran:?}");
+    assert_eq!(door.received().len(), 2);
 }

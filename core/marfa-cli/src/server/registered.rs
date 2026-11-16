@@ -1,5 +1,4 @@
-//! The install folders the machine's service managers hold a server for, wherever
-//! `--dir` put them: the launchd agents and the systemd units `marfa server install` wrote.
+//! The install folders that launchd agents and systemd units hold a server for.
 
 use std::path::{Path, PathBuf};
 

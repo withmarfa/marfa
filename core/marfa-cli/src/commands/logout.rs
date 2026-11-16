@@ -19,8 +19,7 @@ pub struct LogoutArgs {
 
 pub fn run(args: &LogoutArgs, named: &Named, out: &Printer) -> Result<(), CliError> {
     if credentials::is_off() {
-        let environment = std::env::var("MARFA_API_KEY").ok();
-        return without_keychain(args, named, environment, out);
+        return without_keychain(args, named, Remote::handed_key(named)?, out);
     }
     if args.client_id.is_some() {
         return Err(CliError::Usage(
@@ -79,24 +78,24 @@ fn sign_out(origin: &str, out: &Printer) -> Result<(), CliError> {
     }
 }
 
-/// A token passed with `--key` or `MARFA_API_KEY` and revoked at the server, with nothing in the
-/// keychain to read or forget.
+/// Revokes the token passed with `--key` or `MARFA_API_KEY`, as the keychain is off.
 fn without_keychain(
     args: &LogoutArgs,
     named: &Named,
-    environment: Option<String>,
+    handed: Option<(String, String)>,
     out: &Printer,
 ) -> Result<(), CliError> {
-    let token = named
-        .key
-        .clone()
-        .or(environment)
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| {
+    let Some((url, token)) = handed else {
+        return Err(if named.profile.is_some() {
+            credentials::refusal(
+                "a profile's credential is its own, so a token cannot be handed to it: leave the profile out and pass the server with --url, the token with --key or MARFA_API_KEY and the client id it was issued to with --client-id",
+            )
+        } else {
             credentials::refusal(
                 "to revoke a token, pass it with --key or MARFA_API_KEY and the client id it was issued to with --client-id, as `marfa login --print-token` printed them",
             )
-        })?;
+        });
+    };
     let Some(kind) = auth::token_kind(&token) else {
         return Err(CliError::Invalid(
             "the credential passed is not a sign-in token (marfa_at_ or marfa_rt_): `marfa keys revoke` ends a key".into(),
@@ -107,7 +106,6 @@ fn without_keychain(
             "pass the client id the token was issued to with --client-id; `marfa login --print-token` prints it".into(),
         )
     })?;
-    let url = Remote::url_named(named)?;
     cleartext::guard(&url);
     let remote = Remote::public_at(&url)?;
     let origin = remote.origin().to_string();
@@ -118,24 +116,24 @@ fn without_keychain(
         )));
     };
     auth::revoke_token(endpoint, &token, kind, client_id)?;
-    // The door answers alike for a token it did not end, so an access token is tried once.
-    let revoked = if kind == auth::ACCESS_TOKEN {
+    // A token already expired is refused alike, so a refusal proves only that it is no longer accepted.
+    let accepted = if kind == auth::ACCESS_TOKEN {
         match Remote::keyed(&url, &token)?.json(&Request::get(&["profile"])) {
             Ok(_) => {
                 return Err(CliError::Invalid(format!(
                     "{origin} still accepts the token: --client-id is not the client it was issued to"
                 )));
             }
-            Err(error) if error.exit() == Exit::Credential => json!(true),
+            Err(error) if error.exit() == Exit::Credential => json!(false),
             Err(_) => json!(null),
         }
     } else {
         json!(null)
     };
     out.report(
-        &json!({ "server": origin, "signed_out": false, "revoked": revoked }),
-        |_| match revoked {
-            serde_json::Value::Bool(_) => format!("revoked the token at {origin}"),
+        &json!({ "server": origin, "signed_out": false, "accepted": accepted }),
+        |_| match accepted {
+            serde_json::Value::Bool(_) => format!("{origin} no longer accepts the token"),
             _ => format!(
                 "asked {origin} to revoke the token; the server answers alike for a token it did not end, so this cannot confirm it"
             ),
@@ -165,7 +163,11 @@ mod keychain_off_tests {
             key: Some("marfa_k1_abc".into()),
             ..named
         };
-        let outcome = without_keychain(&args, &key, None, &Printer { json: true });
+        let handed = Some((
+            "https://marfa.example".to_string(),
+            "marfa_k1_abc".to_string(),
+        ));
+        let outcome = without_keychain(&args, &key, handed, &Printer { json: true });
         assert!(
             matches!(&outcome, Err(CliError::Invalid(message)) if message.contains("marfa keys revoke")),
             "{outcome:?}"
