@@ -3209,7 +3209,7 @@ export interface components {
                 last_backup_files_waiting?: number | null;
                 /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 store_error?: string | null;
-                /** @description How many parts a check found not holding the bytes their names give, or in a backup folder could not read, and the server has not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                /** @description How many parts a check found altered or, in a backup folder, unreadable, and not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 damaged_parts?: number | null;
             };
             /** @description What needs attention in the background work. Present only for a caller that holds `instance.read`. */
