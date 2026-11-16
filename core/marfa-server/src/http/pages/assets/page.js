@@ -432,6 +432,74 @@
     button.disabled = false;
   }
 
+  function rowOf(element) {
+    return element.closest("li");
+  }
+
+  function openRename(button) {
+    showPasskeyError("");
+    const row = rowOf(button);
+    row.querySelector("[data-passkey-actions]").hidden = true;
+    const form = row.querySelector("[data-passkey-rename-form]");
+    form.hidden = false;
+    const field = form.elements.name;
+    field.focus();
+    field.select();
+  }
+
+  function closeRename(form) {
+    const row = rowOf(form);
+    form.hidden = true;
+    row.querySelector("[data-passkey-actions]").hidden = false;
+    row.querySelector("[data-passkey-rename]").focus();
+  }
+
+  async function renamePasskey(form) {
+    const name = form.elements.name.value.trim();
+    if (!name) {
+      showPasskeyError("Enter a name for the passkey.");
+      return;
+    }
+    const save = form.querySelector("button[type=submit]");
+    save.disabled = true;
+    showPasskeyError("");
+    const answer = await withRecentSignIn(async () => {
+      const response = await fetch("/owner/passkeys/" + form.dataset.passkeyRenameForm, {
+        method: "PATCH",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }).catch(() => null);
+      return response && { response, status: response.status };
+    });
+    if (answer && answer.status === 200) location.reload();
+    else if (answer !== null) {
+      const body = answer ? await answer.response.json().catch(() => null) : null;
+      showPasskeyError(
+        answer?.status === 400 && body?.error?.message
+          ? body.error.message
+          : SOMETHING_WENT_WRONG,
+      );
+    }
+    save.disabled = false;
+  }
+
+  function watchPasskeyRenames() {
+    for (const button of document.querySelectorAll("[data-passkey-rename]")) {
+      button.addEventListener("click", () => openRename(button));
+    }
+    for (const form of document.querySelectorAll("[data-passkey-rename-form]")) {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void renamePasskey(form);
+      });
+      form
+        .querySelector("[data-passkey-rename-cancel]")
+        .addEventListener("click", () => closeRename(form));
+    }
+  }
+
   function watchPasskeyRemovals() {
     for (const button of document.querySelectorAll("[data-passkey-remove]")) {
       button.addEventListener("click", () => void removePasskey(button));
@@ -464,4 +532,5 @@
   watchDialog();
   watchPasskeys();
   watchPasskeyRemovals();
+  watchPasskeyRenames();
 })();

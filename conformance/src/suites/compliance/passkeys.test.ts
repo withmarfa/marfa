@@ -180,7 +180,11 @@ describe("owner passkeys", () => {
     const page = await fetch(base + "/auth/owner/passkeys", {
       headers: { cookie: ownerCookie },
     });
-    expect(await page.text()).toContain("HTTPS");
+    const html = await page.text();
+    expect(html).toContain("HTTPS");
+    for (const id of [firstId, secondId]) {
+      expect(html).toContain(`data-passkey-rename="${id}"`);
+    }
     const signed = await signIn(first, 1);
     expect(signed.status).toBe(200);
     expect(

@@ -14,7 +14,20 @@
 {% if let Some(host) = row.made_for %}
 <p class="notice">Made for {{ host }}, so it can't sign in here. Remove it and add a new passkey.</p>
 {% endif %}
+<div class="actions" data-passkey-actions>
+<button type="button" class="button" data-passkey-rename="{{ row.id }}">Rename</button>
 <button type="button" class="button" data-passkey-remove="{{ row.id }}">Remove</button>
+</div>
+<form class="stack" data-passkey-rename-form="{{ row.id }}" hidden>
+<div class="field">
+<label for="passkey-rename-{{ row.id }}">New name</label>
+<input id="passkey-rename-{{ row.id }}" type="text" name="name" value="{{ row.name }}" maxlength="200" required autocomplete="off">
+</div>
+<div class="actions">
+<button type="submit" class="button primary">Save</button>
+<button type="button" class="button" data-passkey-rename-cancel>Cancel</button>
+</div>
+</form>
 </li>
 {% endfor %}
 </ul>
