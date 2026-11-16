@@ -118,7 +118,8 @@ describe("a destination set through /config", () => {
         expect(unusable.status).toBe("failing");
         expect(String(unusable.store_error)).toContain("The object store");
         const concerns = (await attentionOf(server)).filter(
-          (concern) => concern.kind === "backup" && concern.reference === "store",
+          (concern) =>
+            concern.kind === "backup" && concern.reference === "store",
         );
         expect(concerns.map((concern) => concern.title)).toEqual([
           "The backup destination cannot be used",
@@ -131,7 +132,9 @@ describe("a destination set through /config", () => {
         expect(new Uint8Array(read.data)).toEqual(bytes);
         const stores = (await operator.listBlobStores()).data.data;
         expect(
-          stores.filter((store) => store.kind === "s3" && store.detached_at === null),
+          stores.filter(
+            (store) => store.kind === "s3" && store.detached_at === null,
+          ),
         ).toEqual([]);
 
         const mended = await operator.patchConfig({
@@ -245,7 +248,7 @@ describe("the notice addresses set through /config", () => {
           await server.setFault("fail:audit=item.create");
           const failed = await working.createItem({
             type: "core.note",
-            title: `fails ${randomUUID()}`,
+            properties: { body: `fails ${randomUUID()}` },
           });
           await server.clearFault();
           expect(failed.status).toBe(500);

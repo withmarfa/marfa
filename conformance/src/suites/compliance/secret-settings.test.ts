@@ -94,8 +94,15 @@ describe("a secret setting", () => {
         const witness = `witness-${randomUUID()}`;
         const visible = `visible-${randomUUID()}`;
         const answers: string[] = [];
-        const keep = (answer: { status: number; data: unknown; error?: unknown }) => {
-          answers.push(JSON.stringify(answer.data), JSON.stringify(answer.error ?? null));
+        const keep = (answer: {
+          status: number;
+          data: unknown;
+          error?: unknown;
+        }) => {
+          answers.push(
+            JSON.stringify(answer.data),
+            JSON.stringify(answer.error ?? null),
+          );
           return answer;
         };
 
@@ -118,9 +125,7 @@ describe("a secret setting", () => {
         expect(refused.status).toBe(400);
         expect(JSON.stringify(refused.error)).toContain(SECRET);
         keep(await operator.getConfig());
-        keep(
-          await operator.rawRequest("/config/settings"),
-        );
+        keep(await operator.rawRequest("/config/settings"));
         keep(await operator.listAudit({ kind: "settings" }));
         for (const answer of answers) expect(answer).not.toContain(witness);
         const audit = await operator.listAudit({ kind: "settings" });
@@ -138,7 +143,10 @@ describe("a secret setting", () => {
           "instance",
         ).flatMap((line) => (line.setting ? [line.setting] : []));
         expect(settings).toContainEqual({ key: SECRET, secret: true });
-        expect(settings).toContainEqual({ key: "trash_retention_days", value: 7 });
+        expect(settings).toContainEqual({
+          key: "trash_retention_days",
+          value: 7,
+        });
         expect(Buffer.from(bytes).toString("latin1")).not.toContain(witness);
         expect(JSON.stringify(settings)).not.toContain(witness);
 
@@ -185,7 +193,9 @@ describe("a secret setting", () => {
           stored: null,
         });
 
-        const set = await operator.patchConfig({ [SECRET]: `kept-${randomUUID()}` });
+        const set = await operator.patchConfig({
+          [SECRET]: `kept-${randomUUID()}`,
+        });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         expect(await config(server)).toMatchObject({ secrets_set: [SECRET] });
         expect(await listed(server, SECRET)).toMatchObject({
@@ -195,7 +205,9 @@ describe("a secret setting", () => {
           default: null,
           stored: null,
         });
-        expect((await listed(server, "trash_retention_days")).secret).toBe(false);
+        expect((await listed(server, "trash_retention_days")).secret).toBe(
+          false,
+        );
 
         const whole = await config(server);
         const replaced = await operator.updateConfig(whole);
@@ -230,7 +242,9 @@ describe("a secret setting", () => {
           error_webhook_url: `http://127.0.0.1:9/${randomUUID()}`,
         });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
-        const archive = await (await everythingClient(origin)).exportArchive({
+        const archive = await (
+          await everythingClient(origin)
+        ).exportArchive({
           state: "any",
           files: "false",
         });
@@ -265,7 +279,9 @@ describe("a secret setting", () => {
         });
         expect(mended.status, JSON.stringify(mended.error)).toBe(200);
         expect(
-          (await attentionOf(target)).filter((concern) => concern.kind === "setting"),
+          (await attentionOf(target)).filter(
+            (concern) => concern.kind === "setting",
+          ),
         ).toEqual([]);
       } finally {
         await origin.stop();
@@ -299,13 +315,17 @@ describe("a secret setting", () => {
             .filter((concern) => concern.kind === "setting")
             .map((concern) => concern.reference),
         ).toEqual([SECRET]);
-        expect((await clientsFor(server).operator.getConfig()).status).toBe(200);
+        expect((await clientsFor(server).operator.getConfig()).status).toBe(
+          200,
+        );
 
         const again = await clientsFor(server).operator.patchConfig({
           [SECRET]: `sealed-${randomUUID()}`,
         });
         expect(again.status, JSON.stringify(again.error)).toBe(200);
-        await server.restart(() => writeFileSync(key, "not a key\n", { mode: 0o600 }));
+        await server.restart(() =>
+          writeFileSync(key, "not a key\n", { mode: 0o600 }),
+        );
         expect((await listed(server, SECRET)).set).toBe(false);
         expect(
           readdirSync(dirname(key)).filter((name) =>

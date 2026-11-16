@@ -10,7 +10,9 @@ import { waitFor } from "./wait.js";
  * and nowhere else: the run's object store is named by the environment the
  * fixture inherits, and a blank bucket leaves it unattached.
  */
-export const DISK_ONLY: Record<string, string> = { MARFA_OBJECT_STORE_BUCKET: "" };
+export const DISK_ONLY: Record<string, string> = {
+  MARFA_OBJECT_STORE_BUCKET: "",
+};
 
 /**
  * The settings of a server of a fixture's own that attaches the run's object
@@ -20,7 +22,10 @@ export const DISK_ONLY: Record<string, string> = { MARFA_OBJECT_STORE_BUCKET: ""
  * other's blobs as copies it holds.
  */
 export function ownObjectStore(): Record<string, string> {
-  for (const name of ["MARFA_OBJECT_STORE_BUCKET", "MARFA_OBJECT_STORE_ENDPOINT"]) {
+  for (const name of [
+    "MARFA_OBJECT_STORE_BUCKET",
+    "MARFA_OBJECT_STORE_ENDPOINT",
+  ]) {
     if (!process.env[name]) {
       throw new Error(
         `${name} is required for the object-store fixtures: source the env file \`pnpm garage:up\` writes.`,

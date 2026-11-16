@@ -371,7 +371,9 @@ describe("a backup in the object store", () => {
         `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${originId}`,
         `${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${originId}`,
       ],
-      message: expect.stringContaining(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/`),
+      message: expect.stringContaining(
+        `${store.MARFA_OBJECT_STORE_PREFIX}/blobs/`,
+      ),
     });
     expect((await working.getItem(made.note)).status).toBe(200);
     const read = await operator.downloadBlob(made.hash);

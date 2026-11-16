@@ -1001,14 +1001,20 @@ describe("a backup folder that lacks a file or its disk", () => {
 });
 
 describe("where backups may go", () => {
-  const DISK = { MARFA_OBJECT_STORE_BUCKET: "", MARFA_BACKUP_INTERVAL_SECONDS: "0" };
+  const DISK = {
+    MARFA_OBJECT_STORE_BUCKET: "",
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
+  };
 
   /** The `errors` a `400 validation_error` names, by path. */
   function refusedPaths(answer: { status: number; error?: unknown }) {
     expect(answer.status, JSON.stringify(answer.error)).toBe(400);
     const error = (
       answer.error as {
-        error: { code: string; details?: { errors?: { path: string; message: string }[] } };
+        error: {
+          code: string;
+          details?: { errors?: { path: string; message: string }[] };
+        };
       }
     ).error;
     expect(error.code).toBe("validation_error");
@@ -1025,7 +1031,9 @@ describe("where backups may go", () => {
       const errors = refusedPaths(
         await operator.patchConfig({ object_store_bucket: "a-bucket" }),
       );
-      expect(errors.map((error) => error.path)).toEqual(["object_store_bucket"]);
+      expect(errors.map((error) => error.path)).toEqual([
+        "object_store_bucket",
+      ]);
       expect(errors[0]!.message).toContain("backup_path");
 
       const held = (await operator.getConfig()).data as Record<string, unknown>;
@@ -1049,8 +1057,13 @@ describe("where backups may go", () => {
         [join(data, "backups"), "inside the data directory"],
         [join(linked, "backups"), "inside the blob folder"],
       ] as const) {
-        const errors = refusedPaths(await operator.patchConfig({ backup_path: path }));
-        expect(errors.map((error) => error.path), path).toEqual(["backup_path"]);
+        const errors = refusedPaths(
+          await operator.patchConfig({ backup_path: path }),
+        );
+        expect(
+          errors.map((error) => error.path),
+          path,
+        ).toEqual(["backup_path"]);
         expect(errors[0]!.message, path).toContain(says);
         expect(existsSync(path), path).toBe(false);
       }
@@ -1078,10 +1091,15 @@ describe("where backups may go", () => {
       const set = await operator.patchConfig({ backup_path: missing });
       expect(set.status, JSON.stringify(set.error)).toBe(200);
 
-      const unusable = await waitFor("the folder to be reported unusable", async () => {
-        const backups = (await health(server)).backups;
-        return backups.reason === "destination_unusable" ? backups : undefined;
-      });
+      const unusable = await waitFor(
+        "the folder to be reported unusable",
+        async () => {
+          const backups = (await health(server)).backups;
+          return backups.reason === "destination_unusable"
+            ? backups
+            : undefined;
+        },
+      );
       expect(unusable.status).toBe("failing");
       expect(String(unusable.store_error)).toContain("does not exist");
       const concerns = (await attentionOf(server)).filter(
@@ -1103,9 +1121,13 @@ describe("where backups may go", () => {
       expect(run.status, JSON.stringify(run.error)).toBe(200);
       const id = await instanceIdOf(server);
       expect(
-        readdirSync(join(missing, "backups", id)).filter((name) => name.endsWith(".json")),
+        readdirSync(join(missing, "backups", id)).filter((name) =>
+          name.endsWith(".json"),
+        ),
       ).toHaveLength(1);
-      expect((await health(server)).backups.reason).not.toBe("destination_unusable");
+      expect((await health(server)).backups.reason).not.toBe(
+        "destination_unusable",
+      );
     } finally {
       await server.stop();
       rmSync(parent, { recursive: true, force: true });

@@ -153,7 +153,11 @@ describe("marfa server status", () => {
     const got = await status();
     expect(got.code).toBe(0);
     expect(got.text).toContain("No backups are kept");
-    for (const part of ["backup_path", "object_store_bucket", "config update"]) {
+    for (const part of [
+      "backup_path",
+      "object_store_bucket",
+      "config update",
+    ]) {
       expect(got.text, part).toContain(part);
     }
     expect(got.report.backups).toMatchObject({
