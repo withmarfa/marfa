@@ -40,6 +40,7 @@ mod taking_back;
 mod transfer;
 mod watch;
 mod watch_record;
+mod watched;
 pub use every::{
     Every, EveryFolder, HANDED_OVER, MISSING, RETRY_HANDED, Unwatched, follows, watch_every,
 };
