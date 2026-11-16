@@ -5,7 +5,7 @@
  *
  * The bearer operations meet, in this order: the credential, the standing of
  * the credential for the operation, a query key the operation does not
- * declare, the `ttl` schema, the hash format, and then the read permission
+ * declare, the `ttl_seconds` schema, the hash format, and then the read permission
  * and the blob's existence, which answer alike. The instance's link has no
  * credential: it meets an undeclared query key, the query schema, the hash
  * format, the signature and expiry, and then the blob's existence.

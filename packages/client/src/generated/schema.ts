@@ -19476,7 +19476,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description - `validation_error`: the hash is malformed, or `ttl` isn't a positive integer. */
+            /** @description - `validation_error`: the hash is malformed, or `ttl_seconds` isn't a positive integer. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

@@ -1580,7 +1580,7 @@ If the server cannot record a redelivery's audit entry, then the server MUST lea
 
 **Tests:** `compliance/write-faults.test.ts › leaves the failed delivery unchanged, queues nothing and records nothing, and a retry is accepted`.
 
-### `events/history-dead-letter-kept`
+### `events/history-failed-kept`
 
 While a `failed` delivery is within the effective audit retention, measured from its original `created_at`, the server MUST keep the frame and address it needs to be redelivered.
 
@@ -1686,7 +1686,7 @@ Where the instance does not allow private addresses, if a subscription's `url` n
 
 **Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
 
-### `events/address-name-dead-letter`
+### `events/address-name-failed`
 
 Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST record the delivery `failed` at that attempt.
 

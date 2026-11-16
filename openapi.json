@@ -34633,7 +34633,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the hash is malformed, or `ttl` isn't a positive integer.",
+            "description": "- `validation_error`: the hash is malformed, or `ttl_seconds` isn't a positive integer.",
             "content": {
               "application/json": {
                 "schema": {

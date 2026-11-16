@@ -276,7 +276,7 @@ If a `source` line of an archive names a `mark` that `types/icon-name` refuses, 
 
 ### `archive/restore-sources-refused`
 
-If a `source` line of an archive is not an object, holds a `source` code that `keys-and-oauth/source-code-length` refuses, as it stands or once `archive/restore-sources-app` has mapped it, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /source` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
+If a `source` line of an archive is not an object, holds a `source` code that `keys-and-oauth/source-code-length` refuses, as it stands or once `archive/restore-sources-app` has mapped it, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /sources/{source}` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
 
 **Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
 

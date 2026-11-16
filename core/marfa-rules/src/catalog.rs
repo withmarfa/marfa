@@ -478,7 +478,7 @@ fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>,
     Ok(None)
 }
 
-/// A string whose `format` is a kind of its own is that kind; an array of strings whose `format` is `url`, `email`, `datetime` or `date` is an array of that kind; each member of a list's entries is folded the same way. Every other format annotates the string and stays, as does a `thumbnail` format on an array, which is refused.
+/// A string whose `format` is a kind of its own is that kind; an array of strings whose `format` is `url`, `email` or `date` is an array of that kind; each member of a list's entries is folded the same way. Every other format annotates the string and stays, as does a `thumbnail` format on an array, which is refused.
 fn normalized(definition: &Value) -> Result<Value, RuleError> {
     let Some(row) = definition.as_object() else {
         return Ok(definition.clone());

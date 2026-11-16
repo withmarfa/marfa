@@ -982,7 +982,7 @@ While a look at the backup folder's disk does not answer, the server MUST answer
 
 ### `instance/backup-health-store-clears`
 
-When the object store or the backup folder takes copies again and a run of `blob-replicate` has ended `ok`, the server MUST answer `backups.store_error` as `null`.
+When the object store or the backup folder takes copies again and a run of `blob-replicate` has ended `succeeded`, the server MUST answer `backups.store_error` as `null`.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
 

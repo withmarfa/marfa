@@ -362,7 +362,7 @@ If an attached store leaves unanswered for 15 seconds a question from a run of `
 
 If a run of `blob-replicate` copies no blob because an attached store does not take a copy, then the server MUST end the run with `outcome` `failed` and an `error` that names the store and why, and still answer its `result` as `copied`, `bytes` and `remaining`.
 
-**Reason:** a run that reports `ok` while a store refuses or hangs leaves the owner with no sign that files wait for their second copy. The `result` still counts them in `remaining`.
+**Reason:** a run that reports `succeeded` while a store refuses or hangs leaves the owner with no sign that files wait for their second copy. The `result` still counts them in `remaining`.
 
 **Tests:** `compliance/blob-store-silent.test.ts › finishes, copies nothing, counts the copy in remaining, and makes it once the stores answer`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
 
