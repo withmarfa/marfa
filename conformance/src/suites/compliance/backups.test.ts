@@ -568,6 +568,81 @@ describe("a backup taken while replication is held", () => {
       await server.stop();
     }
   });
+
+  it("calls the backups failing, not incomplete, in health and attention while files wait for their copy and a part an older backup names is damaged", async () => {
+    const own = ownObjectStore();
+    const mine = bucketAt(own.S3_PREFIX);
+    const server = await bootFreshServer("backups-incomplete-damaged", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+    });
+    try {
+      await afterFirstScheduledBackup(server);
+      const { operator, working } = clientsFor(server);
+      const id = await instanceIdOf(server);
+      const note = await working.createItem({
+        type: "core.note",
+        properties: { title: "in the older backup" },
+      });
+      expect(note.status, JSON.stringify(note.error)).toBe(201);
+      const older = await ownerOf(server).runBackup();
+      expect(older.status, JSON.stringify(older.error)).toBe(200);
+      const olderName = older.data.backup.name;
+      const olderItems = (
+        await backupInBucket(mine, id, olderName)
+      ).manifest.parts.find((part) => part.entry === "items.ndjson.gz")!;
+
+      await server.setFault("hold:housekeeping:blob-replicate");
+      const bytes = bytesOf("a file waiting while a part is damaged", 4096);
+      const uploaded = await working.uploadBlob(bytes, "text/plain");
+      expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+      const file = await working.createItem({
+        type: "core.file",
+        properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
+      });
+      expect(file.status, JSON.stringify(file.error)).toBe(201);
+      const waiting = await ownerOf(server).runBackup();
+      expect(waiting.status, JSON.stringify(waiting.error)).toBe(200);
+      expect(waiting.data.blobs_waiting).toBe(1);
+      const newerItems = (
+        await backupInBucket(mine, id, waiting.data.backup.name)
+      ).manifest.parts.find((part) => part.entry === "items.ndjson.gz")!;
+      expect(newerItems.sha256).not.toBe(olderItems.sha256);
+      const incomplete = await health(server, operator);
+      expect(incomplete.backups).toMatchObject({
+        status: "incomplete",
+        last_backup_files_waiting: 1,
+        damaged_parts: 0,
+      });
+      expect(
+        (await backupConcerns(server)).map((concern) => concern.reference),
+      ).toEqual(["incomplete"]);
+
+      const key = `${own.S3_PREFIX}/backup-parts/${id}/${partName(olderItems)}`;
+      const whole = await mine.get(key);
+      const changed = new Uint8Array(whole);
+      changed[Math.floor(changed.length / 2)]! ^= 0x01;
+      await mine.put(key, changed);
+      const checked = await ownerOf(server).runBackup();
+      expect(checked.status, JSON.stringify(checked.error)).toBe(200);
+      expect(checked.data.blobs_waiting).toBe(1);
+      const both = await health(server, operator);
+      expect(both.status).not.toBe("ok");
+      expect(both.backups).toMatchObject({
+        status: "failing",
+        last_backup_files_waiting: 1,
+        damaged_parts: 1,
+      });
+      const references = (await backupConcerns(server)).map(
+        (concern) => concern.reference,
+      );
+      expect(references).toContain("parts_damaged");
+      expect(references).not.toContain("incomplete");
+    } finally {
+      await server.clearFault();
+      await server.stop();
+    }
+  });
 });
 
 describe("the backup schedule", () => {

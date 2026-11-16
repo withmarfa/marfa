@@ -1361,10 +1361,7 @@ impl App {
             }
             (Some(_), _, _, Some(_)) => "failing",
             (Some(_), ..) if damage => "failing",
-            (Some(_), true, ..) => {
-                health.insert("reason".into(), "turned_off".into());
-                "off"
-            }
+            (Some(_), true, ..) => "off",
             (Some(_), false, true, None) => "failing",
             (Some(_), false, false, None) if incomplete => "incomplete",
             (Some(_), false, false, None) => "ok",
@@ -1374,6 +1371,9 @@ impl App {
             health.insert("last_backup".into(), state.last_backup.into());
             health.insert("last_backup_at".into(), state.last_backup_at.into());
             health.insert("failures".into(), state.failures.into());
+        if destination.is_some() && turned_off {
+            health.insert("reason".into(), "turned_off".into());
+        }
             health.insert("last_error".into(), state.last_error.into());
             health.insert("last_failed_at".into(), state.last_failed_at.into());
         }

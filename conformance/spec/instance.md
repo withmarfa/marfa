@@ -88,11 +88,11 @@ While the last backup run, taken on the schedule or by hand, failed or put a bac
 
 ### `instance/attention-backup-incomplete`
 
-While the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `incomplete`, whose description says how many of those files wait.
+While the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail, the destination takes the copies that wait for it and `instance/backup-health-parts-damaged` does not hold, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `incomplete`, whose description says how many of those files wait.
 
 **Reason:** a fresh instance cannot restore the files until replication copies them, and the owner learns it before they need the backup. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again.
 
-**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`.
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`, `› calls the backups failing, not incomplete, in health and attention while files wait for their copy and a part an older backup names is damaged`.
 
 ### `instance/attention-backup-told-once`
 
@@ -990,11 +990,11 @@ While the last backup run put a backup that names files as `lost`, when a reques
 
 ### `instance/backup-health-incomplete`
 
-Where `backup_interval_seconds` is above 0, while the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, the server MUST answer `GET /health` with `backups.status` `incomplete`.
+Where `backup_interval_seconds` is above 0, while the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail, the destination takes the copies that wait for it and `instance/backup-health-parts-damaged` does not hold, the server MUST answer `GET /health` with `backups.status` `incomplete`.
 
 **Reason:** a backup is complete once the copy record holds a copy in its destination of every file it names, so a fresh instance can restore them. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again. Replication copies the files without the owner, so the overall `status` stays as it was.
 
-**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`.
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`, `› calls the backups failing, not incomplete, in health and attention while files wait for their copy and a part an older backup names is damaged`.
 
 ### `instance/backup-health-parts-damaged`
 
