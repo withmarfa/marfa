@@ -88,11 +88,11 @@ describe("edges CRUD", () => {
   for (const { id: edgeType, target, properties } of CORE_EDGE_TYPES) {
     it(`creates a ${edgeType} edge and reads it back via listItemEdges`, async () => {
       const sourceId = await makeItem();
-      const targetId = await target();
+      const toId = await target();
 
       const created = await client.createEdge({
         from_id: sourceId,
-        to_id: targetId,
+        to_id: toId,
         edge_type: edgeType,
         ...(properties !== undefined && { properties }),
       });
@@ -101,7 +101,7 @@ describe("edges CRUD", () => {
       await expectMatchesSchema("POST", "/edges", 201, created.data);
       expect(created.data.edge.edge_type).toBe(edgeType);
       expect(created.data.edge.from_id).toBe(sourceId);
-      expect(created.data.edge.to_id).toBe(targetId);
+      expect(created.data.edge.to_id).toBe(toId);
       expect(created.data.edge.version).toBe(1);
       expect(typeof created.data.edge.created_at).toBe("string");
       expect(typeof created.data.edge.updated_at).toBe("string");
@@ -206,10 +206,10 @@ describe("edges CRUD", () => {
     // the same way, or a client branching on `error.code` has to know which
     // door answered before it can read the edge out.
     const sourceId = await makeItem();
-    const targetId = await makeItem();
+    const toId = await makeItem();
     const created = await client.createEdge({
       from_id: sourceId,
-      to_id: targetId,
+      to_id: toId,
       edge_type: "about",
       properties: { note: "first" },
     });
@@ -255,11 +255,11 @@ describe("edges CRUD", () => {
 
   it("updateEdge patches properties only", async () => {
     const sourceId = await makeItem();
-    const targetId = await makeItem();
+    const toId = await makeItem();
 
     const created = await client.createEdge({
       from_id: sourceId,
-      to_id: targetId,
+      to_id: toId,
       edge_type: "about",
       properties: { note: "initial", position: 1 },
     });
@@ -277,7 +277,7 @@ describe("edges CRUD", () => {
       position: 2,
     });
     expect(updated.data.edge.from_id).toBe(sourceId);
-    expect(updated.data.edge.to_id).toBe(targetId);
+    expect(updated.data.edge.to_id).toBe(toId);
     expect(updated.data.edge.edge_type).toBe("about");
   });
 
@@ -290,11 +290,11 @@ describe("edges CRUD", () => {
     // client whose own projection merges goes on showing the value the server
     // has just discarded until some later read corrects it.
     const sourceId = await makeItem();
-    const targetId = await makeItem();
+    const toId = await makeItem();
 
     const created = await client.createEdge({
       from_id: sourceId,
-      to_id: targetId,
+      to_id: toId,
       edge_type: "about",
       properties: { note: "kept", position: 1 },
     });
@@ -323,12 +323,12 @@ describe("edges CRUD", () => {
 
   it("deleteEdge removes the edge; subsequent list excludes it", async () => {
     const sourceId = await makeItem();
-    const targetId = await makeItem();
+    const toId = await makeItem();
 
     const otherTarget = await makeItem();
     const created = await client.createEdge({
       from_id: sourceId,
-      to_id: targetId,
+      to_id: toId,
       edge_type: "about",
     });
     expect(created.ok).toBe(true);

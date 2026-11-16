@@ -350,10 +350,10 @@ export class MarfaClient {
           params.append("tags", tag);
         }
       } else if (key === "edge" && value && typeof value === "object") {
-        for (const [edgeType, targetId] of Object.entries(
+        for (const [edgeType, toId] of Object.entries(
           value as Record<string, string>,
         )) {
-          params.append(`edge[${edgeType}]`, targetId);
+          params.append(`edge[${edgeType}]`, toId);
         }
       } else if (key === "backref" && value && typeof value === "object") {
         for (const [edgeType, sourceId] of Object.entries(

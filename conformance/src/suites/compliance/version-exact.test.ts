@@ -146,14 +146,14 @@ it("conditions lifecycle and edge writes on the from item's version without repl
   expect(unchanged.data.item).toEqual(before.data.item);
   expect((await transition(2, "archived")).status).toBe(200);
   expect((await transition(2, "active")).status).toBe(200);
-  const create = (version: number, targetId: string) =>
+  const create = (version: number, toId: string) =>
     client.rawRequest<{ edge: { id: string } }>(
       `/edges?from_version=${version}`,
       {
         method: "POST",
         body: {
           from_id: source,
-          to_id: targetId,
+          to_id: toId,
           edge_type: "references",
         },
       },
