@@ -406,7 +406,7 @@ pub struct Inspection {
     pub standing: Standing,
 }
 
-/// Judges the file as `open` does, with a read-only connection.
+/// Judges the schema as `open` does, on a read-only connection and nothing else `open` checks.
 pub fn inspect(path: &Path, migrations: &[Migration]) -> Result<Inspection, Failure> {
     let label = path.display().to_string();
     match std::fs::metadata(path) {
