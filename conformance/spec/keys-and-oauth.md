@@ -2689,11 +2689,11 @@ If a signed-in person opens the device approval page for a pending code whose cl
 
 ### `keys-and-oauth/browser-origin`
 
-If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/consent` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin and `null` included, then the server MUST answer `403 forbidden` before it reads the form.
+If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/consent` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is not the issuer's origin, then the server MUST answer `403 forbidden` before it reads the form, whether that origin is one `cors_origins` names, another of the instance's `addresses`, an approved web page's origin or `null`.
 
-**Reason:** A form posted under the owner's cookie acts as the owner, so approving a web page lets it call the instance with the credential it holds and never with the owner's browser session.
+**Reason:** A form posted under the owner's cookie acts as the owner, and the owner signs in only at the sign-in address. `cors_origins` and an approval let a web page call the instance with the credential it holds, never with the owner's browser session.
 
-**Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`, `compliance/web-page-origin.test.ts › refuses an approved page's origin on the browser forms and at password sign-in, where a configured origin passes`.
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`, `compliance/web-page-origin.test.ts › trusts only the sign-in address on the browser forms and at sign-in, refusing a configured origin, another address and an approved page`.
 
 ### `keys-and-oauth/browser-no-origin`
 
@@ -3045,11 +3045,11 @@ When `POST /auth/sign-out` ends the browser session, the server MUST answer `200
 
 ### `keys-and-oauth/library-origin`
 
-If `POST /auth/sign-in` carries an `Origin` that is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin included, then the server MUST answer `403`.
+If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in/options` carries an `Origin` that is not the issuer's origin, then the server MUST answer `403`, whether that origin is one `cors_origins` names, another of the instance's `addresses` or an approved web page's origin.
 
-**Reason:** A password sign-in sets the owner's session cookie, so the origins it trusts are the operator's and never widen with an approval.
+**Reason:** A sign-in sets the owner's session cookie, so it trusts only the sign-in address, and no setting or approval widens that.
 
-**Tests:** `compliance/web-page-origin.test.ts › refuses an approved page's origin on the browser forms and at password sign-in, where a configured origin passes`.
+**Tests:** `compliance/web-page-origin.test.ts › trusts only the sign-in address on the browser forms and at sign-in, refusing a configured origin, another address and an approved page`.
 
 ## What the sign-in pages say
 

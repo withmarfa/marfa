@@ -13,7 +13,7 @@ use super::{
 use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::owner;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
-use crate::app::auth::{Visit, form_origins};
+use crate::app::auth::{Visit, own_origins};
 use crate::app::clock::Stamp;
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
@@ -82,7 +82,7 @@ pub async fn sign_in_options(
     headers: HeaderMap,
     visit: Visit,
 ) -> Answer {
-    refuse_elsewhere(origin::said(&headers, &form_origins(&app)))?;
+    refuse_elsewhere(origin::said(&headers, &own_origins(&app)))?;
     let started = passkeys::begin_proving(app.clone(), &visit).await?;
     begun(&app, started)
 }

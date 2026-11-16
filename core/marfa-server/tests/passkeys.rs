@@ -577,20 +577,23 @@ async fn a_new_sign_in_host_says_how_many_passkeys_it_strands() {
 }
 
 #[tokio::test]
-async fn a_page_the_cors_origins_setting_names_may_open_a_passkey_ceremony() {
+async fn only_the_sign_in_address_may_open_a_passkey_ceremony() {
     let mut instance = Instance::claimed().await;
     let door = "/auth/passkeys/sign-in/options";
-    instance.origin = "https://named.example".to_string();
-    let refused = instance.ask(door, "").await;
-    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    let own = instance.origin.clone();
+    let answered = instance.ask(door, "").await;
+    assert_eq!(answered.status, StatusCode::OK, "{}", answered.text);
 
     let named = json!(["https://named.example"]).to_string();
     instance
         .app
         .settings
         .apply_stored(&[("cors_origins".to_string(), named)]);
-    let answered = instance.ask(door, "").await;
-    assert_eq!(answered.status, StatusCode::OK, "{}", answered.text);
+    instance.origin = "https://named.example".to_string();
+    let refused = instance.ask(door, "").await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    instance.origin = own;
+    assert_eq!(instance.ask(door, "").await.status, StatusCode::OK);
 }
 
 #[tokio::test]

@@ -25,8 +25,8 @@ import {
  * the redirect URI the page registered, never the `Origin` a browser reports.
  *
  * Approving needs the owner signed in, the restart needs a server of its own,
- * and the configured origin that is the witness for the sign-in forms is a
- * setting, so this file boots a server of its own. Every case approves pages
+ * and the configured origin and the instance's addresses are settings, so this
+ * file boots a server of its own. Every case approves pages
  * on origins no other case names, so the cases share it without reading each
  * other's grants.
  */
@@ -686,10 +686,16 @@ describe("a web page's address", () => {
 });
 
 describe("an approved page's address and the sign-in surface", () => {
-  it("refuses an approved page's origin on the browser forms and at password sign-in, where a configured origin passes", async () => {
-    const origin = "https://forms.web-page-origin.test";
-    await approve(await registerPage([`${origin}/callback`]));
-    await expectAllowed(origin, server.workingKey);
+  it("trusts only the sign-in address on the browser forms and at sign-in, refusing a configured origin, another address and an approved page", async () => {
+    const page = "https://forms.web-page-origin.test";
+    await approve(await registerPage([`${page}/callback`]));
+    await expectAllowed(page, server.workingKey);
+    const elsewhere = "https://elsewhere.web-page-origin.test";
+    const addressed = await controlRequest(server.controlSocket, "/config", {
+      method: "PATCH",
+      body: { addresses: [issuer, elsewhere] },
+    });
+    expect(addressed.status, JSON.stringify(addressed.body)).toBe(200);
 
     const signInForm = (from: string) =>
       fetch(`${server.apiUrl}/auth/sign-in`, {
@@ -701,30 +707,68 @@ describe("an approved page's address and the sign-in surface", () => {
         },
         body: new URLSearchParams({ email: "", password: "", return_to: "/" }),
       });
-    const refusedForm = await signInForm(origin);
-    expect(refusedForm.status).toBe(403);
-    expect(
-      ((await refusedForm.json()) as { error: { code: string } }).error.code,
-    ).toBe("forbidden");
-    // The witness: a configured origin's post is answered by the form.
-    const answeredForm = await signInForm(CONFIGURED);
-    expect(answeredForm.status).toBe(302);
-    expect(answeredForm.headers.get("location")).toContain(
-      "error=missing_field",
-    );
-
     const passwordSignIn = (from: string) =>
       fetch(`${server.apiUrl}/auth/sign-in`, {
         method: "POST",
         headers: { origin: from, "content-type": "application/json" },
         body: JSON.stringify(TEST_OWNER),
       });
-    const refused = await passwordSignIn(origin);
-    await refused.body?.cancel();
-    expect(refused.status).toBe(403);
-    const accepted = await passwordSignIn(CONFIGURED);
+    const ownerForm = (path: string, from: string) =>
+      fetch(`${server.apiUrl}${path}`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          origin: from,
+          cookie,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ user_code: "ABCD2345" }),
+      });
+    const passkeyOptions = (from: string) =>
+      fetch(`${server.apiUrl}/auth/passkeys/sign-in/options`, {
+        method: "POST",
+        headers: { origin: from },
+      });
+
+    for (const from of [CONFIGURED, elsewhere, page]) {
+      const refused = [
+        await signInForm(from),
+        await passwordSignIn(from),
+        await ownerForm("/auth/consent", from),
+        await ownerForm("/auth/device", from),
+        await ownerForm("/auth/device/consent", from),
+        await passkeyOptions(from),
+      ];
+      for (const answer of refused) {
+        expect(answer.status, `${answer.url} from ${from}`).toBe(403);
+        expect(
+          ((await answer.json()) as { error: { code: string } }).error.code,
+        ).toBe("forbidden");
+        expect(answer.headers.get("set-cookie")).toBeNull();
+      }
+    }
+
+    // The witness: the same posts from the sign-in address are answered.
+    const answeredForm = await signInForm(issuer);
+    expect(answeredForm.status).toBe(302);
+    expect(answeredForm.headers.get("location")).toContain(
+      "error=missing_field",
+    );
+    const accepted = await passwordSignIn(issuer);
     await accepted.body?.cancel();
     expect(accepted.status).toBe(200);
+    const device = await ownerForm("/auth/device", issuer);
+    await device.body?.cancel();
+    expect(device.status).not.toBe(403);
+    const options = await passkeyOptions(issuer);
+    await options.body?.cancel();
+    expect(options.status).toBe(200);
+
+    const reset = await controlRequest(server.controlSocket, "/config", {
+      method: "PATCH",
+      body: { addresses: null },
+    });
+    expect(reset.status).toBe(200);
   });
 });
 
