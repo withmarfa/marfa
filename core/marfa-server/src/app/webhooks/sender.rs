@@ -398,6 +398,8 @@ fn report(app: &App, gap: Gap) {
     let request_id = uuid::Uuid::now_v7().to_string();
     log::unhandled(&request_id, METHOD, PATH, None, gap.describe());
     let timestamp = app.clock.stamp();
+    let live = app.settings.live();
+    let webhook = live.error_notice_url();
     app.telemetry.finish(
         None,
         &Finished {
@@ -409,7 +411,8 @@ fn report(app: &App, gap: Gap) {
             status: 500,
             error_code: Some(Code::InternalError.wire()),
             fault: Some(&Arc::new(Fault::internal(gap.describe()))),
-            reporting: app.settings.live().get(ERROR_REPORTING_ENABLED),
+            reporting: live.get(ERROR_REPORTING_ENABLED),
+            webhook: webhook.as_deref(),
             timestamp: &timestamp,
         },
     );

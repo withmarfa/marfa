@@ -9,7 +9,7 @@ use marfa_telemetry::exception::{Event, Exception};
 use marfa_telemetry::host::{CONNECT_LIMIT, may_use_proxy};
 use serde_json::{Value, json};
 
-use super::config::{Exceptions, Webhook};
+use super::config::Exceptions;
 use super::fault::Fault;
 use super::lane::Lane;
 
@@ -96,16 +96,25 @@ fn event(report: &Report, attributes: &[(String, String)]) -> Value {
     .json()
 }
 
-pub fn webhook(config: Webhook, environment: String) -> Lane<Report> {
-    let agent = agent(config.timeout, &config.url);
+const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A report and the address `error_webhook_url` held when it was made.
+#[derive(Clone)]
+pub struct Notice {
+    pub report: Report,
+    pub url: String,
+}
+
+pub fn webhook(environment: String) -> Lane<Notice> {
+    let mut held: Option<(String, ureq::Agent)> = None;
     let mut told: HashMap<String, Instant> = HashMap::new();
     Lane::start(
         "error-webhook",
         QUEUE,
         Duration::ZERO,
         1,
-        move |reports: Vec<Report>| {
-            for report in reports {
+        move |notices: Vec<Notice>| {
+            for Notice { report, url } in notices {
                 let now = Instant::now();
                 told.retain(|_, at| now.duration_since(*at) < DEBOUNCE);
                 let key = format!(
@@ -125,10 +134,15 @@ pub fn webhook(config: Webhook, environment: String) -> Lane<Report> {
                     "method": report.method,
                     "environment": environment,
                 });
-                let _ = agent
-                    .post(&config.url)
-                    .header("Content-Type", "application/json")
-                    .send(notice.to_string().as_bytes());
+                if held.as_ref().is_none_or(|(kept, _)| *kept != url) {
+                    held = Some((url.clone(), agent(WEBHOOK_TIMEOUT, &url)));
+                }
+                if let Some((_, agent)) = &held {
+                    let _ = agent
+                        .post(&url)
+                        .header("Content-Type", "application/json")
+                        .send(notice.to_string().as_bytes());
+                }
             }
         },
     )

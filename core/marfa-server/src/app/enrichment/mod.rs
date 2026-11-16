@@ -888,7 +888,7 @@ mod tests {
 
     fn plan_with(ocr: bool) -> Plan {
         let mut plan = Plan::with(
-            &crate::settings::registry::Snapshot::resolve(&Default::default(), &[], 0),
+            &crate::settings::registry::Snapshot::resolve(&Default::default(), None, &[], 0),
             None,
             8,
         );

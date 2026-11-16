@@ -14,7 +14,6 @@ use crate::settings::rule;
 const DEFAULT_SERVICE: &str = "marfa-server";
 const DEFAULT_RATIO: f64 = 0.05;
 const DEFAULT_ENVIRONMENT: &str = "production";
-const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(5);
 const PAIRS_RULE: &str = "must be comma-separated key=value pairs with percent-encoded values";
 const URL_RULE: &str = "must be an absolute http or https URL";
 const POSTHOG_HOST: &str = "MARFA_POSTHOG_HOST";
@@ -33,13 +32,6 @@ pub struct Export {
 pub struct Exceptions {
     pub url: String,
     pub token: String,
-    pub timeout: Duration,
-}
-
-/// Where a notice of a 500 goes.
-#[derive(Clone, Debug)]
-pub struct Webhook {
-    pub url: String,
     pub timeout: Duration,
 }
 
@@ -66,7 +58,7 @@ impl Notice {
 #[derive(Clone)]
 pub struct Config {
     /// `OTEL_SDK_DISABLED` is `true`: no trace, log record or exception report.
-    /// The error webhook is not telemetry and stays as configured.
+    /// The error webhook is not telemetry, and is a stored setting.
     pub off: bool,
     pub service: String,
     /// `OTEL_RESOURCE_ATTRIBUTES`, less `service.name`.
@@ -75,7 +67,6 @@ pub struct Config {
     pub logs: Option<Export>,
     pub ratio: f64,
     pub exceptions: Option<Exceptions>,
-    pub webhook: Option<Webhook>,
     /// What an error notice names: `deployment.environment.name`, then
     /// `deployment.environment`.
     pub environment: String,
@@ -141,18 +132,6 @@ impl Config {
             }),
         };
 
-        let webhook = text(&get, "MARFA_ERROR_WEBHOOK_URL").and_then(|address| {
-            if is_web_address(&address) {
-                Some(Webhook {
-                    url: address,
-                    timeout: WEBHOOK_TIMEOUT,
-                })
-            } else {
-                refuse(format!("MARFA_ERROR_WEBHOOK_URL {URL_RULE}"));
-                None
-            }
-        });
-
         // A secret is used as written, so whitespace around it is part of it.
         let token = environment.get(POSTHOG_TOKEN).map(str::to_string);
         if let Some(token) = &token
@@ -201,7 +180,6 @@ impl Config {
             logs: logs.filter(|_| !off),
             ratio,
             exceptions,
-            webhook,
             environment: environment_name,
             notices,
         }
@@ -276,7 +254,6 @@ mod tests {
             config.traces.is_none()
                 && config.logs.is_none()
                 && config.exceptions.is_none()
-                && config.webhook.is_none()
         );
         assert_eq!(config.service, "marfa-server");
         assert_eq!(config.environment, "production");
@@ -295,18 +272,16 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_sdk_turns_off_every_export_but_the_webhook_and_says_nothing() {
+    fn a_disabled_sdk_turns_off_every_export_and_says_nothing() {
         let (config, problems) = read(&[
             ("OTEL_SDK_DISABLED", "TRUE"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
             ("MARFA_POSTHOG_HOST", "http://example.test"),
             ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x"),
-            ("MARFA_ERROR_WEBHOOK_URL", "http://127.0.0.1:9/errors"),
         ]);
         assert!(problems.is_empty());
         assert!(config.off);
         assert!(config.traces.is_none() && config.logs.is_none() && config.exceptions.is_none());
-        assert!(config.webhook.is_some());
         assert!(config.notices.is_empty());
     }
 
@@ -378,7 +353,6 @@ mod tests {
         let lines = refused(&[
             ("OTEL_RESOURCE_ATTRIBUTES", "team"),
             ("MARFA_OTEL_SAMPLE_RATIO", "1.5"),
-            ("MARFA_ERROR_WEBHOOK_URL", "nope-secret"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "ftp://collector-secret"),
             ("OTEL_EXPORTER_OTLP_HEADERS", "broken-secret"),
         ]);
@@ -392,10 +366,9 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.starts_with("MARFA_OTEL_SAMPLE_RATIO must be a number from 0 to 1 (got \"1.5\")")
         }));
-        assert!(lines.contains(&format!("MARFA_ERROR_WEBHOOK_URL {URL_RULE}")));
         assert!(lines.contains(&format!("OTEL_EXPORTER_OTLP_ENDPOINT {URL_RULE}")));
         assert!(lines.contains(&format!("OTEL_EXPORTER_OTLP_HEADERS {PAIRS_RULE}")));
-        assert_eq!(lines.len(), 5);
+        assert_eq!(lines.len(), 4);
         assert!(!lines.join("\n").contains("secret"));
     }
 

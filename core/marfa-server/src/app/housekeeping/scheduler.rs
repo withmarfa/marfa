@@ -291,6 +291,8 @@ async fn perform(
 
 fn report(app: &App, name: &str, fault: &Arc<Fault>) {
     let timestamp = app.clock.stamp();
+    let live = app.settings.live();
+    let webhook = live.error_notice_url();
     app.telemetry.finish(
         None,
         &Finished {
@@ -302,7 +304,8 @@ fn report(app: &App, name: &str, fault: &Arc<Fault>) {
             status: 500,
             error_code: Some(Code::InternalError.wire()),
             fault: Some(fault),
-            reporting: app.settings.live().get(ERROR_REPORTING_ENABLED),
+            reporting: live.get(ERROR_REPORTING_ENABLED),
+            webhook: webhook.as_deref(),
             timestamp: &timestamp,
         },
     );

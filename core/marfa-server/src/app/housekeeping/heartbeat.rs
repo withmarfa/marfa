@@ -1,4 +1,4 @@
-//! A request to `MARFA_HEARTBEAT_URL`, so that something else can notice when the requests stop.
+//! A request to `heartbeat_url`, so that something else can notice when the requests stop.
 //! A receiver that does not answer is a heartbeat that says so, not a failed run.
 
 use std::sync::Arc;
@@ -10,12 +10,12 @@ use tokio::sync::oneshot;
 use super::super::App;
 use super::super::refusal::{Refusal, Result};
 use super::{Report, Run};
-use crate::settings::registry::HEARTBEAT_ENABLED;
+use crate::settings::registry::{HEARTBEAT_ENABLED, HEARTBEAT_URL};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn configured(app: &App) -> bool {
-    app.settings.start.heartbeat_url.is_some()
+    app.settings.live().get(HEARTBEAT_URL).is_some()
 }
 
 fn request(url: &str) -> Option<u16> {
@@ -44,8 +44,9 @@ fn request(url: &str) -> Option<u16> {
 /// The request runs on a thread of its own: it blocks, and a stop must be able
 /// to leave it behind, which the runtime's blocking pool would wait for.
 pub async fn beat(app: Arc<App>, run: Run) -> Result<Report> {
-    let url = app.settings.start.heartbeat_url.clone();
-    let Some(url) = url.filter(|_| app.settings.live().get(HEARTBEAT_ENABLED)) else {
+    let live = app.settings.live();
+    let url = live.get(HEARTBEAT_URL).map(|url| url.expose().to_string());
+    let Some(url) = url.filter(|_| live.get(HEARTBEAT_ENABLED)) else {
         return Ok(Report::done(json!({ "skipped": true })));
     };
     let (answer, answered) = oneshot::channel();

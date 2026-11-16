@@ -1,8 +1,11 @@
 //! Rules that compare settings, judged on what the settings would be after a change.
 
+use std::path::{Component, Path, PathBuf};
+
 use super::registry::{
-    ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS,
-    VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, ERROR_WEBHOOK_URL, HEARTBEAT_ENABLED,
+    HEARTBEAT_URL, OBJECT_STORE_BUCKET, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS,
+    VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::start::Fixed;
 use crate::app::addresses::Address;
@@ -48,9 +51,26 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "reporting_needs_a_receiver",
-        description: "Error reporting and the heartbeat can be turned from off to on only where a receiver is set.",
-        keys: &["error_reporting_enabled", "heartbeat_enabled"],
+        description: "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: error_webhook_url or an exception receiver set where Marfa runs, and heartbeat_url.",
+        keys: &[
+            "error_reporting_enabled",
+            "heartbeat_enabled",
+            "error_webhook_url",
+            "heartbeat_url",
+        ],
         judge: reporting_needs_a_receiver,
+    },
+    Together {
+        name: "one_backup_destination",
+        description: "Backups go to one place, so backup_path and object_store_bucket cannot both be set.",
+        keys: &["backup_path", "object_store_bucket"],
+        judge: one_backup_destination,
+    },
+    Together {
+        name: "backup_path_outside_the_data",
+        description: "The backup folder must be outside the data directory and the blob folder, since a backup there is lost with what it backs up.",
+        keys: &["backup_path"],
+        judge: backup_path_outside_the_data,
     },
     Together {
         name: "sign_in_is_an_address",
@@ -94,8 +114,8 @@ pub fn seed_lines(seeds: &super::registry::Seeds, start: &Fixed) -> Vec<String> 
     use super::registry;
     use crate::app::addresses::Addresses;
 
-    let before = Snapshot::resolve(&registry::Seeds::new(), &[], 0);
-    let after = Arc::new(Snapshot::resolve(seeds, &[], 0));
+    let before = Snapshot::resolve(&registry::Seeds::new(), None, &[], 0);
+    let after = Arc::new(Snapshot::resolve(seeds, None, &[], 0));
     let touched: Vec<&str> = seeds.keys().copied().collect();
     let known = start.port != 0 || after.get(registry::SIGN_IN_ADDRESS).is_some();
     let sign_in = known.then(|| Addresses::of(start, after.clone(), None).sign_in());
@@ -135,11 +155,13 @@ fn version_windows(judged: &Judged) -> Vec<Breach> {
     breaches
 }
 
-/// Whether `key` is a reporting switch whose receiver this server lacks.
-pub fn lacks_receiver(start: &Fixed, key: &str) -> bool {
+/// Whether `key` is a reporting switch whose receiver `settings` lack.
+pub fn lacks_receiver(start: &Fixed, settings: &Snapshot, key: &str) -> bool {
     match key {
-        "heartbeat_enabled" => start.heartbeat_url.is_none(),
-        "error_reporting_enabled" => !start.error_receiver,
+        "heartbeat_enabled" => !settings.secret_set(HEARTBEAT_URL.entry),
+        "error_reporting_enabled" => {
+            !start.exception_receiver && !settings.secret_set(ERROR_WEBHOOK_URL.entry)
+        }
         _ => false,
     }
 }
@@ -151,17 +173,74 @@ fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
             judged.names(entry.key)
                 && *judged.after.value(entry) == Value::Boolean(true)
                 && *judged.before.value(entry) != Value::Boolean(true)
-                && lacks_receiver(judged.start, entry.key)
+                && lacks_receiver(judged.start, judged.after, entry.key)
         })
         .map(|entry| Breach {
             path: entry.key,
             message: if entry.key == HEARTBEAT_ENABLED.entry.key {
-                "needs a heartbeat receiver configured where Marfa runs"
+                "needs heartbeat_url to be set"
             } else {
-                "needs an error receiver configured where Marfa runs"
+                "needs error_webhook_url, or an exception receiver configured where Marfa runs"
             }
             .to_string(),
         })
+        .collect()
+}
+
+fn one_backup_destination(judged: &Judged) -> Vec<Breach> {
+    let folder = judged.after.get(BACKUP_PATH).is_some();
+    let bucket = judged.after.get(OBJECT_STORE_BUCKET).is_some();
+    if !(folder && bucket) {
+        return Vec::new();
+    }
+    let (path, other) = if judged.names(BACKUP_PATH.entry.key) {
+        (BACKUP_PATH.entry.key, OBJECT_STORE_BUCKET.entry.key)
+    } else {
+        (OBJECT_STORE_BUCKET.entry.key, BACKUP_PATH.entry.key)
+    };
+    vec![Breach {
+        path,
+        message: format!("cannot be set while {other} is; backups go to one place"),
+    }]
+}
+
+/// `.` parts dropped, so a path is compared as written; links are judged where it is taken.
+fn lexical(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|part| *part != Component::CurDir)
+        .collect()
+}
+
+/// The data directory and the blob folder, each as a path from the root.
+pub fn kept_folders(start: &Fixed) -> Vec<(&'static str, PathBuf)> {
+    let here = std::env::current_dir().unwrap_or_default();
+    let data = start
+        .database
+        .file()
+        .map(|_| ("data directory", start.database.folder()));
+    data.into_iter()
+        .chain([("blob folder", start.blob_path.clone())])
+        .map(|(what, path)| (what, lexical(&here.join(path))))
+        .collect()
+}
+
+fn backup_path_outside_the_data(judged: &Judged) -> Vec<Breach> {
+    let Some(text) = judged.after.get(BACKUP_PATH) else {
+        return Vec::new();
+    };
+    let folder = lexical(Path::new(&text));
+    kept_folders(judged.start)
+        .into_iter()
+        .filter(|(_, kept)| folder.starts_with(kept))
+        .map(|(what, kept)| Breach {
+            path: BACKUP_PATH.entry.key,
+            message: format!(
+                "names a folder inside the {what} {}; a backup there is lost with what it backs \
+                 up, so name a folder outside it, best on another disk",
+                kept.display()
+            ),
+        })
+        .take(1)
         .collect()
 }
 

@@ -195,23 +195,12 @@ impl App {
         clock.resume_from(db.read(clock::kept).await.map_err(unreadable)?);
         db.keep_clock(clock.clone());
         let at = clock.stamp();
-        if let Some(folder) = &start.backup_path {
-            let data = start.database.file().map(|_| start.database.folder());
-            let kept: Vec<(&str, &Path)> = data
-                .iter()
-                .map(|data| ("data directory", data.as_path()))
-                .chain([("blob folder", start.blob_path.as_path())])
-                .collect();
-            blobs::folder::outside(folder, &kept)?;
-        }
         let blobs = Blobs::open(
             &db,
             (&start.blob_path, blob_lock),
-            start.object_store.as_ref(),
-            start
-                .backup_path
-                .as_deref()
-                .map(|folder| (folder, instance_id.as_str())),
+            blobs::Wanted::of(&settings.live()),
+            &instance_id,
+            crate::settings::together::kept_folders(&start),
             &start.auth_secret,
             faults.clone(),
             at.clone(),
@@ -267,6 +256,15 @@ impl App {
             .map_err(|refused| Failure::start(refused.to_string()))?;
         reindex::start(&app);
         Ok(app)
+    }
+
+    /// Takes the store beside the disk that the live settings name, or tries again to take one
+    /// that could not be used.
+    pub async fn follow_stores(&self) {
+        let wanted = blobs::Wanted::of(&self.settings.live());
+        self.blobs
+            .follow(&self.db, wanted, || self.clock.stamp())
+            .await;
     }
 
     /// Raised once, when the stop begins; a stream reads it to end with `server_stopping`.

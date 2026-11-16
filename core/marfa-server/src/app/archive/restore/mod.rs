@@ -72,12 +72,11 @@ const QUEUED: usize = 8;
 fn previous_instance(app: &App, id: &str) -> Value {
     const WHEN: &str =
         "Delete them only once that instance no longer runs and nothing else restores from them.";
-    let start = &app.settings.start;
-    let (destination, kept, message) = match (&start.object_store, &start.backup_path) {
-        (Some(bucket), _) => {
+    let (destination, kept, message) = match (app.blobs.bucket_prefix(), app.blobs.folder()) {
+        (Some(prefix), _) => {
             let kept: Vec<String> = [crate::app::backups::FOLDER, crate::app::backups::PARTS]
                 .iter()
-                .map(|folder| format!("{}/{folder}/{id}", bucket.prefix))
+                .map(|folder| format!("{prefix}/{folder}/{id}"))
                 .collect();
             let message = format!(
                 "Instance {id} wrote this archive. If it took backups to this object store, they \
@@ -85,7 +84,7 @@ fn previous_instance(app: &App, id: &str) -> Value {
                  instance, so keep them.",
                 kept[0],
                 kept[1],
-                bucket.prefix,
+                prefix,
                 crate::app::blobs::s3::BLOBS,
             );
             (json!("bucket"), kept, message)

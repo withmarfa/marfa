@@ -7,7 +7,7 @@ use super::registry::ENTRIES;
 use super::rule;
 use super::start_only::DECLARED;
 
-const PREFIXES: [&str; 2] = ["MARFA_", "S3_"];
+const PREFIXES: [&str; 1] = ["MARFA_"];
 
 /// Naming one of these wrongly makes the server generate a replacement, which ends every key
 /// or every sign-in.
@@ -153,7 +153,7 @@ fn meant(name: &str, known: &[Known], hooks_on: bool) -> Option<Meant> {
     }
 }
 
-/// Every `MARFA_` and `S3_` name the environment holds that no setting reads, and any other name
+/// Every `MARFA_` name the environment holds that no setting reads, and any other name
 /// a letter or two from a secret's, by name.
 pub fn find(environment: &Environment) -> Vec<Unknown> {
     let known = known();
@@ -248,16 +248,20 @@ mod tests {
     }
 
     #[test]
-    fn only_marfa_and_s3_names_are_judged() {
+    fn only_marfa_names_are_judged() {
         assert_eq!(
-            found(&[("PATH", "/usr/bin"), ("OTEL_SDK_DISABLED", "true")]),
+            found(&[
+                ("PATH", "/usr/bin"),
+                ("OTEL_SDK_DISABLED", "true"),
+                ("S3_BUCKET", "x")
+            ]),
             []
         );
-        let names: Vec<_> = found(&[("S3_BUCKT", "x"), ("MARFA_NOT_A_SETTING", "x")])
+        let names: Vec<_> = found(&[("MARFA_NOT_A_SETTING", "x")])
             .into_iter()
             .map(|entry| entry.name)
             .collect();
-        assert_eq!(names, ["MARFA_NOT_A_SETTING", "S3_BUCKT"]);
+        assert_eq!(names, ["MARFA_NOT_A_SETTING"]);
     }
 
     #[test]
@@ -278,8 +282,8 @@ mod tests {
 
     #[test]
     fn a_misspelling_names_the_setting_it_is_near() {
-        let entry = &found(&[("S3_BUCKT", "x")])[0];
-        assert_eq!(entry.meant, setting("S3_BUCKET"));
+        let entry = &found(&[("MARFA_BLOB_PATHH", "x")])[0];
+        assert_eq!(entry.meant, setting("MARFA_BLOB_PATH"));
         let entry = &found(&[("marfa_port", "x")])[0];
         assert_eq!(entry.meant, setting("MARFA_PORT"));
     }
@@ -337,7 +341,7 @@ mod tests {
                  Without MARFA_KEY_SALT the server would make a new one and end every key",
             ]
         );
-        assert!(refusals(&found(&[("MARFA_PORTT", "x"), ("S3_BUCKT", "x")])).is_empty());
+        assert!(refusals(&found(&[("MARFA_PORTT", "x"), ("MARFA_BLOB_PATHH", "x")])).is_empty());
     }
 
     #[test]

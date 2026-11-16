@@ -118,7 +118,7 @@ fn not_found() -> Refusal {
 
 /// An inconclusive registration lookup leaves the decision to the send attempt.
 pub async fn check_address(app: &App, maker: &Maker, address: &request::Address) -> Result<()> {
-    if app.settings.start.webhook_private_addresses {
+    if app.settings.live().get(crate::settings::registry::WEBHOOK_ALLOW_PRIVATE_ADDRESSES) {
         return Ok(());
     }
     match outbound::reach(

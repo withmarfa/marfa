@@ -346,13 +346,18 @@ struct Recorded {
     omissions: i64,
 }
 
+/// The name of the newest backup recorded in `store`.
+fn newest_backup(tx: &Transaction<'_>, store: &str) -> Result<Option<String>> {
+    Ok(tx
+        .prepare_cached("SELECT name FROM backups WHERE store_id = ?1 ORDER BY seq DESC LIMIT 1")?
+        .query_row([store], |row| row.get(0))
+        .optional()?)
+}
+
 /// When the newest backup of `store` was taken, the instant its thinning judged by, unless `now`
 /// is earlier: no thinning yet to come forgets less than one judging by the instant answered.
 fn last_thinned(tx: &Transaction<'_>, store: &str, now: Stamp) -> Result<Option<Stamp>> {
-    let newest: Option<String> = tx
-        .prepare_cached("SELECT name FROM backups WHERE store_id = ?1 ORDER BY seq DESC LIMIT 1")?
-        .query_row([store], |row| row.get(0))
-        .optional()?;
+    let newest = newest_backup(tx, store)?;
     Ok(newest
         .as_deref()
         .and_then(parse)
@@ -757,12 +762,15 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     Ok(held)
 }
 
-fn no_backup_destination() -> Refusal {
-    Refusal::new(
-        Code::NoBackupDestination,
-        "This instance keeps no backups, because it has nowhere to put them. Set \
-         MARFA_BACKUP_PATH to a folder, or S3_BUCKET to an object store, to keep them.",
-    )
+fn no_backup_destination(app: &App) -> Refusal {
+    match app.blobs.trouble() {
+        Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble),
+        None => Refusal::new(
+            Code::NoBackupDestination,
+            "This instance keeps no backups, because it has nowhere to put them. Set \
+             backup_path to a folder, or object_store_bucket to an object store, to keep them.",
+        ),
+    }
 }
 
 fn running(restoring: bool) -> Refusal {
@@ -929,7 +937,7 @@ impl Held {
 
 impl App {
     fn destination(&self) -> Result<Destination> {
-        Destination::of(self).ok_or_else(no_backup_destination)
+        Destination::of(self).ok_or_else(|| no_backup_destination(self))
     }
 
     /// The backups where this instance keeps them, of every instance that put them there, newest
@@ -1368,6 +1376,11 @@ impl App {
                 .and_then(|result| refused_by(result, &destination.id()));
             store_trouble(destination, looked, refused)
         });
+        let unusable = destination
+            .is_none()
+            .then(|| self.blobs.trouble())
+            .flatten();
+        let trouble = trouble.or(unusable.map(|error| (StoreFault::Unusable, error)));
         let fault = trouble.as_ref().map(|(fault, _)| *fault);
         let store_error = trouble.map(|(_, error)| error);
         let run_in_store = state
@@ -1381,6 +1394,11 @@ impl App {
             health.insert("reason".into(), "turned_off".into());
         }
         let status = match (&destination, turned_off, failing, &store_error) {
+            (None, _, _, Some(error)) => {
+                health.insert("reason".into(), "destination_unusable".into());
+                health.insert("store_error".into(), error.clone().into());
+                "failing"
+            }
             (None, ..) => {
                 health.insert("reason".into(), "no_backup_destination".into());
                 "off"
@@ -1529,6 +1547,8 @@ pub enum StoreFault {
     FolderSilent,
     /// The last run of `blob-replicate` copied nothing because the destination refused.
     Refused,
+    /// The destination the settings name could not be taken into use.
+    Unusable,
 }
 
 /// The `backups` part of the health report, and what the attention list reads besides it.
@@ -1577,6 +1597,9 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
+    if app.blobs.trouble().is_some() {
+        app.follow_stores().await;
+    }
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {
         let restoring = app.backups.restoring.load(Ordering::Acquire);
@@ -1586,9 +1609,15 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     if forced && let Some(refusal) = app.db.writes_held() {
         return Err(refusal);
     }
-    let held = app.db.read(state).await?;
+    let store = destination.id();
+    let (held, newest) = app
+        .db
+        .read(move |tx| Ok((state(tx)?, newest_backup(tx, &store)?)))
+        .await?;
     let current = held.backed_up == Some(held.changes)
-        && held.backed_up_version == Some(archive::VERSION as i64);
+        && held.backed_up_version == Some(archive::VERSION as i64)
+        && newest.is_some()
+        && newest == held.last_backup;
     if !forced && held.failures == 0 && current {
         return Ok(Outcome::Unchanged);
     }

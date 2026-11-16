@@ -118,10 +118,16 @@ pub fn stage(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
 }
 
 impl Staged {
-    /// A job's interval or switch may be a setting, so the scheduler looks again.
-    pub fn publish(self, app: &App) {
+    /// A job's interval or switch may be a setting, so the scheduler looks again, and the store
+    /// beside the disk follows its settings.
+    pub fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
         super::housekeeping::wake(app);
+        let wanted = super::blobs::Wanted::of(&app.settings.live());
+        if !app.blobs.follows(&wanted) {
+            let app = app.clone();
+            tokio::spawn(async move { app.follow_stores().await });
+        }
     }
 }
 
@@ -258,6 +264,7 @@ pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -
     for (key, text) in &added {
         write_row(tx, key, text)?;
     }
+    let now = app.settings.candidate(&rows(tx)?);
     let without_receiver = [
         registry::HEARTBEAT_ENABLED.entry.key,
         registry::ERROR_REPORTING_ENABLED.entry.key,
@@ -267,7 +274,7 @@ pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -
         added
             .iter()
             .any(|(key, text)| key == switch && text == "true")
-            && crate::settings::together::lacks_receiver(&app.settings.start, switch)
+            && crate::settings::together::lacks_receiver(&app.settings.start, &now, switch)
     })
     .collect();
     Ok(Restored {
@@ -366,7 +373,7 @@ mod tests {
         for broken in ["soon", "-1", "0", "3601"] {
             write_row(&tx, "mcp_fetch_timeout_seconds", broken).unwrap();
             let rows = rows(&tx).unwrap();
-            let live = registry::Snapshot::resolve(&seeded, &rows, 0);
+            let live = registry::Snapshot::resolve(&seeded, None, &rows, 0);
             assert_eq!(live.unreadable(), ["mcp_fetch_timeout_seconds"], "{broken}");
             assert_eq!(
                 setting(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(),

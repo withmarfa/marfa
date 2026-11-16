@@ -269,7 +269,7 @@ fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, 
         .into_iter()
         .map(|text| (key.to_string(), text))
         .collect();
-    let resolved = Snapshot::resolve(&Seeds::new(), &rows, 0);
+    let resolved = Snapshot::resolve(&Seeds::new(), None, &rows, 0);
     if resolved.unreadable().contains(&key) {
         return Err(Failure::refused_upgrade(
             UpgradeRefusal::SettingsUnreadable,

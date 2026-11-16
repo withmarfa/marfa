@@ -23,7 +23,56 @@ use uuid::Uuid;
 
 use super::hash::Hash;
 use super::store::Answer;
-use crate::settings::start::ObjectStoreSettings;
+use crate::settings::Snapshot;
+use crate::settings::registry::{
+    OBJECT_STORE_ACCESS_KEY_ID, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT,
+    OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION,
+    OBJECT_STORE_SECRET_ACCESS_KEY,
+};
+use crate::settings::sealed::Secret;
+
+/// The object store the settings name; its endpoint and secret are never logged.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ObjectStoreSettings {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<Secret>,
+    pub path_style: bool,
+    pub prefix: String,
+}
+
+impl std::fmt::Debug for ObjectStoreSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.locator())
+    }
+}
+
+impl ObjectStoreSettings {
+    pub fn locator(&self) -> String {
+        format!("s3://{}/{}", self.bucket, self.prefix)
+    }
+
+    /// The store `settings` name, where they name a bucket.
+    pub fn of(settings: &Snapshot) -> Option<ObjectStoreSettings> {
+        let bucket = settings.get(OBJECT_STORE_BUCKET)?;
+        let endpoint = settings.get(OBJECT_STORE_ENDPOINT);
+        Some(ObjectStoreSettings {
+            bucket,
+            region: settings
+                .get(OBJECT_STORE_REGION)
+                .unwrap_or_else(|| "us-east-1".to_string()),
+            path_style: endpoint.is_none() || settings.get(OBJECT_STORE_PATH_STYLE),
+            endpoint,
+            access_key_id: settings.get(OBJECT_STORE_ACCESS_KEY_ID),
+            secret_access_key: settings.get(OBJECT_STORE_SECRET_ACCESS_KEY),
+            prefix: settings
+                .get(OBJECT_STORE_PREFIX)
+                .unwrap_or_else(|| "marfa".to_string()),
+        })
+    }
+}
 
 /// The most bytes sent in one request; a larger blob goes up in parts of this size.
 const PART: usize = 8 * 1024 * 1024;
@@ -213,7 +262,7 @@ impl S3 {
             builder = builder.with_access_key_id(key);
         }
         if let Some(secret) = &settings.secret_access_key {
-            builder = builder.with_secret_access_key(secret);
+            builder = builder.with_secret_access_key(secret.expose());
         }
         builder.build().map_err(failed)
     }
