@@ -1,17 +1,21 @@
 ---
 name: land-a-pull-request
-description: Merge your own Marfa pull request, from draft to merged. Covers the required checks, the review its risk needs, when a merge may go ahead past jobs the change cannot affect, and the worktree clean-up afterward. Use when a pull request in this repository is finished and needs to reach main.
+description: Merge your own Marfa pull request, from draft to merged. Covers the required checks, the review its risk needs, the admin merges that go ahead without waiting for Full CI (including a fix to a failing main), and the worktree clean-up afterward. Use when a pull request in this repository is finished and needs to reach main, or when main is failing.
 ---
 
 # Land a pull request
 
 A session merges its own pull request. Nobody else will, and nothing reaches `main` any other way.
 
+Getting finished work to `main` comes first. Run the least CI a change needs and do not wait on CI for its own sake. A failing `main` is not a release: whoever sees it fixes it forward.
+
 ## Before you mark it ready
 
 1. **Check the body.** It carries the sections **Summary**, **Changes**, **Testing**, **Notes for reviewers** and **Checklist**. Summary, Changes and Testing are filled in, and every box in the checklist is ticked. The required check `Pull request description` fails until that is true, and editing the body reruns only that check.
 2. **Run the quick check locally:** `pnpm test:changed`, with `pnpm typecheck`, `pnpm lint` and `pnpm format:check`. For a change under `core/`, also the checks in `core/AGENTS.md`.
 3. **Get the review its risk calls for,** and state that depth in Notes for reviewers.
+
+Keep a pull request in draft until it is whole. Pieces of work that belong together can share one pull request, or be stacked and merged into one another before the last one lands.
 
 ## Merge
 
@@ -21,17 +25,36 @@ A session merges its own pull request. Nobody else will, and nothing reaches `ma
 4. Watch the run with `gh pr checks <number> --watch`. If a job failed for a reason outside the change, such as a registry or a package mirror being down, rerun the failed jobs with `gh run rerun <run> --failed`. If a test failed and then passed on a rerun, that is a flaky test: say which test on the pull request, and open an issue for it if none exists.
 5. Merge a stack in order, and retarget each pull request to `main` before the branch it sits on is deleted.
 
-## When CI runs jobs the change cannot affect
+A branch does not need to be up to date with `main` to merge. Update it only for a conflict or for something on `main` it needs, never only to be current.
+
+## Merging without waiting for Full CI
+
+In the cases below, merge with `gh pr merge <number> --squash --admin --delete-branch` and say on the pull request which case applies and why.
+
+### Jobs the change cannot affect
 
 `scripts/ci-required.ts` decides which jobs a change runs. When it runs jobs that the change cannot affect, such as the contract's fixtures for a development script:
 
 1. Check that the quick checks pass locally and that `Pull request description` is green.
 2. Cancel the run: `gh run cancel <run>`.
-3. Merge with `gh pr merge <number> --squash --admin --delete-branch`.
-4. Say on the pull request that you did, and why the jobs could not be affected.
-5. Correct the rule in `scripts/ci-required.ts`, in a pull request of its own, so that the next change of that kind runs only what it needs.
+3. Merge with the admin merge above.
+4. Correct the rule in `scripts/ci-required.ts`, in a pull request of its own, so that the next change of that kind runs only what it needs.
 
-**Never do this for a change to data, access, the contract, a migration or the release.** Those wait for `Full CI`. The push to `main` still runs everything.
+### Check bookkeeping
+
+The head commit passed its full checks, and only bookkeeping blocks the merge: a required check left "expected" because a later run on the same commit was cancelled, or auto-merge that does not fire with every required check green. Merge; do not run the checks again.
+
+### A failing main
+
+When the run on `main` fails, for example because two pull requests that each passed clash, or because a test is flaky, fix it before other work, in one small pull request. A failing `main` fails the checks of every open pull request. A fix that changes only tests, or only CI bookkeeping, merges once its local quick checks pass. Any other fix follows the usual rules.
+
+### An update from main
+
+A pull request whose head passed `Full CI`, and that was then only brought up to date with `main` (a merge or rebase with no conflict and no other change), merges without running `Full CI` again.
+
+### What always waits
+
+**A change to data, access, the contract, a migration or the release waits for `Full CI`,** after an update from `main` too. A fix that changes only tests changes none of these. The push to `main` still runs everything, and a release needs a green `main`, so what a skipped run would have caught is caught there.
 
 ## Afterward
 
