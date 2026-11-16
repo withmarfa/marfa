@@ -1455,6 +1455,14 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a declined consent to the redirect URI as access_denied with the request's state`.
 
+### `keys-and-oauth/consent-decision-required`
+
+If a post to `/auth/consent` carries no `authorization_request`, or a `decision` that is missing or is anything other than `approve` or `deny`, then the server MUST refuse it `400 validation_error`, record no consent and issue no code.
+
+**Reason:** A post that names neither answer is neither a yes nor a no, so it is not read as either: a form from before the decision field, or a decision in another case, would otherwise decline or approve for the person.
+
+**Tests:** `compliance/oauth-authorize.test.ts › refuses a consent post that names neither approve nor deny, and records no consent and issues no code`.
+
 ### `keys-and-oauth/consent-nothing-denies`
 
 Where a request names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data or content and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.

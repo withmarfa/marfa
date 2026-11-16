@@ -95,6 +95,58 @@ describe("authorization with consent", () => {
     expect(sent?.searchParams.get("code")).toBeNull();
   });
 
+  it("refuses a consent post that names neither approve nor deny, and records no consent and issues no code", async () => {
+    const app = await registerApp(server, NOTES);
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, NOTES, pkce()),
+    );
+    const request = consent.search.slice(1);
+    const posts: [string, string][][] = [
+      [
+        ["decision", "accept"],
+        ["authorization_request", request],
+      ],
+      [
+        ["decision", "APPROVE"],
+        ["authorization_request", request],
+      ],
+      [
+        ["decision", ""],
+        ["authorization_request", request],
+      ],
+      [
+        ["accept", "true"],
+        ["authorization_request", request],
+      ],
+      [["authorization_request", request]],
+      [["decision", "approve"]],
+    ];
+    for (const fields of posts) {
+      const refused = await fetch(`${server.apiUrl}/auth/consent`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          cookie,
+          origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams([...fields, ["scopes", NOTES]]),
+      });
+      const body = (await refused.json()) as { error?: { code?: string } };
+      expect(refused.status, JSON.stringify(fields)).toBe(400);
+      expect(body.error?.code, JSON.stringify(fields)).toBe("validation_error");
+      expect(
+        refused.headers.get("location"),
+        JSON.stringify(fields),
+      ).toBeNull();
+    }
+    // The witness: no consent was recorded, so the app is asked again, and a
+    // post that names its decision is answered with a code.
+    await consentScreen(authorizeQuery(app.clientId, NOTES, pkce()));
+    const sent = await decide(server, origin, cookie, consent, true, [NOTES]);
+    expect(sent?.searchParams.get("code")).not.toBeNull();
+  });
+
   it("issues a token for only the scopes the person chose", async () => {
     const app = await registerApp(server, `${NOTES} ${BOOKMARKS}`);
     const proof = pkce();

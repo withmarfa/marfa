@@ -74,9 +74,6 @@ const FEATURE_DOORS: {
   { feature: "keys", path: "/keys" },
   { feature: "bulk", path: "/items/bulk", method: "POST", body: {} },
   { feature: "export", path: "/export?state=not-a-state" },
-  // Outside `/auth/*` deliberately: a catch-all at `/auth/*` can answer the
-  // metadata paths under it, so a probe there stays green with Marfa's own
-  // handler deleted.
   {
     feature: "oauth",
     path: "/.well-known/oauth-authorization-server",
@@ -341,7 +338,7 @@ describe("the instance", () => {
   it("names every advertised feature in one convention", async () => {
     // One convention, pinned, so a multi-word entry cannot arrive in a
     // second spelling that nothing distinguishes from a typo. Digits are
-    // inside the convention: `oauth2` or `s3` break no rule this asserts.
+    // inside the convention: `s3` or `sha256` break no rule this asserts.
     const r = await client.root();
     expect(r.ok).toBe(true);
     const features = r.data.features as string[];

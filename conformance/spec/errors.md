@@ -6,7 +6,7 @@ What every refusal looks like, and the refusals no other chapter owns. A refusal
 
 ### `errors/envelope`
 
-When the server refuses a request other than `HEAD`, the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings, unless the answer is the page of `errors/html-page`, a page under `/auth/*` that refuses in plain text or as an HTML page, or an error an OAuth protocol endpoint under `/oauth/` answers in the shape of RFC 6749, RFC 7009, RFC 7591 or RFC 8628.
+When the server refuses a request other than `HEAD`, the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings, unless the answer is the page of `errors/html-page`, a page under `/auth/*` that refuses in plain text or as an HTML page, or an error an OAuth protocol endpoint under `/oauth/` answers in the shape of RFC 6749, RFC 6750, RFC 7009, RFC 7591 or RFC 8628.
 
 **Reason:** a client reads every refusal of the server's own from one shape, whichever operation answered it.
 

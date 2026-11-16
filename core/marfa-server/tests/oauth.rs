@@ -3539,6 +3539,50 @@ async fn a_person_who_declines_is_sent_back_to_the_app() {
 }
 
 #[tokio::test]
+async fn the_consent_form_refuses_anything_but_an_approval_or_a_denial() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    let link = instance.consent_link(&client, NOTES).await;
+    let refusals: [&[(&str, &str)]; 6] = [
+        &[("decision", "accept"), ("authorization_request", &link)],
+        &[("decision", "APPROVE"), ("authorization_request", &link)],
+        &[("decision", ""), ("authorization_request", &link)],
+        &[("accept", "true"), ("authorization_request", &link)],
+        &[("authorization_request", &link)],
+        &[("decision", "approve")],
+    ];
+    for fields in refusals {
+        let refused = instance
+            .send(post_form("/auth/consent", Some(&instance.cookie), fields))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{fields:?}");
+        assert_eq!(
+            refused.json()["error"]["code"],
+            "validation_error",
+            "{fields:?}"
+        );
+        assert!(code_in(&refused).is_none(), "{fields:?}");
+        assert_eq!(
+            instance.count("SELECT count(*) FROM oauth_consents").await,
+            0,
+            "{fields:?}"
+        );
+        assert_eq!(
+            instance.count("SELECT count(*) FROM oauth_codes").await,
+            0,
+            "{fields:?}"
+        );
+    }
+
+    let approved = instance.decide(&link, &[NOTES]).await;
+    assert!(code_in(&approved).is_some(), "{:?}", approved.location());
+    assert_eq!(
+        instance.count("SELECT count(*) FROM oauth_consents").await,
+        1
+    );
+}
+
+#[tokio::test]
 async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
     let instance = Instance::signed_in().await;
     let planted = "planted-by-the-request";

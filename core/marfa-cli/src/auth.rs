@@ -461,11 +461,12 @@ fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError>
     ]));
     let token = match answer {
         Ok(value) => token_set(value)?,
-        // Only a dead grant drops the token; a 429 or any other refusal
-        // leaves it. The origin stays current so the next command names the
-        // server and `marfa login`.
-        Err(CliError::Refused { code, .. })
-            if code == "invalid_grant" || code == "invalid_client" =>
+        // Only a dead grant, or a token endpoint that is no longer served,
+        // drops the token; a 429 or any other refusal leaves it. The origin
+        // stays current so the next command names the server and
+        // `marfa login`.
+        Err(CliError::Refused { code, status, .. })
+            if code == "invalid_grant" || code == "invalid_client" || status == 404 =>
         {
             credentials::drop(origin)?;
             return Err(signed_out(origin));
@@ -1229,6 +1230,36 @@ mod tests {
             credentials::current().unwrap().as_deref(),
             Some(origin.as_str()),
             "the origin stays current so the next command names the server it lost"
+        );
+    }
+
+    #[test]
+    fn a_token_endpoint_that_is_no_longer_served_ends_the_sign_in() {
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_core::contract::CONTRACT_VERSION
+        );
+        let door = Door::open(vec![
+            Answer::json("200 OK", &root),
+            Answer::json(
+                "404 Not Found",
+                r#"{"error":{"code":"not_found","message":"Not found"}}"#,
+            ),
+        ]);
+        let endpoint = format!("{}/auth/oauth2/token", door.url);
+        let origin = door.url.clone();
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
+        let outcome = refresh(&origin, None);
+        door.received();
+        assert!(
+            matches!(outcome, Err(CliError::SignedOut { .. })),
+            "{outcome:?}"
+        );
+        assert_eq!(credentials::read(&origin).unwrap(), None);
+        assert_eq!(
+            credentials::current().unwrap().as_deref(),
+            Some(origin.as_str())
         );
     }
 
