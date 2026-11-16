@@ -1029,6 +1029,7 @@ function clearState(state: string): void {
     `${p.db}-wal`,
     `${p.db}-shm`,
     `${p.db}.server-lock`,
+    resolve(state, "marfa.settings.key"),
     p.env,
     p.log,
     p.stderr,
