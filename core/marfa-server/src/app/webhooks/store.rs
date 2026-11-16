@@ -221,8 +221,8 @@ pub fn set_position(tx: &Transaction<'_>, event_id: i64) -> Result<()> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     Pending,
-    Success,
-    DeadLetter,
+    Succeeded,
+    Failed,
     Canceled,
 }
 
@@ -230,8 +230,8 @@ impl Status {
     pub fn wire(&self) -> &'static str {
         match self {
             Status::Pending => "pending",
-            Status::Success => "success",
-            Status::DeadLetter => "dead_letter",
+            Status::Succeeded => "succeeded",
+            Status::Failed => "failed",
             Status::Canceled => "canceled",
         }
     }
@@ -239,8 +239,8 @@ impl Status {
     fn read(text: &str) -> Option<Status> {
         Some(match text {
             "pending" => Status::Pending,
-            "success" => Status::Success,
-            "dead_letter" => Status::DeadLetter,
+            "succeeded" => Status::Succeeded,
+            "failed" => Status::Failed,
             "canceled" => Status::Canceled,
             _ => return None,
         })
@@ -577,7 +577,7 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
         ask(
             &[
                 (1, "a", "pending", 0),
-                (2, "b", "success", 0),
+                (2, "b", "succeeded", 0),
                 (3, "c", "pending", 50),
             ],
             10,
@@ -645,7 +645,7 @@ pub fn record(tx: &Transaction<'_>, seq: i64, recorded: &Recorded<'_>, at: &str)
     tx.execute(
         "UPDATE webhook_deliveries SET status = ?2, status_code = ?3, error = ?4, due_at = ?5, \
          attempt = attempt + 1, cycle_attempt = cycle_attempt + 1, updated_at = ?6, \
-         payload = CASE WHEN ?2 = 'success' THEN NULL ELSE payload END \
+         payload = CASE WHEN ?2 = 'succeeded' THEN NULL ELSE payload END \
          WHERE seq = ?1 AND status = 'pending'",
         params![
             seq,
@@ -662,7 +662,7 @@ pub fn record(tx: &Transaction<'_>, seq: i64, recorded: &Recorded<'_>, at: &str)
 pub fn redeliver(tx: &Transaction<'_>, seq: i64, due_at: i64, at: &str) -> Result<()> {
     tx.execute(
         "UPDATE webhook_deliveries SET status = 'pending', cycle_attempt = 0, due_at = ?2, \
-         updated_at = ?3 WHERE seq = ?1 AND status = 'dead_letter'",
+         updated_at = ?3 WHERE seq = ?1 AND status = 'failed'",
         params![seq, Stamp::from_ms(due_at)?, at],
     )?;
     Ok(())

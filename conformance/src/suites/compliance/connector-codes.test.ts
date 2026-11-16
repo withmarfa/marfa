@@ -136,11 +136,11 @@ describe("a revoked key", () => {
       ["GET", "/connectors", "/connectors"],
       ["GET", "/connectors/{id}", base],
       ["DELETE", "/connectors/{id}", base],
-      ["POST", "/connectors/heartbeat", "/connectors/heartbeat"],
+      ["POST", "/connectors/{id}/heartbeat", `${base}/heartbeat`],
       [
         "POST",
-        "/connectors/runs",
-        "/connectors/runs",
+        "/connectors/{id}/runs",
+        `${base}/runs`,
         { outcome: "succeeded", started_at: when, finished_at: when },
       ],
       ["GET", "/connectors/{id}/runs", `${base}/runs`],
@@ -527,7 +527,7 @@ describe("a body field no operation declares", () => {
       {
         label: "POST runs",
         method: "POST",
-        path: "/connectors/runs",
+        path: `/connectors/${own.id}/runs`,
         body: { outcome: "succeeded", started_at: when, finished_at: when },
         stray: "sumary",
         first: 201,

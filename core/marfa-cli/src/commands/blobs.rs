@@ -67,7 +67,7 @@ pub fn download_request(hash: &str) -> Request {
 }
 
 pub fn url_request(hash: &str, ttl: Option<u64>) -> Request {
-    Request::get(&["blobs", hash, "url"]).query_opt("ttl", ttl.map(|ttl| ttl.to_string()))
+    Request::get(&["blobs", hash, "url"]).query_opt("ttl_seconds", ttl.map(|ttl| ttl.to_string()))
 }
 
 pub fn stores_request() -> Request {

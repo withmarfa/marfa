@@ -118,7 +118,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
             StatusCode::FOUND,
             &back_to_sign_in(&[
                 ("error", error),
-                ("retry_after", wait),
+                ("retry_after_seconds", wait),
                 ("email", email),
                 ("return_to", shown_return),
                 ("authorization", field("authorization")),
@@ -140,7 +140,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
             let wait = refusal
                 .details
                 .as_ref()
-                .and_then(|details| details.get("retry_after"))
+                .and_then(|details| details.get("retry_after_seconds"))
                 .map(Value::to_string)
                 .unwrap_or_default();
             return failed("too_many_attempts", &wait);

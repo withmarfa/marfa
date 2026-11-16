@@ -98,7 +98,7 @@ fn certifies(route: &str, response: &Response) -> bool {
         (StatusCode::NOT_FOUND, Code::ItemNotFound | Code::EdgeNotFound | Code::TableNotFound) => {
             true
         }
-        (StatusCode::FORBIDDEN, Code::TypeNotPermitted | Code::EdgePermissionDenied) => true,
+        (StatusCode::FORBIDDEN, Code::TypeNotPermitted | Code::EdgeTypeNotPermitted) => true,
         (StatusCode::FORBIDDEN, Code::Forbidden) => route == "/keys/current",
         _ => false,
     }

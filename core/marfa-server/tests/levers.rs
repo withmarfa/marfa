@@ -305,9 +305,7 @@ async fn the_source_filter_narrows_what_a_key_lists_and_leaves_a_read_by_id() {
         .await;
     assert_eq!(stats.body["active"], 2, "{}", stats.text);
 
-    let tags = instance
-        .call(&shown, Method::GET, "/metadata/tags", None)
-        .await;
+    let tags = instance.call(&shown, Method::GET, "/tags", None).await;
     assert_eq!(
         tags.body["data"],
         json!([{ "tag": "both", "count": 1 }]),

@@ -449,7 +449,7 @@ describe("a retained answer after its credential is narrowed", () => {
       (await actor.client.getEdge(edgeOf(first).id)).status,
       "the key still reads the edge",
     ).toBe(200);
-    expectRefused(await ask(), 403, "edge_permission_denied");
+    expectRefused(await ask(), 403, "edge_type_not_permitted");
 
     await grant(actor, { edge_permissions: { "*": "write" } });
     expectReplay(await ask(), first);
@@ -488,7 +488,7 @@ describe("a retained answer after its credential is narrowed", () => {
       properties: { title: "Winner" },
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
-    const ask = keyed(actor, "PATCH", `/items/${item.id}?conflict=manual`, {
+    const ask = keyed(actor, "PATCH", `/items/${item.id}`, {
       version: item.version,
       properties: { title: "Loser" },
     });
@@ -929,7 +929,7 @@ const DOORS = [
   "POST /items/bulk-actions",
   "POST /items/{id}/tags",
   "DELETE /items/{id}/tags/{tag}",
-  "PUT /items/{id}/metadata",
+  "PUT /items/{id}/tags",
   "PUT /items/{id}/extensions/{namespace}",
   "DELETE /items/{id}/extensions/{namespace}",
   "POST /items/{id}/tables/{table}/rows",
@@ -1072,10 +1072,10 @@ async function prepare(door: string): Promise<Prepared> {
         path: `/items/${item.id}/tags/${encodeURIComponent("replay door")}`,
       };
     }
-    case "PUT /items/{id}/metadata":
+    case "PUT /items/{id}/tags":
       return {
         method,
-        path: `/items/${(await note()).id}/metadata`,
+        path: `/items/${(await note()).id}/tags`,
         body: { tags: ["replay-door"] },
       };
     case "PUT /items/{id}/extensions/{namespace}":
@@ -1165,7 +1165,7 @@ interface ChangedBetween {
 async function changedBetween(door: string): Promise<ChangedBetween> {
   const [method] = door.split(" ") as [Method, string];
   const tags = async (id: string): Promise<string[]> => {
-    const read = await client.getMetadata(id);
+    const read = await client.getItem(id);
     expect(read.status, JSON.stringify(read.error)).toBe(200);
     return read.data.metadata.tags;
   };
@@ -1202,16 +1202,15 @@ async function changedBetween(door: string): Promise<ChangedBetween> {
         kept: async () => expect(await tags(item.id)).toContain("taken off"),
       };
     }
-    case "PUT /items/{id}/metadata": {
+    case "PUT /items/{id}/tags": {
       const item = await note();
       return {
         send: {
           method,
-          path: `/items/${item.id}/metadata`,
+          path: `/items/${item.id}/tags`,
           body: { tags: ["mine"] },
         },
-        between: () =>
-          ok(client.replaceMetadata(item.id, { tags: ["theirs"] })),
+        between: () => ok(client.replaceTags(item.id, { tags: ["theirs"] })),
         kept: async () => expect(await tags(item.id)).toEqual(["theirs"]),
       };
     }
@@ -1264,7 +1263,7 @@ describe("a metadata or extension write sent again under its key", () => {
   it.each([
     "POST /items/{id}/tags",
     "DELETE /items/{id}/tags/{tag}",
-    "PUT /items/{id}/metadata",
+    "PUT /items/{id}/tags",
     "PUT /items/{id}/extensions/{namespace}",
     "DELETE /items/{id}/extensions/{namespace}",
   ])(

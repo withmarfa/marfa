@@ -142,9 +142,9 @@ describe("every tag operation moves the modification time", () => {
         send: () => client.removeTag(id, "first"),
       },
       {
-        name: "PUT /items/{id}/metadata",
+        name: "PUT /items/{id}/tags",
         send: () =>
-          client.rawRequest(`/items/${id}/metadata`, {
+          client.rawRequest(`/items/${id}/tags`, {
             method: "PUT",
             body: { tags: ["replaced"] },
           }),

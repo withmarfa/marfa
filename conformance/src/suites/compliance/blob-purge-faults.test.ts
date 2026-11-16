@@ -49,7 +49,8 @@ beforeAll(async () => {
       const sweep = jobs.data.data.find((job) => job.name === "blob-orphans");
       return sweep !== undefined &&
         sweep.running_since === null &&
-        Date.parse(sweep.next_run_at) - Date.now() > sweep.interval_ms / 2
+        Date.parse(sweep.next_run_at) - Date.now() >
+          sweep.interval_seconds * 500
         ? sweep
         : undefined;
     },
@@ -197,7 +198,7 @@ describe("an orphan purge that a write names the blob under", () => {
     await server.clearFault("hold:blob-orphans:purge");
     const run = await sweep;
     expect(run.status, JSON.stringify(run.error)).toBe(200);
-    expect(run.data.outcome, run.data.error ?? "").toBe("ok");
+    expect(run.data.outcome, run.data.error ?? "").toBe("succeeded");
     return run.data.result as { purged: number };
   }
 

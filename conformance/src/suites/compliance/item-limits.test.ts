@@ -83,9 +83,9 @@ describe("the 100-tags-per-item limit", () => {
         within: ["one-more"],
       },
       {
-        name: "PUT /items/{id}/metadata",
+        name: "PUT /items/{id}/tags",
         send: (id: string, tags: string[]) =>
-          client.rawRequest(`/items/${id}/metadata`, {
+          client.rawRequest(`/items/${id}/tags`, {
             method: "PUT",
             body: { tags },
           }),

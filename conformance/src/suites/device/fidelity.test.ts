@@ -1572,7 +1572,7 @@ describe("the scripted answers match the server's", () => {
       { same: ["metadata.item_id", "metadata.tags", "metadata.extensions"] },
     );
 
-    const replaced = await client.rawRequest(`/items/${seeded.id}/metadata`, {
+    const replaced = await client.rawRequest(`/items/${seeded.id}/tags`, {
       method: "PUT",
       body: { tags: ["replaced"] },
     });
@@ -1583,8 +1583,8 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a tag list replaced",
       { status: replaced.status, body: replaced.data },
-      writeAnswers.metadata(seeded.id, ["replaced"]),
-      { same: ["metadata.item_id", "metadata.tags", "metadata.extensions"] },
+      writeAnswers.replacedTags(["replaced"]),
+      { same: ["tags"] },
     );
 
     const extended = await client.rawRequest(
@@ -1787,7 +1787,7 @@ describe("the scripted answers match the server's", () => {
       "a link to a blob's bytes",
       { status: linked.status, body: linked.data },
       writeAnswers.link("http://127.0.0.1/links/fidelity"),
-      { same: ["expires_in"], shape: ["url"] },
+      { same: ["ttl_seconds"], shape: ["url"] },
     );
     // What the scripted link does, the real one does: it serves the bytes
     // with no credential at all.
@@ -3304,7 +3304,7 @@ describe("a local read answers the listing grammar as the server does", () => {
     expect(
       [refused.status, refused.error?.error.code],
       "the server answered a term naming an edge type the key may not read",
-    ).toEqual([403, "edge_permission_denied"]);
+    ).toEqual([403, "edge_type_not_permitted"]);
 
     // The device keeps nothing of the key's edge permissions, and holds no
     // edge of that type, so it answers the term from what it holds.

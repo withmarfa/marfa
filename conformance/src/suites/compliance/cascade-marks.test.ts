@@ -262,7 +262,7 @@ function frame(
   return found?.data as FrameData | undefined;
 }
 
-describe("an item.deleted frame carries when the item went to the bin", () => {
+describe("an item.trashed frame carries when the item went to the bin", () => {
   it("holds the time the listing answers, for the item named and the item a cascade took, by DELETE and by transition", async ({
     signal,
   }) => {
@@ -309,8 +309,8 @@ describe("an item.deleted frame carries when the item went to the bin", () => {
             `${door}: ${id} is in the bin with a time`,
           ).toBeTruthy();
           expect(
-            frame(events, "item.deleted", id)?.item?.trashed_at,
-            `${path}: ${door}: item.deleted for ${id}`,
+            frame(events, "item.trashed", id)?.item?.trashed_at,
+            `${path}: ${door}: item.trashed for ${id}`,
           ).toBe(stored);
         }
       }
@@ -337,14 +337,14 @@ describe("a cascaded trash names its root", () => {
       signal,
     );
     for (const [path, events] of paths) {
-      const taken = frame(events, "item.deleted", child)?.item;
-      expect(taken?.trashed_with, `${path}: the child's item.deleted`).toBe(
+      const taken = frame(events, "item.trashed", child)?.item;
+      expect(taken?.trashed_with, `${path}: the child's item.trashed`).toBe(
         parent,
       );
       expect(taken?.trashed_by_cascade, path).toBe(true);
       for (const own of [parent, alone]) {
-        const deleted = frame(events, "item.deleted", own);
-        expect(deleted, `${path}: item.deleted for ${own}`).toBeDefined();
+        const deleted = frame(events, "item.trashed", own);
+        expect(deleted, `${path}: item.trashed for ${own}`).toBeDefined();
         expect(deleted?.item).not.toHaveProperty("trashed_with");
         expect(deleted?.item).not.toHaveProperty("trashed_by_cascade");
       }
@@ -375,7 +375,7 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("announces item.deleted with its mark for each item a transition into the bin takes", async ({
+  it("announces item.trashed with its mark for each item a transition into the bin takes", async ({
     signal,
   }) => {
     const tag = `transition-mark-${ctx.runId}`;
@@ -395,8 +395,8 @@ describe("a cascaded trash names its root", () => {
     );
     for (const [path, events] of paths) {
       for (const taken of [child, grandchild]) {
-        const deleted = frame(events, "item.deleted", taken)?.item;
-        expect(deleted, `${path}: item.deleted for ${taken}`).toBeDefined();
+        const deleted = frame(events, "item.trashed", taken)?.item;
+        expect(deleted, `${path}: item.trashed for ${taken}`).toBeDefined();
         expect(deleted?.trashed_by_cascade, `${path}: ${taken}`).toBe(true);
         expect(deleted?.trashed_with, `${path}: ${taken}`).toBe(parent);
       }
@@ -406,14 +406,14 @@ describe("a cascaded trash names its root", () => {
       expect(own?.item).not.toHaveProperty("trashed_with");
       expect(own?.item).not.toHaveProperty("trashed_by_cascade");
       // And as a deletion, as a delete of the item would announce it.
-      const gone = frame(events, "item.deleted", parent);
-      expect(gone, `${path}: item.deleted for ${parent}`).toBeDefined();
+      const gone = frame(events, "item.trashed", parent);
+      expect(gone, `${path}: item.trashed for ${parent}`).toBeDefined();
       expect(gone?.item).not.toHaveProperty("trashed_with");
       expect(gone?.item).not.toHaveProperty("trashed_by_cascade");
     }
   });
 
-  it("announces item.deleted for the item a bulk transition into the bin names, and with its mark for each item it takes", async ({
+  it("announces item.trashed for the item a bulk transition into the bin names, and with its mark for each item it takes", async ({
     signal,
   }) => {
     const tag = `bulk-trash-${ctx.runId}`;
@@ -433,14 +433,14 @@ describe("a cascaded trash names its root", () => {
       signal,
     );
     for (const [path, events] of paths) {
-      const taken = frame(events, "item.deleted", child)?.item;
-      expect(taken?.trashed_with, `${path}: the child's item.deleted`).toBe(
+      const taken = frame(events, "item.trashed", child)?.item;
+      expect(taken?.trashed_with, `${path}: the child's item.trashed`).toBe(
         root,
       );
       const changed = frame(events, "item.state_changed", root);
       expect(changed, `${path}: item.state_changed for ${root}`).toBeDefined();
-      const gone = frame(events, "item.deleted", root);
-      expect(gone, `${path}: item.deleted for ${root}`).toBeDefined();
+      const gone = frame(events, "item.trashed", root);
+      expect(gone, `${path}: item.trashed for ${root}`).toBeDefined();
       expect(gone?.item).not.toHaveProperty("trashed_with");
       expect(gone?.item).not.toHaveProperty("trashed_by_cascade");
     }
@@ -492,21 +492,21 @@ describe("a cascaded trash names its root", () => {
       signal,
     );
     for (const [path, events] of deleted.full) {
-      const taken = frame(events, "item.deleted", child)?.item;
-      expect(taken?.trashed_with, `${path}: the child's item.deleted`).toBe(
+      const taken = frame(events, "item.trashed", child)?.item;
+      expect(taken?.trashed_with, `${path}: the child's item.trashed`).toBe(
         root,
       );
       expect(taken?.trashed_by_cascade, path).toBe(true);
     }
     for (const [path, events] of deleted.notes) {
-      const taken = frame(events, "item.deleted", child)?.item;
+      const taken = frame(events, "item.trashed", child)?.item;
       expect(
         taken?.trashed_by_cascade,
-        `${path}: the child's item.deleted`,
+        `${path}: the child's item.trashed`,
       ).toBe(true);
       expect(taken, path).not.toHaveProperty("trashed_with");
-      const own = frame(events, "item.deleted", alone);
-      expect(own, `${path}: item.deleted for ${alone}`).toBeDefined();
+      const own = frame(events, "item.trashed", alone);
+      expect(own, `${path}: item.trashed for ${alone}`).toBeDefined();
       expect(own?.item).not.toHaveProperty("trashed_by_cascade");
     }
 
@@ -699,11 +699,11 @@ describe("a cascaded trash names its root", () => {
     );
     for (const [path, events] of paths) {
       expect(
-        frame(events, "item.deleted", child)?.item?.trashed_with,
-        `${path}: the child's item.deleted`,
+        frame(events, "item.trashed", child)?.item?.trashed_with,
+        `${path}: the child's item.trashed`,
       ).toBe(parent);
-      const revoked = frame(events, "item.deleted", folderId)?.item;
-      expect(revoked?.state, `${path}: the folder's item.deleted`).toBe(
+      const revoked = frame(events, "item.trashed", folderId)?.item;
+      expect(revoked?.state, `${path}: the folder's item.trashed`).toBe(
         "revoked",
       );
       expect(revoked, path).not.toHaveProperty("trashed_by_cascade");
@@ -988,7 +988,7 @@ describe("a purge says which edges it took", () => {
 });
 
 describe("a part's frames name the host that moved it", () => {
-  it("marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took", async ({
+  it("marks a part's item.trashed, item.restored and item.purged with its host, and the edge the host's purge took", async ({
     signal,
   }) => {
     const tag = `parts-${ctx.runId}`;
@@ -1005,8 +1005,8 @@ describe("a part's frames name the host that moved it", () => {
       signal,
     );
     for (const [path, events] of paths) {
-      const taken = frame(events, "item.deleted", part)?.item;
-      expect(taken?.trashed_with, `${path}: the part's item.deleted`).toBe(
+      const taken = frame(events, "item.trashed", part)?.item;
+      expect(taken?.trashed_with, `${path}: the part's item.trashed`).toBe(
         host,
       );
       expect(taken?.trashed_by_cascade, path).toBe(true);
@@ -1040,7 +1040,7 @@ describe("a part's frames name the host that moved it", () => {
 });
 
 describe("a part announces only what moved", () => {
-  it("announces item.deleted and item.restored for a late part and its child, and nothing for a child already in the bin, on the late edge, the restore or a delete, whose mark stays its own", async ({
+  it("announces item.trashed and item.restored for a late part and its child, and nothing for a child already in the bin, on the late edge, the restore or a delete, whose mark stays its own", async ({
     signal,
   }) => {
     const tag = `late-part-${ctx.runId}`;
@@ -1065,7 +1065,7 @@ describe("a part announces only what moved", () => {
       // The witness: the items the late part moved are announced.
       for (const moved of [part, moving]) {
         expect(
-          frame(events, "item.deleted", moved)?.item?.trashed_with,
+          frame(events, "item.trashed", moved)?.item?.trashed_with,
           `${path}: ${moved}`,
         ).toBe(host);
         expect(
@@ -1074,8 +1074,8 @@ describe("a part announces only what moved", () => {
         ).toBeDefined();
       }
       expect(
-        frame(events, "item.deleted", binned),
-        `${path}: item.deleted`,
+        frame(events, "item.trashed", binned),
+        `${path}: item.trashed`,
       ).toBeUndefined();
       expect(
         frame(events, "item.restored", binned),
@@ -1092,11 +1092,11 @@ describe("a part announces only what moved", () => {
     );
     for (const [path, events] of again) {
       expect(
-        frame(events, "item.deleted", moving)?.item?.trashed_with,
+        frame(events, "item.trashed", moving)?.item?.trashed_with,
         `${path}: the moving child`,
       ).toBe(host);
       expect(
-        frame(events, "item.deleted", binned),
+        frame(events, "item.trashed", binned),
         `${path}: the binned child on a delete`,
       ).toBeUndefined();
     }
@@ -1158,10 +1158,10 @@ describe("a purge says which edges it took, a conflicted copy's link among them"
 });
 
 describe("a webhook delivery carries the marks", () => {
-  it("delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one", async () => {
+  it("delivers the item.trashed of an item a cascade trashed with its mark, and the item trashed's own without one", async () => {
     const subscription = await client.createWebhook({
       url: receiver.hookUrl("cascade-marks"),
-      events: ["item.deleted"],
+      events: ["item.trashed"],
     });
     expect(subscription.status).toBe(201);
     trackWebhook(ctx, subscription.data.id, client);
@@ -1178,7 +1178,7 @@ describe("a webhook delivery carries the marks", () => {
       const hit = await receiver.waitFor(
         (r) =>
           r.path === "/hook/cascade-marks" &&
-          r.headers["x-marfa-event-type"] === "item.deleted" &&
+          r.headers["x-marfa-event-type"] === "item.trashed" &&
           itemOf(r.body)?.id === id,
       );
       return itemOf(hit.body) as MarfaItem;

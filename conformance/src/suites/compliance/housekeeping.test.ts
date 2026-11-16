@@ -41,9 +41,9 @@ describe("the housekeeping the server runs on itself", () => {
     for (const name of ALWAYS_LISTED) expect(names).toContain(name);
     for (const row of listed.data.data) {
       expect(row.name).toMatch(/^[a-z][a-z0-9-]*$/);
-      expect(row.interval_ms).toBeGreaterThan(0);
+      expect(row.interval_seconds).toBeGreaterThan(0);
       expect(Date.parse(row.next_run_at)).not.toBeNaN();
-      expect([null, "ok", "error"]).toContain(row.last_outcome);
+      expect([null, "succeeded", "failed"]).toContain(row.last_outcome);
     }
   });
 
@@ -98,7 +98,7 @@ describe("the housekeeping the server runs on itself", () => {
         run.data,
       );
       expect(run.data.name).toBe("trash-purge");
-      expect(run.data.outcome).toBe("ok");
+      expect(run.data.outcome).toBe("succeeded");
       expect(Date.parse(run.data.started_at)).not.toBeNaN();
       expect(Date.parse(run.data.finished_at)).toBeGreaterThanOrEqual(
         Date.parse(run.data.started_at),
@@ -113,7 +113,7 @@ describe("the housekeeping the server runs on itself", () => {
         running_since: null,
         last_started_at: run.data.started_at,
         last_finished_at: run.data.finished_at,
-        last_outcome: "ok",
+        last_outcome: "succeeded",
         last_error: run.data.error,
         last_result: run.data.result,
       });
@@ -123,7 +123,7 @@ describe("the housekeeping the server runs on itself", () => {
       const nextRunAt = Date.parse(row?.next_run_at ?? "");
       expect(nextRunAt).toBeGreaterThan(Date.parse(run.data.started_at));
       expect(nextRunAt).toBeLessThanOrEqual(
-        Date.parse(run.data.finished_at) + (row?.interval_ms ?? 0),
+        Date.parse(run.data.finished_at) + (row?.interval_seconds ?? 0) * 1000,
       );
     } finally {
       await server.stop();
@@ -159,7 +159,7 @@ describe("the housekeeping the server runs on itself", () => {
       ["trash_retention_days", 36500],
       ["inbound_handled_retention_days", 36500],
       ["inbound_pending_retention_days", 36500],
-      ["event_log_retention_hours", 876000],
+      ["event_log_retention_days", 36500],
     ] as const;
     try {
       for (const [field, max] of ranges) {
@@ -198,7 +198,7 @@ describe("the housekeeping the server runs on itself", () => {
         trash_retention_days: 36500,
         inbound_handled_retention_days: 36500,
         inbound_pending_retention_days: 36500,
-        event_log_retention_hours: 876000,
+        event_log_retention_days: 36500,
       });
       expect(widest.status, JSON.stringify(widest.error)).toBe(200);
       for (const name of [
@@ -210,7 +210,7 @@ describe("the housekeeping the server runs on itself", () => {
         const run = await operator.runHousekeeping(name);
         expect(run.status, name).toBe(200);
         expect(run.data.outcome, `${name}: ${String(run.data.error)}`).toBe(
-          "ok",
+          "succeeded",
         );
       }
     } finally {

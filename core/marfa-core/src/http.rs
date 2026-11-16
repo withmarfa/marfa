@@ -1714,7 +1714,7 @@ impl Http {
         );
         if matches!(
             &refused,
-            CoreError::Server { status: 409, code, .. } if code == "type_already_exists"
+            CoreError::Server { status: 409, code, .. } if code == "type_exists"
         ) {
             return Ok(Registration::Held);
         }
@@ -2523,7 +2523,7 @@ mod tests {
             (Method::Delete, "edges/e1"),
             (Method::Post, "items/n1/tags"),
             (Method::Delete, "items/n1/tags/x"),
-            (Method::Put, "items/n1/metadata"),
+            (Method::Put, "items/n1/tags"),
             (Method::Put, "items/n1/extensions/app.cursor"),
             (Method::Delete, "items/n1/extensions/app.cursor"),
         ] {

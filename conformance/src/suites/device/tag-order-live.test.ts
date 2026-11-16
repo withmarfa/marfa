@@ -96,7 +96,7 @@ it("answers the tags in the order the server answers them, after a hydration, a 
     "a catch-up answered the tags in another order than the server",
   ).toEqual(await answered(id));
 
-  const replaced = await client.replaceMetadata(id, {
+  const replaced = await client.replaceTags(id, {
     tags: ["yak", "ant", "yak", "zebra", "bee"],
   });
   expect(replaced.ok, JSON.stringify(replaced.error)).toBe(true);

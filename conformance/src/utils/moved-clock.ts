@@ -58,7 +58,7 @@ export async function quiet(
 ): Promise<void> {
   for (const name of names) {
     for (;;) {
-      expect((await runJob(server, name)).outcome, name).toBe("ok");
+      expect((await runJob(server, name)).outcome, name).toBe("succeeded");
       const next = Date.parse((await jobs(server))[name]?.next_run_at ?? "");
       expect(Number.isNaN(next), `${name} has a next run`).toBe(false);
       const left = next - (Date.now() + server.clockOffsetMs);

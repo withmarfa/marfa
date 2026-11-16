@@ -92,7 +92,7 @@ describe("an image whose header is malformed", () => {
 
     const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
-    expect(run.data.outcome).toBe("ok");
+    expect(run.data.outcome).toBe("succeeded");
     expect(run.data.result).toEqual({ extracted: 3, skipped: 3, failed: 0 });
 
     for (const item of items) {

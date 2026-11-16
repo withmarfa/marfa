@@ -683,7 +683,7 @@ fn a_connector_reports_and_beats_without_naming_itself() {
             &json!({"id": "r1", "connector_id": "c1", "outcome": "failed"}).to_string(),
         ),
     ]);
-    let ran = run(&home, &door.url, &["connectors", "heartbeat"]);
+    let ran = run(&home, &door.url, &["connectors", "heartbeat", "c1"]);
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
         ran.stdout.trim(),
@@ -695,6 +695,7 @@ fn a_connector_reports_and_beats_without_naming_itself() {
         &[
             "connectors",
             "report",
+            "c1",
             "--outcome",
             "failed",
             "--started-at",
@@ -708,19 +709,15 @@ fn a_connector_reports_and_beats_without_naming_itself() {
     let asked = door.received();
     assert_eq!(
         (asked[0].method(), asked[0].path()),
-        ("POST", "/connectors/heartbeat")
+        ("POST", "/connectors/c1/heartbeat")
     );
     assert_eq!(
         (asked[1].method(), asked[1].path()),
-        ("POST", "/connectors/runs")
+        ("POST", "/connectors/c1/runs")
     );
 
-    // Naming an id is no longer a thing to do.
-    let ran = run(
-        &home,
-        "http://127.0.0.1:9",
-        &["connectors", "heartbeat", "c1"],
-    );
+    // A heartbeat names its connector.
+    let ran = run(&home, "http://127.0.0.1:9", &["connectors", "heartbeat"]);
     assert_eq!(ran.code, 2, "{}", ran.stderr);
 }
 

@@ -1056,7 +1056,7 @@ describe("an interrupted hydration", () => {
     // is read after the changes, as a server answers it.
     log = [
       copyItemEvent("11", "item.updated", changed),
-      copyItemEvent("12", "item.deleted", gone),
+      copyItemEvent("12", "item.trashed", gone),
     ];
 
     const resumed = await device.hydrate(["core.note"], "library");

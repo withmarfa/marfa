@@ -59,10 +59,10 @@ codes! {
     SetupProofInvalid = "setup_proof_invalid", 401;
     Unauthorized = "unauthorized", 401;
     CoreTypeImmutable = "core_type_immutable", 403;
-    EdgePermissionDenied = "edge_permission_denied", 403;
+    EdgeTypeNotPermitted = "edge_type_not_permitted", 403;
     Forbidden = "forbidden", 403;
     TypeNotPermitted = "type_not_permitted", 403;
-    ApiKeyNotFound = "api_key_not_found", 404;
+    KeyNotFound = "key_not_found", 404;
     BackupNotFound = "backup_not_found", 404;
     BatchNotFound = "batch_not_found", 404;
     BlobCopyNotFound = "blob_copy_not_found", 404;
@@ -107,7 +107,7 @@ codes! {
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;
     SourceIdConflict = "source_id_conflict", 409;
     TrashPlanChanged = "trash_plan_changed", 409;
-    TypeAlreadyExists = "type_already_exists", 409;
+    TypeExists = "type_exists", 409;
     TypeChainUnresolvable = "type_chain_unresolvable", 409;
     TypeHasSubtypes = "type_has_subtypes", 409;
     TypeInUse = "type_in_use", 409;

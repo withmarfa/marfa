@@ -120,7 +120,7 @@ When the server refuses `POST /types` under `types/register-reach` for an identi
 
 ### `types/register-duplicate`
 
-If `POST /types` names a valid schema under an identifier already registered, then the server MUST answer `409 type_already_exists`.
+If `POST /types` names a valid schema under an identifier already registered, then the server MUST answer `409 type_exists`.
 
 **Tests:** `compliance/type-registry.test.ts › rejects duplicate type registration with 409`, `compliance/types.test.ts › refuses a duplicate registration with a bad schema as the bad schema`.
 
@@ -138,17 +138,11 @@ If `POST /types` names `fields` and no `id`, then the server MUST answer `400 in
 
 ### `types/field-shadows-item`
 
-If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `capture_latitude`, `capture_longitude`, `trashed_at`, `trashed_by_cascade` or `trashed_with`, then the server MUST answer `400 property_shadows_field` naming each such field.
+If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `capture_latitude`, `capture_longitude`, `trashed_at`, `trashed_by_cascade`, `trashed_with`, `last_activity_at` or `read_only`, then the server MUST answer `400 property_shadows_field` naming each such field.
 
 **Reason:** an item would carry two values under one key, with nothing to say which is authoritative.
 
 **Tests:** `compliance/types.test.ts › rejects type registration whose property name shadows a first-class Item field`, `› refuses each field named like one every item has`, `› refuses a replacement whose property name shadows a first-class Item field, as registration does`.
-
-### `types/field-builtin-names`
-
-The server MUST take a field named like a built-in member of an object, such as `toString`, `valueOf`, `constructor` or `hasOwnProperty`, and write, read and update it as any other field.
-
-**Tests:** `compliance/types.test.ts › writes and reads items of a type whose fields share a name with an object's built-in members`, `compliance/type-evolution.test.ts › takes fields named like an object's built-in members`.
 
 ### `types/refused-unchanged`
 
@@ -510,9 +504,9 @@ If a type names `items_fields` on a field that is not an `array` whose `items_ty
 
 ### `types/format-collapses`
 
-When a `string` field names a `format` of `url`, `email`, `datetime`, `date` or `thumbnail`, the server MUST store the field as that type, and an `array` of strings naming one of the first four as an array of that type.
+When a `string` field names a `format` of `url`, `email`, `date` or `thumbnail`, the server MUST store the field as that type, and an `array` of strings naming one of the first three as an array of that type.
 
-**Tests:** `compliance/types.test.ts › keeps a list of strings with a type-naming format a list`, `compliance/types.test.ts › stores email, datetime and date formats on a string as their own types`, `compliance/thumbnails.test.ts › registers by its type or by the format that stands for it`.
+**Tests:** `compliance/types.test.ts › keeps a list of strings with a type-naming format a list`, `compliance/types.test.ts › stores email and date formats on a string as their own types`, `compliance/thumbnails.test.ts › registers by its type or by the format that stands for it`.
 
 ### `types/format-own-type`
 
@@ -525,6 +519,14 @@ When a field names a `format` that is its own type, the server MUST store the fi
 If a field names a type-naming `format` on a type other than `string`, the type the format names or a list of strings, or `thumbnail` on a list, then the server MUST answer `400 invalid_schema` naming the field's `format`.
 
 **Tests:** `compliance/types.test.ts › refuses a type-naming format on a field that is neither a string nor a list of strings`, `compliance/types.test.ts › leaves a format that names the field's own type unchanged, and refuses thumbnail on a list`.
+
+### `types/format-datetime-refused`
+
+If a field names the `format` `datetime`, then the server MUST answer `400 invalid_schema` naming the field's `format`.
+
+**Reason:** `datetime` is a field type, and a field takes it as `{"type": "datetime"}`.
+
+**Tests:** `compliance/types.test.ts › refuses datetime as a format on a string and on a list of strings, and takes it as a type`.
 
 ### `types/format-string-only`
 

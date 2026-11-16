@@ -34,11 +34,14 @@ pub enum ConnectorsCommand {
         /// The connector id.
         id: String,
     },
-    /// Say the connector is alive. The key this runs under is the connector,
-    /// so no id is given.
-    Heartbeat,
-    /// Report one run of the connector the key this runs under registered, so
-    /// no id is given.
+    /// Say the connector is alive. Only the key the connector is registered
+    /// under can.
+    Heartbeat {
+        /// The connector id.
+        id: String,
+    },
+    /// Report one run of a connector. Only the key the connector is
+    /// registered under can.
     Report(ReportArgs),
     /// The runs a connector has reported, newest first.
     Runs {
@@ -267,6 +270,8 @@ impl Outcome {
 
 #[derive(Debug, Args)]
 pub struct ReportArgs {
+    /// The connector id.
+    pub id: String,
     /// How the run ended.
     #[arg(long)]
     pub outcome: Outcome,
@@ -298,7 +303,7 @@ pub fn report_request(args: &ReportArgs) -> Request {
     body.insert("finished_at".into(), json!(args.finished_at));
     insert_opt(&mut body, "summary", args.summary.clone());
     insert_opt(&mut body, "error", args.error.clone());
-    Request::post(&["connectors", "runs"]).json(Value::Object(body))
+    Request::post(&["connectors", &args.id, "runs"]).json(Value::Object(body))
 }
 
 pub fn runs_request(id: &str, page: &PageArgs) -> Request {
@@ -528,7 +533,7 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
     };
     let wrote = match &command {
         ConnectorsCommand::Register { .. } => Wrote::Registered,
-        ConnectorsCommand::Heartbeat => Wrote::Heartbeat,
+        ConnectorsCommand::Heartbeat { .. } => Wrote::Heartbeat,
         ConnectorsCommand::Report(_) => Wrote::Report,
         ConnectorsCommand::Hold { id, .. } => Wrote::Hold(id.clone()),
         ConnectorsCommand::Release { id, .. } => Wrote::Release(id.clone()),
@@ -545,7 +550,7 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         ConnectorsCommand::List => Request::get(&["connectors"]),
         ConnectorsCommand::Get { id } => Request::get(&["connectors", &id]),
         ConnectorsCommand::Delete { id } => Request::delete(&["connectors", &id]),
-        ConnectorsCommand::Heartbeat => Request::post(&["connectors", "heartbeat"]),
+        ConnectorsCommand::Heartbeat { id } => Request::post(&["connectors", &id, "heartbeat"]),
         ConnectorsCommand::Report(args) => report_request(&args),
         ConnectorsCommand::Runs { id, page } => runs_request(&id, &page),
         ConnectorsCommand::Hold { id, process } => hold_request(&id, &process),

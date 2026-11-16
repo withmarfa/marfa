@@ -2253,7 +2253,7 @@ pub(crate) mod tests {
                 matches!(error, CoreError::Forbidden { code, .. } if code == "type_not_permitted")
             }
             "placement" => {
-                matches!(error, CoreError::Forbidden { code, .. } if code == "edge_permission_denied")
+                matches!(error, CoreError::Forbidden { code, .. } if code == "edge_type_not_permitted")
             }
             _ => matches!(
                 error,

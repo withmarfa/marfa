@@ -38,7 +38,7 @@ pub async fn requests(State(app): State<Arc<App>>, request: Request, next: Next)
                 Code::RateLimited,
                 "Too many requests from this credential; try again later.",
             )
-            .with_detail("retry_after", retry_seconds(wait)),
+            .with_detail("retry_after_seconds", retry_seconds(wait)),
         ),
         None => next.run(Request::from_parts(parts, body)).await,
     }

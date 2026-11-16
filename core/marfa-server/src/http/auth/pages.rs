@@ -90,7 +90,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
         return_to,
         authorization: sent.map(|_| link),
         app: app_name,
-        problem: SignInProblem::from_query(field("error"), field("retry_after")),
+        problem: SignInProblem::from_query(field("error"), field("retry_after_seconds")),
     };
     Ok(pages::sign_in(&view)?.into_response())
 }
@@ -160,7 +160,10 @@ pub async fn device(State(app): State<Arc<App>>, uri: Uri) -> Answer {
     let view = DeviceEntry {
         instance_name: instance::name(&app).await?,
         user_code: shown(first(&pairs, "user_code")),
-        problem: DeviceProblem::from_query(first(&pairs, "error"), first(&pairs, "retry_after")),
+        problem: DeviceProblem::from_query(
+            first(&pairs, "error"),
+            first(&pairs, "retry_after_seconds"),
+        ),
     };
     Ok(pages::device_entry(&view)?.into_response())
 }
@@ -174,7 +177,11 @@ fn refused_with(refusal: &Refusal, page: pages::Page) -> Response {
 }
 
 fn wait_of(refusal: &Refusal) -> Option<Wait> {
-    let seconds = refusal.details.as_ref()?.get("retry_after")?.as_i64()?;
+    let seconds = refusal
+        .details
+        .as_ref()?
+        .get("retry_after_seconds")?
+        .as_i64()?;
     Wait::from_query(Some(&seconds.to_string()))
 }
 

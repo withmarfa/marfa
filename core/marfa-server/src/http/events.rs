@@ -26,7 +26,7 @@ use crate::app::access::reach::Judge;
 use crate::app::events::{self, Filter, Opening};
 use crate::app::faults::HOLD_STREAM_OPEN;
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::settings::registry::SSE_MAX_VIEWERS;
+use crate::settings::registry::EVENT_STREAM_MAX_VIEWERS;
 
 const DECLARED: [&str; 2] = ["type", "edges"];
 const COPY_DECLARED: [&str; 2] = ["edges", "copy"];
@@ -184,7 +184,7 @@ async fn copy(
     app.faults.hold(HOLD_STREAM_OPEN, None).await;
     let viewer = app
         .viewers
-        .admit(app.settings.live().get(SSE_MAX_VIEWERS))
+        .admit(app.settings.live().get(EVENT_STREAM_MAX_VIEWERS))
         .ok_or_else(at_capacity)?;
     let (resume, reach) = match resume {
         Some((cursor, reach)) => (Some(cursor), Some(reach)),
@@ -262,7 +262,7 @@ pub async fn open(
     let resume = cursor_of(&headers)?;
     let viewer = app
         .viewers
-        .admit(app.settings.live().get(SSE_MAX_VIEWERS))
+        .admit(app.settings.live().get(EVENT_STREAM_MAX_VIEWERS))
         .ok_or_else(at_capacity)?;
     let feed = events::open(
         app,

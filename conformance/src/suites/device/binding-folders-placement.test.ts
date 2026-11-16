@@ -181,7 +181,7 @@ describe("placement retries on the folder clock", () => {
       const edges = new EdgeDoor();
       edges.placing = (edge) =>
         edge.edge_type === "in-folder"
-          ? refusal(403, "edge_permission_denied", "Write access denied")
+          ? refusal(403, "edge_type_not_permitted", "Write access denied")
           : undefined;
       harness = await bindingFolderHarness("binding-folder-key-clock", {
         key: [() => key],

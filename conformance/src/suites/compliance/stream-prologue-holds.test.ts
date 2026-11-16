@@ -251,7 +251,9 @@ describe("a replay the retention sweep overtakes", () => {
       await note("retired-second");
       await server.advanceClock(31 * DAY_MS);
       const kept = await note("kept");
-      expect((await runJob(server, "event-log-cleanup")).outcome).toBe("ok");
+      expect((await runJob(server, "event-log-cleanup")).outcome).toBe(
+        "succeeded",
+      );
 
       // The witness that the sweep retired the events the replay was to read.
       const probe = await open({ lastEventId: before });

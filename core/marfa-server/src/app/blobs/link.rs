@@ -48,7 +48,7 @@ impl Signer {
     }
 }
 
-/// A `ttl` as seconds: a whole number of at least 1, held to the cap.
+/// A `ttl_seconds` value: a whole number of at least 1, held to the cap.
 pub fn ttl_seconds(text: Option<&str>) -> Result<u64> {
     let Some(text) = text else {
         return Ok(DEFAULT_TTL_SECONDS);
@@ -56,10 +56,10 @@ pub fn ttl_seconds(text: Option<&str>) -> Result<u64> {
     let digits = text.trim_start_matches('0');
     let whole = !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
     if !whole || digits.is_empty() {
-        let message = "ttl must be a whole number of seconds, 1 or more.";
+        let message = "ttl_seconds must be a whole number of seconds, 1 or more.";
         return Err(Refusal::validation(message).with_detail(
             "errors",
-            serde_json::json!([{ "path": "ttl", "message": message }]),
+            serde_json::json!([{ "path": "ttl_seconds", "message": message }]),
         ));
     }
     Ok(digits

@@ -12,11 +12,11 @@ When `PATCH /items/{id}` names the version the item holds and carries `propertie
 
 ### `versions/metadata-keeps-version`
 
-When `POST /items/{id}/tags`, `PUT /items/{id}/metadata` or `PUT /items/{id}/extensions/{namespace}` writes an item, the server MUST NOT move its `version` or write a snapshot.
+When `POST /items/{id}/tags`, `PUT /items/{id}/tags` or `PUT /items/{id}/extensions/{namespace}` writes an item, the server MUST NOT move its `version` or write a snapshot.
 
 **Reason:** tags, metadata and extensions are not the item's content, so a writer of content is not told its base moved when they change.
 
-**Tests:** `compliance/version-order.test.ts › leaves the item at its version and its history empty after a tag write, a metadata replacement and an extension write`.
+**Tests:** `compliance/version-order.test.ts › leaves the item at its version and its history empty after a tag write, a tag replacement and an extension write`.
 
 ### `versions/refused-keeps-history`
 
@@ -130,7 +130,7 @@ When two `PATCH /items/{id}` writes that name one version, name no `conflict=aut
 
 ### `versions/update-order`
 
-When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an id no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; an inline edge of an edge type nothing registered, a self-loop, `properties` the edge type refuses, a to item no item holds, in the bin or that the key may not read, or an endpoint type the edge type refuses; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks; an inline edge that duplicates one the item holds, breaks a cardinality or closes a cycle.
+When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an id no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; an inline edge of an edge type nothing registered, a self-loop, `properties` the edge type refuses, a to item no item holds, in the bin or that the key may not read, or an endpoint type the edge type refuses; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks; an inline edge that duplicates one the item holds, breaks a cardinality or closes a cycle.
 
 **Reason:** the answers about the item itself, such as `404 item_not_found` and `409 type_mismatch`, come after the check for nothing to change and before the version is looked at. What an edge's own definition decides is asked before the version, and what depends on the edges the item holds after the merge, as `edges/inline-order` says.
 
@@ -540,7 +540,7 @@ If a stale `PATCH /items/{id}` that names no `conflict=auto`, under `properties_
 
 ### `versions/collision-prototype-key`
 
-When a stale write carries or clears a property named like a member every object has, such as `constructor`, the server MUST judge it by what the item holds, as it judges any other property.
+When a stale write carries or clears a property of any name, the server MUST judge it by what the item holds, as it judges any other property.
 
 **Tests:** `correctness/item-versioning.test.ts › clears a field named like a prototype member as any other`.
 
@@ -776,17 +776,11 @@ When a `POST /items/bulk` entry under `mode: create_only` names a natural key th
 
 The rules below are written for `PATCH /items/{id}`, the one operation that takes a `conflict` mode.
 
-### `versions/conflict-manual`
-
-When `PATCH /items/{id}` names `conflict=manual` or `conflict=callback`, the server MUST answer as it does where the request names no `conflict`.
-
-**Tests:** `sync/conflict.test.ts › takes conflict=manual and conflict=callback as absent, and refuses any other value`.
-
 ### `versions/conflict-invalid`
 
-If `PATCH /items/{id}` names a `conflict` other than `auto`, `manual` or `callback`, then the server MUST answer `400 validation_error`.
+If `PATCH /items/{id}` names a `conflict` other than `auto`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `sync/conflict.test.ts › takes conflict=manual and conflict=callback as absent, and refuses any other value`.
+**Tests:** `sync/conflict.test.ts › refuses a conflict mode other than auto, and resolves the same write under auto`.
 
 ### `versions/auto-resolved`
 

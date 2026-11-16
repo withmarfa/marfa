@@ -38,7 +38,7 @@ pub async fn preview(app: &App, caller: &Caller, id: &str) -> Result<Key> {
         .await?
         .into_iter()
         .find(|key| key.id == id)
-        .ok_or_else(|| Refusal::new(Code::ApiKeyNotFound, format!("Key {id} not found")))
+        .ok_or_else(|| Refusal::new(Code::KeyNotFound, format!("Key {id} not found")))
 }
 
 pub fn token_for(app: &App, caller: &Caller, key: &Key) -> Result<confirm::Token> {

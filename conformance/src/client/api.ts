@@ -139,7 +139,7 @@ export interface UpdateItemInput {
   edges?: Record<string, string[]>;
 }
 
-export interface ReplaceMetadataInput {
+export interface ReplaceTagsInput {
   tags?: string[];
 }
 
@@ -164,6 +164,8 @@ export class MarfaClient {
   /** Sends to the local listener's socket, or over the network. */
   private send: typeof fetch;
   private http: typeof ofetch;
+  /** The connector this client last registered, which its heartbeats and run reports name. */
+  private registered: string | undefined;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -1136,10 +1138,12 @@ export class MarfaClient {
     description?: string;
     read_only_types?: string[];
   }): Promise<ApiResponse<ConnectorRow>> {
-    return this.request<ConnectorRow>("/connectors", {
+    const answer = await this.request<ConnectorRow>("/connectors", {
       method: "POST",
       body: input,
     });
+    if (answer.ok) this.registered = answer.data.id;
+    return answer;
   }
 
   async listConnectors(): Promise<ApiResponse<PaginatedResult<ConnectorRow>>> {
@@ -1156,24 +1160,35 @@ export class MarfaClient {
     });
   }
 
-  /** `POST /connectors/heartbeat`: the key's own registration is the connector. */
-  async sendConnectorHeartbeat(): Promise<
-    ApiResponse<{ last_heartbeat_at: string }>
-  > {
+  /**
+   * `POST /connectors/{id}/heartbeat`: for the connector this client
+   * registered, or for `id`. With neither, it names a connector nothing holds.
+   */
+  async sendConnectorHeartbeat(
+    id?: string,
+  ): Promise<ApiResponse<{ last_heartbeat_at: string }>> {
     return this.request<{ last_heartbeat_at: string }>(
-      "/connectors/heartbeat",
+      `/connectors/${this.connectorId(id)}/heartbeat`,
       { method: "POST" },
     );
   }
 
-  /** `POST /connectors/runs`: the key's own registration is the connector. */
+  /** `POST /connectors/{id}/runs`: for the connector this client registered, or for `id`. */
   async reportConnectorRun(
     input: ConnectorRunInput,
+    id?: string,
   ): Promise<ApiResponse<ConnectorRun>> {
-    return this.request<ConnectorRun>("/connectors/runs", {
-      method: "POST",
-      body: input as unknown as Record<string, unknown>,
-    });
+    return this.request<ConnectorRun>(
+      `/connectors/${this.connectorId(id)}/runs`,
+      {
+        method: "POST",
+        body: input as unknown as Record<string, unknown>,
+      },
+    );
+  }
+
+  private connectorId(id: string | undefined): string {
+    return id ?? this.registered ?? "01a0c000-0000-7000-8000-000000000000";
   }
 
   async listConnectorRuns(
@@ -1394,19 +1409,13 @@ export class MarfaClient {
     );
   }
 
-  async getMetadata(
+  async replaceTags(
     id: string,
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/metadata`);
-  }
-
-  async replaceMetadata(
-    id: string,
-    metadata: ReplaceMetadataInput,
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/metadata`, {
+    input: ReplaceTagsInput,
+  ): Promise<ApiResponse<{ tags: string[] }>> {
+    return this.request<{ tags: string[] }>(`/items/${id}/tags`, {
       method: "PUT",
-      body: metadata,
+      body: input,
     });
   }
 
@@ -1414,7 +1423,7 @@ export class MarfaClient {
     ApiResponse<PaginatedResult<{ tag: string; count: number }>>
   > {
     return this.request<PaginatedResult<{ tag: string; count: number }>>(
-      "/metadata/tags",
+      "/tags",
     );
   }
 
@@ -1546,10 +1555,11 @@ export class MarfaClient {
   /** `GET /blobs/{hash}/url`: a time-limited link the bytes can be fetched from. */
   async getBlobUrl(
     hash: string,
-    ttl?: number,
-  ): Promise<ApiResponse<{ url: string; expires_in: number }>> {
-    const query = ttl === undefined ? "" : `?ttl=${String(ttl)}`;
-    return this.request<{ url: string; expires_in: number }>(
+    ttlSeconds?: number,
+  ): Promise<ApiResponse<{ url: string; ttl_seconds: number }>> {
+    const query =
+      ttlSeconds === undefined ? "" : `?ttl_seconds=${String(ttlSeconds)}`;
+    return this.request<{ url: string; ttl_seconds: number }>(
       `/blobs/${hash}/url${query}`,
     );
   }

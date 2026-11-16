@@ -777,7 +777,7 @@ pub(crate) fn settle_late_part(
     };
     for item in moved_to_bin(unit, &plan::late_part(&gate, &source, &host)?)? {
         unit.audit("item", &item.id, None)?;
-        announce(unit, "item.deleted", &item)?;
+        announce(unit, "item.trashed", &item)?;
     }
     index::settle(tx, &catalog.rules)
 }
@@ -1159,7 +1159,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         {
             if !self.caller().may_read_type(&row.type_id) {
                 return Err(Refusal::new(
-                    Code::Conflict,
+                    Code::IdReused,
                     format!("Item with id={id} already exists"),
                 )
                 .with_detail("existing_id", id));
@@ -1913,11 +1913,16 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(row)
     }
 
-    fn tags_landed(&self, row: &Item, details: Value) -> Result<Done> {
-        let tx = self.unit.tx();
-        let item = rows::touch(tx, row, &self.unit.at)?;
+    fn tags_touched(&self, row: &Item, details: Value) -> Result<Item> {
+        let item = rows::touch(self.unit.tx(), row, &self.unit.at)?;
         self.unit.audit("item", &item.id, Some(details))?;
         self.announce_metadata(&item)?;
+        Ok(item)
+    }
+
+    fn tags_landed(&self, row: &Item, details: Value) -> Result<Done> {
+        let tx = self.unit.tx();
+        let item = self.tags_touched(row, details)?;
         Ok(Done {
             status: 200,
             body: format!(
@@ -1934,7 +1939,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let before = rows::tags(tx, row.seq)?.len();
         validation::tag_count(before, tags.len()).map_err(ruled)?;
         rows::set_tags(tx, row.seq, &tags)?;
-        self.tags_landed(&row, json!({ "tags": tags }))
+        let item = self.tags_touched(&row, json!({ "tags": tags }))?;
+        Ok(Done {
+            status: 200,
+            body: json!({ "tags": rows::tags(tx, item.seq)? }).to_string(),
+        })
     }
 
     fn add_tags(&self, id: &str, tags: Vec<String>, version: Option<i64>) -> Result<Done> {
@@ -2114,7 +2123,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if !self.caller().may_read_type(&row.type_id) {
             return Err(if named_by_id {
                 Refusal::new(
-                    Code::Conflict,
+                    Code::IdReused,
                     format!("Item with id={} already exists", row.id),
                 )
                 .with_detail("existing_id", row.id.as_str())
@@ -2297,10 +2306,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if to_bin {
             for row in &taken {
                 self.unit.audit("item", &row.id, None)?;
-                self.announce("item.deleted", row)?;
+                self.announce("item.trashed", row)?;
                 carried.push(row.id.clone());
             }
-            self.announce("item.deleted", &item)?;
+            self.announce("item.trashed", &item)?;
         } else if from_bin {
             self.announce("item.restored", &item)?;
             carried = self.brought_back(&row)?;
@@ -2312,7 +2321,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let plan = plan::plan(&self.gate(), Act::Bin, &[Asked { id, version }])?;
         for item in self.moved_to_bin(&plan.moving)? {
             self.unit.audit("item", &item.id, None)?;
-            self.announce("item.deleted", &item)?;
+            self.announce("item.trashed", &item)?;
         }
         Ok(done_ok())
     }
@@ -2335,7 +2344,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         }
         let moved = self.moved_to_bin(&plan.moving)?;
         for item in &moved {
-            self.announce("item.deleted", item)?;
+            self.announce("item.trashed", item)?;
         }
         self.unit.audit_set(
             "items.trash",

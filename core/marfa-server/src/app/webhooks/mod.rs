@@ -378,7 +378,7 @@ fn delivery_answer(delivery: &Delivery) -> Value {
         "event_type": delivery.event_type,
         "status_code": delivery.status_code,
         "attempt": delivery.attempt,
-        "succeeded": delivery.status == Status::Success,
+        "succeeded": delivery.status == Status::Succeeded,
         "error": delivery.error,
         "created_at": delivery.created_at,
     })
@@ -454,10 +454,10 @@ pub async fn redeliver(
                  longer has webhooks.manage, so Marfa sends it nothing.",
             ));
         }
-        if delivery.status != Status::DeadLetter {
+        if delivery.status != Status::Failed {
             return Err(redelivery_refused(
                 "delivery_not_failed",
-                "Only a delivery Marfa gave up on, with status dead_letter, can be redelivered.",
+                "Only a delivery Marfa gave up on, with status failed, can be redelivered.",
             ));
         }
         let cutoff = housekeeping::cutoff(tx, &live, AUDIT_RETENTION_DAYS, DAY_MS)?;

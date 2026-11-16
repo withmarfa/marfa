@@ -2975,7 +2975,7 @@ describe("files and items", () => {
         edge.edge_type === "in-folder"
           ? refusal(
               403,
-              "edge_permission_denied",
+              "edge_type_not_permitted",
               "Write access to edge type denied",
             )
           : undefined;
@@ -3013,7 +3013,7 @@ describe("files and items", () => {
           entry.refusal?.code,
         ]),
         "the refusal whose read met the changed reach left the push's report",
-      ).toEqual([["create_edge", "refused", "edge_permission_denied"]]);
+      ).toEqual([["create_edge", "refused", "edge_type_not_permitted"]]);
       expect(placedPaths(edges)).toEqual([]);
 
       const next = await harness.folder.push();
@@ -3825,7 +3825,7 @@ describe("files and items", () => {
       edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -5559,7 +5559,7 @@ describe("large removals, status and size", () => {
       .map((row, at) =>
         copyItemEvent(
           String(at + 2),
-          "item.deleted",
+          "item.trashed",
           wireItem({ ...row.item, state: "trashed" }),
         ),
       );

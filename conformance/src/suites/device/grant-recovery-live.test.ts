@@ -155,7 +155,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
           break;
         }
         case "metadata": {
-          const read = await client.getMetadata(id);
+          const read = await client.getItem(id);
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
           expect(read.data.metadata.tags).toContain("saved-offline");
           break;

@@ -149,7 +149,7 @@ describe("a push that only sends", () => {
         copyReplay("2", [
           copyItemEvent(
             "2",
-            "item.deleted",
+            "item.trashed",
             wireItem({ ...departed, state: "trashed" }),
           ),
         ]),

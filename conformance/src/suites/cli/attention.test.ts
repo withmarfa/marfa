@@ -193,7 +193,7 @@ it(
     await server.setFault("fail:housekeeping:audit-cleanup");
     try {
       const ended = await local.json(["housekeeping", "run", "audit-cleanup"]);
-      expect(ended).toMatchObject({ name: "audit-cleanup", outcome: "error" });
+      expect(ended).toMatchObject({ name: "audit-cleanup", outcome: "failed" });
     } finally {
       await server.clearFault();
     }
@@ -214,6 +214,7 @@ it(
     await failing.as.json([
       "connectors",
       "report",
+      failing.id,
       "--started-at",
       new Date(Date.now() - 60_000).toISOString(),
       "--finished-at",

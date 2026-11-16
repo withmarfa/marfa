@@ -105,7 +105,7 @@ describe("type registry", () => {
     const second = await client.registerType(schema);
     expect(second.ok).toBe(false);
     expect(second.status).toBe(409);
-    expect(second.error?.error.code).toBe("type_already_exists");
+    expect(second.error?.error.code).toBe("type_exists");
   });
 
   it("rejects type registration from a key without metadata.types:write", async () => {
@@ -955,7 +955,7 @@ describe("type registry", () => {
 
     const read = await client.getItem(id);
     expect(read.data.item.properties.name).toBe("kept");
-    expect((await client.getMetadata(id)).data.metadata.tags).toContain(tag);
+    expect((await client.getItem(id)).data.metadata.tags).toContain(tag);
   });
 
   it("refuses force against a parent, ahead of the items it holds", async () => {

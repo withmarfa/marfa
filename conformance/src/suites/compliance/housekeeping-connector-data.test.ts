@@ -133,7 +133,7 @@ describe("housekeeping and what a connector keeps", () => {
       expect(listed).toContain("credential-cleanup");
       for (const name of listed) {
         const run = await runJob(server, name);
-        expect(run.outcome, `${name}: ${String(run.error)}`).toBe("ok");
+        expect(run.outcome, `${name}: ${String(run.error)}`).toBe("succeeded");
       }
 
       // The state is as it was, the agreement of the item that stands stays,

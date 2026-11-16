@@ -286,7 +286,7 @@ fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     } else {
         format!("Key {id} not found")
     };
-    Ok(Refusal::new(Code::ApiKeyNotFound, message))
+    Ok(Refusal::new(Code::KeyNotFound, message))
 }
 
 pub(crate) fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {

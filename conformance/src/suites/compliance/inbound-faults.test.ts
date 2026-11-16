@@ -113,7 +113,7 @@ describe("a run of inbound-delivery-cleanup that fails while it removes deliveri
     // The witness that the fault ended the run after it chose what to remove.
     expect(await firedCount("fail:inbound-cleanup")).toBe(1);
     expect(failed.status).toBe(200);
-    expect(failed.data.outcome).toBe("error");
+    expect(failed.data.outcome).toBe("failed");
     expect(await kept()).toEqual(
       Object.fromEntries(delivered.map((d, i) => [d, bodies[i]])),
     );
@@ -122,7 +122,7 @@ describe("a run of inbound-delivery-cleanup that fails while it removes deliveri
     const removed = await operator().runHousekeeping(
       "inbound-delivery-cleanup",
     );
-    expect(removed.data.outcome).toBe("ok");
+    expect(removed.data.outcome).toBe("succeeded");
     expect(removed.data.result).toMatchObject({ deleted: 3 });
     expect(await kept()).toEqual({});
   });

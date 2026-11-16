@@ -81,7 +81,7 @@ describe("per-edge-type permissions", () => {
     });
     expect(r1.ok).toBe(false);
     expect(r1.status).toBe(403);
-    expect(r1.error?.error.code).toBe("edge_permission_denied");
+    expect(r1.error?.error.code).toBe("edge_type_not_permitted");
 
     const noTypeScope = await makeKey("no-type-scope", {
       type_permissions: { "core.note": "read" },
@@ -161,7 +161,7 @@ describe("per-edge-type permissions", () => {
     });
     expect(po.ok).toBe(false);
     expect(po.status).toBe(403);
-    expect(po.error?.error.code).toBe("edge_permission_denied");
+    expect(po.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("wildcard edge_permissions: edge.*:write creates any edge type", async () => {
@@ -332,7 +332,7 @@ describe("per-edge-type permissions", () => {
     });
     expect(write.ok).toBe(false);
     expect(write.status).toBe(403);
-    expect(write.error?.error.code).toBe("edge_permission_denied");
+    expect(write.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("an edge type granted write is readable without a read entry", async () => {
@@ -1045,7 +1045,7 @@ describe("the doors under an item answer only what the credential may read", () 
       refusedKind.status,
       `a filter naming an unreadable edge type was answered: ${JSON.stringify(refusedKind.data)}`,
     ).toBe(403);
-    expect(refusedKind.error?.error.code).toBe("edge_permission_denied");
+    expect(refusedKind.error?.error.code).toBe("edge_type_not_permitted");
 
     // The full form of the same term, which is the shorthand's twin and
     // would otherwise be the way around it.
@@ -1057,7 +1057,7 @@ describe("the doors under an item answer only what the credential may read", () 
       refusedFullForm.status,
       `the full filter form was answered where the shorthand was refused: ${JSON.stringify(refusedFullForm.data)}`,
     ).toBe(403);
-    expect(refusedFullForm.error?.error.code).toBe("edge_permission_denied");
+    expect(refusedFullForm.error?.error.code).toBe("edge_type_not_permitted");
 
     // An anchor it may not read is not refused: it matches as an anchor no
     // item holds, so the page says nothing of the item or its edges.
@@ -1103,7 +1103,7 @@ describe("the doors under an item answer only what the credential may read", () 
       searchRefused.status,
       `search answered a filter naming an unreadable edge type: ${JSON.stringify(searchRefused.data)}`,
     ).toBe(403);
-    expect(searchRefused.error?.error.code).toBe("edge_permission_denied");
+    expect(searchRefused.error?.error.code).toBe("edge_type_not_permitted");
 
     // `POST /items/bulk-actions` takes the grammar too, and asks the same.
     const writerKey = await makeKey("underitem-filter-bulk", {
@@ -1129,7 +1129,7 @@ describe("the doors under an item answer only what the credential may read", () 
       bulkRefused.status,
       `bulk-actions answered a filter naming an unreadable edge type: ${JSON.stringify(bulkRefused.data)}`,
     ).toBe(403);
-    expect(bulkRefused.error?.error.code).toBe("edge_permission_denied");
+    expect(bulkRefused.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("refuses the term on GET /items/stats and on a view's items, and answers one the credential may read", async () => {
@@ -1167,7 +1167,7 @@ describe("the doors under an item answer only what the credential may read", () 
         refused.status,
         `stats answered ${unseenQuery}: ${JSON.stringify(refused.data)}`,
       ).toBe(403);
-      expect(refused.error?.error.code).toBe("edge_permission_denied");
+      expect(refused.error?.error.code).toBe("edge_type_not_permitted");
     }
 
     const viewOf = async (filter: string): Promise<string> => {
@@ -1192,7 +1192,7 @@ describe("the doors under an item answer only what the credential may read", () 
       refused.status,
       `a view's items answered a term naming an unreadable edge type: ${JSON.stringify(refused.data)}`,
     ).toBe(403);
-    expect(refused.error?.error.code).toBe("edge_permission_denied");
+    expect(refused.error?.error.code).toBe("edge_type_not_permitted");
   });
 });
 

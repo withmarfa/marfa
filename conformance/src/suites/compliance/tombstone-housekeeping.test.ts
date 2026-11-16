@@ -103,7 +103,7 @@ describe("a tombstone and housekeeping", () => {
       await clock.advance(2 * DAY_MS);
       const before = new Date(clock.now()).toISOString();
       const run = await runJob(server, "trash-purge");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       const after = new Date(clock.now()).toISOString();
       expect(run.result).toMatchObject({ deleted: 1 });
 
@@ -128,7 +128,7 @@ describe("a tombstone and housekeeping", () => {
     async () => {
       const row = await binned();
       await clock.advance(2 * DAY_MS);
-      expect((await runJob(server, "trash-purge")).outcome).toBe("ok");
+      expect((await runJob(server, "trash-purge")).outcome).toBe("succeeded");
       const recorded = await tombstones(row.link, row.key);
       // The witness: the tombstones are there to be removed.
       expect(recorded.byLink).toHaveLength(1);

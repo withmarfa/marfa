@@ -58,7 +58,7 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
         ProfileCommand::Show => out.value(&remote.json(&Request::get(&["profile"]))?),
         ProfileCommand::Update(args) => {
             let picture = match &args.avatar {
-                Some(file) => Some(picture_request(&["profile", "picture"], file)?),
+                Some(file) => Some(picture_request(&["profile", "avatar"], file)?),
                 None => None,
             };
             let mut body = Map::new();

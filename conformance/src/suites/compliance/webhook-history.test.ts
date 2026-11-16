@@ -76,7 +76,7 @@ async function run(name: string): Promise<unknown> {
       const ran = await manager().runHousekeeping(name);
       if (ran.status === 409) return undefined;
       expect(ran.status, JSON.stringify(ran.error)).toBe(200);
-      expect(ran.data.outcome, ran.data.error ?? "").toBe("ok");
+      expect(ran.data.outcome, ran.data.error ?? "").toBe("succeeded");
       return ran.data.result;
     },
     30_000,
@@ -172,14 +172,14 @@ function newest(
 const RETENTION_MS = RETENTION_DAYS * DAY_MS;
 
 describe("an outbound delivery's history", () => {
-  it("refuses to redeliver a dead_letter delivery older than the audit retention", async () => {
+  it("refuses to redeliver a failed delivery older than the audit retention", async () => {
     const id = await subscribe("redeliver-expired");
     try {
       await write("redeliver-expired");
-      const [older] = await settled(id, 1, "dead_letter");
+      const [older] = await settled(id, 1, "failed");
       await clock.advance(2 * MINUTE_MS);
       await write("redeliver-expired-younger");
-      const younger = newest(await settledAs(id, "dead_letter", 2), [older!]);
+      const younger = newest(await settledAs(id, "failed", 2), [older!]);
       // The older is a minute past the retention and the younger a minute
       // inside it.
       await clock.advance(RETENTION_MS - MINUTE_MS);
@@ -192,7 +192,7 @@ describe("an outbound delivery's history", () => {
       });
       expect(
         (await deliveries(id)).find((row) => row.id === older!.id),
-      ).toMatchObject({ status: "dead_letter", attempt: 1, status_code: 400 });
+      ).toMatchObject({ status: "failed", attempt: 1, status_code: 400 });
       const audit = await owner().listAudit({
         action: "webhook.delivery.redeliver",
         resource_id: older!.id,
@@ -212,18 +212,18 @@ describe("an outbound delivery's history", () => {
     }
   });
 
-  it("keeps a dead_letter delivery within the audit retention redeliverable", async () => {
+  it("keeps a failed delivery within the audit retention redeliverable", async () => {
     const id = await subscribe("history-dead-letter");
     try {
       await write("history-dead-letter");
-      const [kept] = await settled(id, 1, "dead_letter");
+      const [kept] = await settled(id, 1, "failed");
       await clock.advance(RETENTION_MS - MINUTE_MS);
 
       await run("audit-cleanup");
 
       expect(
         (await deliveries(id)).find((row) => row.id === kept!.id),
-      ).toMatchObject({ status: "dead_letter", attempt: 1, status_code: 400 });
+      ).toMatchObject({ status: "failed", attempt: 1, status_code: 400 });
       const accepted = await redeliver(id, kept!.id);
       expect(accepted.status, JSON.stringify(accepted.error)).toBe(202);
       expect(accepted.data.id).toBe(kept!.id);
@@ -248,7 +248,7 @@ describe("an outbound delivery's history", () => {
     try {
       answer = 200;
       await write("history-pending-settled");
-      const [delivered] = await settled(id, 1, "success");
+      const [delivered] = await settled(id, 1, "succeeded");
       answer = 503;
       await write("history-pending");
       const pending = await waitFor("the first attempt", async () =>
@@ -279,7 +279,7 @@ describe("an outbound delivery's history", () => {
       await clock.advance(DAY_MS);
       await waitFor("the delivery to be sent", async () => {
         const row = (await deliveries(id)).find((r) => r.id === pending!.id);
-        return row?.status === "success" ? row : undefined;
+        return row?.status === "succeeded" ? row : undefined;
       });
     } finally {
       await unsubscribe(id);
@@ -290,7 +290,7 @@ describe("an outbound delivery's history", () => {
     const id = await subscribe("history-clock");
     try {
       await write("history-clock");
-      const [failed] = await settled(id, 1, "dead_letter");
+      const [failed] = await settled(id, 1, "failed");
       // An hour inside the retention, so the redelivery is accepted.
       await clock.advance(RETENTION_MS - HOUR_MS);
       const accepted = await redeliver(id, failed!.id);
@@ -300,9 +300,7 @@ describe("an outbound delivery's history", () => {
       ).toBe(202);
       const again = await waitFor("the redelivery to be refused", async () => {
         const row = (await deliveries(id)).find((r) => r.id === failed!.id);
-        return row?.status === "dead_letter" && row.attempt === 2
-          ? row
-          : undefined;
+        return row?.status === "failed" && row.attempt === 2 ? row : undefined;
       });
       // The delivery still says when it began: a redelivery did not start it over.
       expect(again.created_at).toBe(failed!.created_at);
@@ -323,23 +321,23 @@ describe("an outbound delivery's history", () => {
   it("deletes a delivery's history past the audit retention", async () => {
     const id = await subscribe("history-deleted");
     try {
-      // Two settled as success and two as dead_letter, one pair past the
+      // Two settled as success and two as failed, one pair past the
       // retention and one a minute inside it.
       answer = 200;
       await write("history-deleted-success-old");
-      const [oldSuccess] = await settledAs(id, "success", 1);
+      const [oldSuccess] = await settledAs(id, "succeeded", 1);
       answer = 400;
       await write("history-deleted-failed-old");
-      const [oldFailed] = await settledAs(id, "dead_letter", 1);
+      const [oldFailed] = await settledAs(id, "failed", 1);
       await clock.advance(2 * MINUTE_MS);
       answer = 200;
       await write("history-deleted-success-young");
-      const youngSuccess = newest(await settledAs(id, "success", 2), [
+      const youngSuccess = newest(await settledAs(id, "succeeded", 2), [
         oldSuccess!,
       ]);
       answer = 400;
       await write("history-deleted-failed-young");
-      const youngFailed = newest(await settledAs(id, "dead_letter", 2), [
+      const youngFailed = newest(await settledAs(id, "failed", 2), [
         oldFailed!,
       ]);
       await clock.advance(RETENTION_MS - MINUTE_MS);
@@ -376,7 +374,7 @@ describe("an outbound delivery's history", () => {
             },
           );
           recorded = current.attempt;
-          if (current.status === "dead_letter") return current;
+          if (current.status === "failed") return current;
           expect(current, `after attempt ${String(recorded)}`).toMatchObject({
             status: "pending",
             status_code: 503,

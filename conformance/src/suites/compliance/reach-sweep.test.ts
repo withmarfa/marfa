@@ -98,13 +98,13 @@ describe("a retention sweep that purges an item", () => {
     // The witness: a sweep before the item is due purges nothing and leaves
     // the reach where it was, so the change below is the purge's.
     const early = await runJob(server, "trash-purge");
-    expect(early.outcome).toBe("ok");
+    expect(early.outcome).toBe("succeeded");
     expect(early.result).toMatchObject({ deleted: 0 });
     expect(await answer(proof)).toEqual({ status: 200, code: undefined });
 
     await movedClock(server).advance(2 * DAY_MS);
     const swept = await runJob(server, "trash-purge");
-    expect(swept.outcome).toBe("ok");
+    expect(swept.outcome).toBe("succeeded");
     expect(
       (swept.result as { deleted: number }).deleted,
     ).toBeGreaterThanOrEqual(1);

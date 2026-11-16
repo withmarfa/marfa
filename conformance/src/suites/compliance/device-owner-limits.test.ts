@@ -248,7 +248,7 @@ describe("the owner device lookup lane", () => {
     );
     expect(refused.searchParams.get("error")).toBe("too_many_attempts");
     // The owner lane's wait is what is left of its fifteen minutes.
-    const wait = Number(refused.searchParams.get("retry_after"));
+    const wait = Number(refused.searchParams.get("retry_after_seconds"));
     expect(wait).toBeGreaterThan(0);
     expect(wait).toBeLessThanOrEqual(15 * 60);
     expect(

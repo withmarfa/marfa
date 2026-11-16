@@ -165,7 +165,6 @@ impl Report {
                 "blob_storage": self.blob_storage.to_json(with_errors),
             },
             "backups": backups,
-            "unrecognized_stored_values": { "rows": 0, "scanned": false },
         })
     }
 }

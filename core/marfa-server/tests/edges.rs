@@ -634,10 +634,10 @@ async fn the_log_marks_what_a_cascade_took_and_what_a_purge_removed() {
         .local(Method::DELETE, &path, None)
         .await
         .landed(StatusCode::OK);
-    let taken = logged("item.deleted", &child);
+    let taken = logged("item.trashed", &child);
     assert_eq!(taken["item"]["trashed_with"], json!(parent));
     assert_eq!(taken["item"]["trashed_by_cascade"], json!(true));
-    let named = logged("item.deleted", &parent);
+    let named = logged("item.trashed", &parent);
     assert!(named["item"].get("trashed_with").is_none(), "{named}");
 
     let restore = format!("/items/{parent}/restore");

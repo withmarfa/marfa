@@ -307,7 +307,7 @@ describe("POST /edges refusals", () => {
       edge_type: unregistered,
     });
     expect(unreached.status).toBe(403);
-    expect(unreached.error?.error.code).toBe("edge_permission_denied");
+    expect(unreached.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("refuses a malformed from_id, to_id or edge id with invalid_id", async () => {
@@ -518,12 +518,12 @@ describe("PATCH /edges/{id} versions and grants", () => {
       version: edge.version,
     });
     expect(update.status).toBe(403);
-    expect(update.error?.error.code).toBe("edge_permission_denied");
+    expect(update.error?.error.code).toBe("edge_type_not_permitted");
     expect(update.error?.error.details?.edge_type).toBe("references");
 
     const removed = await reader.deleteEdge(edge.id);
     expect(removed.status).toBe(403);
-    expect(removed.error?.error.code).toBe("edge_permission_denied");
+    expect(removed.error?.error.code).toBe("edge_type_not_permitted");
     expect(removed.error?.error.details?.edge_type).toBe("references");
 
     const untouched = await client.getEdge(edge.id);

@@ -252,7 +252,7 @@ describe("password sign-in", () => {
     expect(form.status).toBe(302);
     const refusal = new URL(form.headers.get("location") ?? "", account.apiUrl);
     expect(refusal.searchParams.get("error")).toBe("too_many_attempts");
-    const wait = Number(refusal.searchParams.get("retry_after"));
+    const wait = Number(refusal.searchParams.get("retry_after_seconds"));
     expect(wait).toBeGreaterThan(15 * 60);
     expect(wait).toBeLessThanOrEqual(60 * 60);
 
@@ -275,7 +275,7 @@ describe("password sign-in", () => {
       new URL(
         both.headers.get("location") ?? "",
         account.apiUrl,
-      ).searchParams.get("retry_after"),
+      ).searchParams.get("retry_after_seconds"),
     );
     expect(bothWait).toBeGreaterThan(15 * 60);
     expect(bothWait).toBeLessThanOrEqual(60 * 60);
@@ -727,7 +727,7 @@ describe("device code lookups", () => {
       timed.apiUrl,
     );
     expect(refused.searchParams.get("error")).toBe("too_many_attempts");
-    const wait = Number(refused.searchParams.get("retry_after"));
+    const wait = Number(refused.searchParams.get("retry_after_seconds"));
     expect(wait).toBeGreaterThan(14 * 60);
     expect(wait).toBeLessThanOrEqual(15 * 60);
   }, 120_000);

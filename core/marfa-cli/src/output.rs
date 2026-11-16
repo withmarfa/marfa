@@ -811,7 +811,7 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
         if row.get("id").is_some()
             || row
                 .get("name")
-                .is_some_and(|_| row.get("interval_ms").is_some())
+                .is_some_and(|_| row.get("interval_seconds").is_some())
             || row.get("key").is_some_and(|_| row.get("rule").is_some())
             || row.get("tag").is_some_and(|_| row.get("count").is_some())
             || row
@@ -994,10 +994,8 @@ fn record_line(record: &Value) -> String {
 }
 
 /// How long a job waits between runs, in the biggest whole unit that holds it.
-fn every(milliseconds: u64) -> String {
-    let seconds = milliseconds / 1000;
+fn every(seconds: u64) -> String {
     match seconds {
-        0 => format!("{milliseconds} ms"),
         s if s % 86_400 == 0 => format!("{} d", s / 86_400),
         s if s % 3_600 == 0 => format!("{} h", s / 3_600),
         s if s % 60 == 0 => format!("{} min", s / 60),
@@ -1127,7 +1125,7 @@ fn record_columns(record: &Value) -> Cols {
             ],
         );
     }
-    if record.get("interval_ms").is_some() && record.get("next_run_at").is_some() {
+    if record.get("interval_seconds").is_some() && record.get("next_run_at").is_some() {
         let ran = match field(record, "last_outcome") {
             "" => String::new(),
             outcome => format!("{outcome} {}", field(record, "last_finished_at")),
@@ -1145,7 +1143,7 @@ fn record_columns(record: &Value) -> Cols {
             vec![
                 owned("name"),
                 record
-                    .get("interval_ms")
+                    .get("interval_seconds")
                     .and_then(Value::as_u64)
                     .map(every)
                     .unwrap_or_default(),
@@ -1837,16 +1835,16 @@ pub(crate) mod tests {
             json!({
                 "id": id, "webhook_id": "w1", "event_type": "item.created",
                 "status": status, "status_code": code, "attempt": attempt,
-                "succeeded": status == "success", "error": error,
+                "succeeded": status == "succeeded", "error": error,
                 "created_at": "2026-01-01T00:00:00Z",
             })
         };
         let text = describe(&json!({
             "data": [
-                delivery("d1", "dead_letter", json!(503), 9, json!("Max attempts reached")),
-                delivery("d2", "dead_letter", json!(404), 1, json!("HTTP 404")),
-                delivery("d3", "dead_letter", Value::Null, 2, json!("The receiver could not be reached.")),
-                delivery("d4", "success", json!(204), 1, Value::Null),
+                delivery("d1", "failed", json!(503), 9, json!("Max attempts reached")),
+                delivery("d2", "failed", json!(404), 1, json!("HTTP 404")),
+                delivery("d3", "failed", Value::Null, 2, json!("The receiver could not be reached.")),
+                delivery("d4", "succeeded", json!(204), 1, Value::Null),
                 delivery("d5", "pending", Value::Null, 0, Value::Null),
             ],
             "next_cursor": null,
@@ -1854,12 +1852,12 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "id  status       event         attempts    answer\n\
-             d1  dead_letter  item.created  9 attempts  HTTP 503: Max attempts reached\n\
-             d2  dead_letter  item.created  1 attempt   HTTP 404\n\
-             d3  dead_letter  item.created  2 attempts  The receiver could not be reached.\n\
-             d4  success      item.created  1 attempt   HTTP 204\n\
-             d5  pending      item.created  0 attempts  no answer yet"
+            "id  status     event         attempts    answer\n\
+             d1  failed     item.created  9 attempts  HTTP 503: Max attempts reached\n\
+             d2  failed     item.created  1 attempt   HTTP 404\n\
+             d3  failed     item.created  2 attempts  The receiver could not be reached.\n\
+             d4  succeeded  item.created  1 attempt   HTTP 204\n\
+             d5  pending    item.created  0 attempts  no answer yet"
         );
     }
 
@@ -1867,24 +1865,24 @@ pub(crate) mod tests {
     fn housekeeping_jobs_read_as_columns_with_the_cadence_in_words() {
         let job = |name: &str, every: u64, outcome: serde_json::Value| {
             json!({
-                "name": name, "interval_ms": every, "next_run_at": "2026-01-01T01:00:00.000Z",
+                "name": name, "interval_seconds": every, "next_run_at": "2026-01-01T01:00:00.000Z",
                 "running_since": null, "last_started_at": null,
                 "last_finished_at": "2026-01-01T00:00:00.000Z", "last_outcome": outcome,
                 "last_error": null, "last_result": {"deleted": 2},
             })
         };
         let text = describe(&json!({"data": [
-            job("trash-purge", 86_400_000, json!("ok")),
-            job("blob-replicate", 60_000, json!("ok")),
-            job("enrichment-sweep", 30_000, json!(null)),
+            job("trash-purge", 86_400, json!("succeeded")),
+            job("blob-replicate", 60, json!("succeeded")),
+            job("enrichment-sweep", 30, json!(null)),
         ]}))
         .unwrap();
         assert_eq!(
             text,
-            "name              every  next run                  last run                     result\n\
-             trash-purge       1 d    2026-01-01T01:00:00.000Z  ok 2026-01-01T00:00:00.000Z  {\"deleted\":2}\n\
-             blob-replicate    1 min  2026-01-01T01:00:00.000Z  ok 2026-01-01T00:00:00.000Z  {\"deleted\":2}\n\
-             enrichment-sweep  30 s   2026-01-01T01:00:00.000Z                               {\"deleted\":2}"
+            "name              every  next run                  last run                            result\n\
+             trash-purge       1 d    2026-01-01T01:00:00.000Z  succeeded 2026-01-01T00:00:00.000Z  {\"deleted\":2}\n\
+             blob-replicate    1 min  2026-01-01T01:00:00.000Z  succeeded 2026-01-01T00:00:00.000Z  {\"deleted\":2}\n\
+             enrichment-sweep  30 s   2026-01-01T01:00:00.000Z                                      {\"deleted\":2}"
         );
     }
 

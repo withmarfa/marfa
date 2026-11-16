@@ -109,7 +109,8 @@ impl Drop for Reservation {
 }
 
 pub fn unavailable(message: &'static str) -> Refusal {
-    Refusal::new(Code::InboundUnavailable, message).with_detail("retry_after", RETRY_AFTER_SECONDS)
+    Refusal::new(Code::InboundUnavailable, message)
+        .with_detail("retry_after_seconds", RETRY_AFTER_SECONDS)
 }
 
 fn not_found() -> Refusal {
@@ -178,7 +179,7 @@ fn spend_window(app: &App, endpoint_id: &str, live: &Snapshot) -> Result<()> {
             Code::RateLimited,
             "Too many deliveries to this address; try again later.",
         )
-        .with_detail("retry_after", retry_seconds(wait))),
+        .with_detail("retry_after_seconds", retry_seconds(wait))),
     }
 }
 

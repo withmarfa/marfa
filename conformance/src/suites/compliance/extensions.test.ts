@@ -164,7 +164,7 @@ describe("metadata extensions", () => {
       persisted: true,
     });
     expect(put.ok).toBe(true);
-    const r = await client.getMetadata(itemId);
+    const r = await client.getItem(itemId);
     expect(r.ok).toBe(true);
     expect(r.data.metadata.extensions?.["persist-test"]).toEqual({
       persisted: true,

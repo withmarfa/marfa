@@ -286,7 +286,7 @@ describe("custom edge-type registration", () => {
       for (const force of [false, true]) {
         const refused = await scoped.deleteEdgeType(id, force);
         expect(refused.status, `${id} force=${String(force)}`).toBe(403);
-        expect(refused.error?.error.code).toBe("edge_permission_denied");
+        expect(refused.error?.error.code).toBe("edge_type_not_permitted");
         expect(refused.error?.error.details?.edge_type).toBe(refusedName);
         await expectMatchesSchema(
           "DELETE",
@@ -372,7 +372,7 @@ describe("custom edge-type registration", () => {
       reverse_name: other,
     });
     expect(reversed.status).toBe(403);
-    expect(reversed.error?.error.code).toBe("edge_permission_denied");
+    expect(reversed.error?.error.code).toBe("edge_type_not_permitted");
     expect(reversed.error?.error.details?.edge_type).toBe(other);
 
     for (const id of [other, readOnly]) {
@@ -382,7 +382,7 @@ describe("custom edge-type registration", () => {
         cardinality: "many-to-many",
       });
       expect(refused.status, id).toBe(403);
-      expect(refused.error?.error.code).toBe("edge_permission_denied");
+      expect(refused.error?.error.code).toBe("edge_type_not_permitted");
       expect(refused.error?.error.details?.edge_type).toBe(id);
       await expectMatchesSchema("POST", "/edge-types", 403, refused.error);
 
@@ -420,7 +420,7 @@ describe("custom edge-type registration", () => {
       cardinality: "many-to-many",
     });
     expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("edge_permission_denied");
+    expect(refused.error?.error.code).toBe("edge_type_not_permitted");
     expect(refused.error?.error.details).toMatchObject({
       edge_type: id,
       required_scope: "edge.user.*:write",
@@ -680,7 +680,7 @@ describe("custom edge-type registration", () => {
       });
       const label = JSON.stringify(properties)?.slice(0, 40);
       expect(r.status, label).toBe(400);
-      expect(r.error?.error.code, label).toBe("validation_error");
+      expect(r.error?.error.code, label).toBe("invalid_properties");
       const details = r.error?.error.details as
         { errors?: { path: string }[] } | undefined;
       expect(details?.errors?.[0]?.path, label).toBe(path);
@@ -701,7 +701,7 @@ describe("custom edge-type registration", () => {
       properties: { path: "../a.md" },
     });
     expect(moved.status).toBe(400);
-    expect(moved.error?.error.code).toBe("validation_error");
+    expect(moved.error?.error.code).toBe("invalid_properties");
     const upserted = await client.bulkEdges({
       atomic: false,
       edges: [
@@ -714,7 +714,7 @@ describe("custom edge-type registration", () => {
       ],
     });
     expect(upserted.status).toBe(200);
-    expect(upserted.data.results[0]?.error?.code).toBe("validation_error");
+    expect(upserted.data.results[0]?.error?.code).toBe("invalid_properties");
 
     // An inline edge carries no properties, so no inline door writes one.
     const inline = [
@@ -734,7 +734,7 @@ describe("custom edge-type registration", () => {
     ];
     for (const r of inline) {
       expect(r.status).toBe(400);
-      expect(r.error?.error.code).toBe("validation_error");
+      expect(r.error?.error.code).toBe("invalid_properties");
     }
     const bulk = await client.bulkItems({
       atomic: false,
@@ -749,7 +749,7 @@ describe("custom edge-type registration", () => {
       ],
     });
     expect(bulk.status).toBe(200);
-    expect(bulk.data.results[0]?.error?.code).toBe("validation_error");
+    expect(bulk.data.results[0]?.error?.code).toBe("invalid_properties");
   });
 
   it("names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge", async () => {
@@ -768,7 +768,7 @@ describe("custom edge-type registration", () => {
       path: string,
       label: string,
     ) => {
-      expect(error?.code, label).toBe("validation_error");
+      expect(error?.code, label).toBe("invalid_properties");
       const details = error?.details as
         { errors?: { path: string }[] } | undefined;
       expect(
@@ -837,7 +837,7 @@ describe("custom edge-type registration", () => {
     expect(rolled.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rolled.error?.error.details).toMatchObject({
       index: 1,
-      code: "validation_error",
+      code: "invalid_properties",
     });
     refusedAt(
       rolled.error?.error.details as { code?: string; details?: unknown },
@@ -1568,7 +1568,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
       cardinality: "many-to-many",
     });
     expect(alone.status).toBe(403);
-    expect(alone.error?.error.code).toBe("edge_permission_denied");
+    expect(alone.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("refuses an id the key's edge map does not grant before it refuses extends", async () => {
@@ -1582,7 +1582,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
       ...extending,
     });
     expect(denied.status).toBe(403);
-    expect(denied.error?.error.code).toBe("edge_permission_denied");
+    expect(denied.error?.error.code).toBe("edge_type_not_permitted");
     expect(denied.error?.error.details?.edge_type).toBe(ungranted);
 
     // The witness: an id the map grants meets the refusal of extends.
@@ -1677,7 +1677,7 @@ describe("the order POST /edge-types asks its refusals in", () => {
       cardinality: "many-to-many",
     });
     expect(alone.status).toBe(403);
-    expect(alone.error?.error.code).toBe("edge_permission_denied");
+    expect(alone.error?.error.code).toBe("edge_type_not_permitted");
   });
 });
 

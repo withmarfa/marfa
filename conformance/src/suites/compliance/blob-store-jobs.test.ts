@@ -45,7 +45,8 @@ beforeAll(async () => {
       const sweep = jobs.data.data.find((job) => job.name === "blob-orphans");
       return sweep !== undefined &&
         sweep.running_since === null &&
-        Date.parse(sweep.next_run_at) - Date.now() > sweep.interval_ms / 2
+        Date.parse(sweep.next_run_at) - Date.now() >
+          sweep.interval_seconds * 500
         ? sweep
         : undefined;
     },

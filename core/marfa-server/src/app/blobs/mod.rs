@@ -104,7 +104,7 @@ impl Opened {
 
 pub struct Link {
     pub url: String,
-    pub expires_in: u64,
+    pub ttl_seconds: u64,
 }
 
 pub struct Blobs {
@@ -1195,7 +1195,7 @@ impl App {
             return match s3.link(object, lifetime, self.blobs.check()).await {
                 Ok(url) => Ok(Link {
                     url,
-                    expires_in: ttl,
+                    ttl_seconds: ttl,
                 }),
                 Err(error) => {
                     tracing::warn!(%error, "The object store made no link");
@@ -1216,7 +1216,7 @@ impl App {
                 expires_ms,
                 &signature,
             ),
-            expires_in: ttl,
+            ttl_seconds: ttl,
         })
     }
 

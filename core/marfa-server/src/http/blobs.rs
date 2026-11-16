@@ -298,16 +298,16 @@ pub async fn url(
     Path(hash): Path<String>,
 ) -> Answer {
     caller.require_blob_reach()?;
-    query::only(&uri, &["ttl"])?;
+    query::only(&uri, &["ttl_seconds"])?;
     let ttl = query::pairs(&uri)?
         .into_iter()
-        .find(|(key, _)| key == "ttl")
+        .find(|(key, _)| key == "ttl_seconds")
         .map(|(_, value)| value);
     let ttl = link::ttl_seconds(ttl.as_deref())?;
     let link = app.mint_link(&caller, &Hash::parse(&hash)?, ttl).await?;
     Ok(json_answer(
         StatusCode::OK,
-        &json!({ "url": link.url, "expires_in": link.expires_in }),
+        &json!({ "url": link.url, "ttl_seconds": link.ttl_seconds }),
     ))
 }
 

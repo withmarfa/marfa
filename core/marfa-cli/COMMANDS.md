@@ -690,7 +690,7 @@ marfa items update [OPTIONS] --version <VERSION> <ID>
 | `--occurred-at <TIME>` | The item's own time, RFC 3339. |
 | `--source-id <KEY>` | The natural key to move the item to. The server refuses one another item already holds. |
 | `--edges <JSON>` | Edges to write with it, as the JSON object the operation takes. |
-| `--conflict <CONFLICT>` | How a colliding write is settled: `auto` asks the server to resolve within its own transaction. One of `auto`, `manual`, `callback`. |
+| `--conflict <CONFLICT>` | How a colliding write is settled: `auto` asks the server to resolve within its own transaction. One of `auto`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items delete
@@ -1518,18 +1518,6 @@ An item's tags and the namespaces it carries, and every tag in use.
 ```text
 marfa metadata [OPTIONS] <COMMAND>
 ```
-
-### marfa metadata get
-
-An item's metadata: its tags and the namespaces it carries.
-
-```text
-marfa metadata get [OPTIONS] <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The item id. |
 
 ### marfa metadata replace
 
@@ -2629,19 +2617,27 @@ marfa connectors delete [OPTIONS] <ID>
 
 ### marfa connectors heartbeat
 
-Say the connector is alive. The key this runs under is the connector, so no id is given.
+Say the connector is alive. Only the key the connector is registered under can.
 
 ```text
-marfa connectors heartbeat [OPTIONS]
+marfa connectors heartbeat [OPTIONS] <ID>
 ```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The connector id. |
 
 ### marfa connectors report
 
-Report one run of the connector the key this runs under registered, so no id is given.
+Report one run of a connector. Only the key the connector is registered under can.
 
 ```text
-marfa connectors report [OPTIONS] --outcome <OUTCOME> --started-at <TIME> --finished-at <TIME>
+marfa connectors report [OPTIONS] --outcome <OUTCOME> --started-at <TIME> --finished-at <TIME> <ID>
 ```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The connector id. |
 
 | Option | Description |
 | --- | --- |

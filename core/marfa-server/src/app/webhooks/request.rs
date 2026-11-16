@@ -10,7 +10,7 @@ use crate::app::types::missing_field;
 pub const EVENTS: [&str; 11] = [
     "item.created",
     "item.updated",
-    "item.deleted",
+    "item.trashed",
     "item.restored",
     "item.purged",
     "item.state_changed",

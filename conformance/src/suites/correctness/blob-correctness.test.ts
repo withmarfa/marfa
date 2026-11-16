@@ -236,7 +236,7 @@ describe("blob correctness", () => {
     const link = await client.getBlobUrl(upload.data.hash, 90);
     expect(link.status).toBe(200);
     await expectMatchesSchema("GET", "/blobs/{hash}/url", 200, link.data);
-    expect(link.data.expires_in).toBe(90);
+    expect(link.data.ttl_seconds).toBe(90);
 
     const fetched = await fetchLink(link.data.url);
     expect(fetched.status).toBe(200);
@@ -254,7 +254,7 @@ describe("blob correctness", () => {
     expect(upload.ok).toBe(true);
     const link = await client.getBlobUrl(upload.data.hash, 10_000_000);
     expect(link.status).toBe(200);
-    expect(link.data.expires_in).toBe(7 * 24 * 60 * 60);
+    expect(link.data.ttl_seconds).toBe(7 * 24 * 60 * 60);
   });
 
   it("refuses a link that has expired or was altered", async () => {
@@ -270,17 +270,17 @@ describe("blob correctness", () => {
     expect(served.bytes).toEqual(content);
 
     // Its own witness first, with seconds to spare for a store's link, which
-    // may stop up to a second short of `expires_in`.
+    // may stop up to a second short of `ttl_seconds`.
     const short = await client.getBlobUrl(upload.data.hash, 3);
     expect(short.status).toBe(200);
-    expect(short.data.expires_in).toBe(3);
+    expect(short.data.ttl_seconds).toBe(3);
     const alive = await fetchLink(short.data.url);
     expect(alive.status).toBe(200);
     expect(alive.bytes).toEqual(content);
     // A signer counts a lifetime from a whole second, so a second more, and
     // a little, covers its rounding either way.
     await new Promise((resolve) =>
-      setTimeout(resolve, (short.data.expires_in + 1) * 1000 + 100),
+      setTimeout(resolve, (short.data.ttl_seconds + 1) * 1000 + 100),
     );
     expectRefused(await fetchLink(short.data.url), content);
 
@@ -593,7 +593,7 @@ describe("blob correctness", () => {
     for (const [method, path] of [
       ["GET", `/blobs/${hash}?${stray}`],
       ["HEAD", `/blobs/${hash}?${stray}`],
-      ["GET", `/blobs/${hash}/url?ttl=60&${stray}`],
+      ["GET", `/blobs/${hash}/url?ttl_seconds=60&${stray}`],
       ["GET", `/blobs/${hash}/copies?${stray}`],
     ] as const) {
       const refused = await call(method, path);
@@ -622,7 +622,7 @@ describe("blob correctness", () => {
     expect(accepted.status).toBe(201);
   });
 
-  it("gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other", async () => {
+  it("gives a link an hour when no ttl_seconds is asked for, takes every whole number of seconds up to the cap and refuses any other", async () => {
     const upload = await uploadReferenced(
       client,
       ctx,
@@ -634,7 +634,7 @@ describe("blob correctness", () => {
 
     const defaulted = await client.getBlobUrl(hash);
     expect(defaulted.status).toBe(200);
-    expect(defaulted.data.expires_in).toBe(3600);
+    expect(defaulted.data.ttl_seconds).toBe(3600);
 
     // The smallest lifetime asked for is given, the cap is the most, and
     // one past the cap is answered with the cap.
@@ -645,13 +645,18 @@ describe("blob correctness", () => {
     ] as const) {
       const link = await client.getBlobUrl(hash, asked);
       expect(link.status, String(asked)).toBe(200);
-      expect(link.data.expires_in, String(asked)).toBe(given);
+      expect(link.data.ttl_seconds, String(asked)).toBe(given);
     }
 
     for (const ttl of ["0", "-1", "1.5", "abc", ""]) {
-      const refused = await call("GET", `/blobs/${hash}/url?ttl=${ttl}`);
-      expect(refused.status, `ttl=${ttl}`).toBe(400);
-      expect(refused.error?.code, `ttl=${ttl}`).toBe("validation_error");
+      const refused = await call(
+        "GET",
+        `/blobs/${hash}/url?ttl_seconds=${ttl}`,
+      );
+      expect(refused.status, `ttl_seconds=${ttl}`).toBe(400);
+      expect(refused.error?.code, `ttl_seconds=${ttl}`).toBe(
+        "validation_error",
+      );
     }
   });
 });

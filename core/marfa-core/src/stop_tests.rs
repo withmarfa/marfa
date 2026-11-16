@@ -445,7 +445,7 @@ fn a_stopped_drain_leaves_a_tag_metadata_or_extension_write_in_flight_for_the_ne
     let writes: [(&str, &Queues, &str); 5] = [
         ("/items/a/tags", &add, tags),
         ("/items/a/tags/x", &remove, tags),
-        ("/items/a/metadata", &replace, tags),
+        ("/items/a/tags", &replace, tags),
         ("/items/a/extensions/app.cursor", &write, extensions),
         ("/items/a/extensions/app.cursor", &delete, extensions),
     ];

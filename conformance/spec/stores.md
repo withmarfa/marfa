@@ -360,7 +360,7 @@ If an attached store leaves unanswered for 15 seconds a question from a run of `
 
 ### `stores/replicate-failure-recorded`
 
-If a run of `blob-replicate` copies no blob because an attached store does not take a copy, then the server MUST end the run with `outcome` `error` and an `error` that names the store and why, and still answer its `result` as `copied`, `bytes` and `remaining`.
+If a run of `blob-replicate` copies no blob because an attached store does not take a copy, then the server MUST end the run with `outcome` `failed` and an `error` that names the store and why, and still answer its `result` as `copied`, `bytes` and `remaining`.
 
 **Reason:** a run that reports `ok` while a store refuses or hangs leaves the owner with no sign that files wait for their second copy. The `result` still counts them in `remaining`.
 
@@ -368,7 +368,7 @@ If a run of `blob-replicate` copies no blob because an attached store does not t
 
 ### `stores/replicate-failure-by-store`
 
-If a run of `blob-replicate` ends with `outcome` `error` because attached stores do not take a copy, then the server MUST answer the run's `result` with `refused`, an object that holds, for each store that took none, the store's ID and why.
+If a run of `blob-replicate` ends with `outcome` `failed` because attached stores do not take a copy, then the server MUST answer the run's `result` with `refused`, an object that holds, for each store that took none, the store's ID and why.
 
 **Reason:** a failure copying into the blob folder is not a failure of the backup destination, and only the store's ID tells them apart.
 

@@ -84,7 +84,7 @@ describe("a key reaches only the keys it could have minted", () => {
 
     const r = await minter.client.revokeKey(full.id);
     expect(r.status).toBe(404);
-    expect(r.error?.error.code).toBe("api_key_not_found");
+    expect(r.error?.error.code).toBe("key_not_found");
     expect({
       status: r.status,
       code: r.error?.error.code,
@@ -102,7 +102,7 @@ describe("a key reaches only the keys it could have minted", () => {
       type_permissions: { "core.note": "read" },
     });
     expect(r.status).toBe(404);
-    expect(r.error?.error.code).toBe("api_key_not_found");
+    expect(r.error?.error.code).toBe("key_not_found");
     expect({
       status: r.status,
       code: r.error?.error.code,
@@ -230,7 +230,7 @@ describe("a key reaches only the keys it could have minted", () => {
       // and still does not reach a key that holds nothing at all.
       const revoke = await client.revokeKey(spare.data.id);
       expect(revoke.status).toBe(404);
-      expect(revoke.error?.error.code).toBe("api_key_not_found");
+      expect(revoke.error?.error.code).toBe("key_not_found");
       const update = await client.updateKey(spare.data.id, { label: "x" });
       expect(update.status).toBe(404);
       const listed = await client.listKeys();
@@ -303,13 +303,13 @@ describe("a key reaches only the keys it could have minted", () => {
     const unknown = await client.revokeKey(UNKNOWN_ID);
     const again = await client.revokeKey(peer.id);
     expect(again.status).toBe(404);
-    expect(again.error?.error.code).toBe("api_key_not_found");
+    expect(again.error?.error.code).toBe("key_not_found");
     expect(again.error?.error.message).toBe(
       unknown.error?.error.message.replace(UNKNOWN_ID, peer.id),
     );
     const managed = await getManagementClient().revokeKey(peer.id);
     expect(managed.status).toBe(404);
-    expect(managed.error?.error.code).toBe("api_key_not_found");
+    expect(managed.error?.error.code).toBe("key_not_found");
     expect(managed.error?.error.message).toContain("already revoked");
   });
 

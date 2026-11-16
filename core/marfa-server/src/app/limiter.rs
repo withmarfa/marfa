@@ -52,7 +52,7 @@ impl Lane {
     }
 }
 
-/// What `Retry-After` and `retry_after` hold: whole seconds, rounded up, from one to a day.
+/// What `Retry-After` and `retry_after_seconds` hold: whole seconds, rounded up, from one to a day.
 pub fn retry_seconds(wait_ms: i64) -> i64 {
     wait_ms
         .saturating_add(999)

@@ -17,37 +17,51 @@
       "description": "The full details, as long as you need."
     },
     "due_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Due",
-      "description": "When the task is due.",
-      "format": "datetime"
+      "description": "When the task is due."
     },
     "starts_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Starts",
-      "description": "When you plan to start the task.",
-      "format": "datetime"
+      "description": "When you plan to start the task."
     },
     "completed_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Completed",
-      "description": "When you finished the task.",
-      "format": "datetime"
+      "description": "When you finished the task."
     },
     "status": {
       "type": "status",
       "description": "Where the task stands",
       "status_values": [
-        { "value": "not_started", "group": "not_started" },
-        { "value": "in_progress", "group": "in_progress" },
-        { "value": "completed", "group": "completed" },
-        { "value": "canceled", "group": "canceled" }
+        {
+          "value": "not_started",
+          "group": "not_started"
+        },
+        {
+          "value": "in_progress",
+          "group": "in_progress"
+        },
+        {
+          "value": "completed",
+          "group": "completed"
+        },
+        {
+          "value": "canceled",
+          "group": "canceled"
+        }
       ]
     },
     "priority": {
       "type": "enum",
       "description": "How important the task is.",
-      "enum_values": ["low", "medium", "high", "urgent"]
+      "enum_values": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ]
     },
     "place": {
       "type": "string",
@@ -56,7 +70,12 @@
     "precision": {
       "type": "enum",
       "description": "How much of the task's date is known, such as only the year or the month.",
-      "enum_values": ["year", "month", "day", "time"]
+      "enum_values": [
+        "year",
+        "month",
+        "day",
+        "time"
+      ]
     },
     "url": {
       "type": "string",
@@ -89,7 +108,9 @@
       "description": "RFC 5545 recurrence lines (RRULE, RDATE, EXDATE) that make the task repeat, counted from `due_at` or, without one, from `starts_at`."
     }
   },
-  "required": ["title"],
+  "required": [
+    "title"
+  ],
   "display_hints": {
     "title_field": "title",
     "body_field": "body",

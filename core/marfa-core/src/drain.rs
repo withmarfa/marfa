@@ -844,7 +844,7 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
         ),
         WriteKind::ReplaceMetadata => to(
             Method::Put,
-            vec!["items".into(), item_id()?.into(), "metadata".into()],
+            vec!["items".into(), item_id()?.into(), "tags".into()],
             Shape::Plain,
         ),
         WriteKind::AddTag => to(
@@ -4593,7 +4593,7 @@ mod tests {
             .iter()
             .map(|(id, version)| {
                 let mut row: serde_json::Value = serde_json::from_str(
-                    &crate::scripted::item_payload("item.deleted", id, "core.note", *version),
+                    &crate::scripted::item_payload("item.trashed", id, "core.note", *version),
                 )
                 .unwrap();
                 row.as_object_mut().unwrap().remove("event_type");

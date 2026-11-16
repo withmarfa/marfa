@@ -151,7 +151,7 @@
           },
           "format": {
             "type": "string",
-            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`."
+            "description": "A refinement of a `string` property. `url`, `email` and `date` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`."
           }
         },
         "required": [
@@ -1319,11 +1319,7 @@
           },
           "version": {
             "type": "string",
-            "description": "The build the instance runs."
-          },
-          "release": {
-            "type": "string",
-            "description": "The release the build was made as, such as `0.0.14`. Absent for a build that is not a release."
+            "description": "The release the instance runs, such as `0.0.14`."
           },
           "instance_id": {
             "type": "string",
@@ -1523,25 +1519,6 @@
               "blob_storage"
             ],
             "description": "Each component checked: reading and writing the database, free disk space and the blob store."
-          },
-          "unrecognized_stored_values": {
-            "type": "object",
-            "properties": {
-              "rows": {
-                "type": "integer",
-                "minimum": 0,
-                "description": "How many stored rows hold a value this build does not recognize."
-              },
-              "scanned": {
-                "type": "boolean",
-                "description": "`true` if the scan for such rows ran. `false` means `rows` is unknown."
-              }
-            },
-            "required": [
-              "rows",
-              "scanned"
-            ],
-            "description": "Stored values this build does not recognize."
           },
           "placement": {
             "type": "object",
@@ -1747,7 +1724,6 @@
         "required": [
           "status",
           "components",
-          "unrecognized_stored_values",
           "backups"
         ],
         "description": "The instance's health: the worst state of its components, and each one's state.",
@@ -1770,10 +1746,6 @@
               "status": "ok",
               "latency_ms": 0
             }
-          },
-          "unrecognized_stored_values": {
-            "rows": 0,
-            "scanned": true
           }
         }
       },
@@ -2273,7 +2245,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "edge_permission_denied",
+                  "edge_type_not_permitted",
                   "forbidden",
                   "type_not_permitted"
                 ],
@@ -2434,7 +2406,7 @@
         ],
         "description": "A write Marfa can't merge, because it holds no snapshot you can read of the `version` you sent: the error and the item now."
       },
-      "ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal": {
+      "IdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2443,7 +2415,6 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "conflict",
                   "id_reused",
                   "item_exists",
                   "link_taken",
@@ -2518,7 +2489,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "edge_permission_denied",
+                  "edge_type_not_permitted",
                   "type_not_permitted"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -2879,11 +2850,9 @@
       "ConflictMode": {
         "type": "string",
         "enum": [
-          "auto",
-          "manual",
-          "callback"
+          "auto"
         ],
-        "description": "Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`."
+        "description": "Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. Leave it out and Marfa returns the conflict for you to resolve."
       },
       "Ok": {
         "type": "object",
@@ -4140,7 +4109,7 @@
                 "type": "string",
                 "enum": [
                   "bulk_atomic_rollback",
-                  "edge_permission_denied",
+                  "edge_type_not_permitted",
                   "forbidden",
                   "type_not_permitted"
                 ],
@@ -4233,7 +4202,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "edge_permission_denied",
+                  "edge_type_not_permitted",
                   "forbidden"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -4614,7 +4583,6 @@
             "enum": [
               "url",
               "email",
-              "datetime",
               "date",
               "thumbnail",
               "bcp47",
@@ -4622,7 +4590,7 @@
               "currency",
               "phone"
             ],
-            "description": "Refines a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`."
+            "description": "Refines a `string` field or an array of strings. `url`, `email`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`."
           },
           "searchable": {
             "type": "boolean",
@@ -4721,7 +4689,6 @@
             "enum": [
               "url",
               "email",
-              "datetime",
               "date",
               "thumbnail",
               "bcp47",
@@ -5260,7 +5227,7 @@
                 "type": "string",
                 "enum": [
                   "link_taken",
-                  "type_already_exists"
+                  "type_exists"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -5995,11 +5962,7 @@
               },
               "version": {
                 "type": "string",
-                "description": "The build the instance runs."
-              },
-              "release": {
-                "type": "string",
-                "description": "The release the build was made as. Absent for a build that is not a release."
+                "description": "The release the instance runs."
               }
             },
             "required": [
@@ -6737,9 +6700,9 @@
             "type": "string",
             "description": "The job's name, such as `trash-purge`."
           },
-          "interval_ms": {
+          "interval_seconds": {
             "type": "integer",
-            "description": "How often the job runs, in milliseconds."
+            "description": "How often the job runs, in seconds."
           },
           "next_run_at": {
             "type": "string",
@@ -6798,7 +6761,7 @@
         },
         "required": [
           "name",
-          "interval_ms",
+          "interval_seconds",
           "next_run_at",
           "running_since",
           "last_started_at",
@@ -6812,11 +6775,11 @@
       "HousekeepingOutcome": {
         "type": "string",
         "enum": [
-          "ok",
-          "error",
+          "succeeded",
+          "failed",
           "held"
         ],
-        "description": "How a run ended: `ok` if it finished, `error` if it failed, `held` if it did nothing because the clock is far ahead or a restore holds writes."
+        "description": "How a run ended: `succeeded` if it finished, `failed` if it failed, `held` if it did nothing because the clock is far ahead or a restore holds writes."
       },
       "HousekeepingReport": {
         "type": "object",
@@ -8661,7 +8624,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "api_key_not_found"
+                  "key_not_found"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -8883,11 +8846,11 @@
             "maximum": 36500,
             "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies."
           },
-          "event_log_retention_hours": {
+          "event_log_retention_days": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 876000,
-            "description": "Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies."
+            "maximum": 36500,
+            "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies."
           },
           "trash_retention_days": {
             "type": "integer",
@@ -9060,7 +9023,7 @@
               "string",
               "null"
             ],
-            "description": "The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/picture`."
+            "description": "The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`."
           },
           "created_at": {
             "type": "string",
@@ -9341,7 +9304,7 @@
                 "additionalProperties": {},
                 "description": "More about the error, such as the field it concerns. Each code defines its own details.",
                 "properties": {
-                  "retry_after": {
+                  "retry_after_seconds": {
                     "type": "integer",
                     "minimum": 1,
                     "description": "The same whole seconds as `Retry-After`."
@@ -10082,11 +10045,11 @@
             "type": "string",
             "enum": [
               "pending",
-              "success",
-              "dead_letter",
+              "succeeded",
+              "failed",
               "canceled"
             ],
-            "description": "`pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why."
+            "description": "`pending`: waiting to be sent or retried. `succeeded`: the receiver answered with a `2xx` status. `failed`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why."
           },
           "webhook_id": {
             "type": "string",
@@ -10109,7 +10072,7 @@
           },
           "succeeded": {
             "type": "boolean",
-            "description": "`true` if `status` is `success`."
+            "description": "`true` if `status` is `succeeded`."
           },
           "error": {
             "type": [
@@ -10335,7 +10298,7 @@
                     ],
                     "description": "Why Marfa turned the write away without a wait. `restore_running` means a restore is running."
                   },
-                  "retry_after": {
+                  "retry_after_seconds": {
                     "type": "integer",
                     "minimum": 1,
                     "description": "The same whole seconds as `Retry-After`. Present when `reason` is `restore_running`."
@@ -10576,7 +10539,7 @@
             "enum": [
               "item.created",
               "item.updated",
-              "item.deleted",
+              "item.trashed",
               "item.restored",
               "item.purged",
               "item.state_changed",
@@ -10590,7 +10553,7 @@
                 "$ref": "#/components/schemas/Item"
               },
               {
-                "description": "The item after the change. On `item.deleted` and `item.purged` of an item a cascade trashed, it carries `trashed_by_cascade`, and `trashed_with` if you can read that item's type."
+                "description": "The item after the change. On `item.trashed` and `item.purged` of an item a cascade trashed, it carries `trashed_by_cascade`, and `trashed_with` if you can read that item's type."
               }
             ]
           },
@@ -11346,7 +11309,6 @@
             "enum": [
               "url",
               "email",
-              "datetime",
               "date",
               "bcp47",
               "iso3166",
@@ -12185,6 +12147,22 @@
         "required": [
           "error"
         ]
+      },
+      "ItemTags": {
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The item's tags."
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "description": "An item's tags."
       }
     },
     "parameters": {},
@@ -12432,7 +12410,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: `source` is not your credential's own or one of your key's `sources` (`details.source` names it), or the source allow-list excludes it.\n- `type_not_permitted`: you don't have write on the item's type, or on the type `source_id` resolves to.\n- `edge_permission_denied`: you don't have write on an edge's type.",
+            "description": "- `forbidden`: `source` is not your credential's own or one of your key's `sources` (`details.source` names it), or the source allow-list excludes it.\n- `type_not_permitted`: you don't have write on the item's type, or on the type `source_id` resolves to.\n- `edge_type_not_permitted`: you don't have write on an edge's type.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12498,7 +12476,7 @@
             }
           },
           "409": {
-            "description": "- `item_exists`: `create_only` found an item holding the `source_id` or `id`.\n- `id_reused`: `id` names an item of another type.\n- `conflict`: `id` names an item you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
+            "description": "- `item_exists`: `create_only` found an item holding the `source_id` or `id`.\n- `id_reused`: `id` names an item of another type, or one you can't read.\n- `link_taken`: another item of the type holds this link. `details.existing_id` names it.\n- `type_mismatch`: `source_id` matches an item of another type.\n- `version_conflict`, `ancestor_unavailable`: `version` is stale.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12510,7 +12488,7 @@
                       "$ref": "#/components/schemas/ItemAncestorUnavailable"
                     },
                     {
-                      "$ref": "#/components/schemas/ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal"
+                      "$ref": "#/components/schemas/IdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
@@ -12996,7 +12974,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.\n- `forbidden`: `type` names `system.connection` and you don't hold `grants.manage`. `details.required_scope` names it.",
+            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_type_not_permitted`: the filter has an `edge` or `backref` term for an edge type you can't read.\n- `forbidden`: `type` names `system.connection` and you don't hold `grants.manage`. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13485,7 +13463,7 @@
               "$ref": "#/components/schemas/ConflictMode"
             },
             "required": false,
-            "description": "Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`.",
+            "description": "Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. Leave it out and Marfa returns the conflict for you to resolve.",
             "name": "conflict",
             "in": "query"
           },
@@ -13698,7 +13676,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: you can read the item's type but don't have write on it (or on the type `retype` enters), or your credential reaches no type.\n- `edge_permission_denied`: you don't have write on an edge type in `edges`.\n- `forbidden`: you changed `source_id` on an item whose source your key doesn't write under or claim. `details.source` names it.",
+            "description": "- `type_not_permitted`: you can read the item's type but don't have write on it (or on the type `retype` enters), or your credential reaches no type.\n- `edge_type_not_permitted`: you don't have write on an edge type in `edges`.\n- `forbidden`: you changed `source_id` on an item whose source your key doesn't write under or claim. `details.source` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18232,7 +18210,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.",
+            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_type_not_permitted`: the filter has an `edge` or `backref` term for an edge type you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21059,7 +21037,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `items.purge` for a purge, or the instance's source filter changed while Marfa selected items. Repeat the request.\n- `type_not_permitted`: your credential reaches no type, or `filter.type` is a type you can't read.\n- `edge_permission_denied`: the filter names an edge type you can't read.",
+            "description": "- `forbidden`: you don't have `items.purge` for a purge, or the instance's source filter changed while Marfa selected items. Repeat the request.\n- `type_not_permitted`: your credential reaches no type, or `filter.type` is a type you can't read.\n- `edge_type_not_permitted`: the filter names an edge type you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21862,254 +21840,14 @@
         "x-marfa-local-command": true
       }
     },
-    "/items/{id}/metadata": {
-      "get": {
-        "operationId": "getItemMetadata",
-        "tags": [
-          "Metadata"
-        ],
-        "summary": "Get item metadata",
-        "description": "Returns an item's metadata: its tags and the extension namespaces you can read. To read metadata for many items, use `include=metadata` on `GET /items`.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "The ID of the item."
-            },
-            "required": true,
-            "description": "The ID of the item.",
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Returns the item's metadata.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetadataResponse"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              }
-            }
-          },
-          "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "404": {
-            "description": "- `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ItemNotFoundRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "412": {
-            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContractMismatchRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "429": {
-            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RateLimitedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Retry-After": {
-                "$ref": "#/components/headers/Retry-After"
-              }
-            }
-          },
-          "500": {
-            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalErrorRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Retry-After": {
-                "$ref": "#/components/headers/Retry-After"
-              }
-            }
-          },
-          "507": {
-            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          }
-        }
-      },
+    "/items/{id}/tags": {
       "put": {
-        "operationId": "replaceItemMetadata",
+        "operationId": "replaceItemTags",
         "tags": [
           "Metadata"
         ],
         "summary": "Replace an item's tags",
-        "description": "Replaces the item's tags with the ones you send and returns its metadata. An empty list clears all tags.",
+        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.",
         "security": [
           {
             "bearerAuth": []
@@ -22172,11 +21910,11 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the item's metadata with the new tags.",
+            "description": "Returns the item's tags.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MetadataResponse"
+                  "$ref": "#/components/schemas/ItemTags"
                 }
               }
             },
@@ -22503,9 +22241,7 @@
             }
           }
         }
-      }
-    },
-    "/items/{id}/tags": {
+      },
       "post": {
         "operationId": "addItemTags",
         "tags": [
@@ -23308,7 +23044,7 @@
         }
       }
     },
-    "/metadata/tags": {
+    "/tags": {
       "get": {
         "operationId": "listTags",
         "tags": [
@@ -27598,7 +27334,7 @@
             }
           },
           "403": {
-            "description": "- `edge_permission_denied`: you don't have write on the edge type. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
+            "description": "- `edge_type_not_permitted`: you don't have write on the edge type. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28300,7 +28036,7 @@
             }
           },
           "403": {
-            "description": "- `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the type of the item the edge points from, or of the item you move it to, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
+            "description": "- `edge_type_not_permitted`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the type of the item the edge points from, or of the item you move it to, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28692,7 +28428,7 @@
             }
           },
           "403": {
-            "description": "- `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
+            "description": "- `edge_type_not_permitted`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.\n- `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29089,7 +28825,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type.\n- `bulk_atomic_rollback`: with `atomic` true, you don't have write on the type of the item an entry points from, or on its edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.",
+            "description": "- `type_not_permitted`: your credential reaches no type.\n- `bulk_atomic_rollback`: with `atomic` true, you don't have write on the type of the item an entry points from, or on its edge type. `details.code` is `type_not_permitted` or `edge_type_not_permitted`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30169,7 +29905,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.",
+            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_type_not_permitted`: the filter has an `edge` or `backref` term for an edge type you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -30655,7 +30391,7 @@
             }
           },
           "409": {
-            "description": "- `type_already_exists`: a type has this identifier.\n- `link_taken`: two items that a forced delete left under this identifier hold the same value in the `link_field`.",
+            "description": "- `type_exists`: a type has this identifier.\n- `link_taken`: two items that a forced delete left under this identifier hold the same value in the `link_field`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33188,7 +32924,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.\n- `type_not_permitted`: the edge type cascades on delete and holds edges that point to items of a type you can't write. `details.grant` names the missing grant.",
+            "description": "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_type_not_permitted`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.\n- `type_not_permitted`: the edge type cascades on delete and holds edges that point to items of a type you can't write. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33762,7 +33498,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `schema.write`.\n- `edge_permission_denied`: your edge map doesn't grant write on the edge type or its `reverse_name`. `details.edge_type` names it.",
+            "description": "- `forbidden`: you don't have `schema.write`.\n- `edge_type_not_permitted`: your edge map doesn't grant write on the edge type or its `reverse_name`. `details.edge_type` names it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34613,7 +34349,7 @@
           "Blobs"
         ],
         "summary": "Get a blob URL",
-        "description": "Returns a URL that serves the blob's bytes without a credential, and `expires_in`, the seconds until it stops working. The URL keeps working for that time even if you revoke your credential.",
+        "description": "Returns a URL that serves the blob's bytes without a credential, and `ttl_seconds`, the seconds until it stops working. The URL keeps working for that time even if you revoke your credential.",
         "security": [
           {
             "bearerAuth": []
@@ -34635,17 +34371,17 @@
               "type": "integer",
               "minimum": 1,
               "default": 3600,
-              "description": "How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `expires_in`."
+              "description": "How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `ttl_seconds`."
             },
             "required": false,
-            "description": "How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `expires_in`.",
-            "name": "ttl",
+            "description": "How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `ttl_seconds`.",
+            "name": "ttl_seconds",
             "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Returns the `url` and `expires_in`. The URL serves the blob with its recorded `Content-Type`, as a download.",
+            "description": "Returns the `url` and `ttl_seconds`. The URL serves the blob with its recorded `Content-Type`, as a download.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34655,14 +34391,14 @@
                       "type": "string",
                       "description": "A URL that serves the bytes without a credential."
                     },
-                    "expires_in": {
-                      "type": "number",
+                    "ttl_seconds": {
+                      "type": "integer",
                       "description": "Seconds until the URL stops working."
                     }
                   },
                   "required": [
                     "url",
-                    "expires_in"
+                    "ttl_seconds"
                   ]
                 }
               }
@@ -36156,7 +35892,7 @@
                       "enum": [
                         "item.created",
                         "item.updated",
-                        "item.deleted",
+                        "item.trashed",
                         "item.restored",
                         "item.purged",
                         "item.state_changed",
@@ -36972,7 +36708,7 @@
                       "enum": [
                         "item.created",
                         "item.updated",
-                        "item.deleted",
+                        "item.trashed",
                         "item.restored",
                         "item.purged",
                         "item.state_changed",
@@ -40736,7 +40472,7 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type.\n- `edge_permission_denied`: the view's filter names an edge type, or its `beneath` needs `parent-of`, that you can't read.",
+            "description": "- `type_not_permitted`: your credential reaches no type.\n- `edge_type_not_permitted`: the view's filter names an edge type, or its `beneath` needs `parent-of`, that you can't read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -42730,20 +42466,30 @@
         "x-marfa-local-command": true
       }
     },
-    "/connectors/heartbeat": {
+    "/connectors/{id}/heartbeat": {
       "post": {
         "operationId": "sendConnectorHeartbeat",
         "tags": [
           "Connectors"
         ],
         "summary": "Send a connector heartbeat",
-        "description": "Sends a heartbeat for the connector your key registered, which sets its `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.",
+        "description": "Sends a heartbeat for the connector, which sets its `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The ID of the connector."
+            },
+            "required": true,
+            "description": "The ID of the connector.",
+            "name": "id",
+            "in": "path"
+          },
           {
             "name": "X-Marfa-Instance-Id",
             "in": "header",
@@ -42826,7 +42572,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't a key. Only a key reports as a connector, and management permission does not authorize it.",
+            "description": "- `forbidden`: your credential isn't the key the connector is registered under. Only that key sends heartbeats, and management permission does not authorize it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -42847,7 +42593,7 @@
             }
           },
           "404": {
-            "description": "- `connector_not_found`: your key has not registered a connector.",
+            "description": "- `connector_not_found`: no connector has this ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -43023,20 +42769,30 @@
         }
       }
     },
-    "/connectors/runs": {
+    "/connectors/{id}/runs": {
       "post": {
         "operationId": "reportConnectorRun",
         "tags": [
           "Connectors"
         ],
         "summary": "Report a connector run",
-        "description": "Reports one run of the connector your key registered, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
+        "description": "Reports one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The ID of the connector."
+            },
+            "required": true,
+            "description": "The ID of the connector.",
+            "name": "id",
+            "in": "path"
+          },
           {
             "name": "X-Marfa-Instance-Id",
             "in": "header",
@@ -43154,7 +42910,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential isn't a key. Only a key reports as a connector, and management permission does not authorize it.",
+            "description": "- `forbidden`: your credential isn't the key the connector is registered under. Only that key reports its runs, and management permission does not authorize it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -43175,7 +42931,7 @@
             }
           },
           "404": {
-            "description": "- `connector_not_found`: your key has not registered a connector.",
+            "description": "- `connector_not_found`: no connector has this ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -43370,9 +43126,7 @@
             }
           }
         }
-      }
-    },
-    "/connectors/{id}/runs": {
+      },
       "get": {
         "operationId": "listConnectorRuns",
         "tags": [
@@ -43686,9 +43440,9 @@
                       "type": "string",
                       "description": "When the hold lapses: the hold window after Marfa took or renewed it. The window is three minutes unless the instance sets another."
                     },
-                    "ttl_ms": {
+                    "ttl_seconds": {
                       "type": "integer",
-                      "description": "The hold window in milliseconds, so you can schedule the next renewal without reading Marfa's clock."
+                      "description": "The hold window in seconds, so you can schedule the next renewal without reading Marfa's clock."
                     },
                     "renewed": {
                       "type": "boolean",
@@ -43697,7 +43451,7 @@
                   },
                   "required": [
                     "expires_at",
-                    "ttl_ms",
+                    "ttl_seconds",
                     "renewed"
                   ]
                 }
@@ -48228,7 +47982,7 @@
         "x-marfa-local-command": true
       }
     },
-    "/source": {
+    "/sources/{source}": {
       "get": {
         "operationId": "getSource",
         "tags": [
@@ -48245,13 +47999,13 @@
           {
             "schema": {
               "type": "string",
-              "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
+              "description": "The source code, such as `github`. Percent-encode it as one path segment.",
               "example": "github"
             },
             "required": true,
-            "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
+            "description": "The source code, such as `github`. Percent-encode it as one path segment.",
             "name": "source",
-            "in": "query"
+            "in": "path"
           }
         ],
         "responses": {
@@ -48466,13 +48220,13 @@
           {
             "schema": {
               "type": "string",
-              "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
+              "description": "The source code, such as `github`. Percent-encode it as one path segment.",
               "example": "github"
             },
             "required": true,
-            "description": "The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path.",
+            "description": "The source code, such as `github`. Percent-encode it as one path segment.",
             "name": "source",
-            "in": "query"
+            "in": "path"
           },
           {
             "name": "X-Marfa-Instance-Id",
@@ -49751,7 +49505,7 @@
             }
           },
           "404": {
-            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The local command's message says when the key was already revoked.",
+            "description": "- `key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The local command's message says when the key was already revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50153,7 +49907,7 @@
             }
           },
           "404": {
-            "description": "- `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`.",
+            "description": "- `key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52908,7 +52662,7 @@
                   },
                   "avatar": {
                     "type": "null",
-                    "description": "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/picture` or `PUT /profile/picture`."
+                    "description": "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`."
                   }
                 },
                 "additionalProperties": false
@@ -53741,7 +53495,7 @@
                   },
                   "avatar": {
                     "type": "null",
-                    "description": "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/picture` or `PUT /profile/picture`."
+                    "description": "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`."
                   }
                 },
                 "additionalProperties": false
@@ -54042,7 +53796,7 @@
         "x-marfa-local-command": true
       }
     },
-    "/owner/picture": {
+    "/owner/avatar": {
       "put": {
         "operationId": "replaceOwnerPicture",
         "tags": [
@@ -54620,7 +54374,7 @@
         "x-marfa-local-command": true
       }
     },
-    "/profile/picture": {
+    "/profile/avatar": {
       "put": {
         "operationId": "replaceProfilePicture",
         "tags": [
@@ -56627,7 +56381,7 @@
           "Instance"
         ],
         "summary": "Get the instance",
-        "description": "Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.",
+        "description": "Returns a description of the instance: its display name, `instance_id`, the release it runs, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.",
         "responses": {
           "200": {
             "description": "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
@@ -57229,11 +56983,11 @@
                     "maximum": 36500,
                     "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
-                  "event_log_retention_hours": {
+                  "event_log_retention_days": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 876000,
-                    "description": "Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "maximum": 36500,
+                    "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
                   "trash_retention_days": {
                     "type": "integer",
@@ -57706,14 +57460,14 @@
                     "maximum": 36500,
                     "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
                   },
-                  "event_log_retention_hours": {
+                  "event_log_retention_days": {
                     "type": [
                       "integer",
                       "null"
                     ],
                     "minimum": 0,
-                    "maximum": 876000,
-                    "description": "Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "maximum": 36500,
+                    "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
                   },
                   "trash_retention_days": {
                     "type": [
@@ -58960,7 +58714,7 @@
                     "process": {
                       "type": "object",
                       "properties": {
-                        "release": {
+                        "version": {
                           "type": "string",
                           "description": "The release this server runs."
                         },
@@ -58994,7 +58748,7 @@
                         }
                       },
                       "required": [
-                        "release",
+                        "version",
                         "memory_rss_bytes",
                         "memory_rss_peak_bytes",
                         "cpu_user_seconds",
@@ -62304,7 +62058,7 @@
               "enum": [
                 "item.created",
                 "item.updated",
-                "item.deleted",
+                "item.trashed",
                 "item.restored",
                 "item.purged",
                 "item.state_changed",
@@ -62330,10 +62084,10 @@
         },
         "responses": {
           "2XX": {
-            "description": "Marfa records the delivery as `success`. It doesn't read the response body."
+            "description": "Marfa records the delivery as `succeeded`. It doesn't read the response body."
           },
           "default": {
-            "description": "Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `dead_letter`."
+            "description": "Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `failed`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `failed`."
           }
         }
       }
@@ -62389,8 +62143,7 @@
       "name": "Metadata",
       "description": "An item's tags and extensions together, and the tags in use.",
       "x-operation-order": [
-        "getItemMetadata",
-        "replaceItemMetadata",
+        "replaceItemTags",
         "addItemTags",
         "removeItemTag",
         "listTags"

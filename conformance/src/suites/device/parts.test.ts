@@ -349,7 +349,7 @@ describe("a working copy applies no part rule on a delete", () => {
     const binned = (id: string, at: string) =>
       copyItemEvent(
         at,
-        "item.deleted",
+        "item.trashed",
         wireItem({
           id,
           version: 2,
@@ -361,7 +361,7 @@ describe("a working copy applies no part rule on a delete", () => {
     log = [
       copyItemEvent(
         "11",
-        "item.deleted",
+        "item.trashed",
         wireItem({
           id: "host",
           type: "core.task",

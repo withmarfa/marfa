@@ -215,11 +215,14 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
         }
         let part = |held: &str| copy.on_delete(held) == OnDelete::WithHosts;
         if part(edge.edge_type) && edges::closes_cycle(&copy, &proposed, part)? {
-            return Err(refused(edges::refused_parts_cycle(
-                edge.edge_type,
-                edge.from.id(),
-                edge.to_id,
-            )));
+            let cycle =
+                edges::refused_parts_cycle(edge.edge_type, edge.from.id(), edge.to_id);
+            return Err(CoreError::Validation {
+                server: None,
+                code: "edge_cycle".into(),
+                message: cycle.message,
+                details: Some(Box::new(cycle.details)),
+            });
         }
     }
     Ok(())
@@ -699,6 +702,14 @@ mod tests {
 
     /// The server's `error.details` for an `edge_constraint_violation`.
     fn details_of<T: std::fmt::Debug>(outcome: crate::Result<T>, what: &str) -> Value {
+        details_under(outcome, "edge_constraint_violation", what)
+    }
+
+    fn details_under<T: std::fmt::Debug>(
+        outcome: crate::Result<T>,
+        want: &str,
+        what: &str,
+    ) -> Value {
         match outcome {
             Err(CoreError::Validation {
                 code,
@@ -706,7 +717,7 @@ mod tests {
                 details,
                 ..
             }) => {
-                assert_eq!(code, "edge_constraint_violation", "{what}: {message}");
+                assert_eq!(code, want, "{what}: {message}");
                 *details.unwrap_or_else(|| panic!("{what}: no details on {message}"))
             }
             other => panic!("{what}: {other:?}"),
@@ -1862,15 +1873,15 @@ mod tests {
             "edge_type": draft.edge_type,
             "from_id": draft.from_id,
             "to_id": draft.to_id,
-            "constraint": "cycle",
         })
     }
 
     fn assert_parts_cycle(core: &Core, draft: &EdgeDraft, what: &str) {
         let before = queued(core);
         let want = parts_cycle(draft);
-        assert_eq!(details_of(core.check_edge(draft), what), want, "{what}");
-        assert_eq!(details_of(core.create_edge(draft), what), want, "{what}");
+        let checked = details_under(core.check_edge(draft), "edge_cycle", what);
+        let created = details_under(core.create_edge(draft), "edge_cycle", what);
+        assert_eq!((checked, created), (want.clone(), want), "{what}");
         assert_eq!(queued(core), before, "{what}: a refused edge was queued");
     }
 
@@ -1981,16 +1992,16 @@ mod tests {
         core.create_item(&draft).unwrap();
         let before = queued(&core);
         assert_eq!(
-            details_of(
+            details_under(
                 core.update_edge("ab", &target(NOTE_C)),
+                "edge_cycle",
                 "a move of a's host onto c, which a already hosts"
             ),
             json!({
                 "edge_type": "mock.moving-part",
                 "from_id": NOTE_A,
                 "to_id": NOTE_C,
-                "constraint": "cycle",
-            }),
+                }),
         );
         assert_eq!(queued(&core), before, "a refused move was queued");
     }

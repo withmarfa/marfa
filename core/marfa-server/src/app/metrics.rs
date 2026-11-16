@@ -146,7 +146,7 @@ fn process(resident: Option<u64>) -> Value {
     // The peak is bytes on macOS and kilobytes elsewhere.
     let peak_unit: i64 = if cfg!(target_os = "macos") { 1 } else { 1024 };
     json!({
-        "release": VERSION,
+        "version": VERSION,
         "memory_rss_bytes": resident,
         "memory_rss_peak_bytes": used.map(|used| used.ru_maxrss * peak_unit),
         "cpu_user_seconds": used.map(|used| seconds(used.ru_utime)),

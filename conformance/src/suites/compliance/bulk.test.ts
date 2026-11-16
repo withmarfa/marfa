@@ -1597,7 +1597,7 @@ describe("bulk_action async-job lifecycle", () => {
 
     const final = await noteOnly.pollBulkActionToTerminal(myJob.id);
     expect(final.status).toBe("completed");
-    const metadata = await noteOnly.getMetadata(note.data.item.id);
+    const metadata = await noteOnly.getItem(note.data.item.id);
     expect(metadata.data.metadata.tags).toContain(`${noteTag}-done`);
   });
 

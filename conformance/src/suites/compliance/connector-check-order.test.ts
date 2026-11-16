@@ -60,8 +60,6 @@ interface Call {
   /** The path under `/connectors/{id}`, query included. */
   path: string;
   body?: Record<string, unknown>;
-  /** The door names no connector, so the path is under `/connectors`. */
-  own?: boolean;
 }
 
 async function answer(
@@ -69,10 +67,7 @@ async function answer(
   id: string,
   call: Call,
 ): Promise<Answer> {
-  const url = call.own
-    ? `/connectors${call.path}`
-    : `/connectors/${id}${call.path}`;
-  const res = await who.rawRequest<unknown>(url, {
+  const res = await who.rawRequest<unknown>(`/connectors/${id}${call.path}`, {
     method: call.method,
     body: call.body,
   });
@@ -114,7 +109,6 @@ const bodyDoors: Door[] = [
     bad: {
       method: "POST",
       path: "/runs",
-      own: true,
       body: {
         outcome: "skipped",
         started_at: "2026-10-05T18:00:00Z",
@@ -124,14 +118,13 @@ const bodyDoors: Door[] = [
     good: {
       method: "POST",
       path: "/runs",
-      own: true,
       body: {
         outcome: "succeeded",
         started_at: "2026-10-05T18:00:00Z",
         finished_at: "2026-10-05T18:00:01Z",
       },
     },
-    stranger: hidden,
+    stranger: forbidden,
   },
   {
     label: "POST hold",
@@ -286,15 +279,12 @@ describe("a registration that is not there, against the key", () => {
   });
 });
 
-describe("a key that has registered no connector, on the doors that name none", () => {
-  it("answers 404 connector_not_found to a key with no registration, where the connector's own key is taken", async () => {
+describe("a heartbeat and a run report, against a key that is not the connector's own", () => {
+  it("answers 403 forbidden to another key and to the operator, and 404 connector_not_found to an ID nothing holds", async () => {
     const runs = bodyDoors.find((door) => door.label === "POST runs")!;
     const own = await freshConnector("own-key doors");
     const doors: { label: string; call: Call }[] = [
-      {
-        label: "POST heartbeat",
-        call: { method: "POST", path: "/heartbeat", own: true },
-      },
+      { label: "POST heartbeat", call: { method: "POST", path: "/heartbeat" } },
       { label: runs.label, call: runs.good },
     ];
     for (const { label, call } of doors) {
@@ -302,9 +292,14 @@ describe("a key that has registered no connector, on the doors that name none", 
         [stranger, "another key"],
         [getManagementClient(), "operator"],
       ] as const) {
-        const told = await answer(who, connectorId, call);
-        expect(told.status, `${label}: ${name}`).toBe(404);
-        expect(told.code, `${label}: ${name}`).toBe("connector_not_found");
+        const told = await answer(who, own.id, call);
+        expect(told.status, `${label}: ${name}`).toBe(403);
+        expect(told.code, `${label}: ${name}`).toBe("forbidden");
+        const absent = await answer(who, UNKNOWN, call);
+        expect(absent.status, `${label}: ${name} at an unknown ID`).toBe(404);
+        expect(absent.code, `${label}: ${name} at an unknown ID`).toBe(
+          "connector_not_found",
+        );
       }
       // The witness: the connector's own key is taken at the same door.
       const taken = await answer(own.client, own.id, call);
@@ -375,7 +370,6 @@ describe("a field the door does not declare, against the key and the fence", () 
       call: {
         method: "POST",
         path: "/runs",
-        own: true,
         body: {
           outcome: "succeeded",
           started_at: "2026-10-05T18:00:00Z",
@@ -386,7 +380,6 @@ describe("a field the door does not declare, against the key and the fence", () 
       fence: {
         method: "POST",
         path: "/runs",
-        own: true,
         body: {
           outcome: "succeeded",
           started_at: "2026-10-05T18:00:00Z",
@@ -427,8 +420,7 @@ describe("a field the door does not declare, against the key and the fence", () 
       expect(own.code).toBe("validation_error");
       expect(own.details?.["unknown_body_fields"], label).toBeDefined();
 
-      // A door that names no connector finds another key no registration.
-      const told = call.own ? hidden : forbidden;
+      const told = forbidden;
       const refused = await answer(stranger, connectorId, call);
       expect(refused.status, `${label}: another key`).toBe(told.status);
       expect(refused.code, label).toBe(told.code);
@@ -570,7 +562,6 @@ describe("a body the door refuses once the key is the connector's own, against a
         call: {
           method: "POST",
           path: "/runs",
-          own: true,
           body: { ...times, finished_at: "2026-10-05T17:59:59Z" },
         },
       },
@@ -579,7 +570,6 @@ describe("a body the door refuses once the key is the connector's own, against a
         call: {
           method: "POST",
           path: "/runs",
-          own: true,
           body: {
             ...times,
             started_at: "0000-01-01T00:00:00+00:01",
@@ -631,7 +621,6 @@ describe("a body the door refuses once the key is the connector's own, against a
         call: {
           method: "POST",
           path: "/runs",
-          own: true,
           body: { ...times, retries: 2 },
         },
       },
@@ -647,7 +636,7 @@ describe("a body the door refuses once the key is the connector's own, against a
         [getManagementClient(), "operator"],
       ] as const) {
         const told = await answer(who, connectorId, call);
-        const meant = call.own ? hidden : forbidden;
+        const meant = forbidden;
         expect(told.status, `${label}: ${name}`).toBe(meant.status);
         expect(told.code, `${label}: ${name}`).toBe(meant.code);
       }
@@ -767,7 +756,7 @@ describe("a credential that is missing, against what the body would be refused f
       {
         label: "POST runs",
         method: "POST",
-        path: "/connectors/runs",
+        path: `/connectors/${UNKNOWN}/runs`,
         bad: JSON.stringify({ outcome: "skipped" }),
       },
       {
@@ -835,7 +824,7 @@ describe("a credential that is missing, against what the body would be refused f
       {
         label: "POST runs",
         method: "POST",
-        path: "/connectors/runs",
+        path: `/connectors/${UNKNOWN}/runs`,
         body: {
           outcome: "succeeded",
           started_at: "2026-10-05T18:00:00Z",

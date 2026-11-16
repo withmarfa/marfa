@@ -96,7 +96,7 @@ describe("how long a sign-in's folder reports are kept", () => {
 
     await server.advanceClock(31 * DAY_MS);
     const run = await runJob(server, "credential-cleanup");
-    expect(run.outcome, JSON.stringify(run)).toBe("ok");
+    expect(run.outcome, JSON.stringify(run)).toBe("succeeded");
     const after = (await status(id)).sign_ins;
     expect(after.map((g) => g.sign_in.id)).toEqual([kept.id]);
   });
@@ -126,7 +126,7 @@ describe("how long a sign-in's folder reports are kept", () => {
 
     await server.advanceClock(91 * DAY_MS);
     const run = await runJob(server, "credential-cleanup");
-    expect(run.outcome, JSON.stringify(run)).toBe("ok");
+    expect(run.outcome, JSON.stringify(run)).toBe("succeeded");
     expect(
       (await status(id)).sign_ins.filter((g) => g.sign_in.kind === "app"),
     ).toEqual([]);

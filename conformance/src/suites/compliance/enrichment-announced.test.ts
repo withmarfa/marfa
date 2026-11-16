@@ -64,7 +64,7 @@ describe("the enrichment sweep", () => {
       async (stream) => {
         const run = await operator.runHousekeeping("enrichment-sweep");
         expect(run.status).toBe(200);
-        expect(run.data.outcome).toBe("ok");
+        expect(run.data.outcome).toBe("succeeded");
         // The witness: a write after the sweep, so a frame the sweep did not
         // send is absent and not late.
         const witness = await client.createItem(createNote());

@@ -58,7 +58,7 @@ async function jobsIdle(): Promise<void> {
         return (
           job !== undefined &&
           job.running_since === null &&
-          Date.parse(job.next_run_at) - Date.now() > job.interval_ms / 2
+          Date.parse(job.next_run_at) - Date.now() > job.interval_seconds * 500
         );
       })
         ? true
@@ -185,7 +185,7 @@ describe("a replication run while no store answers", () => {
     ]);
 
     await storesHang();
-    const run = await runJob(operator, "blob-replicate", "error");
+    const run = await runJob(operator, "blob-replicate", "failed");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waiting()).toBe(0);
     expect(
@@ -214,7 +214,7 @@ describe("health and attention while the object store does not answer", () => {
       expect(quiet.backups).toMatchObject({ status: "ok", store_error: null });
 
       await storesHang();
-      await runJob(operator, "blob-replicate", "error");
+      await runJob(operator, "blob-replicate", "failed");
       const before = Date.now();
       const detail = await healthDetail(server);
       expect(Date.now() - before).toBeLessThan(2500);
@@ -262,7 +262,7 @@ describe("health and attention while the object store does not answer", () => {
       copied: number;
       remaining: number;
       refused: Record<string, string>;
-    }>(operator, "blob-replicate", "error");
+    }>(operator, "blob-replicate", "failed");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     const bucket = (await operator.listBlobStores()).data.data.find(
       (store) => store.kind === "s3",
@@ -308,7 +308,7 @@ describe("a store's delete that does not answer", () => {
     // The delete the run gave up on is still out.
     expect(await waitingAt("hold:blob-delete")).toBe(1);
 
-    const copied = await runJob(operator, "blob-replicate", "error");
+    const copied = await runJob(operator, "blob-replicate", "failed");
     expect(copied.result).toMatchObject({ copied: 0, remaining: 1 });
     // Skipped rather than asked again: no second delete waits.
     expect(await waitingAt("hold:blob-delete")).toBe(1);
@@ -423,12 +423,12 @@ describe("a store's write that does not answer", () => {
 
     await server.setFault("store-check-deadline=200");
     await server.setFault("hold:blob-write");
-    const run = await runJob(operator, "blob-replicate", "error");
+    const run = await runJob(operator, "blob-replicate", "failed");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     // The write the run gave up on is still out.
     expect(await waitingAt("hold:blob-write")).toBe(1);
 
-    const later = await runJob(operator, "blob-replicate", "error");
+    const later = await runJob(operator, "blob-replicate", "failed");
     expect(later.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waitingAt("hold:blob-write")).toBe(1);
     expect(
@@ -455,7 +455,7 @@ describe("a drop while a store does not finish a write of the blob's bytes", () 
 
     await server.setFault("store-check-deadline=200");
     await server.setFault("hold:blob-write");
-    const run = await runJob(operator, "blob-replicate", "error");
+    const run = await runJob(operator, "blob-replicate", "failed");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waitingAt("hold:blob-write")).toBe(1);
 

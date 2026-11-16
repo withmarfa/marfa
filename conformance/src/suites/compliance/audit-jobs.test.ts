@@ -206,7 +206,7 @@ describe("the audit log of a housekeeping run", () => {
     for (const name of names) {
       const run = await manager.runHousekeeping(name);
       expect(run.status, name).toBe(200);
-      expect(run.data.outcome, name).toBe("ok");
+      expect(run.data.outcome, name).toBe("succeeded");
     }
     const after = await wholeLog();
     expect(after.map((entry) => entry.id)).toEqual(

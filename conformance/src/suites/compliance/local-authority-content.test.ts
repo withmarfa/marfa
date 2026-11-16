@@ -142,7 +142,7 @@ it("refuses every item, edge, tag, search and occurrence door through the privat
       body: { type: "core.note", ids: [kept] },
     },
     { method: "GET", path: "/edges" },
-    { method: "GET", path: "/metadata/tags" },
+    { method: "GET", path: "/tags" },
     { method: "GET", path: `/items/${annotated}/extensions/${EXTENSION}` },
     { method: "GET", path: "/search?q=kept" },
     {

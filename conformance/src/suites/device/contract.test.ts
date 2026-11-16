@@ -1073,7 +1073,6 @@ const invocations: Record<string, () => string[]> = {
   "items restore": () => [ID],
   "items transition": () => ["--state", "archived", ID],
   "items versions": () => [ID],
-  "metadata get": () => [ID],
   "metadata replace": () => ["--tag", "t", ID],
   "items tag": () => [ID, "t"],
   "items purge": () => [ID],
@@ -1179,8 +1178,9 @@ const invocations: Record<string, () => string[]> = {
   "connectors list": () => [],
   "connectors get": () => [ID],
   "connectors delete": () => [ID],
-  "connectors heartbeat": () => [],
+  "connectors heartbeat": () => [ID],
   "connectors report": () => [
+    ID,
     "--outcome",
     "succeeded",
     "--started-at",
@@ -1888,7 +1888,7 @@ describe("every command holds the server to the contract", () => {
     for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
       server = await ScriptedServer.start();
       server.contract = contract;
-      server.answer("PUT", "/profile/picture", {
+      server.answer("PUT", "/profile/avatar", {
         kind: "json",
         status: 200,
         body: { ok: true },
@@ -1905,7 +1905,7 @@ describe("every command holds the server to the contract", () => {
         picture,
       ]);
       const label = `profile update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
-      expect(sent(server), label).toEqual(["PUT /profile/picture"]);
+      expect(sent(server), label).toEqual(["PUT /profile/avatar"]);
       expect(server.requests[0]?.headers.authorization, label).toBe(
         `Bearer ${KEY}`,
       );
@@ -1948,7 +1948,7 @@ describe("every command holds the server to the contract", () => {
           picture,
         ]);
         const label = `owner update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
-        expect(socket.asked, label).toEqual(["PUT /owner/picture"]);
+        expect(socket.asked, label).toEqual(["PUT /owner/avatar"]);
         if (contract === BUILT_FOR) {
           expect(outcome.code, label).toBe(0);
           expect(JSON.parse(outcome.stdout), label).toEqual(body);

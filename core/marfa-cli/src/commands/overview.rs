@@ -77,10 +77,7 @@ pub fn describe(overview: &Value) -> String {
     let mut lines = vec![format!(
         "instance {} ({})",
         text(instance, "name"),
-        match instance.get("release").and_then(Value::as_str) {
-            Some(release) => format!("{release}, build {}", text(instance, "version")),
-            None => text(instance, "version").to_string(),
-        }
+        text(instance, "version")
     )];
     let kind = match text(credential, "kind") {
         "app" => "app".to_string(),

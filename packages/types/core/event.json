@@ -13,16 +13,14 @@
       "description": "A short description of the event."
     },
     "starts_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Starts",
-      "description": "When the event starts, as an ISO 8601 instant. `timezone` says which local time it means.",
-      "format": "datetime"
+      "description": "When the event starts, as an ISO 8601 instant. `timezone` says which local time it means."
     },
     "ends_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Ends",
-      "description": "When the event ends, as an ISO 8601 instant.",
-      "format": "datetime"
+      "description": "When the event ends, as an ISO 8601 instant."
     },
     "duration": {
       "type": "number",
@@ -49,12 +47,21 @@
     "precision": {
       "type": "enum",
       "description": "How much of the start is known, such as only the year, for an event dated from memory.",
-      "enum_values": ["year", "month", "day", "time"]
+      "enum_values": [
+        "year",
+        "month",
+        "day",
+        "time"
+      ]
     },
     "status": {
       "type": "enum",
       "description": "Whether the event will happen.",
-      "enum_values": ["tentative", "confirmed", "canceled"]
+      "enum_values": [
+        "tentative",
+        "confirmed",
+        "canceled"
+      ]
     },
     "notes": {
       "type": "string",
@@ -95,18 +102,24 @@
         "response": {
           "type": "enum",
           "description": "The attendee's reply to the invitation",
-          "enum_values": ["needs_action", "accepted", "declined", "tentative"]
+          "enum_values": [
+            "needs_action",
+            "accepted",
+            "declined",
+            "tentative"
+          ]
         }
       }
     },
     "original_starts_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Original Start",
-      "description": "For an event that replaces one occurrence of a repeating event, the start of the occurrence it replaces.",
-      "format": "datetime"
+      "description": "For an event that replaces one occurrence of a repeating event, the start of the occurrence it replaces."
     }
   },
-  "required": ["title"],
+  "required": [
+    "title"
+  ],
   "display_hints": {
     "title_field": "title",
     "body_field": "description",

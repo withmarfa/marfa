@@ -211,7 +211,7 @@ mod tests {
         json!({
             "id": "wh_1",
             "url": "https://receiver.example/hook",
-            "events": ["item.created", "item.deleted"],
+            "events": ["item.created", "item.trashed"],
             "type_filter": "core.note",
             "secret": "whsec_PLAINTEXT",
             "active": true,
@@ -223,7 +223,7 @@ mod tests {
         let text = created_text(&created(), &WebhookCreateArgs::default());
         assert_eq!(
             text,
-            "whsec_PLAINTEXT\nwebhook wh_1 (https://receiver.example/hook); the signing secret is shown once, keep it now\n  events item.created, item.deleted\n  type filter core.note"
+            "whsec_PLAINTEXT\nwebhook wh_1 (https://receiver.example/hook); the signing secret is shown once, keep it now\n  events item.created, item.trashed\n  type filter core.note"
         );
         assert_eq!(text.matches("whsec_PLAINTEXT").count(), 1);
     }

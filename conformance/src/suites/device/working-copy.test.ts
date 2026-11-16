@@ -3006,7 +3006,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
       copyReplay("11", [
         copyItemEvent(
           "11",
-          "item.deleted",
+          "item.trashed",
           wireItem({
             id: "doomed",
             state: "trashed",

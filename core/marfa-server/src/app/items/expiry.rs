@@ -129,7 +129,7 @@ fn move_one(
     }
     let moved = moved_to_bin(unit, &moving)?;
     for item in &moved {
-        announce(unit, "item.deleted", item)?;
+        announce(unit, "item.trashed", item)?;
     }
     Ok(Some(moved.into_iter().map(|item| item.id).collect()))
 }

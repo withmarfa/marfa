@@ -70,7 +70,7 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
       "--avatar",
       file,
     ]);
-    expect(pictured.avatar).toMatch(/\/owner\/picture$/);
+    expect(pictured.avatar).toMatch(/\/owner\/avatar$/);
     expect((await owner()).avatar).toBe(pictured.avatar);
     const fetched = join(dir, "fetched.png");
     await local.json(["owner", "picture", "--output", fetched]);

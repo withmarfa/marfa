@@ -106,7 +106,7 @@ describe("a device finds a file by its extracted text", () => {
 
     const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
-    expect(run.data.outcome).toBe("ok");
+    expect(run.data.outcome).toBe("succeeded");
     // The witness: the server has the text and finds the files by it.
     expect(await served("zorblaxian")).toEqual([most, some, least]);
 

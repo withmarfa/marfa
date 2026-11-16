@@ -467,7 +467,7 @@ describe("edges.bulk", () => {
 
     // A key holding type write but no edge write is denied at the
     // per-edge gate. In atomic mode the batch rolls back with the inner
-    // edge_permission_denied.
+    // edge_type_not_permitted.
     const deniedKey = await client.createKey({
       label: "edges-bulk-denied",
       source: `${ctx.source}-denied`,
@@ -490,7 +490,7 @@ describe("edges.bulk", () => {
     // "fix the request".
     expect(rejected.status).toBe(403);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
-    expect(rejected.error?.error.details?.code).toBe("edge_permission_denied");
+    expect(rejected.error?.error.details?.code).toBe("edge_type_not_permitted");
 
     // Still a rollback: nothing of the page landed.
     const listed = await client.listItemEdges(b.fromId, {

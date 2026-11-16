@@ -694,12 +694,12 @@ it("announces the owner's trash, restore, purge and emptying of the bin as the i
   const of = (id: string) =>
     frames.filter((e) => rowOf(e) === id).map((e) => e.event);
   expect(of(purged.id)).toEqual([
-    "item.deleted",
+    "item.trashed",
     "item.restored",
-    "item.deleted",
+    "item.trashed",
     "item.purged",
   ]);
-  expect(of(emptied.id)).toEqual(["item.deleted", "item.purged"]);
+  expect(of(emptied.id)).toEqual(["item.trashed", "item.purged"]);
 });
 
 async function emptyBin() {

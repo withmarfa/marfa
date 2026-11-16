@@ -60,24 +60,19 @@ interface Door {
   method: string;
   path: string;
   body?: Record<string, unknown>;
-  /** The door names no connector: the key is the connector. */
-  own?: boolean;
 }
 
 function urlOf(door: Door, connectorId: string): string {
-  return door.own
-    ? `/connectors${door.path}`
-    : `/connectors/${connectorId}${door.path}`;
+  return `/connectors/${connectorId}${door.path}`;
 }
 
 function doors(): Door[] {
   const at = "2026-10-05T18:00:00Z";
   return [
-    { method: "POST", path: "/heartbeat", own: true },
+    { method: "POST", path: "/heartbeat" },
     {
       method: "POST",
       path: "/runs",
-      own: true,
       body: { outcome: "succeeded", started_at: at, finished_at: at },
     },
     { method: "POST", path: "/hold", body: { process: holder } },
@@ -165,11 +160,7 @@ describe("direct authority on own-key connector operations", () => {
           // Another key is no connector's own, so an own-key door finds it no
           // registration where a door that names one refuses it.
           const expected =
-            key === undefined
-              ? 401
-              : connectorId === id && !door.own
-                ? 403
-                : 404;
+            key === undefined ? 401 : connectorId === id ? 403 : 404;
           expect(
             res.status,
             `${key === undefined ? "anonymous" : "another key"}: ${door.method} ${door.path}`,

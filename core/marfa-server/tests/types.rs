@@ -139,7 +139,7 @@ async fn registrations_racing_for_one_id_leave_one_type_and_refuse_the_other() {
     } else {
         &first
     };
-    assert_eq!(refused.code(), "type_already_exists");
+    assert_eq!(refused.code(), "type_exists");
     let ids = instance.type_ids().await;
     assert_eq!(ids.iter().filter(|id| *id == "acme.race").count(), 1);
 }
@@ -406,7 +406,7 @@ async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_t
     assert_eq!(read.code(), "type_chain_unresolvable");
     assert_eq!(read.body["error"]["details"]["type_id"], "acme.broken");
     let again = instance.register(simple("acme.broken")).await;
-    assert_eq!(again.code(), "type_already_exists");
+    assert_eq!(again.code(), "type_exists");
     let kept: String = {
         let stored = instance.app.db.read(|tx| {
             Ok(tx.query_row(

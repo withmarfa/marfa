@@ -497,7 +497,7 @@ impl Folder {
         {
             return Err(CoreError::Forbidden {
                 server: None,
-                code: "edge_permission_denied".into(),
+                code: "edge_type_not_permitted".into(),
                 message: format!(
                     "this key cannot write the {PLACEMENT_EDGE} edges that say where each file sits, so the folder cannot place its files: it needs `edge.{PLACEMENT_EDGE}:write`"
                 ),

@@ -111,7 +111,7 @@ describe("webhook address resolution", () => {
     try {
       await write("rebind");
       const sent = await deliveryAt(id, 1);
-      expect(sent.status).toBe("success");
+      expect(sent.status).toBe("succeeded");
       await receiver.waitFor((r) => r.path === "/hook/rebind");
       expect(
         receiver.received.filter((r) => r.path === "/hook/rebind"),

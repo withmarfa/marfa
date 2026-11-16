@@ -648,12 +648,11 @@ describe("a cycle of parts", () => {
       edge_type: "attached-to",
     });
     expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("edge_constraint_violation");
+    expect(refused.error?.error.code).toBe("edge_cycle");
     expect(refused.error?.error.details).toEqual({
       edge_type: "attached-to",
       from_id: c,
       to_id: a,
-      constraint: "cycle",
     });
 
     // The witness: the same edge to an item outside the chain lands.

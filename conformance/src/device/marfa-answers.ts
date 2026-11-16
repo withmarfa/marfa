@@ -323,7 +323,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
         type: "string",
         description: "A short description of the event.",
       },
-      starts_at: { type: "string", format: "datetime", label: "Starts" },
+      starts_at: { type: "datetime", label: "Starts" },
     },
     mergePolicy: {
       fields: { notes: "keep_both_copies" },
@@ -1203,7 +1203,7 @@ export const answers = {
   edgePermissionDenied: (edgeType: string): Answer =>
     refusal(
       403,
-      "edge_permission_denied",
+      "edge_type_not_permitted",
       `Missing edge.${edgeType}:write permission`,
       { edge_type: edgeType, required: "write" },
     ),
@@ -1345,12 +1345,17 @@ export const answers = {
  * exactly that, so these exist to be scripted instead.
  */
 export const writeAnswers = {
-  /** `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}` and
-   *  `PUT /items/{id}/metadata`: the sidecar, whole. */
+  /** `POST /items/{id}/tags` and `DELETE /items/{id}/tags/{tag}`: the sidecar, whole. */
   metadata: (itemId: string, tags: string[] = []): Answer => ({
     kind: "json",
     status: 200,
     body: { metadata: { item_id: itemId, tags, extensions: {} } },
+  }),
+  /** `PUT /items/{id}/tags`: the tags alone. */
+  replacedTags: (tags: string[] = []): Answer => ({
+    kind: "json",
+    status: 200,
+    body: { tags },
   }),
   /** Both extension doors: the namespaces, whole. */
   extensions: (namespaces: Record<string, unknown> = {}): Answer => ({
@@ -1370,7 +1375,7 @@ export const writeAnswers = {
   link: (url: string): Answer => ({
     kind: "json",
     status: 200,
-    body: { url, expires_in: 3600 },
+    body: { url, ttl_seconds: 3600 },
   }),
   /** `POST /edges`, which answers `201`, and `PATCH /edges/{id}`, which
    *  answers `200`. */

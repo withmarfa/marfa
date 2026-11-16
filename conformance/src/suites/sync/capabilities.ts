@@ -788,7 +788,7 @@ async function probeEdgeVersion(args: {
 /**
  * Does purging an item announce itself?
  *
- * The control is the soft delete on the same stream. `item.deleted` arriving
+ * The control is the soft delete on the same stream. `item.trashed` arriving
  * and `item.purged` not arriving is a finding; neither arriving says only that
  * the subscription was not working, which is a different thing and must not be
  * recorded as an absent rule.
@@ -870,10 +870,10 @@ async function probeItemPurgedEvent(args: {
         signal,
       );
 
-      if (!saw(settled, "item.deleted")) {
+      if (!saw(settled, "item.trashed")) {
         throw new IndeterminateProbe(
           "itemPurgedEvent",
-          `the stream never delivered item.deleted for ${id} either, so it was not carrying this dataset's events`,
+          `the stream never delivered item.trashed for ${id} either, so it was not carrying this dataset's events`,
         );
       }
       if (saw(settled, "item.purged")) {
@@ -884,7 +884,7 @@ async function probeItemPurgedEvent(args: {
       }
       return {
         present: false,
-        evidence: `purging ${id} delivered item.deleted but no item.purged, so a client offline across the purge is never told the item is gone`,
+        evidence: `purging ${id} delivered item.trashed but no item.purged, so a client offline across the purge is never told the item is gone`,
       };
     },
   );

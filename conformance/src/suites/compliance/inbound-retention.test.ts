@@ -176,7 +176,7 @@ async function world(duplicateHeader?: string): Promise<World> {
 async function sweep() {
   const run = await operator().runHousekeeping("inbound-delivery-cleanup");
   expect(run.status).toBe(200);
-  expect(run.data.outcome, String(run.data.error)).toBe("ok");
+  expect(run.data.outcome, String(run.data.error)).toBe("succeeded");
   return run.data.result;
 }
 
@@ -456,9 +456,9 @@ describe("the cleanup job's interval", () => {
           expect(listed.status).toBe(200);
           return listed.data.data.find(
             (row) => row.name === "inbound-delivery-cleanup",
-          )?.interval_ms;
+          )?.interval_seconds;
         };
-        expect(await interval()).toBe(60_000);
+        expect(await interval()).toBe(60);
       } finally {
         await own.stop();
       }

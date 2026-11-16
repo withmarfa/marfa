@@ -189,7 +189,7 @@ it("retries a failed delivery through local authority without exposing its frame
     const body = await response.text();
     expect(body).not.toContain(privateBody);
     const page = JSON.parse(body) as { data: { id: string; status: string }[] };
-    return page.data.find((d) => d.status === "dead_letter");
+    return page.data.find((d) => d.status === "failed");
   });
   expect(receiver.received.some((r) => r.body.includes(privateBody))).toBe(
     true,
@@ -198,7 +198,7 @@ it("retries a failed delivery through local authority without exposing its frame
     const page = (await (
       await local(`/webhooks/${ids[1]!}/deliveries`)
     ).json()) as { data: { id: string; status: string }[] };
-    return page.data.find((d) => d.status === "dead_letter");
+    return page.data.find((d) => d.status === "failed");
   });
   fail = false;
   expect(
@@ -222,7 +222,7 @@ it("retries a failed delivery through local authority without exposing its frame
         data: { id: string; status: string }[];
       };
       return page.data.find(
-        (d) => d.id === failed.id && d.status === "success",
+        (d) => d.id === failed.id && d.status === "succeeded",
       );
     },
     60_000,
@@ -280,7 +280,7 @@ it("names a maker that no longer holds webhooks.manage as the reason a local red
     const page = (await (await local(path)).json()) as {
       data: { id: string; status: string }[];
     };
-    return page.data.find((d) => d.status === "dead_letter");
+    return page.data.find((d) => d.status === "failed");
   });
 
   // The witness: while the maker holds the permission the local request is
@@ -293,9 +293,7 @@ it("names a maker that no longer holds webhooks.manage as the reason a local red
     const page = (await (await local(path)).json()) as {
       data: { id: string; status: string }[];
     };
-    return page.data.find(
-      (d) => d.id === failed.id && d.status === "dead_letter",
-    );
+    return page.data.find((d) => d.id === failed.id && d.status === "failed");
   });
 
   const current = (await (

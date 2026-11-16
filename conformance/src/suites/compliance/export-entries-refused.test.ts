@@ -47,7 +47,7 @@ describe("an archive export of an item a restore would refuse", () => {
   it("answers 409 naming the entry, and exports once the entry is corrected", async () => {
     const fields = {
       title: { type: "string" as const, required: true },
-      starts_at: { type: "string" as const, format: "datetime" as const },
+      starts_at: { type: "datetime" as const },
       recurrence: { type: "array" as const, items_type: "string" as const },
     };
     const registered = await working.registerType({

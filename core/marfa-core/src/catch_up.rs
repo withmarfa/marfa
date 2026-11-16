@@ -89,7 +89,7 @@ struct Slice {
 const ITEM_CHANGES: [&str; 6] = [
     "item.created",
     "item.updated",
-    "item.deleted",
+    "item.trashed",
     "item.restored",
     "item.state_changed",
     "metadata.changed",
@@ -2056,7 +2056,7 @@ fn entering_row(
                 return Ok(Entering::outside());
             }
             None => {
-                let read = if kind == "item.deleted" {
+                let read = if kind == "item.trashed" {
                     http.trashed_item(&item.id)?
                 } else {
                     http.item(&item.id)?

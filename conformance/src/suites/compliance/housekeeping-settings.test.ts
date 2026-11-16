@@ -25,16 +25,14 @@ afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 const DAYS = [
   "MARFA_AUDIT_RETENTION_DAYS",
   "MARFA_TRASH_RETENTION_DAYS",
+  "MARFA_EVENT_LOG_RETENTION_DAYS",
   "MARFA_INBOUND_HANDLED_RETENTION_DAYS",
   "MARFA_INBOUND_PENDING_RETENTION_DAYS",
   "MARFA_REVOKED_GRANT_RETENTION_DAYS",
   "MARFA_GRANT_INACTIVITY_DAYS",
 ] as const;
 /** Counted in hours, 0 through 876000. */
-const HOURS = [
-  "MARFA_EVENT_LOG_RETENTION_HOURS",
-  "MARFA_UNAPPROVED_APP_RETENTION_HOURS",
-] as const;
+const HOURS = ["MARFA_UNAPPROVED_APP_RETENTION_HOURS"] as const;
 
 const MAX_DAYS = 36_500;
 const MAX_HOURS = 876_000;
@@ -141,7 +139,7 @@ describe("a retention setting inside its range", () => {
   );
 
   it(
-    "finishes each cleanup job that reads a retention setting at the largest value with last_outcome ok",
+    "finishes each cleanup job that reads a retention setting at the largest value with last_outcome succeeded",
     async () => {
       const server = await bootFreshServer("retention-settings-widest", {
         ...WIDEST,
@@ -161,11 +159,13 @@ describe("a retention setting inside its range", () => {
         }
         for (const name of readers) {
           const run = await runJob(server, name);
-          expect(run.outcome, `${name}: ${String(run.error)}`).toBe("ok");
+          expect(run.outcome, `${name}: ${String(run.error)}`).toBe(
+            "succeeded",
+          );
         }
         const after = await jobs(server);
         for (const name of readers) {
-          expect(after[name]?.last_outcome, name).toBe("ok");
+          expect(after[name]?.last_outcome, name).toBe("succeeded");
         }
       } finally {
         await server.stop();

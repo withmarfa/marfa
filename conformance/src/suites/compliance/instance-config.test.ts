@@ -336,7 +336,7 @@ describe("GET /config and PUT /config", () => {
     trash_retention_days: 30,
     inbound_handled_retention_days: 5,
     inbound_pending_retention_days: 6,
-    event_log_retention_hours: 100,
+    event_log_retention_days: 100,
   };
 
   function operatorClient(): MarfaClient {
@@ -523,7 +523,7 @@ describe("GET /config and PUT /config", () => {
       // setting. Sent as PUTs, the second would erase the first's.
       const first = await client.patchConfig({ audit_retention_days: 31 });
       const second = await client.patchConfig({
-        event_log_retention_hours: 100,
+        event_log_retention_days: 100,
       });
       expect(first.status, JSON.stringify(first.error)).toBe(200);
       expect(second.status, JSON.stringify(second.error)).toBe(200);
@@ -531,16 +531,16 @@ describe("GET /config and PUT /config", () => {
         instance_id: minted,
         trash_retention_days: 30,
         audit_retention_days: 31,
-        event_log_retention_hours: 100,
+        event_log_retention_days: 100,
       };
       expect(second.data).toEqual(both);
       expect(await read(client)).toEqual(both);
 
       // The witness: a PUT of one setting does remove the rest.
-      await put(client, { event_log_retention_hours: 100 });
+      await put(client, { event_log_retention_days: 100 });
       expect(await read(client)).toEqual({
         instance_id: minted,
-        event_log_retention_hours: 100,
+        event_log_retention_days: 100,
       });
 
       await put(client, EVERYTHING);

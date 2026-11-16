@@ -496,30 +496,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/items/{id}/metadata": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get item metadata
-         * @description Returns an item's metadata: its tags and the extension namespaces you can read. To read metadata for many items, use `include=metadata` on `GET /items`.
-         */
-        get: operations["getItemMetadata"];
-        /**
-         * Replace an item's tags
-         * @description Replaces the item's tags with the ones you send and returns its metadata. An empty list clears all tags.
-         */
-        put: operations["replaceItemMetadata"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/items/{id}/tags": {
         parameters: {
             query?: never;
@@ -528,7 +504,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Replace an item's tags
+         * @description Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.
+         */
+        put: operations["replaceItemTags"];
         /**
          * Add tags to an item
          * @description Adds tags to the item and returns its metadata. A tag the item already has isn't added twice.
@@ -560,7 +540,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/metadata/tags": {
+    "/tags": {
         parameters: {
             query?: never;
             header?: never;
@@ -1093,7 +1073,7 @@ export interface paths {
         };
         /**
          * Get a blob URL
-         * @description Returns a URL that serves the blob's bytes without a credential, and `expires_in`, the seconds until it stops working. The URL keeps working for that time even if you revoke your credential.
+         * @description Returns a URL that serves the blob's bytes without a credential, and `ttl_seconds`, the seconds until it stops working. The URL keeps working for that time even if you revoke your credential.
          */
         get: operations["getBlobUrl"];
         put?: never;
@@ -1496,7 +1476,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/connectors/heartbeat": {
+    "/connectors/{id}/heartbeat": {
         parameters: {
             query?: never;
             header?: never;
@@ -1507,29 +1487,9 @@ export interface paths {
         put?: never;
         /**
          * Send a connector heartbeat
-         * @description Sends a heartbeat for the connector your key registered, which sets its `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.
+         * @description Sends a heartbeat for the connector, which sets its `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.
          */
         post: operations["sendConnectorHeartbeat"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/connectors/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Report a connector run
-         * @description Reports one run of the connector your key registered, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.
-         */
-        post: operations["reportConnectorRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1549,7 +1509,11 @@ export interface paths {
          */
         get: operations["listConnectorRuns"];
         put?: never;
-        post?: never;
+        /**
+         * Report a connector run
+         * @description Reports one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.
+         */
+        post: operations["reportConnectorRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1776,7 +1740,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/source": {
+    "/sources/{source}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2064,7 +2028,7 @@ export interface paths {
         patch: operations["updateProfile"];
         trace?: never;
     };
-    "/owner/picture": {
+    "/owner/avatar": {
         parameters: {
             query?: never;
             header?: never;
@@ -2088,7 +2052,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/profile/picture": {
+    "/profile/avatar": {
         parameters: {
             query?: never;
             header?: never;
@@ -2205,7 +2169,7 @@ export interface paths {
         };
         /**
          * Get the instance
-         * @description Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.
+         * @description Returns a description of the instance: its display name, `instance_id`, the release it runs, the contract version it speaks, the features it serves and the largest request body it takes. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -2607,7 +2571,7 @@ export interface components {
             enum_values?: string[];
             /** @description The type of each element of an `array` property. A write is refused if an element is not a value of that type. It can't be `thumbnail`. */
             items_type?: string;
-            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`. */
+            /** @description A refinement of a `string` property. `url`, `email` and `date` store it as that type. `bcp47` and `iso3166` only label it, and `currency` limits it to three capital letters. It can't be `thumbnail`. */
             format?: string;
         };
         /** @description A lever that applies to the types it names. */
@@ -3082,10 +3046,8 @@ export interface components {
         InstanceDescription: {
             /** @description The instance's display name. Defaults to `Marfa`. */
             name: string;
-            /** @description The build the instance runs. */
+            /** @description The release the instance runs, such as `0.0.14`. */
             version: string;
-            /** @description The release the build was made as, such as `0.0.14`. Absent for a build that is not a release. */
-            release?: string;
             /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
             instance_id: string;
             /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */
@@ -3133,10 +3095,6 @@ export interface components {
          *           "status": "ok",
          *           "latency_ms": 0
          *         }
-         *       },
-         *       "unrecognized_stored_values": {
-         *         "rows": 0,
-         *         "scanned": true
          *       }
          *     }
          */
@@ -3196,13 +3154,6 @@ export interface components {
                     /** @description What went wrong. Present only for a caller that holds `instance.read`. */
                     error?: string;
                 };
-            };
-            /** @description Stored values this build does not recognize. */
-            unrecognized_stored_values: {
-                /** @description How many stored rows hold a value this build does not recognize. */
-                rows: number;
-                /** @description `true` if the scan for such rows ran. `false` means `rows` is unknown. */
-                scanned: boolean;
             };
             /** @description Where the server runs. Present only when it is configured. */
             placement?: {
@@ -3481,7 +3432,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_permission_denied" | "forbidden" | "type_not_permitted";
+                code: "edge_type_not_permitted" | "forbidden" | "type_not_permitted";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3524,14 +3475,14 @@ export interface components {
             requested_version: number;
         };
         /** @description An error response. */
-        ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal: {
+        IdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "conflict" | "id_reused" | "item_exists" | "link_taken" | "type_mismatch";
+                code: "id_reused" | "item_exists" | "link_taken" | "type_mismatch";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3565,7 +3516,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_permission_denied" | "type_not_permitted";
+                code: "edge_type_not_permitted" | "type_not_permitted";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -3697,10 +3648,10 @@ export interface components {
             };
         };
         /**
-         * @description Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`.
+         * @description Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. Leave it out and Marfa returns the conflict for you to resolve.
          * @enum {string}
          */
-        ConflictMode: "auto" | "manual" | "callback";
+        ConflictMode: "auto";
         /** @description Confirms that the request succeeded. */
         Ok: {
             /**
@@ -4248,7 +4199,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "bulk_atomic_rollback" | "edge_permission_denied" | "forbidden" | "type_not_permitted";
+                code: "bulk_atomic_rollback" | "edge_type_not_permitted" | "forbidden" | "type_not_permitted";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4286,7 +4237,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_permission_denied" | "forbidden";
+                code: "edge_type_not_permitted" | "forbidden";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4435,10 +4386,10 @@ export interface components {
                 [key: string]: components["schemas"]["EntryMember"];
             };
             /**
-             * @description Refines a `string` field or an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`.
+             * @description Refines a `string` field or an array of strings. `url`, `email`, `date` and `thumbnail` become the `type` or `items_type`. `bcp47`, `iso3166`, `currency` and `phone` stay as `format`; a `currency` is three capital letters, such as `GBP`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
+            format?: "url" | "email" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
             /** @description The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
@@ -4481,7 +4432,7 @@ export interface components {
              * @description A refinement of a `string` member, as a field's `format`.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
+            format?: "url" | "email" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` member allows. */
             max_length?: number;
             /** @description The lowest value the member allows, itself included. Only a `number` or `integer` member takes it. */
@@ -4666,7 +4617,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "link_taken" | "type_already_exists";
+                code: "link_taken" | "type_exists";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4991,10 +4942,8 @@ export interface components {
             instance: {
                 /** @description The instance's display name. */
                 name: string;
-                /** @description The build the instance runs. */
+                /** @description The release the instance runs. */
                 version: string;
-                /** @description The release the build was made as. Absent for a build that is not a release. */
-                release?: string;
             };
             /** @description The credential that sent the request, and what it may do. */
             credential: {
@@ -5281,8 +5230,8 @@ export interface components {
         HousekeepingJob: {
             /** @description The job's name, such as `trash-purge`. */
             name: string;
-            /** @description How often the job runs, in milliseconds. */
-            interval_ms: number;
+            /** @description How often the job runs, in seconds. */
+            interval_seconds: number;
             /** @description When the job is next due, in UTC. */
             next_run_at: string;
             /** @description When the current run started, in UTC, or `null` if the job isn't running. */
@@ -5299,10 +5248,10 @@ export interface components {
             last_result: components["schemas"]["HousekeepingReport"] | null;
         };
         /**
-         * @description How a run ended: `ok` if it finished, `error` if it failed, `held` if it did nothing because the clock is far ahead or a restore holds writes.
+         * @description How a run ended: `succeeded` if it finished, `failed` if it failed, `held` if it did nothing because the clock is far ahead or a restore holds writes.
          * @enum {string}
          */
-        HousekeepingOutcome: "ok" | "error" | "held";
+        HousekeepingOutcome: "succeeded" | "failed" | "held";
         /** @description What a run reports, under names its job chooses, such as `deleted`, `copied` or, for `trash-purge`, `passed_over`: the items it could not purge and left for the next run. */
         HousekeepingReport: {
             [key: string]: number | boolean | string | null;
@@ -5974,7 +5923,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "api_key_not_found";
+                code: "key_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -6062,8 +6011,8 @@ export interface components {
             };
             /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
             audit_retention_days?: number;
-            /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
-            event_log_retention_hours?: number;
+            /** @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
+            event_log_retention_days?: number;
             /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
             trash_retention_days?: number;
             /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies. */
@@ -6136,7 +6085,7 @@ export interface components {
             email: string;
             /** @description Display name of the owner. */
             name: string;
-            /** @description The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/picture`. */
+            /** @description The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`. */
             avatar: string | null;
             /** @description When the owner was created, in UTC. */
             created_at: string;
@@ -6272,7 +6221,7 @@ export interface components {
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
                     /** @description The same whole seconds as `Retry-After`. */
-                    retry_after?: number;
+                    retry_after_seconds?: number;
                 } & {
                     [key: string]: unknown;
                 };
@@ -6595,10 +6544,10 @@ export interface components {
             /** @description Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt. */
             id: string;
             /**
-             * @description `pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.
+             * @description `pending`: waiting to be sent or retried. `succeeded`: the receiver answered with a `2xx` status. `failed`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.
              * @enum {string}
              */
-            status: "pending" | "success" | "dead_letter" | "canceled";
+            status: "pending" | "succeeded" | "failed" | "canceled";
             /** @description The ID of the webhook the delivery belongs to. */
             webhook_id: string;
             /** @description The event delivered, such as `item.created`. */
@@ -6607,7 +6556,7 @@ export interface components {
             status_code: number | null;
             /** @description How many attempts have recorded an outcome, across every redelivery. A send whose outcome was lost, such as during a restart, isn't counted, so the receiver may have seen more. */
             attempt: number;
-            /** @description `true` if `status` is `success`. */
+            /** @description `true` if `status` is `succeeded`. */
             succeeded: boolean;
             /** @description Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt. */
             error: string | null;
@@ -6702,7 +6651,7 @@ export interface components {
                      */
                     reason?: "restore_running";
                     /** @description The same whole seconds as `Retry-After`. Present when `reason` is `restore_running`. */
-                    retry_after?: number;
+                    retry_after_seconds?: number;
                 } & {
                     [key: string]: unknown;
                 };
@@ -6816,7 +6765,7 @@ export interface components {
              * @description The event, which is also the frame's `event:`.
              * @enum {string}
              */
-            event_type: "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed";
+            event_type: "item.created" | "item.updated" | "item.trashed" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed";
             item: components["schemas"]["Item"] & unknown;
             /** @description The item's tags and extensions after the change, or before it on `item.purged`, with only the namespaces you can read. A webhook sends `null`. */
             metadata?: components["schemas"]["Metadata"] | null;
@@ -7114,7 +7063,7 @@ export interface components {
              * @description A refinement of a `string` column, as a field's `format`. Not for an `item` column.
              * @enum {string}
              */
-            format?: "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166" | "currency" | "phone";
+            format?: "url" | "email" | "date" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` column allows. Not for an `item` column. */
             max_length?: number;
             /** @description The lowest value the column allows, itself included. Only a `number` or `integer` column takes it. */
@@ -7481,6 +7430,11 @@ export interface components {
             /** @description A description of the error for a person to read. */
             error_description?: string;
         };
+        /** @description An item's tags. */
+        ItemTags: {
+            /** @description The item's tags. */
+            tags: string[];
+        };
     };
     responses: never;
     parameters: never;
@@ -7589,7 +7543,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
-             *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             *     - `edge_type_not_permitted`: the filter has an `edge` or `backref` term for an edge type you can't read.
              *     - `forbidden`: `type` names `system.connection` and you don't hold `grants.manage`. `details.required_scope` names it.
              */
             403: {
@@ -7797,7 +7751,7 @@ export interface operations {
             /**
              * @description - `forbidden`: `source` is not your credential's own or one of your key's `sources` (`details.source` names it), or the source allow-list excludes it.
              *     - `type_not_permitted`: you don't have write on the item's type, or on the type `source_id` resolves to.
-             *     - `edge_permission_denied`: you don't have write on an edge's type.
+             *     - `edge_type_not_permitted`: you don't have write on an edge's type.
              */
             403: {
                 headers: {
@@ -7841,8 +7795,7 @@ export interface operations {
             };
             /**
              * @description - `item_exists`: `create_only` found an item holding the `source_id` or `id`.
-             *     - `id_reused`: `id` names an item of another type.
-             *     - `conflict`: `id` names an item you can't read.
+             *     - `id_reused`: `id` names an item of another type, or one you can't read.
              *     - `link_taken`: another item of the type holds this link. `details.existing_id` names it.
              *     - `type_mismatch`: `source_id` matches an item of another type.
              *     - `version_conflict`, `ancestor_unavailable`: `version` is stale.
@@ -7856,7 +7809,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["ConflictOrIdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["IdReusedOrItemExistsOrLinkTakenOrTypeMismatchRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -8322,7 +8275,7 @@ export interface operations {
     updateItem: {
         parameters: {
             query?: {
-                /** @description Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. `manual` and `callback` return the conflict for you to resolve. Defaults to `manual`. */
+                /** @description Who resolves a version conflict. `auto` has Marfa resolve it by the type's merge policy. Leave it out and Marfa returns the conflict for you to resolve. */
                 conflict?: components["schemas"]["ConflictMode"];
             };
             header?: {
@@ -8430,7 +8383,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: you can read the item's type but don't have write on it (or on the type `retype` enters), or your credential reaches no type.
-             *     - `edge_permission_denied`: you don't have write on an edge type in `edges`.
+             *     - `edge_type_not_permitted`: you don't have write on an edge type in `edges`.
              *     - `forbidden`: you changed `source_id` on an item whose source your key doesn't write under or claim. `details.source` names it.
              */
             403: {
@@ -10613,7 +10566,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
-             *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             *     - `edge_type_not_permitted`: the filter has an `edge` or `backref` term for an edge type you can't read.
              */
             403: {
                 headers: {
@@ -12098,7 +12051,7 @@ export interface operations {
             /**
              * @description - `forbidden`: you don't have `items.purge` for a purge, or the instance's source filter changed while Marfa selected items. Repeat the request.
              *     - `type_not_permitted`: your credential reaches no type, or `filter.type` is a type you can't read.
-             *     - `edge_permission_denied`: the filter names an edge type you can't read.
+             *     - `edge_type_not_permitted`: the filter names an edge type you can't read.
              */
             403: {
                 headers: {
@@ -12530,145 +12483,7 @@ export interface operations {
             };
         };
     };
-    getItemMetadata: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description The ID of the item. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns the item's metadata. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MetadataResponse"];
-                };
-            };
-            /**
-             * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `type_not_permitted`: your credential reaches no type. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
-                };
-            };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read. */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    replaceItemMetadata: {
+    replaceItemTags: {
         parameters: {
             query?: never;
             header?: {
@@ -12695,7 +12510,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the item's metadata with the new tags. */
+            /** @description Returns the item's tags. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12704,7 +12519,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MetadataResponse"];
+                    "application/json": components["schemas"]["ItemTags"];
                 };
             };
             /**
@@ -15665,7 +15480,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_permission_denied`: you don't have write on the edge type. `details.grant` names the missing grant.
+             * @description - `edge_type_not_permitted`: you don't have write on the edge type. `details.grant` names the missing grant.
              *     - `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
@@ -16031,7 +15846,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
+             * @description - `edge_type_not_permitted`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
              *     - `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
@@ -16243,7 +16058,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
+             * @description - `edge_type_not_permitted`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
              *     - `type_not_permitted`: you can read the type of the item the edge points from, or of the item you move it to, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
@@ -16481,7 +16296,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: your credential reaches no type.
-             *     - `bulk_atomic_rollback`: with `atomic` true, you don't have write on the type of the item an entry points from, or on its edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.
+             *     - `bulk_atomic_rollback`: with `atomic` true, you don't have write on the type of the item an entry points from, or on its edge type. `details.code` is `type_not_permitted` or `edge_type_not_permitted`.
              */
             403: {
                 headers: {
@@ -16997,7 +16812,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
-             *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             *     - `edge_type_not_permitted`: the filter has an `edge` or `backref` term for an edge type you can't read.
              */
             403: {
                 headers: {
@@ -17283,7 +17098,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `type_already_exists`: a type has this identifier.
+             * @description - `type_exists`: a type has this identifier.
              *     - `link_taken`: two items that a forced delete left under this identifier hold the same value in the `link_field`.
              */
             409: {
@@ -18829,7 +18644,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't have `metadata.edge_types:write`.
-             *     - `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.
+             *     - `edge_type_not_permitted`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.
              *     - `type_not_permitted`: the edge type cascades on delete and holds edges that point to items of a type you can't write. `details.grant` names the missing grant.
              */
             403: {
@@ -19010,7 +18825,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't have `schema.write`.
-             *     - `edge_permission_denied`: your edge map doesn't grant write on the edge type or its `reverse_name`. `details.edge_type` names it.
+             *     - `edge_type_not_permitted`: your edge map doesn't grant write on the edge type or its `reverse_name`. `details.edge_type` names it.
              */
             403: {
                 headers: {
@@ -19469,8 +19284,8 @@ export interface operations {
     getBlobUrl: {
         parameters: {
             query?: {
-                /** @description How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `expires_in`. */
-                ttl?: number;
+                /** @description How long the URL works, in seconds. Marfa caps it at 604800 (seven days) and returns the lifetime it used as `ttl_seconds`. */
+                ttl_seconds?: number;
             };
             header?: never;
             path: {
@@ -19481,7 +19296,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the `url` and `expires_in`. The URL serves the blob with its recorded `Content-Type`, as a download. */
+            /** @description Returns the `url` and `ttl_seconds`. The URL serves the blob with its recorded `Content-Type`, as a download. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19493,7 +19308,7 @@ export interface operations {
                         /** @description A URL that serves the bytes without a credential. */
                         url: string;
                         /** @description Seconds until the URL stops working. */
-                        expires_in: number;
+                        ttl_seconds: number;
                     };
                 };
             };
@@ -20450,7 +20265,7 @@ export interface operations {
                     /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
-                    events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
+                    events: ("item.created" | "item.updated" | "item.trashed" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
                     /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Leave it out, blank or `null` for every type. */
                     type_filter?: string | null;
                     /** @description The key Marfa signs each delivery with. Leave it out for Marfa to generate one. */
@@ -20928,7 +20743,7 @@ export interface operations {
                     /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url?: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
-                    events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
+                    events?: ("item.created" | "item.updated" | "item.trashed" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
                     /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Blank or `null` removes it. */
                     type_filter?: string | null;
                     /** @description `false` stops sending events and cancels pending deliveries. `true` starts again. */
@@ -22798,7 +22613,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: your credential reaches no type.
-             *     - `edge_permission_denied`: the view's filter names an edge type, or its `beneath` needs `parent-of`, that you can't read.
+             *     - `edge_type_not_permitted`: the view's filter names an edge type, or its `beneath` needs `parent-of`, that you can't read.
              */
             403: {
                 headers: {
@@ -23887,7 +23702,10 @@ export interface operations {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
                 "X-Marfa-Instance-Id"?: string;
             };
-            path?: never;
+            path: {
+                /** @description The ID of the connector. */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -23930,7 +23748,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential isn't a key. Only a key reports as a connector, and management permission does not authorize it. */
+            /** @description - `forbidden`: your credential isn't the key the connector is registered under. Only that key sends heartbeats, and management permission does not authorize it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23942,7 +23760,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: your key has not registered a connector. */
+            /** @description - `connector_not_found`: no connector has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23952,198 +23770,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
-                };
-            };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    reportConnectorRun: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /**
-                     * @description How the run ended: `succeeded` or `failed`.
-                     * @enum {string}
-                     */
-                    outcome: "succeeded" | "failed";
-                    /** @description When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC. */
-                    started_at: string;
-                    /** @description When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`. */
-                    finished_at: string;
-                    /** @description A short summary of the run. Leave it out for none. */
-                    summary?: string;
-                    /** @description The error the run hit. Leave it out for none. */
-                    error?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Returns the run. */
-            201: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConnectorRun"];
-                };
-            };
-            /**
-             * @description - `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.
-             *     - `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, `summary` or `error` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `forbidden`: your credential isn't a key. Only a key reports as a connector, and management permission does not authorize it. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description - `connector_not_found`: your key has not registered a connector. */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
-                };
-            };
-            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
-            408: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
             /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
@@ -24362,6 +23988,201 @@ export interface operations {
             };
         };
     };
+    reportConnectorRun: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The ID of the connector. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description How the run ended: `succeeded` or `failed`.
+                     * @enum {string}
+                     */
+                    outcome: "succeeded" | "failed";
+                    /** @description When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC. */
+                    started_at: string;
+                    /** @description When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`. */
+                    finished_at: string;
+                    /** @description A short summary of the run. Leave it out for none. */
+                    summary?: string;
+                    /** @description The error the run hit. Leave it out for none. */
+                    error?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns the run. */
+            201: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorRun"];
+                };
+            };
+            /**
+             * @description - `missing_required_field`: `outcome`, `started_at` or `finished_at` is missing.
+             *     - `validation_error`: `outcome` isn't `succeeded` or `failed`, a time isn't a timestamp, `finished_at` is before `started_at`, `summary` or `error` is over 2,000 characters, or the body has a top-level field this endpoint doesn't take.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: your credential isn't the key the connector is registered under. Only that key reports its runs, and management permission does not authorize it. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description - `connector_not_found`: no connector has this ID. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     takeConnectorHold: {
         parameters: {
             query?: never;
@@ -24395,8 +24216,8 @@ export interface operations {
                     "application/json": {
                         /** @description When the hold lapses: the hold window after Marfa took or renewed it. The window is three minutes unless the instance sets another. */
                         expires_at: string;
-                        /** @description The hold window in milliseconds, so you can schedule the next renewal without reading Marfa's clock. */
-                        ttl_ms: number;
+                        /** @description The hold window in seconds, so you can schedule the next renewal without reading Marfa's clock. */
+                        ttl_seconds: number;
                         /** @description `true` if this process's hold was still live when the call arrived; `false` on a first take or after a lapse. If it's `false` and you believed you held the connector, read the state and agreements again before writing. */
                         renewed: boolean;
                     };
@@ -26822,12 +26643,12 @@ export interface operations {
     };
     getSource: {
         parameters: {
-            query: {
-                /** @description The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path. */
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The source code, such as `github`. Percent-encode it as one path segment. */
                 source: string;
             };
-            header?: never;
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -26948,15 +26769,15 @@ export interface operations {
     };
     updateSource: {
         parameters: {
-            query: {
-                /** @description The source code. It's a query parameter because a code such as `..` or one holding `/` can't travel safely in a path. */
-                source: string;
-            };
+            query?: never;
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
                 "X-Marfa-Instance-Id"?: string;
             };
-            path?: never;
+            path: {
+                /** @description The source code, such as `github`. Percent-encode it as one path segment. */
+                source: string;
+            };
             cookie?: never;
         };
         requestBody: {
@@ -27642,7 +27463,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The local command's message says when the key was already revoked. */
+            /** @description - `key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. The local command's message says when the key was already revoked. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27844,7 +27665,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `api_key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. */
+            /** @description - `key_not_found`: no key you could have created has this ID, or the key is revoked or past its `expires_at`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29545,7 +29366,7 @@ export interface operations {
                     email?: string;
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
-                    /** @description Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/picture` or `PUT /profile/picture`. */
+                    /** @description Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`. */
                     avatar?: null;
                 };
             };
@@ -29858,7 +29679,7 @@ export interface operations {
                 "application/json": {
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
-                    /** @description Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/picture` or `PUT /profile/picture`. */
+                    /** @description Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`. */
                     avatar?: null;
                 };
             };
@@ -31786,8 +31607,8 @@ export interface operations {
                     };
                     /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
                     audit_retention_days?: number;
-                    /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
-                    event_log_retention_hours?: number;
+                    /** @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    event_log_retention_days?: number;
                     /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
                     trash_retention_days?: number;
                     /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies. */
@@ -32005,8 +31826,8 @@ export interface operations {
                     } | null;
                     /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
                     audit_retention_days?: number | null;
-                    /** @description Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
-                    event_log_retention_hours?: number | null;
+                    /** @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    event_log_retention_days?: number | null;
                     /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
                     trash_retention_days?: number | null;
                     /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
@@ -32699,7 +32520,7 @@ export interface operations {
                         /** @description What this server process costs, since it started. */
                         process: {
                             /** @description The release this server runs. */
-                            release: string;
+                            version: string;
                             /** @description Memory the server process holds in RAM, in bytes. `null` if it can't be read. */
                             memory_rss_bytes: number | null;
                             /** @description The most memory the process has held in RAM, in bytes. `null` if it can't be read. */
@@ -34371,7 +34192,7 @@ export interface operations {
                 /** @description `t=<unix seconds>,v1=<hex>`, where `v1` is the HMAC-SHA256 of `<t>.<raw body>` under the webhook's `secret`. Check it, and that `t` is recent, before you trust the body. */
                 "X-Marfa-Signature": string;
                 /** @description The event, the same as `event_type` in the body. */
-                "X-Marfa-Event-Type": "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted";
+                "X-Marfa-Event-Type": "item.created" | "item.updated" | "item.trashed" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted";
             };
             path?: never;
             cookie?: never;
@@ -34382,14 +34203,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Marfa records the delivery as `success`. It doesn't read the response body. */
+            /** @description Marfa records the delivery as `succeeded`. It doesn't read the response body. */
             "2XX": {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `dead_letter`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `dead_letter`. */
+            /** @description Any other answer is a failure. On a `3xx`, or a `4xx` other than `408` and `429`, the delivery becomes `failed`. On a `408`, `429` or `5xx`, no answer within 10 seconds or no connection, Marfa tries again after at least 1, 5, 25, 125, 625, 3125 and 15625 seconds, and as long as `Retry-After` asks, up to 5 minutes. After 8 attempts, it's `failed`. */
             default: {
                 headers: {
                     [name: string]: unknown;

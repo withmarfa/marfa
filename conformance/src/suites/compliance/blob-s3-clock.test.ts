@@ -48,7 +48,7 @@ it("expires store-signed links on real time with a boot offset and later clock m
       await runJob(server, "blob-replicate");
       const link = await operator.getBlobUrl(upload.data.hash, LINK_TTL_S);
       expect(link.status).toBe(200);
-      expect(link.data.expires_in).toBe(LINK_TTL_S);
+      expect(link.data.ttl_seconds).toBe(LINK_TTL_S);
       expect(new URL(link.data.url).host).toBe(
         new URL(process.env.S3_ENDPOINT!).host,
       );

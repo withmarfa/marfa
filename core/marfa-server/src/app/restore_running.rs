@@ -15,5 +15,5 @@ pub fn refusal() -> Refusal {
         "A restore is running and holds every write; nothing was written. Try again in a few seconds.",
     )
     .with_detail("reason", REASON)
-    .with_detail("retry_after", RETRY_SECONDS)
+    .with_detail("retry_after_seconds", RETRY_SECONDS)
 }

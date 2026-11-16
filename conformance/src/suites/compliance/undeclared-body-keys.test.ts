@@ -57,10 +57,7 @@ async function itemSetup(
     body,
     seen: async () => {
       const item = await client.getItem(id);
-      const metadata = await client.rawRequest<unknown>(
-        `/items/${id}/metadata`,
-      );
-      return [item.data, metadata.data];
+      return [item.data];
     },
   };
 }
@@ -68,8 +65,8 @@ async function itemSetup(
 const OPERATIONS: Record<string, () => Promise<Setup>> = {
   "POST /items/{id}/transition": () =>
     itemSetup("POST", "/transition", { state: "archived" }),
-  "PUT /items/{id}/metadata": () =>
-    itemSetup("PUT", "/metadata", { tags: ["replaced"] }),
+  "PUT /items/{id}/tags": () =>
+    itemSetup("PUT", "/tags", { tags: ["replaced"] }),
   "POST /items/{id}/tags": () =>
     itemSetup("POST", "/tags", { tags: ["added"] }),
   "POST /items/bulk-get": async () => {
@@ -169,7 +166,7 @@ describe("a body that is open by design", () => {
     expect(written.status, JSON.stringify(written.error)).toBe(200);
     const read = await client.rawRequest<{
       metadata: { extensions: Record<string, unknown> };
-    }>(`/items/${id}/metadata`);
+    }>(`/items/${id}`);
     expect(read.data.metadata.extensions["closed-body"]).toEqual(document);
   });
 

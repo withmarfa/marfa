@@ -31,7 +31,7 @@ const ITEM_EVENTS = [
   "item.created",
   "item.updated",
   "item.state_changed",
-  "item.deleted",
+  "item.trashed",
   "item.restored",
   "item.purged",
 ] as const;
@@ -125,9 +125,9 @@ function expectCarried(
     "item.created",
     "item.updated",
     "item.state_changed",
-    "item.deleted",
+    "item.trashed",
     "item.restored",
-    "item.deleted",
+    "item.trashed",
     "item.purged",
   ]);
   const [created, ...later] = frames;

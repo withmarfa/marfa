@@ -546,7 +546,7 @@ describe("marfa_update", () => {
       applied: [],
       current: { id, version: version + 1 },
     });
-    expect((await owner().getMetadata(id)).data.metadata.tags).toEqual([]);
+    expect((await owner().getItem(id)).data.metadata.tags).toEqual([]);
   });
 });
 

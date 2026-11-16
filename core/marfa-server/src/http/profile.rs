@@ -21,8 +21,8 @@ use crate::app::auth::owner::{self, Owner, PROFILE_FIELDS, ProfileUpdate};
 use crate::app::auth::picture::{Door, MAX_BYTES};
 use crate::app::refusal::{Code, Refusal};
 
-const OWNER_PICTURE: &str = "/owner/picture";
-const PROFILE_PICTURE: &str = "/profile/picture";
+const OWNER_PICTURE: &str = "/owner/avatar";
+const PROFILE_PICTURE: &str = "/profile/avatar";
 
 /// A picture's body is read by its own door, under its own cap.
 pub fn is_picture(request: &Request) -> bool {

@@ -123,7 +123,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
     expect(ended.status).toBe(200);
     expect(await ended.json()).toMatchObject({
       name: "heartbeat",
-      outcome: "ok",
+      outcome: "succeeded",
     });
     expect((await listedHeartbeat()).running_since).toBeNull();
   });

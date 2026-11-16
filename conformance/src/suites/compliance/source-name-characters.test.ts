@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 function sourcePath(source: string): string {
-  return `/source?source=${encodeURIComponent(source)}`;
+  return `/sources/${encodeURIComponent(source)}`;
 }
 
 function nameSource(

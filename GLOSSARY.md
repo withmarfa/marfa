@@ -33,6 +33,8 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **row**: One record of a table, its values keyed by column, with an `id` that is a UUIDv7. Never an item: it has no version, tags, edges or history.
 - **batch**: One write to the rows of one table of an item, made whole and named by a UUIDv7. The table's **change log** keeps each row as it stood before each batch, so a batch can be undone; an undo is a batch too.
 - **tag**: A free-form, flat label on an item (`search-and-filters/search-tags-with-text`). A git tag that names a release, such as `v0.0.1`, is a release tag, not this.
+- **metadata**: The `metadata` member of an item answer: the item's `item_id`, its tags and its extensions. The word never means the tags alone, which have their own doors, `/items/{id}/tags` and `/tags`.
+- **backrefs**: The edges that point at an item, listed by `GET /items/{id}/backrefs` and carried by an item read that asks for them. Never "inbound edges" or "reverse edges".
 - **extension**: A namespaced JSON object of metadata attached to an item by something other than the key that wrote the item, read and written per namespace. Not a blob and not a property.
 - **edge**: A directed relationship from one item to another, named by its **edge type**. `from_id` names its **from item**, the item it points from, and `to_id` its **to item**, the item it points to; together they are its two **ends**. An edge has properties and a version of its own. Never "source" or "target" for an end: a source is what wrote an item.
 - **reverse name**: The name an edge type may declare for its edges read from the to item, such as `child-of` for `parent-of`, used as a frontmatter key. Never "inverse". Not a reverse label.
@@ -213,6 +215,7 @@ The twelve permissions use ten roots, `schema`, `keys`, `items`, `webhooks`, `co
 One rule across the API, with one exception that is named rather than implied.
 
 - Every time field is a verb plus `_at`: `occurred_at`, `created_at`, `updated_at`, `expires_at`, `revoked_at`.
+- Every duration is a whole number whose name ends in its unit: `ttl_seconds`, `interval_seconds`, `retry_after_seconds`, and `_days` or `_hours` for a retention. `_ms` names only a measured elapsed time, such as `latency_ms`. Marfa rounds a wait up, so a client never waits less than the real one. `Retry-After` and an OAuth token's `expires_in` keep the spelling their standards give them.
 - Every range filter is that verb plus `_after` and `_before`, and **both are exclusive**: an item's own time is filtered by `occurred_after` and `occurred_before`, and the audit log by `created_after` and `created_before`.
 
 **`updated_after` is the exception, and it is not a bug.** It is the catch-up filter on `GET /items` and `GET /edges`, and it is **inclusive**, because `updated_at` ties across a bulk write: a strict bound drops every item that shares the cursor's instant, silently and for good, so a caller deduplicates by ID instead. **Do not make it exclusive to satisfy the rule above.** Its sibling `updated_before` is exclusive, like every other bound: a lower bound is a resume point a client hands back, an upper bound is an end point a caller chooses, and only the resume point can lose items to a tie.

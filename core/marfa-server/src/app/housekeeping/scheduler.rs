@@ -468,7 +468,11 @@ pub async fn supervise(
             name: job.name,
             started_at,
             finished_at: app.clock.stamp(),
-            outcome: if failure.is_some() { "error" } else { "ok" },
+            outcome: if failure.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            },
             result,
             error: failure.as_ref().map(|failed| failed.message.clone()),
             kept_unread: kept_unread.load(Ordering::Relaxed),

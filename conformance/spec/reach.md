@@ -404,7 +404,7 @@ When a conditional read whose header equals the credential's current reach answe
 
 ### `reach/certified-edge-refused`
 
-When a conditional read whose header equals the credential's current reach answers `403 edge_permission_denied`, the server MUST carry `X-Marfa-Reach` and `Cache-Control: no-store` on the answer.
+When a conditional read whose header equals the credential's current reach answers `403 edge_type_not_permitted`, the server MUST carry `X-Marfa-Reach` and `Cache-Control: no-store` on the answer.
 
 **Tests:** `compliance/reach.test.ts › certifies type not permitted, edge permission denied and a hidden-type absence under the matching reach`, `› answers 409 before a validation 400 and before a resource 403 under a stale reach`.
 
@@ -418,7 +418,7 @@ When an app's access token sends `GET /keys/current` with a header that equals i
 
 ### `reach/uncertified-failures`
 
-When the server answers a request that names `X-Marfa-Reach` with other than a `2xx`, `404 item_not_found`, `404 edge_not_found`, `404 table_not_found`, `403 type_not_permitted`, `403 edge_permission_denied`, or `403 forbidden` on `GET /keys/current`, the server MUST NOT carry `X-Marfa-Reach` on the answer.
+When the server answers a request that names `X-Marfa-Reach` with other than a `2xx`, `404 item_not_found`, `404 edge_not_found`, `404 table_not_found`, `403 type_not_permitted`, `403 edge_type_not_permitted`, or `403 forbidden` on `GET /keys/current`, the server MUST NOT carry `X-Marfa-Reach` on the answer.
 
 **Tests:** `compliance/reach.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 409 before a validation 400 and before a resource 403 under a stale reach`, `compliance/reach-order.test.ts › carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds`, `› answers 401, then 400 to a malformed reach, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
@@ -562,7 +562,7 @@ While a copy stream replays, has a frame written while it opened still to send, 
 
 ### `reach/frame-listed`
 
-When a copy stream sends `item.created`, `item.updated`, `item.state_changed`, `item.deleted`, `item.restored`, `item.purged` or `metadata.changed`, the server MUST carry a boolean `listed` in the frame, on a live stream and on a replayed one.
+When a copy stream sends `item.created`, `item.updated`, `item.state_changed`, `item.trashed`, `item.restored`, `item.purged` or `metadata.changed`, the server MUST carry a boolean `listed` in the frame, on a live stream and on a replayed one.
 
 **Tests:** `compliance/reach.test.ts › sends listed on created, state changed and purged frames, live and replayed`, `› delivers source-excluded update, metadata, delete and restore carriers with listed false`, `› ends an open copy stream with a no-id detail-free terminal after a structural change`.
 

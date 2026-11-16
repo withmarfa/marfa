@@ -226,7 +226,7 @@ describe("rows and the life of an item", () => {
             job.last_finished_at &&
             !job.running_since
           ) {
-            expect(job.last_outcome).toBe("ok");
+            expect(job.last_outcome).toBe("succeeded");
             result = job.last_result as { removed: number; pages: number };
           } else if (!asked && !job?.running_since) {
             asked = true;

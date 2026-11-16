@@ -268,13 +268,13 @@ describe("a key names one request", () => {
       },
       {
         method: "PUT",
-        template: "/items/{id}/metadata",
+        template: "/items/{id}/tags",
         first: async () => ({
-          path: `/items/${await seedItem("replace-tags")}/metadata`,
+          path: `/items/${await seedItem("replace-tags")}/tags`,
           body: { tags: ["a"] },
         }),
         second: async () => ({
-          path: `/items/${await seedItem("replace-tags")}/metadata`,
+          path: `/items/${await seedItem("replace-tags")}/tags`,
           body: { tags: ["b"] },
         }),
       },
@@ -385,8 +385,8 @@ describe("a malformed identifier", () => {
     );
     await expectRefusal(
       "PUT",
-      "/items/{id}/metadata",
-      await call("PUT", `/items/${MALFORMED}/metadata`, { body: { tags: [] } }),
+      "/items/{id}/tags",
+      await call("PUT", `/items/${MALFORMED}/tags`, { body: { tags: [] } }),
       400,
       "invalid_id",
     );
@@ -518,11 +518,10 @@ describe("a credential without write on the type", () => {
       return minted.data.key;
     };
     const reads: [string, string, string, unknown][] = [
-      ["GET", "/items/{id}/metadata", `/items/${id}/metadata`, undefined],
       ["GET", "/items/{id}/versions", `/items/${id}/versions`, undefined],
     ];
     const writes: [string, string, string, unknown][] = [
-      ["PUT", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
+      ["PUT", "/items/{id}/tags", `/items/${id}/tags`, { tags: [] }],
       ["POST", "/items/{id}/tags", `/items/${id}/tags`, { tags: ["x"] }],
       ["DELETE", "/items/{id}/tags/{tag}", `/items/${id}/tags/x`, undefined],
     ];
@@ -577,7 +576,7 @@ describe("a credential without write on the type", () => {
         body: { version: 1, edges: { about: [await seedItem("edgeless")] } },
       }),
       403,
-      "edge_permission_denied",
+      "edge_type_not_permitted",
     );
   });
 });
@@ -585,7 +584,6 @@ describe("a credential without write on the type", () => {
 describe("an item door given a malformed id", () => {
   it("is refused 400 invalid_id on the metadata, tag, lifecycle and edge doors", async () => {
     const doors: [string, string, string, unknown][] = [
-      ["GET", "/items/{id}/metadata", "/metadata", undefined],
       ["DELETE", "/items/{id}/tags/{tag}", "/tags/x", undefined],
       ["DELETE", "/items/{id}", "", undefined],
       ["POST", "/items/{id}/purge", "/purge", undefined],
@@ -610,7 +608,7 @@ describe("a body without a field the door requires", () => {
     const doors: [string, string, string][] = [
       ["POST", "/keys", "/keys"],
       ["POST", "/connectors", "/connectors"],
-      ["POST", "/connectors/runs", "/connectors/runs"],
+      ["POST", "/connectors/{id}/runs", `/connectors/${UNKNOWN}/runs`],
       [
         "POST",
         "/connectors/{id}/deliveries/handled",
@@ -686,7 +684,7 @@ describe("a deployment that caps live viewers", () => {
     "refuses a viewer past the cap 503",
     async () => {
       const server = await bootFreshServer("viewer-cap", {
-        MARFA_SSE_MAX_VIEWERS: "1",
+        MARFA_EVENT_STREAM_MAX_VIEWERS: "1",
       });
       const held = new AbortController();
       try {

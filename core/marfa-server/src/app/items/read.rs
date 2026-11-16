@@ -593,18 +593,6 @@ pub async fn tag_counts(app: &App, caller: &Caller) -> Result<String> {
     .await
 }
 
-pub async fn metadata(app: &App, caller: &Caller, id: String) -> Result<String> {
-    reading(app, caller, move |read| {
-        let row = read.row(&id)?;
-        read.hydrating();
-        Ok(format!(
-            "{{\"metadata\":{}}}",
-            metadata_for(read.tx, &row, &read.caller)?
-        ))
-    })
-    .await
-}
-
 pub async fn extensions(app: &App, caller: &Caller, id: String) -> Result<String> {
     reading(app, caller, move |read| {
         let row = read.row(&id)?;

@@ -185,7 +185,7 @@ describe("beneath on GET /items and GET /items/stats", () => {
     for (const path of ["/items", "/items/stats"]) {
       const r = await blind.rawRequest<unknown>(`${path}?beneath=${root}`);
       expect(r.status, path).toBe(403);
-      expect(r.error?.error.code, path).toBe("edge_permission_denied");
+      expect(r.error?.error.code, path).toBe("edge_type_not_permitted");
       await expectMatchesSchema("GET", path, 403, r.error);
     }
   });

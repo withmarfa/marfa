@@ -682,7 +682,7 @@ describe("key management", () => {
       ["GET /items", await operator.listItems({ limit: 5 })],
       ["GET /items/stats", await operator.itemStats()],
       ["GET /search", await operator.search("a")],
-      ["GET /metadata/tags", await operator.listTags()],
+      ["GET /tags", await operator.listTags()],
       ["GET /export", await operator.exportItems({ type: "core.note" })],
       [
         "GET /occurrences",
@@ -733,7 +733,7 @@ describe("key management", () => {
       ["GET /items", await reader.listItems({ limit: 5 })],
       ["GET /items/stats", await reader.itemStats()],
       ["GET /search", await reader.search("a")],
-      ["GET /metadata/tags", await reader.listTags()],
+      ["GET /tags", await reader.listTags()],
       ["GET /export", await reader.exportItems({ type: "core.note" })],
       [
         "GET /occurrences",

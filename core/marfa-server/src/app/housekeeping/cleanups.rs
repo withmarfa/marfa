@@ -12,9 +12,9 @@ use super::super::clock::Unread;
 use super::super::keys::reap;
 use super::super::refusal::{Refusal, Result};
 use super::super::{App, audit, events, idempotency, oauth, webhooks};
-use super::{DAY_MS, HOUR_MS, Report, Run, cutoff};
+use super::{DAY_MS, Report, Run, cutoff};
 use crate::db::Write;
-use crate::settings::registry::{AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, Setting};
+use crate::settings::registry::{AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_DAYS, Setting};
 
 const BATCH: i64 = 1_000;
 
@@ -81,34 +81,29 @@ fn expire_events(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> 
 
 pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
     let (purged_records, records_done) = drain(&run, BATCH, || {
-        expire(
-            &app,
-            EVENT_LOG_RETENTION_HOURS,
-            HOUR_MS,
-            idempotency::expire,
-        )
+        expire(&app, EVENT_LOG_RETENTION_DAYS, DAY_MS, idempotency::expire)
     })
     .await?;
     if records_done {
         report_kept(
             &app,
             &run,
-            EVENT_LOG_RETENTION_HOURS,
-            HOUR_MS,
+            EVENT_LOG_RETENTION_DAYS,
+            DAY_MS,
             &idempotency::UNREAD,
         )
         .await?;
     }
     let (deleted, events_done) = drain(&run, BATCH, || {
-        expire(&app, EVENT_LOG_RETENTION_HOURS, HOUR_MS, expire_events)
+        expire(&app, EVENT_LOG_RETENTION_DAYS, DAY_MS, expire_events)
     })
     .await?;
     if events_done {
         report_kept(
             &app,
             &run,
-            EVENT_LOG_RETENTION_HOURS,
-            HOUR_MS,
+            EVENT_LOG_RETENTION_DAYS,
+            DAY_MS,
             &events::UNREAD,
         )
         .await?;

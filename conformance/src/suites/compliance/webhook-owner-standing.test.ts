@@ -54,7 +54,7 @@ it.each(["create", "update", "delete", "delivery.redeliver"])(
         await note("redelivery race");
         delivery = await waitFor("failed delivery", async () => {
           const rows = await maker.listWebhookDeliveries(hook.data.id);
-          return rows.data.data.find((row) => row.status === "dead_letter")?.id;
+          return rows.data.data.find((row) => row.status === "failed")?.id;
         });
       }
       const send = () =>
@@ -285,7 +285,7 @@ describe("a subscription whose credential stops standing", () => {
     if (stored.status !== 404) {
       expect(stored.status).toBe(200);
       expect(stored.rows.find((row) => row.id === pending.id)?.status).not.toBe(
-        "success",
+        "succeeded",
       );
     }
   });

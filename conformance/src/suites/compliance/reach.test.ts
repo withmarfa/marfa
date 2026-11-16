@@ -895,7 +895,7 @@ describe("conditional working-copy reaches", () => {
           await receive("metadata.changed", () =>
             writer.addTags(row.id, ["excluded-metadata"]),
           );
-          await receive("item.deleted", () => writer.deleteItem(row.id));
+          await receive("item.trashed", () => writer.deleteItem(row.id));
           await receive("item.restored", () => writer.restoreItem(row.id));
         },
       );
@@ -1504,7 +1504,7 @@ describe("what a reach certifies and what it outranks", () => {
 
     const filtered = `/items?include=metadata&edge[about]=${note.id}`;
     certified(await request(filtered, sees.reach, seeAbout.key), sees.reach);
-    await refusal(filtered, blind, noEdges.key, 403, "edge_permission_denied");
+    await refusal(filtered, blind, noEdges.key, 403, "edge_type_not_permitted");
 
     certified(
       await request(`/items/${bookmark.data.item.id}`, full.reach),
@@ -1562,7 +1562,11 @@ describe("what a reach certifies and what it outranks", () => {
         path: `/items?include=metadata&edge[about]=${target.id}`,
         key: noEdges.key,
         proof: reader,
-        fresh: { status: 403, code: "edge_permission_denied", certified: true },
+        fresh: {
+          status: 403,
+          code: "edge_type_not_permitted",
+          certified: true,
+        },
       },
       {
         path: `/items/${bookmark.data.item.id}`,
@@ -1742,7 +1746,7 @@ describe("a copy stream resumed from a cursor and the frames it carries", () => 
           ).toEqual([
             "item.created",
             "item.state_changed",
-            "item.deleted",
+            "item.trashed",
             "item.purged",
           ]);
           for (const frame of carried) {

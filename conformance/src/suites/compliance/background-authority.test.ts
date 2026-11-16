@@ -59,7 +59,7 @@ describe("background jobs after the requesting key is revoked", () => {
           ).toBe("ok");
           expect((await jobs(server))[name]).toMatchObject({
             running_since: null,
-            last_outcome: "ok",
+            last_outcome: "succeeded",
           });
           expect((await caller.runHousekeeping(name)).status).toBe(401);
           expect(finished.data.result).toMatchObject({

@@ -44,23 +44,16 @@ describe("metadata doors", () => {
     expect(again.ok).toBe(true);
     expect([...again.data.metadata.tags].sort()).toEqual([tagA, tagB].sort());
 
-    const read = await client.getMetadata(id);
+    const read = await client.getItem(id);
     expect(read.ok).toBe(true);
-    await expectMatchesSchema("GET", "/items/{id}/metadata", 200, read.data);
-    expect(read.data.metadata.item_id).toBe(id);
     expect([...read.data.metadata.tags].sort()).toEqual([tagA, tagB].sort());
 
-    const replaced = await client.replaceMetadata(id, { tags: [tagC] });
+    const replaced = await client.replaceTags(id, { tags: [tagC] });
     expect(replaced.ok).toBe(true);
-    await expectMatchesSchema(
-      "PUT",
-      "/items/{id}/metadata",
-      200,
-      replaced.data,
-    );
-    expect(replaced.data.metadata.tags).toEqual([tagC]);
+    await expectMatchesSchema("PUT", "/items/{id}/tags", 200, replaced.data);
+    expect(replaced.data).toEqual({ tags: [tagC] });
 
-    const after = await client.getMetadata(id);
+    const after = await client.getItem(id);
     expect(after.ok).toBe(true);
     expect(after.data.metadata.tags).toEqual([tagC]);
   });
@@ -79,7 +72,7 @@ describe("metadata doors", () => {
 
     const tags = await client.listTags();
     expect(tags.ok).toBe(true);
-    await expectMatchesSchema("GET", "/metadata/tags", 200, tags.data);
+    await expectMatchesSchema("GET", "/tags", 200, tags.data);
     const counts = new Map(tags.data.data.map((t) => [t.tag, t.count]));
     expect(counts.get(shared)).toBe(2);
     expect(counts.get(lone)).toBe(1);
@@ -91,6 +84,34 @@ describe("metadata doors", () => {
     expect(counts.get(tieEarly)).toBe(1);
     expect(counts.get(tieLate)).toBe(1);
     expect(order.indexOf(tieEarly)).toBeLessThan(order.indexOf(tieLate));
+  });
+
+  it("answers the retired tag paths as any unknown path, and a replace at the tags door the same as before", async () => {
+    const id = await seed();
+    const tag = `md-gone-${ctx.runId}`;
+    const gone: [string, string][] = [
+      ["GET", `/items/${id}/metadata`],
+      ["PUT", `/items/${id}/metadata`],
+      ["GET", "/metadata/tags"],
+    ];
+    for (const [method, path] of gone) {
+      const res = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        ...(method === "PUT" ? { body: JSON.stringify({ tags: [tag] }) } : {}),
+      });
+      expect(res.status, `${method} ${path}`).toBe(404);
+      expect(
+        ((await res.json()) as { error: { code: string } }).error.code,
+        `${method} ${path}`,
+      ).toBe("not_found");
+    }
+    // The witness: the new paths answer for the same request.
+    expect((await client.replaceTags(id, { tags: [tag] })).status).toBe(200);
+    expect((await client.listTags()).status).toBe(200);
   });
 
   it("keeps each tag once, whichever operation writes it", async () => {
@@ -112,16 +133,13 @@ describe("metadata doors", () => {
     const bulkId = bulk.data.results[0]?.id;
     expect(bulkId).toBeDefined();
     trackItem(ctx, bulkId!);
-    expect((await client.getMetadata(bulkId!)).data.metadata.tags).toEqual([
-      b,
-      a,
-    ]);
+    expect((await client.getItem(bulkId!)).data.metadata.tags).toEqual([b, a]);
 
-    const replaced = await client.replaceMetadata(created.data.item.id, {
+    const replaced = await client.replaceTags(created.data.item.id, {
       tags: [b, b, a, b],
     });
     expect(replaced.status).toBe(200);
-    expect(replaced.data.metadata.tags).toEqual([b, a]);
+    expect(replaced.data.tags).toEqual([b, a]);
 
     const counts = new Map(
       (await client.listTags()).data.data.map((t) => [t.tag, t.count]),
@@ -143,8 +161,7 @@ describe("metadata doors", () => {
   it("answers 404 for an unknown item on every metadata door", async () => {
     const unknown = "00000000-0000-7000-8000-000000000000";
     const doors: [string, string, unknown?][] = [
-      ["GET", "/items/{id}/metadata"],
-      ["PUT", "/items/{id}/metadata", { tags: ["x"] }],
+      ["PUT", "/items/{id}/tags", { tags: ["x"] }],
       ["POST", "/items/{id}/tags", { tags: ["x"] }],
       ["DELETE", "/items/{id}/tags/{tag}"],
       ["GET", "/items/{id}/extensions"],
@@ -172,7 +189,7 @@ describe("metadata doors", () => {
 
     // The witness: a known item answers the same door.
     const known = await seed();
-    expect((await client.getMetadata(known)).status).toBe(200);
+    expect((await client.getItem(known)).status).toBe(200);
 
     for (const [method, path, body] of doors) {
       const res = await fetch(
@@ -209,9 +226,8 @@ describe("metadata doors", () => {
     // credential-less caller must not be able to read.
     const unknown = "01999999-9999-7999-8999-999999999999";
     const anonymous = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
-    expect((await anonymous.getMetadata(unknown)).status).toBe(401);
     expect((await anonymous.addTags(unknown, [])).status).toBe(401);
-    expect((await anonymous.replaceMetadata(unknown, {})).status).toBe(401);
+    expect((await anonymous.replaceTags(unknown, {})).status).toBe(401);
     expect((await anonymous.listTags()).status).toBe(401);
   });
 
@@ -241,12 +257,12 @@ describe("metadata doors", () => {
       error: { code: "version_conflict" },
       current: { id, version: version + 1 },
     });
-    expect((await client.getMetadata(id)).data.metadata.tags).toEqual(["kept"]);
+    expect((await client.getItem(id)).data.metadata.tags).toEqual(["kept"]);
 
     const removed = await client.removeTag(id, "kept", {
       version: version + 1,
     });
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
-    expect((await client.getMetadata(id)).data.metadata.tags).toEqual([]);
+    expect((await client.getItem(id)).data.metadata.tags).toEqual([]);
   });
 });

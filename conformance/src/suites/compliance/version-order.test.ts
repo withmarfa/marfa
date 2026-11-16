@@ -158,7 +158,7 @@ function expectRefusal(
 }
 
 describe("a write that is not an update leaves the version where it was", () => {
-  it("leaves the item at its version and its history empty after a tag write, a metadata replacement and an extension write", async () => {
+  it("leaves the item at its version and its history empty after a tag write, a tag replacement and an extension write", async () => {
     const id = await note();
     const before = (await client.getItem(id)).data.item;
     expect(before.version).toBe(1);
@@ -168,14 +168,11 @@ describe("a write that is not an update leaves the version where it was", () => 
     expect(tagged.data.metadata.tags).toEqual([`order-${ctx.runId}`]);
     expect((await client.getItem(id)).data.item.version).toBe(1);
 
-    const replaced = await client.replaceMetadata(id, {
+    const replaced = await client.replaceTags(id, {
       tags: [`order-${ctx.runId}`, "second"],
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    expect(replaced.data.metadata.tags).toEqual([
-      `order-${ctx.runId}`,
-      "second",
-    ]);
+    expect(replaced.data.tags).toEqual([`order-${ctx.runId}`, "second"]);
     expect((await client.getItem(id)).data.item.version).toBe(1);
 
     const extended = await client.setItemExtension(id, "order.test", { n: 1 });

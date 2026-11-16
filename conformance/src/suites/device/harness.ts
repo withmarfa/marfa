@@ -887,6 +887,18 @@ export interface ScriptedWrites {
   edges?: Responder[];
 }
 
+/** The answer of the door that replaces tags, from the answer of a door that adds one. */
+function replacedTags(responder: Responder): Responder {
+  if (typeof responder === "function" || responder.kind !== "json") {
+    return responder;
+  }
+  const held = (responder.body as { metadata?: { tags?: string[] } })?.metadata
+    ?.tags;
+  return held === undefined
+    ? responder
+    : { ...responder, body: { tags: held } };
+}
+
 export function scriptWrites(
   server: ScriptedServer,
   options: ScriptedWrites = {},
@@ -908,11 +920,15 @@ export function scriptWrites(
   if (options.tags !== undefined) {
     server.answer("POST", /^\/items\/[^/]+\/tags$/, ...options.tags);
     server.answer("DELETE", /^\/items\/[^/]+\/tags\/[^/]+$/, ...options.tags);
-    // The metadata door answers the same sidecar, so it is scripted with the
-    // tag doors rather than needing a group of its own: leaving it out is how
-    // a drain carrying a metadata write met an unscripted door and read the
-    // 501 as a refusal.
-    server.answer("PUT", /^\/items\/[^/]+\/metadata$/, ...options.tags);
+    // The replacing door answers the tags alone, and is scripted with the tag
+    // doors rather than needing a group of its own: leaving it out is how a
+    // drain carrying a tag replacement met an unscripted door and read the 501
+    // as a refusal.
+    server.answer(
+      "PUT",
+      /^\/items\/[^/]+\/tags$/,
+      ...options.tags.map(replacedTags),
+    );
   }
   if (options.extensions !== undefined) {
     const door = /^\/items\/[^/]+\/extensions\/[^/]+$/;

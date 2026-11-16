@@ -157,7 +157,9 @@ describe("GET /auth/device/consent", () => {
     const consentUrl = (user: string) =>
       `${origin}/auth/device/consent?user_code=${encodeURIComponent(user)}`;
 
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     const refused = await fetch(consentUrl(code.user_code), {
       headers: { cookie },
     });

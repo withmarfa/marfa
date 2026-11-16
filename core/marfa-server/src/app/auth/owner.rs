@@ -17,7 +17,7 @@ pub struct Owner {
     pub email: String,
     pub name: String,
     pub created_at: Stamp,
-    /// Whether the owner holds a picture, which `GET /owner/picture` serves.
+    /// Whether the owner holds a picture, which `GET /owner/avatar` serves.
     pub avatar: bool,
 }
 
@@ -28,7 +28,7 @@ impl Owner {
             "id": self.id,
             "email": self.email,
             "name": self.name,
-            "avatar": self.avatar.then(|| format!("{origin}/owner/picture")),
+            "avatar": self.avatar.then(|| format!("{origin}/owner/avatar")),
             "created_at": self.created_at,
         })
     }

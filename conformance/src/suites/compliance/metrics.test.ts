@@ -62,9 +62,9 @@ describe("the instance's metrics", () => {
       "cpu_user_seconds",
       "memory_rss_bytes",
       "memory_rss_peak_bytes",
-      "release",
+      "version",
     ]);
-    expect(typeof r.data.process.release).toBe("string");
+    expect(typeof r.data.process.version).toBe("string");
     expect(r.data.process.memory_rss_bytes as number).toBeGreaterThan(0);
     expect(sorted(r.data.storage)).toEqual([
       "database_bytes",

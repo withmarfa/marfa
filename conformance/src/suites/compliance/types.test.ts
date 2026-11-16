@@ -298,7 +298,7 @@ describe("type registration and listing", () => {
   });
 
   it("refuses each field named like one every item has", async () => {
-    // The sixteen names an item carries itself.
+    // The names an item carries itself.
     const names = [
       "id",
       "type",
@@ -317,6 +317,8 @@ describe("type registration and listing", () => {
       "trashed_at",
       "trashed_by_cascade",
       "trashed_with",
+      "last_activity_at",
+      "read_only",
     ];
     for (const name of names) {
       const id = `user.shadow-${name.replace(/_/g, "-")}-${ctx.runId}`;
@@ -352,7 +354,7 @@ describe("type registration and listing", () => {
     // The witness: the duplicate with a good schema is the conflict.
     const duplicate = await client.registerType({ id, fields });
     expect(duplicate.status).toBe(409);
-    expect(duplicate.error?.error.code).toBe("type_already_exists");
+    expect(duplicate.error?.error.code).toBe("type_exists");
 
     // Refused by the validator.
     const shadowing = await client.registerType({
@@ -416,9 +418,9 @@ describe("type registration and listing", () => {
     expect(errors?.some((e) => e.field === "fields.count.format")).toBe(true);
   });
 
-  it("stores email, datetime and date formats on a string as their own types", async () => {
+  it("stores email and date formats on a string as their own types", async () => {
     const id = `user.format-types-${ctx.runId}`;
-    const formats = ["email", "datetime", "date"] as const;
+    const formats = ["email", "date"] as const;
     const registered = await client.registerType({
       id,
       fields: Object.fromEntries(
@@ -435,6 +437,32 @@ describe("type registration and listing", () => {
         label: `As ${format[0]!.toUpperCase()}${format.slice(1)}`,
       });
     }
+  });
+
+  it("refuses datetime as a format on a string and on a list of strings, and takes it as a type", async () => {
+    for (const [name, field] of [
+      ["string", { type: "string", format: "datetime" }],
+      ["list", { type: "array", items_type: "string", format: "datetime" }],
+    ] as const) {
+      const refused = await client.registerType({
+        id: `user.format-datetime-${name}-${ctx.runId}`,
+        fields: { seen: field },
+      });
+      expect(refused.status, name).toBe(400);
+      expect(refused.error?.error.code, name).toBe("invalid_schema");
+      const errors = refused.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(
+        errors?.some((e) => e.field === "fields.seen.format"),
+        name,
+      ).toBe(true);
+    }
+    // The witness: the same field declared as the type is taken.
+    const taken = await client.registerType({
+      id: `user.format-datetime-type-${ctx.runId}`,
+      fields: { seen: { type: "datetime" } },
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
   });
 
   it("leaves a format that names the field's own type unchanged, and refuses thumbnail on a list", async () => {

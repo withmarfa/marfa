@@ -63,7 +63,7 @@ async function runRecorded<T>(
       continue;
     }
     expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
-    expect(res.data.outcome, res.data.error ?? "").toBe("ok");
+    expect(res.data.outcome, res.data.error ?? "").toBe("succeeded");
     return {
       result: res.data.result as T,
       started_at: res.data.started_at,

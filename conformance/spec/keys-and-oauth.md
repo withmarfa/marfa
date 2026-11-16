@@ -369,7 +369,7 @@ If `PATCH /keys/{id}` names `narrow_only: true` and an `enforcement_override` ot
 
 ### `keys-and-oauth/key-unknown`
 
-When `PATCH` or `DELETE /keys/{id}` names a well-formed id that no key within the caller's reach holds, the server MUST answer `404 api_key_not_found`.
+When `PATCH` or `DELETE /keys/{id}` names a well-formed id that no key within the caller's reach holds, the server MUST answer `404 key_not_found`.
 
 **Tests:** `compliance/keys-update.test.ts › answers 404 for an unknown key and 400 for a malformed id`, `compliance/key-reach.test.ts › cannot revoke a key beyond its reach, and is answered as for no key`.
 
@@ -395,7 +395,7 @@ When a key has been revoked, the server MUST answer the next request bearing it 
 
 ### `keys-and-oauth/revoke-twice`
 
-When `DELETE /keys/{id}` names a key that is already revoked, the server MUST answer `404 api_key_not_found`, with a message saying it was already revoked only to a caller holding `keys.manage` or local authority.
+When `DELETE /keys/{id}` names a key that is already revoked, the server MUST answer `404 key_not_found`, with a message saying it was already revoked only to a caller holding `keys.manage` or local authority.
 
 **Reason:** A revoked key's reach cannot be measured, so a caller acting through `keys.mint` is told what it would be told of a key it never reached.
 
@@ -487,7 +487,7 @@ When `PATCH /keys/{id}` names no `expires_at`, the server MUST leave the key's `
 
 When a key is past its `expires_at`, the server MUST answer a request bearing it `401 unauthorized`.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› is refused 401 once the expiry it was minted with comes`.
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 key_not_found to an update or a revoke`, `› is refused 401 once the expiry it was minted with comes`.
 
 ### `keys-and-oauth/expired-named`
 
@@ -509,7 +509,7 @@ If a request bears a secret that no unrevoked key holds, then the server MUST an
 
 When a key is past its `expires_at`, the server MUST leave it out of `GET /keys`.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`.
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 key_not_found to an update or a revoke`.
 
 ### `keys-and-oauth/expired-source-free`
 
@@ -529,17 +529,17 @@ When a mint takes a `source` from keys past their `expires_at`, the server MUST 
 
 ### `keys-and-oauth/expired-unknown`
 
-When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST answer `404 api_key_not_found`, whoever the caller is.
+When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST answer `404 key_not_found`, whoever the caller is.
 
 **Reason:** A key whose time has passed cannot be given a new one; a new key is minted instead.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› answers 404 api_key_not_found to an update that would clear its expiry, and stays past it`.
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 key_not_found to an update or a revoke`, `› answers 404 key_not_found to an update that would clear its expiry, and stays past it`.
 
 ### `keys-and-oauth/expired-unchanged`
 
 When `PATCH` or `DELETE /keys/{id}` names a key past its `expires_at`, the server MUST leave the key as it was, whoever the caller is.
 
-**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› answers 404 api_key_not_found to an update that would clear its expiry, and stays past it`.
+**Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 key_not_found to an update or a revoke`, `› answers 404 key_not_found to an update that would clear its expiry, and stays past it`.
 
 ## A key's life is held to its maker's
 
@@ -835,19 +835,19 @@ If a key whose claim was taken away creates or upserts by natural key under that
 
 ## Source names and marks
 
-Every item carries a source code that says what wrote it. A source also has a name and an optional mark, an icon ID, to be shown by. `GET /sources` lists the sources a credential can see, and `GET /source` and `PATCH /source` read and set one.
+Every item carries a source code that says what wrote it. A source also has a name and an optional mark, an icon ID, to be shown by. `GET /sources` lists the sources a credential can see, and `GET /sources/{source}` and `PATCH /sources/{source}` read and set one.
 
-### `keys-and-oauth/source-code-query`
+### `keys-and-oauth/source-code-path`
 
-The server MUST take the source code of `GET /source` and `PATCH /source` from the `source` query parameter.
+The server MUST take the source code of `GET /sources/{source}` and `PATCH /sources/{source}` from the `source` path segment, percent-decoded.
 
-**Reason:** a valid code such as `..`, or one holding `/`, `?` or `#`, would be rewritten or cut short in a path.
+**Reason:** a valid code can hold `/`, `?` or `#`, which a client percent-encodes to keep it in one segment.
 
-**Tests:** `compliance/source-names.test.ts › travels in the query, so a code a path would rewrite reaches its source`.
+**Tests:** `compliance/source-names.test.ts › travels as one path segment, so a code holding a slash, a question mark or a hash reaches its source`.
 
 ### `keys-and-oauth/source-code-length`
 
-The server MUST take a nonempty source code with no Unicode `White_Space` at either end at `GET /source`, `PATCH /source` and every other door that takes one only if it is at most 200 characters long or is `restored:` followed by at most 200 characters.
+The server MUST take a nonempty source code with no Unicode `White_Space` at either end at `GET /sources/{source}`, `PATCH /sources/{source}` and every other door that takes one only if it is at most 200 characters long or is `restored:` followed by at most 200 characters.
 
 **Reason:** a key holds a source of at most 200 characters, and a restore puts `restored:`, 9 more, before an app's source of that length, so no door may refuse a code the instance can hold.
 
@@ -855,13 +855,13 @@ The server MUST take a nonempty source code with no Unicode `White_Space` at eit
 
 ### `keys-and-oauth/source-read`
 
-When a credential sends `GET /source` naming a source it can see, the server MUST answer the source's `source`, `name` and `name_from`, and its `mark` only where one is set.
+When a credential sends `GET /sources/{source}` naming a source it can see, the server MUST answer the source's `source`, `name` and `name_from`, and its `mark` only where one is set.
 
 **Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`.
 
 ### `keys-and-oauth/source-list`
 
-When a credential sends `GET /sources`, the server MUST answer every source it can see, in the shape `GET /source` answers each, ordered by code, in one page whose `next_cursor` is `null`.
+When a credential sends `GET /sources`, the server MUST answer every source it can see, in the shape `GET /sources/{source}` answers each, ordered by code, in one page whose `next_cursor` is `null`.
 
 **Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`, `› answers source_not_found for a source the credential cannot see, and leaves it out of the list`.
 
@@ -921,27 +921,27 @@ When the key whose own `source` a source is ends, the server MUST NOT answer tha
 
 ### `keys-and-oauth/source-name-length`
 
-If `PATCH /source` sends a `name` that is empty once trimmed, holds a control character or a bidirectional formatting character, or is longer than 200 characters once trimmed, then the server MUST answer `400 validation_error` and leave the source's name and mark as they were.
+If `PATCH /sources/{source}` sends a `name` that is empty once trimmed, holds a control character or a bidirectional formatting character, or is longer than 200 characters once trimmed, then the server MUST answer `400 validation_error` and leave the source's name and mark as they were.
 
-**Reason:** it is the rule a sign-in's name is held to, and an archive refuses a name that `PATCH /source` could not store, so a name measured another way would stop an export.
+**Reason:** it is the rule a sign-in's name is held to, and an archive refuses a name that `PATCH /sources/{source}` could not store, so a name measured another way would stop an export.
 
 **Tests:** `compliance/source-names.test.ts › refuses a name an archive could not carry, and keeps what was set`, `compliance/source-name-characters.test.ts › counts a name in characters`.
 
 ### `keys-and-oauth/source-set-own`
 
-When a credential sends `PATCH /source` naming its own `source` or a source it claims, the server MUST set the name and mark the body gives.
+When a credential sends `PATCH /sources/{source}` naming its own `source` or a source it claims, the server MUST set the name and mark the body gives.
 
 **Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
 
 ### `keys-and-oauth/source-set-manage`
 
-When a credential holding `keys.manage`, or local authority, sends `PATCH /source` naming any source, the server MUST set the name and mark the body gives.
+When a credential holding `keys.manage`, or local authority, sends `PATCH /sources/{source}` naming any source, the server MUST set the name and mark the body gives.
 
 **Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
 
 ### `keys-and-oauth/source-set-refused`
 
-If a credential without `keys.manage` sends `PATCH /source` naming a source that is neither its own `source` nor one it claims, then the server MUST answer `403 forbidden` with `details.required_scope` `keys.manage`.
+If a credential without `keys.manage` sends `PATCH /sources/{source}` naming a source that is neither its own `source` nor one it claims, then the server MUST answer `403 forbidden` with `details.required_scope` `keys.manage`.
 
 **Reason:** a source's name is what the owner reads to tell what wrote an item, so only what writes under it, or what manages keys, may change it.
 
@@ -949,25 +949,25 @@ If a credential without `keys.manage` sends `PATCH /source` naming a source that
 
 ### `keys-and-oauth/source-set-refused-unchanged`
 
-If a credential without `keys.manage` sends `PATCH /source` naming a source that is neither its own `source` nor one it claims, then the server MUST leave the source's name and mark as they were.
+If a credential without `keys.manage` sends `PATCH /sources/{source}` naming a source that is neither its own `source` nor one it claims, then the server MUST leave the source's name and mark as they were.
 
 **Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
 
 ### `keys-and-oauth/source-set-omitted`
 
-When `PATCH /source` leaves `name` or `mark` out of its body, the server MUST keep that field's value.
+When `PATCH /sources/{source}` leaves `name` or `mark` out of its body, the server MUST keep that field's value.
 
 **Tests:** `compliance/source-names.test.ts › keeps a field left out, and clears one sent as null`.
 
 ### `keys-and-oauth/source-set-null`
 
-When `PATCH /source` sends `name` or `mark` as `null`, the server MUST clear that field.
+When `PATCH /sources/{source}` sends `name` or `mark` as `null`, the server MUST clear that field.
 
 **Tests:** `compliance/source-names.test.ts › keeps a field left out, and clears one sent as null`.
 
 ### `keys-and-oauth/source-mark-name`
 
-If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST answer `400 invalid_schema` naming it in `details.errors`.
+If `PATCH /sources/{source}` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST answer `400 invalid_schema` naming it in `details.errors`.
 
 **Reason:** a mark is drawn where a type's icon is, from the same pinned sets.
 
@@ -975,7 +975,7 @@ If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's ico
 
 ### `keys-and-oauth/source-mark-unchanged`
 
-If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST leave the source's name and mark as they were.
+If `PATCH /sources/{source}` sends a `mark` that `types/icon-name` refuses as a type's icon, then the server MUST leave the source's name and mark as they were.
 
 **Tests:** `compliance/source-names.test.ts › refuses a mark outside the pinned icon sets with invalid_schema, and sets nothing`.
 
@@ -983,13 +983,13 @@ If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's ico
 
 When a credential holding `keys.manage`, or local authority, sends `GET /sources`, the server MUST answer every source the instance holds: those of its items in any state, those with a name or mark, and those its keys hold as their own or claim, whatever types the credential reads.
 
-**Reason:** `GET /source` answers any source to such a credential, so the list says the same.
+**Reason:** `GET /sources/{source}` answers any source to such a credential, so the list says the same.
 
 **Tests:** `compliance/source-names.test.ts › lists every source the instance holds to a credential with keys.manage, whatever types it reads`.
 
 ### `keys-and-oauth/source-hidden`
 
-If a credential without `keys.manage` sends `GET /source` naming a source that is not its own `source`, not one it claims, and carried by no item it can read in any state, then the server MUST answer `404 source_not_found`.
+If a credential without `keys.manage` sends `GET /sources/{source}` naming a source that is not its own `source`, not one it claims, and carried by no item it can read in any state, then the server MUST answer `404 source_not_found`.
 
 **Reason:** a source's code and name say what writes to the instance, which a credential that reads none of it has no reason to learn.
 
@@ -1003,7 +1003,7 @@ The server MUST NOT list to a credential without `keys.manage`, on `GET /sources
 
 ### `keys-and-oauth/source-audit`
 
-When `PATCH /source` succeeds, the server MUST record an audit entry with the action `source.update` and the source code as the resource.
+When `PATCH /sources/{source}` succeeds, the server MUST record an audit entry with the action `source.update` and the source code as the resource.
 
 **Tests:** `compliance/source-names.test.ts › records a change to a source's name in the audit log`.
 
@@ -1013,7 +1013,7 @@ A key is within a caller's reach when it holds nothing the caller does not: each
 
 ### `keys-and-oauth/reach-minter`
 
-When a caller acting through `keys.mint` updates or revokes a key beyond its reach, the server MUST answer exactly as for an id no key holds, `404 api_key_not_found` with the same message.
+When a caller acting through `keys.mint` updates or revokes a key beyond its reach, the server MUST answer exactly as for an id no key holds, `404 key_not_found` with the same message.
 
 **Reason:** The answer says nothing of whether the key exists, as an item a key cannot read answers as a missing one.
 
@@ -1117,7 +1117,7 @@ When the server answers `429 rate_limited`, the server MUST carry in `Retry-Afte
 
 ### `keys-and-oauth/rate-limit-retry-detail`
 
-When the server answers `429 rate_limited` in the error envelope to a request made with a key or an app's access token, the server MUST name in `details.retry_after` the number of seconds `Retry-After` carries.
+When the server answers `429 rate_limited` in the error envelope to a request made with a key or an app's access token, the server MUST name in `details.retry_after_seconds` the number of seconds `Retry-After` carries.
 
 **Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`, `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
 
@@ -2719,7 +2719,7 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-form-limit-wait`
 
-If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `retry_after` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent, the value `Retry-After` carries on the same refusal.
+If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `retry_after_seconds` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent, the value `Retry-After` carries on the same refusal.
 
 **Reason:** The sign-in page tells the owner how long to wait. The address limit and the limit every address shares end at different times, and an address that has spent both is refused again at the end of the shorter wait.
 
@@ -2727,7 +2727,7 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
-When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
+When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
 
 **Reason:** A fixed number of minutes would be wrong for one of the two limits, and the passkey is the way in that a password lock does not close (`authentication/passkey-password-lock`).
 
@@ -2867,7 +2867,7 @@ If one address has made ten device code lookups without the owner's live browser
 
 ### `keys-and-oauth/device-lookup-wait`
 
-If a device code lookup is refused by a device lookup limit, then the server MUST redirect with `retry_after` holding the whole seconds, from 1 to 86400, until another lookup will be allowed, which is the latest end among the device lookup limits that are spent.
+If a device code lookup is refused by a device lookup limit, then the server MUST redirect with `retry_after_seconds` holding the whole seconds, from 1 to 86400, until another lookup will be allowed, which is the latest end among the device lookup limits that are spent.
 
 **Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, and a lookup refused by one can meet another that is spent for longer, so the page can say how long to wait only if the redirect names the later end.
 
@@ -2875,7 +2875,7 @@ If a device code lookup is refused by a device lookup limit, then the server MUS
 
 ### `keys-and-oauth/device-lookup-page`
 
-When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up.
+When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up.
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a person who has tried too many device codes how long to wait, in whole minutes rounded up`.
 

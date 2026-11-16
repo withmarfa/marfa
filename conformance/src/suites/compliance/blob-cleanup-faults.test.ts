@@ -49,7 +49,7 @@ async function jobsIdle(): Promise<void> {
         return (
           job !== undefined &&
           job.running_since === null &&
-          Date.parse(job.next_run_at) - Date.now() > job.interval_ms / 2
+          Date.parse(job.next_run_at) - Date.now() > job.interval_seconds * 500
         );
       })
         ? true

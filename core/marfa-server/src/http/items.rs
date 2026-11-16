@@ -403,12 +403,9 @@ fn settle_of(uri: &Uri) -> Result<Settle> {
         .into_iter()
         .find(|(name, _)| name == "conflict");
     match named.as_ref().map(|(_, value)| value.as_str()) {
-        None | Some("manual" | "callback") => Ok(Settle::Refuse),
+        None => Ok(Settle::Refuse),
         Some("auto") => Ok(Settle::Automatically),
-        Some(_) => Err(invalid_field(
-            "conflict",
-            "conflict is auto, manual or callback.",
-        )),
+        Some(_) => Err(invalid_field("conflict", "conflict must be auto.")),
     }
 }
 
@@ -706,19 +703,7 @@ pub async fn titles(
     Ok(text_answer(StatusCode::OK, answer))
 }
 
-pub async fn metadata(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Named(id): Named<String>,
-    uri: Uri,
-) -> Answer {
-    query::only(&uri, &[])?;
-    check_item_id(&id)?;
-    let answer = items::metadata(&app, &caller, id).await?;
-    Ok(text_answer(StatusCode::OK, answer))
-}
-
-pub async fn set_metadata(
+pub async fn set_tags(
     State(app): State<Arc<App>>,
     caller: Caller,
     Named(id): Named<String>,

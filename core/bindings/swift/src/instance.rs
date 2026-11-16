@@ -4,7 +4,6 @@ use crate::MarfaError;
 pub struct InstanceDescription {
     pub name: String,
     pub version: String,
-    pub release: Option<String>,
     pub instance_id: String,
     pub contract: u64,
     pub features: Vec<String>,
@@ -16,7 +15,6 @@ pub fn instance_description(url: String) -> Result<InstanceDescription, MarfaErr
     Ok(InstanceDescription {
         name: description.name,
         version: description.version,
-        release: description.release,
         instance_id: description.instance_id,
         contract: description.contract,
         features: description.features,

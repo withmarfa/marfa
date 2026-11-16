@@ -7794,11 +7794,11 @@ describe("an edit behind an edit of the same item", () => {
     // The witness: the first write went out.
     expect(
       server.requests.map((request) => `${request.method} ${request.pathname}`),
-    ).toEqual(expect.arrayContaining([`PUT /items/${HELD.id}/metadata`]));
+    ).toEqual(expect.arrayContaining([`PUT /items/${HELD.id}/tags`]));
     expect(
       server.requests.filter(
         (request) =>
-          request.pathname === `/items/${HELD.id}/metadata` ||
+          request.pathname === `/items/${HELD.id}/tags` ||
           request.pathname === `/items/${QUIET.id}/restore`,
       ),
     ).toHaveLength(1);

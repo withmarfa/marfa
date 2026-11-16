@@ -174,9 +174,9 @@ When a key sends `DELETE /views/{id}` for an active or revoked view, the server 
 
 ### `views/delete-announced`
 
-When a key deletes a view, the server MUST announce `item.purged` for it, and neither `item.deleted` nor `item.state_changed`.
+When a key deletes a view, the server MUST announce `item.purged` for it, and neither `item.trashed` nor `item.state_changed`.
 
-**Reason:** `item.deleted` announces an item that stays, in the bin or, for a `system.*` item a cascade revokes, with `state` `revoked`, and a working copy keeps it; `item.purged` tells every working copy to drop the view.
+**Reason:** `item.trashed` announces an item that stays, in the bin or, for a `system.*` item a cascade revokes, with `state` `revoked`, and a working copy keeps it; `item.purged` tells every working copy to drop the view.
 
 **Tests:** `compliance/views.test.ts › publishes a view's create and change as item events, and its delete as item.purged`.
 
@@ -320,7 +320,7 @@ Where a view names `query.beneath`, the server MUST NOT reach an item through on
 
 ### `views/items-edge-read`
 
-If a view names `query.beneath` and the key cannot read `parent-of` edges, then the server MUST answer `403 edge_permission_denied`.
+If a view names `query.beneath` and the key cannot read `parent-of` edges, then the server MUST answer `403 edge_type_not_permitted`.
 
 **Tests:** `compliance/views-items.test.ts › refuses a view that goes beneath an item to a key that cannot read parent-of edges`.
 

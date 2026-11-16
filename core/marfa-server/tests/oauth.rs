@@ -52,7 +52,7 @@ async fn cleaned(app: &Arc<App>) -> Cleaned {
     let ended = housekeeping::run_now(app, "credential-cleanup")
         .await
         .unwrap();
-    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
     let result = ended.result.unwrap();
     let count = |name: &str| result[name].as_u64().unwrap();
     Cleaned {
@@ -991,7 +991,7 @@ async fn a_browser_session_reaches_no_content_door() {
         "/items",
         "/edges",
         "/search?q=kept",
-        "/metadata/tags",
+        "/tags",
     ] {
         let refused = instance.send(by_owner(path)).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{path}");
@@ -1245,7 +1245,7 @@ async fn a_failing_stage_leaves_the_later_stages_to_run_and_fails_the_run() {
         .await
         .unwrap();
     assert_eq!(instance.count(clients).await, 1);
-    assert_eq!(ended.outcome, "error");
+    assert_eq!(ended.outcome, "failed");
     let error = ended.error.unwrap();
     assert!(error.starts_with("idle grants: "), "{error}");
 
@@ -1468,7 +1468,7 @@ async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_no
     let ended = housekeeping::run_now(app, "credential-cleanup")
         .await
         .unwrap();
-    assert_eq!(ended.outcome, "error");
+    assert_eq!(ended.outcome, "failed");
     let error = ended.error.unwrap();
     for key in keys {
         assert!(error.contains(key), "{key}: {error}");
@@ -3040,7 +3040,7 @@ async fn the_source_an_app_writes_under_shows_its_sign_in_name() {
     let code = text_at(own, "source").to_string();
     assert_eq!(code, format!("oauth:{client}"), "{code}");
 
-    let path = format!("/source?{}", encoded(&[("source", &code)]));
+    let path = format!("/sources/{code}");
     let read = instance.local(from_local(Method::GET, &path, None)).await;
     assert_eq!(read.status, StatusCode::OK, "{}", read.text);
     assert_eq!(read.json(), *own);

@@ -169,7 +169,7 @@ describe("one envelope for every list and search", () => {
       template: "/webhooks/{id}/deliveries",
       path: () => `/webhooks/${webhookId}/deliveries`,
     },
-    { template: "/metadata/tags", path: () => "/metadata/tags" },
+    { template: "/tags", path: () => "/tags" },
     {
       template: "/items/{id}/versions",
       path: () => `/items/${itemId}/versions`,

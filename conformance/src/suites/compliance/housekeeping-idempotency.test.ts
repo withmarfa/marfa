@@ -19,7 +19,7 @@ import {
 
 /**
  * How long the server keeps the answer to a write sent with an
- * `Idempotency-Key`: as long as the event log, which `event_log_retention_hours`
+ * `Idempotency-Key`: as long as the event log, which `event_log_retention_days`
  * sets. The age of an answer is a clock a fixture cannot wait out, so the case
  * moves the server's clock through the target interface and runs
  * `event-log-cleanup` by hand.
@@ -41,8 +41,8 @@ describe("housekeeping and the answers kept under an Idempotency-Key", () => {
     await quiet(server, ["event-log-cleanup"]);
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  async function retention(hours: number): Promise<void> {
-    const set = await writer.patchConfig({ event_log_retention_hours: hours });
+  async function retention(days: number): Promise<void> {
+    const set = await writer.patchConfig({ event_log_retention_days: days });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
   }
 
@@ -72,13 +72,13 @@ describe("housekeeping and the answers kept under an Idempotency-Key", () => {
 
   async function cleanUp(): Promise<void> {
     const run = await runJob(server, "event-log-cleanup");
-    expect(run.outcome, String(run.error)).toBe("ok");
+    expect(run.outcome, String(run.error)).toBe("succeeded");
   }
 
   it(
-    "replays an answer until event_log_retention_hours has passed, and runs the key as a first attempt after",
+    "replays an answer until event_log_retention_days has passed, and runs the key as a first attempt after",
     async () => {
-      await retention(48);
+      await retention(2);
       const key = `idempotency-window-${randomUUID()}`;
       const first = await create(key);
       expect(first.status).toBe(201);
@@ -102,7 +102,7 @@ describe("housekeeping and the answers kept under an Idempotency-Key", () => {
   );
 
   it(
-    "replays an answer for as long as the event log is kept when event_log_retention_hours is 0",
+    "replays an answer for as long as the event log is kept when event_log_retention_days is 0",
     async () => {
       await retention(0);
       const key = `idempotency-for-ever-${randomUUID()}`;

@@ -102,7 +102,7 @@ describe("the enrichment sweep", () => {
 
     const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
-    expect(run.data.outcome).toBe("ok");
+    expect(run.data.outcome).toBe("succeeded");
 
     const image = await propertiesOf(shippedImage);
     expect(image.width, "core.file.image").toBe(1700);

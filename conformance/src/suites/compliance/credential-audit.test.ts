@@ -264,7 +264,9 @@ describe("a grant retired for inactivity", () => {
     // audit entry rather than counting every retirement.
     await movedClock(server).advance(366 * DAY_MS);
     // The scheduler finds the job due after the move and may be running it.
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     expect(await logged("auth.grant.retired", app.clientId)).toBe(1);
     expect(await grantsOf()).not.toContain(app.clientId);
   });
@@ -289,11 +291,15 @@ describe("a credential the clean-up removes", () => {
     // Inside the thirty days a revoked key is kept: the witness that the run is not
     // what writes the entry.
     await movedClock(server).advance(2 * DAY_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     expect(await logged("keys.purged")).toBe(before);
 
     await movedClock(server).advance(29 * DAY_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     expect(await logged("keys.purged")).toBe(before + 1);
   });
 
@@ -301,7 +307,9 @@ describe("a credential the clean-up removes", () => {
     await registerApp(server, NOTES);
     const before = await logged("auth.clients.purged");
     await movedClock(server).advance(2 * HOUR_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     expect(await logged("auth.clients.purged")).toBeGreaterThan(before);
   });
 
@@ -325,11 +333,15 @@ describe("a credential the clean-up removes", () => {
 
     // Inside the retention a revoked grant is kept.
     await movedClock(server).advance(30 * DAY_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     expect(await logged("auth.grants.purged")).toBe(before);
 
     await movedClock(server).advance(70 * DAY_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     expect(await logged("auth.grants.purged")).toBeGreaterThan(before);
   });
 });

@@ -136,7 +136,7 @@ If `POST /items`, without `mode: create_only`, names an `id` that an item of ano
 
 ### `items/create-id-unreadable`
 
-If `POST /items` names an `id` that an item of a type the key may not read holds, then the server MUST answer `409 conflict` naming neither that item's type nor any of its properties.
+If `POST /items` names an `id` that an item of a type the key may not read holds, then the server MUST answer `409 id_reused` naming neither that item's type nor any of its properties.
 
 **Reason:** the key learns the id is taken, which it must to choose another, and nothing else about an item it may not read.
 
@@ -326,7 +326,7 @@ If the natural key of `POST /items` naming `mode: create_only` resolves an item 
 
 ### `items/create-only-id-unreadable`
 
-If `POST /items` naming `mode: create_only` names an `id` that an item of a type the key may not read holds, and a natural key that resolves no item, then the server MUST answer `409 conflict` naming neither that item's type nor any of its properties.
+If `POST /items` naming `mode: create_only` names an `id` that an item of a type the key may not read holds, and a natural key that resolves no item, then the server MUST answer `409 id_reused` naming neither that item's type nor any of its properties.
 
 **Reason:** the answer is the one the create gets without the mode (`items/create-id-unreadable`).
 
@@ -1054,7 +1054,7 @@ When the revocation of a key commits before an item write bearing that key begin
 
 ### `items/idempotency-operations`
 
-The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/trash`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}`, `POST /items/bulk-actions` and the two doors `tables/rows-keyed` names, and on no other operation.
+The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/trash`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/tags`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}`, `POST /items/bulk-actions` and the two doors `tables/rows-keyed` names, and on no other operation.
 
 **Reason:** a client resends a write whose answer it lost. A metadata or extension write checks no version, and a tag write checks one only when it names one, so one applied a second time would undo a change made between the two sends.
 
@@ -1114,23 +1114,23 @@ When the server answers a request under an `Idempotency-Key` with `401`, `403` o
 
 ### `items/idempotency-kept-for`
 
-The server MUST replay the answer it kept under an `Idempotency-Key` to a repeat sent less than `event_log_retention_hours` after the first request.
+The server MUST replay the answer it kept under an `Idempotency-Key` to a repeat sent less than `event_log_retention_days` after the first request.
 
 **Reason:** the answer is kept by the same clean-up as the event log, so an owner who shortens the event log shortens this window too ([Settings](instance.md#stored-settings)). A client that resends a queued write after the window runs it again.
 
-**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer until event_log_retention_hours has passed, and runs the key as a first attempt after`.
+**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer until event_log_retention_days has passed, and runs the key as a first attempt after`.
 
 ### `items/idempotency-kept-for-ever`
 
-Where `event_log_retention_hours` is 0, the server MUST keep the answers it holds under an `Idempotency-Key` without a time limit.
+Where `event_log_retention_days` is 0, the server MUST keep the answers it holds under an `Idempotency-Key` without a time limit.
 
-**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer for as long as the event log is kept when event_log_retention_hours is 0`.
+**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer for as long as the event log is kept when event_log_retention_days is 0`.
 
 ### `items/idempotency-expired`
 
-When a credential repeats a request under an `Idempotency-Key` after `event_log_retention_hours` has passed since the first request and the `event-log-cleanup` job has run, the server MUST treat the repeat as a first request.
+When a credential repeats a request under an `Idempotency-Key` after `event_log_retention_days` has passed since the first request and the `event-log-cleanup` job has run, the server MUST treat the repeat as a first request.
 
-**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer until event_log_retention_hours has passed, and runs the key as a first attempt after`.
+**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer until event_log_retention_days has passed, and runs the key as a first attempt after`.
 
 ### `items/idempotency-unproven-file-not-kept`
 
@@ -1268,7 +1268,7 @@ If `POST /items/{id}/transition` carries a top-level body key the operation does
 
 When a transition moves the item it names to another state, the server MUST announce `item.state_changed` for that item.
 
-**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each item a transition into the bin takes`, `› announces item.deleted for the item a bulk transition into the bin names, and with its mark for each item it takes`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
+**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.trashed with its mark for each item a transition into the bin takes`, `› announces item.trashed for the item a bulk transition into the bin names, and with its mark for each item it takes`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/system-lifecycle`
 
@@ -1328,7 +1328,7 @@ When `GET /items/{id}` names an archived item the key may read, the server MUST 
 
 ### `items/write-in-bin`
 
-If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors/bin-trashed`).
+If `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin, then the server MUST answer `404 item_not_found`, with `details.trashed: true` only to a key that may read the item's type (`errors/bin-trashed`).
 
 **Tests:** `correctness/trash.test.ts › deleted item is hidden from default queries`, `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 
@@ -1362,15 +1362,15 @@ When a delete or a transition into the bin moves an item, on its own operation o
 
 ### `items/trash-cascade-announced`
 
-When a cascade moves an item into the bin, the server MUST announce `item.deleted` for it.
+When a cascade moves an item into the bin, the server MUST announce `item.trashed` for it.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› announces item.deleted with its mark for each item a transition into the bin takes`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› announces item.trashed with its mark for each item a transition into the bin takes`.
 
 ### `items/delete-announced`
 
-When a delete or a transition into the bin moves an item into the bin, the server MUST announce `item.deleted` for it.
+When a delete or a transition into the bin moves an item into the bin, the server MUST announce `item.trashed` for it.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› announces item.deleted with its mark for each item a transition into the bin takes`, `› announces item.deleted for the item a bulk transition into the bin names, and with its mark for each item it takes`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› announces item.trashed with its mark for each item a transition into the bin takes`, `› announces item.trashed for the item a bulk transition into the bin names, and with its mark for each item it takes`.
 
 ### `items/trash-blocked`
 
@@ -1490,7 +1490,7 @@ While an item a cascade moved into the bin stays there, the server MUST answer i
 
 **Reason:** a connector must know a trash was a cascade, or it carries to the vendor a trash the person never made.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.trashed of an item a cascade trashed with its mark, and the item trashed's own without one`.
 
 ### `items/cascade-mark-names`
 
@@ -2192,9 +2192,15 @@ When a key sends tags on `POST /items/{id}/tags`, the server MUST add them to th
 
 ### `items/tags-replace`
 
-When a key sends `PUT /items/{id}/metadata`, the server MUST make the tags it names the item's whole tag list.
+When a key sends `PUT /items/{id}/tags`, the server MUST make the tags it names the item's whole tag list.
 
 **Tests:** `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
+
+### `items/tags-replace-answer`
+
+When a key sends `PUT /items/{id}/tags`, the server MUST answer `200` with `tags` as the item's whole tag list.
+
+**Tests:** `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`, `› keeps each tag once, whichever operation writes it`.
 
 ### `items/tags-remove`
 
@@ -2218,7 +2224,7 @@ When `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names the item's
 
 ### `items/tags-read`
 
-The server MUST answer an item's tags in its `metadata` on `GET /items/{id}` and `GET /items/{id}/metadata`, which also names the `item_id`.
+The server MUST answer an item's tags in its `metadata` on `GET /items/{id}`, which also names the `item_id`.
 
 **Tests:** `correctness/tags.test.ts › creates an item with tags and returns them correctly`, `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
 
@@ -2228,9 +2234,9 @@ If a tag write names `tags` that is not a list, then the server MUST answer `400
 
 **Tests:** `correctness/tags.test.ts › refuses a tags add whose tags are not an array, and answers 404 for an unknown item`, `compliance/metadata-routes.test.ts › refuses a tags body that is not an array`.
 
-### `items/metadata-undeclared-key`
+### `items/tags-undeclared-key`
 
-If `PUT /items/{id}/metadata` or `POST /items/{id}/tags` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+If `PUT /items/{id}/tags` or `POST /items/{id}/tags` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a misspelled `tags` would otherwise be dropped, and the write answered as the success of a different request.
 
@@ -2256,7 +2262,7 @@ The server MUST hold `favorite` as an ordinary tag, with no field of its own.
 
 ### `items/tag-counts`
 
-When a key sends `GET /metadata/tags`, the server MUST answer each tag on an active item the key may read with the number of such items carrying it, by count descending and then by tag ascending.
+When a key sends `GET /tags`, the server MUST answer each tag on an active item the key may read with the number of such items carrying it, by count descending and then by tag ascending.
 
 **Tests:** `compliance/metadata-routes.test.ts › counts distinct tags across the dataset`, `› keeps each tag once, whichever operation writes it`.
 
@@ -2268,7 +2274,7 @@ When a tag operation writes an item's tags, the server MUST move the item's `upd
 
 ### `items/tag-announced`
 
-When `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata` or a bulk `update_tags` action commits for an item, the server MUST announce `metadata.changed`, whether or not the item's tags change.
+When `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/tags` or a bulk `update_tags` action commits for an item, the server MUST announce `metadata.changed`, whether or not the item's tags change.
 
 **Reason:** such a write still moves the item's `updated_at` (`items/tag-updated-at`), and a client learns the new time from the frame.
 
@@ -2654,7 +2660,7 @@ If `POST /items/tombstones` names a `type` nothing registered, then the server M
 
 ### `items/json-depth`
 
-If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
+If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
 
 **Reason:** SQLite's JSON functions stop at 1,000 levels, so a deeper body would fail inside the database as `500`.
 
@@ -2662,7 +2668,7 @@ If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its 
 
 ### `items/json-text-well-formed`
 
-If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
+If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 

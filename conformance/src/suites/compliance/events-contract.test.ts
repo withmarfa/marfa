@@ -752,19 +752,19 @@ describe("event stream contract", () => {
       const { events } = await collectUntil(
         stream,
         (seen) =>
-          seen.some((e) => e.event === "item.deleted" && ofItem(e) === b) &&
+          seen.some((e) => e.event === "item.trashed" && ofItem(e) === b) &&
           seen.some(
             (e) =>
               e.event === "edge.deleted" && ofEdge(e) === edge.data.edge.id,
           ),
-        `item.deleted for ${b} and edge.deleted for ${edge.data.edge.id}`,
+        `item.trashed for ${b} and edge.deleted for ${edge.data.edge.id}`,
         signal,
       );
       const pick = (name: string, id: string, of: typeof ofItem) =>
         events.find((e) => e.event === name && of(e) === id);
       return {
         itemCreated: pick("item.created", a, ofItem),
-        itemDeleted: pick("item.deleted", b, ofItem),
+        itemDeleted: pick("item.trashed", b, ofItem),
         edgeCreated: pick("edge.created", edge.data.edge.id, ofEdge),
         edgeDeleted: pick("edge.deleted", edge.data.edge.id, ofEdge),
       };
@@ -772,7 +772,7 @@ describe("event stream contract", () => {
 
     for (const [name, frame] of Object.entries({
       "item.created": frames.itemCreated,
-      "item.deleted": frames.itemDeleted,
+      "item.trashed": frames.itemDeleted,
       "edge.created": frames.edgeCreated,
       "edge.deleted": frames.edgeDeleted,
     })) {
@@ -1247,7 +1247,7 @@ describe("which event each write announces", () => {
     expect(eventsOf(frames, id)).toEqual(Array(6).fill("item.updated"));
   });
 
-  it("announces a delete only as item.deleted and a restore only as item.restored", async ({
+  it("announces a delete only as item.trashed and a restore only as item.restored", async ({
     signal,
   }) => {
     const id = await seed("delete-restore-only");
@@ -1258,14 +1258,14 @@ describe("which event each write announces", () => {
       expect((await client.restoreItem(id)).ok).toBe(true);
     }, signal);
     expect(eventsOf(frames, id)).toEqual([
-      "item.deleted",
+      "item.trashed",
       "item.restored",
-      "item.deleted",
+      "item.trashed",
       "item.restored",
     ]);
   });
 
-  it("announces a transition as item.state_changed, single or by bulk action, with item.deleted or item.restored when it crosses the bin", async ({
+  it("announces a transition as item.state_changed, single or by bulk action, with item.trashed or item.restored when it crosses the bin", async ({
     signal,
   }) => {
     const single = await seed("transition-single");
@@ -1291,10 +1291,10 @@ describe("which event each write announces", () => {
       }
     }, signal);
     const expected = [
-      "item.deleted",
+      "item.trashed",
       "item.restored",
       ...Array<string>(4).fill("item.state_changed"),
-    ];
+    ].sort();
     expect(eventsOf(frames, single).sort()).toEqual(expected);
     expect(eventsOf(frames, byJob).sort()).toEqual(expected);
   });
@@ -1325,7 +1325,7 @@ describe("which event each write announces", () => {
     const frames = await announced(async () => {
       expect((await client.addTags(id, [tag])).ok).toBe(true);
       expect((await client.removeTag(id, `absent-${ctx.runId}`)).ok).toBe(true);
-      expect((await client.replaceMetadata(id, { tags: [tag] })).ok).toBe(true);
+      expect((await client.replaceTags(id, { tags: [tag] })).ok).toBe(true);
       await runAction({
         action: "update_tags",
         add: [tag],

@@ -226,7 +226,7 @@ describe("owner and delegated profile changes", () => {
         await expectMatchesSchema("PATCH", "/owner", 404, ownerRefused.body);
         await assertStillUnclaimed();
 
-        const pictureRefused = await local("/owner/picture", {
+        const pictureRefused = await local("/owner/avatar", {
           method: "PUT",
           body: png(8, 8),
         });
@@ -236,7 +236,7 @@ describe("owner and delegated profile changes", () => {
         });
         await expectMatchesSchema(
           "PUT",
-          "/owner/picture",
+          "/owner/avatar",
           404,
           pictureRefused.body,
         );

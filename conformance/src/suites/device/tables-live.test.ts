@@ -1440,7 +1440,7 @@ describe("a gap in the stream", () => {
     const config = (await operator.getConfig()).data as Record<string, unknown>;
     const set = await operator.updateConfig({
       ...config,
-      event_log_retention_hours: 1,
+      event_log_retention_days: 1,
     });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
     const first = (await serverPage(item, { limit: "1" })).data[0]!;
@@ -1448,14 +1448,14 @@ describe("a gap in the stream", () => {
       { op: "delete", id: first.id },
       { op: "put", values: { count: 50 } },
     ]);
-    await movedClock(server).advance(2 * HOUR_MS);
+    await movedClock(server).advance(2 * 24 * HOUR_MS);
     await write(item, [{ op: "put", values: { count: 51 } }]);
     // The sweep keeps what the webhook sender has not passed, which it does
     // soon after each write.
     let deleted = 0;
     for (let tries = 0; deleted < 3 && tries < 50; tries += 1) {
       const swept = await runJob(server, "event-log-cleanup");
-      expect(swept.outcome).toBe("ok");
+      expect(swept.outcome).toBe("succeeded");
       deleted += (swept.result as { deleted: number }).deleted;
       if (deleted < 3) await new Promise((resolve) => setTimeout(resolve, 100));
     }

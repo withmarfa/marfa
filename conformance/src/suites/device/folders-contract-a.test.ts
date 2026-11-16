@@ -1486,7 +1486,7 @@ describe("own-field recovery", () => {
         edges: [
           refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "the fixture retains its unplaced file",
           ),
         ],
@@ -1633,7 +1633,7 @@ it("reports a locally missing item already trashed elsewhere as waiting on scan"
       copyReplay("2", [
         copyItemEvent(
           "2",
-          "item.deleted",
+          "item.trashed",
           wireItem({ ...item, state: "trashed" }),
         ),
       ]),

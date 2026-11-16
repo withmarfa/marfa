@@ -483,6 +483,11 @@ fn normalized(definition: &Value) -> Result<Value, RuleError> {
     let Some(row) = definition.as_object() else {
         return Ok(definition.clone());
     };
+    if row.get("format").and_then(Value::as_str) == Some("datetime") {
+        return Err(RuleError::invalid(
+            "datetime is a field type, not a format: declare the field as {\"type\": \"datetime\"}",
+        ));
+    }
     let mut row = row.clone();
     let kind = row
         .get("format")
@@ -1812,6 +1817,19 @@ mod tests {
             }
         );
         assert_eq!(catalog.indexing("acme.unknown"), Indexing::default());
+    }
+
+    #[test]
+    fn datetime_is_a_type_and_never_a_format() {
+        let taken = serde_json::json!({"type": "datetime"});
+        assert_eq!(normalized(&taken).unwrap(), taken);
+        for old in [
+            serde_json::json!({"type": "string", "format": "datetime"}),
+            serde_json::json!({"type": "array", "items_type": "string", "format": "datetime"}),
+        ] {
+            let refused = normalized(&old).unwrap_err();
+            assert!(refused.message.contains("datetime"), "{}", refused.message);
+        }
     }
 
     #[test]

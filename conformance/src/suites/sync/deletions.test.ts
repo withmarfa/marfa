@@ -91,7 +91,7 @@ describe("deletions reach the stream", () => {
           `the purge that should cascade did not happen: ${JSON.stringify(purged.error)}`,
         ).toBe(true);
 
-        // Waits on the control, not on the rule. `item.deleted` for the
+        // Waits on the control, not on the rule. `item.trashed` for the
         // endpoint is the frame a working subscription must deliver whatever
         // the answer about the cascade is, so waiting on that turns "the edge
         // was never announced" into a named assertion below. Waiting on
@@ -147,7 +147,7 @@ describe("deletions reach the stream", () => {
         )
         .map((e) => e.event),
       "the stream did not carry the endpoint's own removal, so it was not delivering",
-    ).toContain("item.deleted");
+    ).toContain("item.trashed");
 
     const cascaded = outcome.filter(
       (e) => (e.data as { edge?: { id?: string } })?.edge?.id === edgeId,
@@ -183,7 +183,7 @@ describe("deletions reach the stream", () => {
           (events) =>
             events.some(
               (e) =>
-                (e.event === "item.deleted" || e.event === "item.purged") &&
+                (e.event === "item.trashed" || e.event === "item.purged") &&
                 (e.data as { item?: { id?: string } })?.item?.id === id,
             ),
           `the removal of ${id} to reach the stream`,
@@ -218,7 +218,7 @@ describe("deletions reach the stream", () => {
     expect(
       names,
       "the stream did not carry this item's soft delete either, so it was not delivering",
-    ).toContain("item.deleted");
+    ).toContain("item.trashed");
     expect(
       names,
       "a hard delete was not announced, so a client that was offline across it keeps the item forever",

@@ -1400,7 +1400,7 @@ While a restore runs, from when it begins to place the archive's files until it 
 
 ### `archive/restore-writers-retry-after`
 
-While a restore runs, when the server answers a write `503 write_contention` with `details.reason` `restore_running`, the server MUST carry a `Retry-After` of 5 seconds, and the same number in `details.retry_after`.
+While a restore runs, when the server answers a write `503 write_contention` with `details.reason` `restore_running`, the server MUST carry a `Retry-After` of 5 seconds, and the same number in `details.retry_after_seconds`.
 
 **Reason:** the server cannot tell how long a restore will run, so it states no estimate. Each refusal is answered at once, so five seconds costs a client about ten of them across a restore of 250,000 items, and a restore of a few thousand items ends within one.
 

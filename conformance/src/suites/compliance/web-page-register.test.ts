@@ -318,7 +318,9 @@ describe("registrations nobody approves", () => {
     // What earlier cases registered and nobody approved is idle by now, and the
     // sweep below is to remove the one registration this case leaves idle.
     await server.advanceClock(2 * HOUR_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     const idleId = await registeredClient(idle);
     const approvedId = await registeredClient(approved);
     const revokedId = await registeredClient(revoked);
@@ -347,7 +349,9 @@ describe("registrations nobody approves", () => {
     await screen.body?.cancel();
     expect(screen.status).toBe(200);
 
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
 
     const gone = await authorizeLandsAt(idleId, idle);
     expect(gone?.pathname).toBe("/auth/error");
@@ -397,7 +401,9 @@ describe("registrations nobody approves", () => {
     await offered.body?.cancel();
     expect(offered.status).toBe(200);
 
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     const again = await fetch(page, { headers: { cookie } });
     await again.body?.cancel();
     expect(again.status).toBe(200);

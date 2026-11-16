@@ -303,8 +303,8 @@ describe("edge events", () => {
         );
         expect(listed.ok).toBe(true);
         expect(listed.data.data.map((d) => d.status)).toEqual([
-          "success",
-          "success",
+          "succeeded",
+          "succeeded",
         ]);
         return listed;
       },

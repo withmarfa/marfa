@@ -80,7 +80,7 @@ it("sends nothing for a write to a type, an edge type, a source, a key, the conf
         200,
       );
       ok(
-        await management.rawRequest("/source?source=silent-key", {
+        await management.rawRequest("/sources/silent-key", {
           method: "PATCH",
           body: { name: "Silent source" },
         }),

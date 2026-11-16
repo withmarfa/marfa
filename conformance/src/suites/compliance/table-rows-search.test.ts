@@ -664,13 +664,15 @@ describe("searching rows", () => {
         // The table is rebuilding, so its still searchable column answers nothing yet.
         expect(await count(`kept${w}`)).toBe(0);
         const run = await runJob(server, "table-row-cleanup");
-        expect(run.outcome, String(run.error)).toBe("ok");
+        expect(run.outcome, String(run.error)).toBe("succeeded");
         expect(await count(w)).toBe(0);
         expect(await count(`kept${w}`)).toBe(1_500);
 
         await change(true);
         expect(await count(w)).toBe(0);
-        expect((await runJob(server, "table-row-cleanup")).outcome).toBe("ok");
+        expect((await runJob(server, "table-row-cleanup")).outcome).toBe(
+          "succeeded",
+        );
         expect(await count(w)).toBe(1_500);
       } finally {
         await server.stop();

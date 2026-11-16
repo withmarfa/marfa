@@ -303,7 +303,7 @@ registry! {
     GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Rule::Whole { min: 0, max: 36_500 }, "365", "How many days an app grant may go unused before it is retired. 0 never retires one.";
     TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
     ROW_LOG_RETENTION_DAYS: u64 = "row_log_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days a table keeps a batch in its change log, so the batch can be undone. 0 keeps every batch.";
-    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log and the kept answers to a write sent with an Idempotency-Key are kept. 0 keeps them for ever.";
+    EVENT_LOG_RETENTION_DAYS: u64 = "event_log_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days the event log and the kept answers to a write sent with an Idempotency-Key are kept. 0 keeps them for ever.";
     VERSION_RECENT_DAYS: u64 = "version_recent_days", Rule::Whole { min: 0, max: 36_500 }, "30", "For this many days, every version of an item is kept.";
     VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "90", "Up to this many days, one version a day is kept.";
     VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "365", "Up to this many days, one version a week is kept.";
@@ -316,7 +316,7 @@ registry! {
     ENRICHMENT_MAX_MEMORY_BYTES: u64 = "enrichment_max_memory_bytes", BYTES, "1073741824", "The most memory the process that reads one file may take, in bytes. A file that needs more is skipped.";
     ENRICHMENT_MAX_ATTEMPTS: u64 = "enrichment_max_attempts", Rule::Whole { min: 1, max: 100 }, "3", "How many times the server tries to read a file that fails, or that stops the server, before it stops.";
     HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
-    SSE_MAX_VIEWERS: u64 = "sse_max_viewers", COUNT_OR_NONE, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
+    EVENT_STREAM_MAX_VIEWERS: u64 = "event_stream_max_viewers", COUNT_OR_NONE, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
     MCP_FETCH_ENABLED: bool = "mcp_fetch_enabled", Rule::Boolean, "true", "Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.";
     MCP_FETCH_MAX_BYTES: u64 = "mcp_fetch_max_bytes", BYTES, "52428800", "The largest file an MCP tool fetches from a web address to save, in bytes. A larger file is refused and nothing is stored.";
     MCP_FETCH_TIMEOUT_SECONDS: u64 = "mcp_fetch_timeout_seconds", UP_TO_AN_HOUR, "60", "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds.";

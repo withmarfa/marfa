@@ -102,7 +102,7 @@ async function keyActions(id: string): Promise<string[]> {
 }
 
 describe("a key past its expires_at", () => {
-  it("is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke", async () => {
+  it("is refused 401, left out of the listing, and answered 404 key_not_found to an update or a revoke", async () => {
     const expiring = await mint("expiring", inAnHour(), mover);
     const lasting = await mint("lasting", undefined, mover);
     const bearer = new MarfaClient({
@@ -126,10 +126,10 @@ describe("a key past its expires_at", () => {
 
     const updated = await mover.updateKey(expiring.id, { label: "x" });
     expect(updated.status).toBe(404);
-    expect(updated.error?.error.code).toBe("api_key_not_found");
+    expect(updated.error?.error.code).toBe("key_not_found");
     const revoked = await mover.revokeKey(expiring.id);
     expect(revoked.status).toBe(404);
-    expect(revoked.error?.error.code).toBe("api_key_not_found");
+    expect(revoked.error?.error.code).toBe("key_not_found");
     // No door lists an expired key, so the audit log is the witness that the
     // refused update and revoke changed nothing.
     expect(await keyActions(expiring.id)).toEqual(["key.create"]);
@@ -289,14 +289,14 @@ describe("a key past its expires_at", () => {
     }
   });
 
-  it("answers 404 api_key_not_found to an update that would clear its expiry, and stays past it", async () => {
+  it("answers 404 key_not_found to an update that would clear its expiry, and stays past it", async () => {
     const expiring = await mint("expired-clear", inAnHour(), mover);
     await clock.advance(2 * HOUR_MS);
     const cleared = await mover.updateKey(expiring.id, {
       expires_at: null,
     });
     expect(cleared.status).toBe(404);
-    expect(cleared.error?.error.code).toBe("api_key_not_found");
+    expect(cleared.error?.error.code).toBe("key_not_found");
     // No door lists an expired key, so the audit log is the witness that the
     // refused update changed nothing.
     expect(await keyActions(expiring.id)).toEqual(["key.create"]);

@@ -196,7 +196,7 @@ describe("types and edge types", () => {
 describe("metadata and extensions", () => {
   it("replaces and adds tags, lists the tags in use, and writes and removes a namespace", async () => {
     const id = await note(unique("cli-metadata"));
-    const replaced = await c.cli.json<{ metadata: { tags: string[] } }>([
+    const replaced = await c.cli.json<{ tags: string[] }>([
       "metadata",
       "replace",
       id,
@@ -205,7 +205,7 @@ describe("metadata and extensions", () => {
       "--tag",
       "two",
     ]);
-    expect(replaced.metadata.tags.sort()).toEqual(["one", "two"]);
+    expect(replaced.tags.sort()).toEqual(["one", "two"]);
     const added = await c.cli.json<{ metadata: { tags: string[] } }>([
       "items",
       "tag",
@@ -214,7 +214,7 @@ describe("metadata and extensions", () => {
     ]);
     expect(added.metadata.tags.sort()).toEqual(["one", "three", "two"]);
     const read = await c.cli.json<{ metadata: { tags: string[] } }>([
-      "metadata",
+      "items",
       "get",
       id,
     ]);
@@ -368,7 +368,7 @@ describe("occurrences and the bulk doors", () => {
     expect(read_job.id).toBe(job.id);
     expect(read_job.status).toBe("completed");
     const swept = await c.cli.json<{ metadata: { tags: string[] } }>([
-      "metadata",
+      "items",
       "get",
       ids[0]!,
     ]);

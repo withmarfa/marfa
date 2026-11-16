@@ -198,7 +198,7 @@ describe("a ? inside a value", () => {
     expect(shorthand.data.data).toEqual([]);
   });
 
-  it("counts a tag holding a ? under its own name on GET /metadata/tags", async () => {
+  it("counts a tag holding a ? under its own name on GET /tags", async () => {
     const r = await key.listTags();
     expect(r.status).toBe(200);
     const mine = r.data.data.filter((t) => t.tag.startsWith(`${word}-`));

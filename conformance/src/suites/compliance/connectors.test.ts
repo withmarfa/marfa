@@ -203,10 +203,10 @@ describe("registration", () => {
       ["GET", base],
       ["DELETE", base],
       ["GET", `${base}/runs`],
-      ["POST", "/connectors/heartbeat"],
+      ["POST", `${base}/heartbeat`],
       [
         "POST",
-        "/connectors/runs",
+        `${base}/runs`,
         {
           outcome: "failed",
           started_at: "2026-10-05T18:00:00Z",
@@ -490,8 +490,8 @@ describe("registration", () => {
     const bare = await createSecondClient(ctx, "no-registration");
     for (const [door, res] of [
       ["GET /connectors/{id}", await client.getConnector(unknown)],
-      ["POST /connectors/heartbeat", await bare.sendConnectorHeartbeat()],
-      ["POST /connectors/runs", await bare.reportConnectorRun(run)],
+      ["POST /connectors/{id}/heartbeat", await bare.sendConnectorHeartbeat()],
+      ["POST /connectors/{id}/runs", await bare.reportConnectorRun(run)],
       ["GET /connectors/{id}/runs", await client.listConnectorRuns(unknown)],
       [
         "POST /connectors/{id}/hold",
@@ -587,16 +587,24 @@ describe("heartbeats and runs", () => {
     const mine = await register(client, `${ctx.runId} beats`);
     const unregistered = await createSecondClient(ctx, "unregistered-beater");
     for (const c of [unregistered, getManagementClient()]) {
-      const refused = await c.sendConnectorHeartbeat();
-      expect(refused.status).toBe(404);
-      expect(refused.error?.error.code).toBe("connector_not_found");
+      const refused = await c.sendConnectorHeartbeat(mine.data.id);
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+      const absent = await c.sendConnectorHeartbeat();
+      expect(absent.status).toBe(404);
+      expect(absent.error?.error.code).toBe("connector_not_found");
     }
     expect(
       (await client.getConnector(mine.data.id)).data.last_heartbeat_at,
     ).toBeNull();
     const beat = await client.sendConnectorHeartbeat();
     expect(beat.status).toBe(200);
-    await expectMatchesSchema("POST", "/connectors/heartbeat", 200, beat.data);
+    await expectMatchesSchema(
+      "POST",
+      "/connectors/{id}/heartbeat",
+      200,
+      beat.data,
+    );
     expect(beat.data.last_heartbeat_at).toMatch(ISO);
     // The server's clock: no later than now, no earlier than the
     // registration, and moved by the next beat.
@@ -713,7 +721,7 @@ describe("heartbeats and runs", () => {
       summary: "12 messages",
     });
     expect(run.status).toBe(201);
-    await expectMatchesSchema("POST", "/connectors/runs", 201, run.data);
+    await expectMatchesSchema("POST", "/connectors/{id}/runs", 201, run.data);
     expect(run.data).toMatchObject({
       connector_id: mine.data.id,
       outcome: "succeeded",
@@ -729,7 +737,12 @@ describe("heartbeats and runs", () => {
       error: "the mailbox refused the token",
     });
     expect(failed.status).toBe(201);
-    await expectMatchesSchema("POST", "/connectors/runs", 201, failed.data);
+    await expectMatchesSchema(
+      "POST",
+      "/connectors/{id}/runs",
+      201,
+      failed.data,
+    );
     expect(failed.data.summary).toBeNull();
     // An instant run, and a summary and an error at their caps, are fine.
     const capped = await client.reportConnectorRun({
@@ -768,9 +781,12 @@ describe("heartbeats and runs", () => {
     }
     const unregistered = await createSecondClient(ctx, "unregistered-reporter");
     for (const c of [unregistered, getManagementClient()]) {
-      const theirs = await c.reportConnectorRun(good);
-      expect(theirs.status).toBe(404);
-      expect(theirs.error?.error.code).toBe("connector_not_found");
+      const theirs = await c.reportConnectorRun(good, mine.data.id);
+      expect(theirs.status).toBe(403);
+      expect(theirs.error?.error.code).toBe("forbidden");
+      const absent = await c.reportConnectorRun(good);
+      expect(absent.status).toBe(404);
+      expect(absent.error?.error.code).toBe("connector_not_found");
     }
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data,
@@ -782,19 +798,25 @@ describe("heartbeats and runs", () => {
     const mine = await register(client, `${ctx.runId} run outcome`);
     const at = new Date().toISOString();
     const times = { started_at: at, finished_at: at };
-    const missing = await client.rawRequest<unknown>("/connectors/runs", {
-      method: "POST",
-      body: times,
-    });
+    const missing = await client.rawRequest<unknown>(
+      `/connectors/${mine.data.id}/runs`,
+      {
+        method: "POST",
+        body: times,
+      },
+    );
     expect(missing.status).toBe(400);
     expect(missing.error?.error.code).toBe("missing_required_field");
     expect(missing.error?.error.details?.["field"]).toBe("outcome");
 
     // The witnesses: a wrong outcome is told otherwise, and a right one is taken.
-    const wrong = await client.rawRequest<unknown>("/connectors/runs", {
-      method: "POST",
-      body: { ...times, outcome: "skipped" },
-    });
+    const wrong = await client.rawRequest<unknown>(
+      `/connectors/${mine.data.id}/runs`,
+      {
+        method: "POST",
+        body: { ...times, outcome: "skipped" },
+      },
+    );
     expect(wrong.status).toBe(400);
     expect(wrong.error?.error.code).toBe("validation_error");
     expect(
@@ -814,7 +836,7 @@ describe("heartbeats and runs", () => {
   it("names a missing started_at or finished_at as missing_required_field", async () => {
     const mine = await register(client, `${ctx.runId} run times missing`);
     const at = new Date().toISOString();
-    const runs = "/connectors/runs";
+    const runs = `/connectors/${mine.data.id}/runs`;
     const times = { started_at: at, finished_at: at };
     for (const missing of ["started_at", "finished_at"] as const) {
       const { [missing]: _left, ...rest } = times;

@@ -430,11 +430,11 @@ describe("the order across item and edge frames", () => {
         })
         .map((e) => e.event);
     const expected = ["edge.deleted", "edge.deleted", "item.purged"];
-    expect(concerning(live).filter((name) => name !== "item.deleted")).toEqual(
+    expect(concerning(live).filter((name) => name !== "item.trashed")).toEqual(
       expected,
     );
     expect(
-      concerning(replayed).filter((name) => name !== "item.deleted"),
+      concerning(replayed).filter((name) => name !== "item.trashed"),
     ).toEqual(expected);
   });
 });
