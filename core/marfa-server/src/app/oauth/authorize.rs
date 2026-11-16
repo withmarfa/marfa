@@ -4,9 +4,7 @@ use rusqlite::{Connection, Transaction};
 use serde_json::json;
 
 use super::client::GrantType;
-use super::clients::{
-    self, ceiling_lacks, destinations_digest, judge, registries_in,
-};
+use super::clients::{self, ceiling_lacks, destinations_digest, judge, registries_in};
 use super::grant::{self, CONSENT_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::metadata_document;
 use super::offer::{self, Decision, Offer, Post, Request};

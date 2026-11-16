@@ -185,8 +185,8 @@ enum Command {
         #[command(subcommand)]
         command: apps::AppsCommand,
     },
-    /// Sign-ins: every browser, app and key that can reach the server. A key
-    /// or an app's token is refused; use --socket.
+    /// Sign-ins: every browser, app and key that can reach the server.
+    /// Requires `sign_ins.manage`.
     #[command(name = "sign-ins")]
     SignIns {
         #[command(subcommand)]

@@ -523,8 +523,8 @@ describe("the committed OpenAPI document", () => {
 
     // The witnesses: the check reads declarations and marks that exist.
     expect(published.get("GET /items")?.security).toEqual([{ bearerAuth: [] }]);
-    expect(published.get("GET /owner")?.security).toBeUndefined();
-    expect(published.get("GET /owner")?.["x-marfa-local-command"]).toBe(true);
+    expect(published.get("POST /restore")?.security).toBeUndefined();
+    expect(published.get("POST /restore")?.["x-marfa-local-command"]).toBe(true);
   });
 
   it("names no security scheme the server does not accept", () => {

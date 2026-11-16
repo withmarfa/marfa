@@ -146,11 +146,7 @@ export const RACE_CODES: Readonly<Record<string, string>> = {
  * unlisted fails.
  */
 export const UNREACHED: Readonly<Record<string, string>> = {
-  "PATCH /owner 404":
-    "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
   "PATCH /profile 404":
-    "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
-  "PUT /owner/avatar 404":
     "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
   "GET /oauth/authorize 403":
     "a browser session over a sign-in address that is neither HTTPS nor on this machine, which the run's loopback server never has",

@@ -1648,11 +1648,6 @@ export class MarfaClient {
     );
   }
 
-  /** `GET /owner`: local authority. */
-  async getOwner(): Promise<ApiResponse<Owner>> {
-    return this.request<Owner>("/owner");
-  }
-
   /** `POST /owner`: one-time machine-issued claim proof. */
   async createOwner(body: {
     code?: string;

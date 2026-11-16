@@ -243,7 +243,11 @@ impl Instance {
     }
 
     async fn owner(&self) -> Value {
-        let reply = send(&self.control, request(Method::GET, "/profile", Body::empty())).await;
+        let reply = send(
+            &self.control,
+            request(Method::GET, "/profile", Body::empty()),
+        )
+        .await;
         reply.json()
     }
 
@@ -440,7 +444,7 @@ async fn an_unavailable_owner_is_refused_and_nothing_is_stored() {
 }
 
 #[tokio::test]
-async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_may_write() {
+async fn the_avatar_door_takes_the_local_command_and_a_key_that_may_write_and_no_browser() {
     let instance = Instance::start(true).await;
     let cookie = instance.cookie().await;
     let kept = png(9);
@@ -532,11 +536,15 @@ async fn the_profile_door_removes_the_avatar_and_changes_the_name_in_one_step() 
     assert_eq!(instance.owner().await, before);
     assert_eq!(instance.served().await.bytes, kept);
 
-    for body in [
-        json!({}),
-        json!({ "email": "x@example.test" }),
-        json!({ "avatar": "https://example.test/p.png" }),
-    ] {
+    let email = send(
+        &instance.public,
+        patch(&named, json!({ "email": "x@example.test" })),
+    )
+    .await;
+    assert_eq!(email.status, StatusCode::FORBIDDEN);
+    assert_eq!(instance.owner().await, before);
+
+    for body in [json!({}), json!({ "avatar": "https://example.test/p.png" })] {
         let reply = send(&instance.public, patch(&named, body)).await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST);
     }

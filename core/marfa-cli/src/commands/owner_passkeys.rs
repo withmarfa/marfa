@@ -43,8 +43,7 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
             out.value(&remote.json(&Request::delete(&["owner", "passkeys", &id]))?)
         }
         PasskeysCommand::Add { no_browser } => {
-            let answer =
-                remote.json(&Request::get(&["owner", "passkeys", "add-url"]))?;
+            let answer = remote.json(&Request::get(&["owner", "passkeys", "add-url"]))?;
             let link = answer.get("url").and_then(Value::as_str).ok_or_else(|| {
                 CliError::Invalid("server returned no passkey sign-in URL".into())
             })?;

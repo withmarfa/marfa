@@ -2076,6 +2076,26 @@ export interface paths {
         patch: operations["renameOwnerPasskey"];
         trace?: never;
     };
+    "/owner/passkeys/add-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the passkey add link
+         * @description Returns the address where the owner signs in and then adds a passkey in their browser. The link carries no credential. Requires `sign_ins.manage`.
+         */
+        get: operations["getPasskeyAddUrl"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -2304,6 +2324,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/clock/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm the clock
+         * @description Takes the server's clock as right and returns the time it now trusts. While the clock reads more than 7 days later than the trusted time, the jobs that delete old records do nothing; this lets them run now. Requires `instance.maintain`.
+         */
+        post: operations["confirmClock"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/export": {
         parameters: {
             query?: never;
@@ -2402,46 +2442,6 @@ export interface paths {
          * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. While it writes, Marfa turns other writes away at once. Requires the private local command.
          */
         post: operations["restoreBackup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/clock/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Confirm the clock
-         * @description Takes the server's clock as right and returns the time it now trusts. While the clock reads more than 7 days later than the trusted time, the jobs that delete old records do nothing; this lets them run now. Requires `instance.maintain`.
-         */
-        post: operations["confirmClock"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/owner/passkeys/add-url": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get the passkey add link
-         * @description Returns the address where the owner signs in and then adds a passkey in their browser. The link carries no credential. Requires `sign_ins.manage`.
-         */
-        get: operations["getPasskeyAddUrl"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -33372,6 +33372,131 @@ export interface operations {
             };
         };
     };
+    getPasskeyAddUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the sign-in link. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PasskeyAddLink"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     getInstance: {
         parameters: {
             query?: never;
@@ -35532,6 +35657,131 @@ export interface operations {
             };
         };
     };
+    confirmClock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the time Marfa now trusts. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "confirmed_at": "2026-10-03T09:30:00.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ClockConfirmation"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: the credential lacks `instance.maintain`. `details.required_scope` names it. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     exportArchive: {
         parameters: {
             query?: {
@@ -36792,256 +37042,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BlobStoreUnavailableOrWriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    confirmClock: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns the time Marfa now trusts. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "confirmed_at": "2026-10-03T09:30:00.000Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ClockConfirmation"];
-                };
-            };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `forbidden`: the credential lacks `instance.maintain`. `details.required_scope` names it. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    getPasskeyAddUrl: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Returns the sign-in link. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["PasskeyAddLink"];
-                };
-            };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description - `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
             /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */

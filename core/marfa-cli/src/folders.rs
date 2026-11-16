@@ -46,7 +46,7 @@ pub enum FoldersCommand {
     /// identifies the directory the folder opened: compare it for equality
     /// and do not parse it.
     List,
-    /// List active folders in Marfa, using the owner's private local socket.
+    /// List the active folders in Marfa, to a credential that reads `system.folder`.
     Inventory {
         #[command(flatten)]
         page: crate::commands::PageArgs,

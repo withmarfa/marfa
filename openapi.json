@@ -57374,6 +57374,219 @@
         "x-marfa-local-command": true
       }
     },
+    "/owner/passkeys/add-url": {
+      "get": {
+        "operationId": "getPasskeyAddUrl",
+        "tags": [
+          "Sign-ins and passkeys"
+        ],
+        "summary": "Get the passkey add link",
+        "description": "Returns the address where the owner signs in and then adds a passkey in their browser. The link carries no credential. Requires `sign_ins.manage`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-marfa-local-command": true,
+        "responses": {
+          "200": {
+            "description": "Returns the sign-in link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyAddLink"
+                },
+                "example": {
+                  "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "operationId": "getInstance",
@@ -61188,6 +61401,219 @@
         "x-marfa-local-command": true
       }
     },
+    "/clock/confirm": {
+      "post": {
+        "operationId": "confirmClock",
+        "tags": [
+          "Health and maintenance"
+        ],
+        "summary": "Confirm the clock",
+        "description": "Takes the server's clock as right and returns the time it now trusts. While the clock reads more than 7 days later than the trusted time, the jobs that delete old records do nothing; this lets them run now. Requires `instance.maintain`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-marfa-local-command": true,
+        "responses": {
+          "200": {
+            "description": "Returns the time Marfa now trusts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClockConfirmation"
+                },
+                "example": {
+                  "confirmed_at": "2026-10-03T09:30:00.000Z"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the credential lacks `instance.maintain`. `details.required_scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
     "/export": {
       "get": {
         "operationId": "exportArchive",
@@ -63538,432 +63964,6 @@
           }
         ],
         "x-marfa-local-command": true
-      }
-    },
-    "/clock/confirm": {
-      "post": {
-        "operationId": "confirmClock",
-        "tags": [
-          "Health and maintenance"
-        ],
-        "summary": "Confirm the clock",
-        "description": "Takes the server's clock as right and returns the time it now trusts. While the clock reads more than 7 days later than the trusted time, the jobs that delete old records do nothing; this lets them run now. Requires `instance.maintain`.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "x-marfa-local-command": true,
-        "responses": {
-          "200": {
-            "description": "Returns the time Marfa now trusts.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClockConfirmation"
-                },
-                "example": {
-                  "confirmed_at": "2026-10-03T09:30:00.000Z"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              }
-            }
-          },
-          "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "403": {
-            "description": "- `forbidden`: the credential lacks `instance.maintain`. `details.required_scope` names it.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "412": {
-            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContractMismatchRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "429": {
-            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RateLimitedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Retry-After": {
-                "$ref": "#/components/headers/Retry-After"
-              }
-            }
-          },
-          "500": {
-            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalErrorRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Retry-After": {
-                "$ref": "#/components/headers/Retry-After"
-              }
-            }
-          },
-          "507": {
-            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/owner/passkeys/add-url": {
-      "get": {
-        "operationId": "getPasskeyAddUrl",
-        "tags": [
-          "Sign-ins and passkeys"
-        ],
-        "summary": "Get the passkey add link",
-        "description": "Returns the address where the owner signs in and then adds a passkey in their browser. The link carries no credential. Requires `sign_ins.manage`.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "x-marfa-local-command": true,
-        "responses": {
-          "200": {
-            "description": "Returns the sign-in link.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PasskeyAddLink"
-                },
-                "example": {
-                  "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              }
-            }
-          },
-          "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "403": {
-            "description": "- `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "412": {
-            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContractMismatchRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "429": {
-            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RateLimitedRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Retry-After": {
-                "$ref": "#/components/headers/Retry-After"
-              }
-            }
-          },
-          "500": {
-            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InternalErrorRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              },
-              "Retry-After": {
-                "$ref": "#/components/headers/Retry-After"
-              }
-            }
-          },
-          "507": {
-            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          }
-        }
       }
     }
   },

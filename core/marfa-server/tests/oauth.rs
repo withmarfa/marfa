@@ -2856,7 +2856,12 @@ async fn every_door_takes_the_scope_that_writes_the_sign_in_email() {
             }),
         ))
         .await;
-    assert_eq!(registered.status, StatusCode::CREATED, "{}", registered.text);
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.text
+    );
     let client = text_at(&registered.json(), "client_id").to_string();
     let authorization = request_with(&client, &[("scope", Some(asked))]);
     let shown = instance

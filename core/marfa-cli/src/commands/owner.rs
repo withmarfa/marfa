@@ -164,7 +164,10 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         OwnerCommand::Update(args) => {
             let avatar = match &args.avatar {
-                Some(file) => Some(super::profile::avatar_request(&["profile", "avatar"], file)?),
+                Some(file) => Some(super::profile::avatar_request(
+                    &["profile", "avatar"],
+                    file,
+                )?),
                 None => None,
             };
             let mut body = serde_json::Map::new();

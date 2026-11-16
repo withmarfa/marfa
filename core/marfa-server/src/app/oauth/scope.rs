@@ -127,7 +127,6 @@ impl ProfileRow {
     fn from_word(word: &str) -> Option<ProfileRow> {
         Self::ALL.into_iter().find(|row| row.word() == word)
     }
-
 }
 
 /// `pattern` is `*`, `<root>.*` or one id.

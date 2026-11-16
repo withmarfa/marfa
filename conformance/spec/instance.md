@@ -1868,11 +1868,11 @@ Where the server believes the forwarded address of a peer, the server MUST count
 
 ## Bodies on the public listener
 
-The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
+The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /profile/avatar` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
 
 ### `instance/body-deadline`
 
-If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
+If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /profile/avatar` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a body at the 16 MiB default of `max_bulk_request_bytes` takes about 134 seconds over a 1 Mbit/s link, and 180 seconds allows for that while a client that stops sending cannot hold the memory its body takes. The deadline does not move with the settings: an owner who raises `max_bulk_request_bytes` or `max_request_bytes` above about 21 MiB gets bodies that cannot arrive in time over a 1 Mbit/s link, and the descriptions of both settings say so.
 
@@ -1918,7 +1918,7 @@ If a request with a body is sent to an operation that requires a credential and 
 
 ### `instance/credential-judged-after-body`
 
-If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
+If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /profile/avatar` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
 
 **Reason:** a credential the server judged when the head arrived proves nothing about the moment the body is whole, and a caller who sends a body slowly must not keep authority the owner has taken away. A body that does not arrive whole is answered under `instance/body-deadline` or its own refusals.
 

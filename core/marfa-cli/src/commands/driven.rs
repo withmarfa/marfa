@@ -387,12 +387,7 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             .iter()
             .map(|leaf| leaf.words.join(" "))
             .collect::<Vec<_>>(),
-        [
-            "setup status",
-            "setup code",
-            "setup open",
-            "owner recover",
-        ]
+        ["setup status", "setup code", "setup open", "owner recover",]
     );
     for leaf in commands {
         let argv = command_line(&server.url, &leaf.words, &[], &file).unwrap();

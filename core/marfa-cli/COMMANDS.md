@@ -429,7 +429,7 @@ marfa apps revoke [OPTIONS] <ID>
 
 ## sign-ins
 
-Sign-ins: every browser, app and key that can reach the server. A key or an app's token is refused; use --socket.
+Sign-ins: every browser, app and key that can reach the server. Requires `sign_ins.manage`.
 
 ### marfa sign-ins
 
@@ -4361,7 +4361,7 @@ marfa folders list [OPTIONS]
 
 ### marfa folders inventory
 
-List active folders in Marfa, using the owner's private local socket.
+List the active folders in Marfa, to a credential that reads `system.folder`.
 
 ```text
 marfa folders inventory [OPTIONS]

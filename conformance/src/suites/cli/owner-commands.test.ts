@@ -93,7 +93,7 @@ it("clears the owner's avatar", async () => {
       "--avatar",
       file,
     ]);
-    expect(updated.avatar).toMatch(/\/owner\/avatar$/);
+    expect(updated.avatar).toMatch(/\/profile\/avatar$/);
     expect((await owner()).avatar).toBe(updated.avatar);
 
     const cleared = await local.json<{ avatar: string | null }>([
