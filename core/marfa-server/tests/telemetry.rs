@@ -188,7 +188,10 @@ fn settings(host: &str, other: &[(&'static str, String)]) -> Vec<(String, String
         ("OTEL_EXPORTER_OTLP_ENDPOINT".to_string(), host.to_string()),
         ("MARFA_OTEL_SAMPLE_RATIO".to_string(), "0".to_string()),
         // The receiver listens on loopback.
-        ("MARFA_ALLOW_PRIVATE_ADDRESSES".to_string(), "true".to_string()),
+        (
+            "MARFA_ALLOW_PRIVATE_ADDRESSES".to_string(),
+            "true".to_string(),
+        ),
     ];
     pairs.extend(other.iter().map(|(k, v)| (k.to_string(), v.clone())));
     pairs

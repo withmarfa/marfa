@@ -100,10 +100,7 @@ describe("a secret setting", () => {
         );
       }
       const folder = mkdtempSync(join(tmpdir(), "marfa-secret-backups-"));
-      const server = await bootFreshServer("secret-witness", {
-        ...DISK,
-        MARFA_BACKUP_PATH: folder,
-      });
+      const server = await bootFreshServer("secret-witness", DISK);
       try {
         const { operator } = clientsFor(server);
         const witness = `witness-${randomUUID()}`;
@@ -127,6 +124,7 @@ describe("a secret setting", () => {
           await operator.patchConfig({
             [SECRET]: witness,
             heartbeat_url: beat,
+            backup_path: folder,
             object_store_access_key_id: visible,
             trash_retention_days: 7,
           }),

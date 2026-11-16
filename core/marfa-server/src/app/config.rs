@@ -599,12 +599,12 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 let tx = unit.tx();
                 let before = rows_of(stored::rows(tx)?);
                 let plan = Plan::of(&request, before);
+                if plan.private_addresses_change(&writing) {
+                    unit.caller.require_local()?;
+                }
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
-                if moved.sign_in_moves
-                    || plan.origins_change(&writing)
-                    || plan.private_addresses_change(&writing)
-                {
+                if moved.sign_in_moves || plan.origins_change(&writing) {
                     unit.caller.require_local()?;
                 }
                 if moved.confirm && !request.confirmed {

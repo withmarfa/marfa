@@ -36,7 +36,7 @@ pnpm garage:up
 set -a; . .marfa-state/garage/garage.env; set +a
 ```
 
-`garage:up` starts one node under `.marfa-state/garage/`, makes a bucket and a key, and writes the `MARFA_OBJECT_STORE_*` values to `garage.env`. Source it before `marfa:up`: a server with test hooks takes them as the defaults of the `object_store_*` stored settings, and attaches the store only when `MARFA_OBJECT_STORE_BUCKET` is set. A server without hooks has the adapter write them through `PATCH /config`. Pass `--state <dir>` to put it elsewhere.
+`garage:up` starts one node under `.marfa-state/garage/`, makes a bucket and a key, and writes the `MARFA_OBJECT_STORE_*` values to `garage.env`. Source it before `marfa:up`: a server with test hooks takes them as the defaults of the `object_store_*` stored settings, and attaches the store only when `MARFA_OBJECT_STORE_BUCKET` is set. A server without hooks has the adapter write them through `PATCH /config` on the private socket, which alone changes `allow_private_addresses`. Pass `--state <dir>` to put it elsewhere.
 
 ## 3. Boot the server
 

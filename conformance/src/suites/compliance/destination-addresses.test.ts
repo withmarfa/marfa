@@ -68,8 +68,14 @@ describe("where the server may send", () => {
         expect(turned[SWITCH]).toBe(true);
         const same = await operator.patchConfig({ [SWITCH]: true });
         expect(same.status, JSON.stringify(same.error)).toBe(200);
+        // A private destination stored while the switch is on does not turn
+        // the key's refusal into a judgment of the settings.
+        await setFrom(operator, {
+          object_store_endpoint: "http://127.0.0.1:9",
+        });
         const off = await operator.patchConfig({ [SWITCH]: false });
         expect(off.status).toBe(403);
+        expect(off.error?.error.details).toEqual({ needs: "local" });
         expect(
           ((await operator.getConfig()).data as Record<string, unknown>)[
             SWITCH
@@ -128,7 +134,7 @@ describe("where the server may send", () => {
           [SWITCH]: false,
           object_store_endpoint: null,
         });
-        expect(cleared).not.toHaveProperty(SWITCH);
+        expect(cleared[SWITCH]).toBe(false);
       } finally {
         await server.stop();
       }
