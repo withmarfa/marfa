@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createServer, type RequestListener, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { offeredValues } from "../../utils/approval-form.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -212,6 +215,177 @@ async function switchState(): Promise<unknown> {
   return read.body[SWITCH];
 }
 
+/** A note the working key writes, which the archive and the backup taken after it hold. */
+async function note(): Promise<string> {
+  const written = await call(server.workingKey, "POST", "/items", {
+    type: "core.note",
+    properties: { title: `step-up ${randomUUID()}` },
+  });
+  expect(written.status, JSON.stringify(written.body)).toBe(201);
+  return written.body.item.id as string;
+}
+
+async function purge(id: string): Promise<void> {
+  expect((await call(server.workingKey, "DELETE", `/items/${id}`)).status).toBe(
+    200,
+  );
+  const purged = await call(server.workingKey, "POST", `/items/${id}/purge`);
+  expect(purged.status, JSON.stringify(purged.body)).toBe(200);
+}
+
+async function itemStatus(id: string): Promise<number> {
+  return (await call(server.workingKey, "GET", `/items/${id}`)).status;
+}
+
+const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+
+async function deviceClient(): Promise<string> {
+  const response = await fetch(`${server.apiUrl}/oauth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "step-up device",
+      application_type: "native",
+      grant_types: [DEVICE_GRANT, "refresh_token"],
+      response_types: [],
+      token_endpoint_auth_method: "none",
+      scope: SCOPE,
+    }),
+  });
+  const body = (await response.json()) as { client_id: string };
+  expect(response.status, JSON.stringify(body)).toBe(201);
+  return body.client_id;
+}
+
+async function deviceCode(
+  clientId: string,
+  extra: Record<string, string> = {},
+): Promise<{ status: number; body: Record<string, any> }> {
+  const response = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, scope: SCOPE, ...extra }),
+  });
+  return {
+    status: response.status,
+    body: (await response.json()) as Record<string, any>,
+  };
+}
+
+function devicePage(userCode: string, cookie: string): Promise<Response> {
+  return fetch(
+    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    { redirect: "manual", headers: { cookie } },
+  );
+}
+
+function deviceDecision(
+  userCode: string,
+  cookie: string,
+  scopes: readonly string[],
+): Promise<Response> {
+  const form = new URLSearchParams({
+    user_code: userCode,
+    decision: "approve",
+  });
+  for (const scope of scopes) form.append("scopes", scope);
+  return fetch(`${server.apiUrl}/auth/device/consent`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      cookie,
+      origin,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: form,
+  });
+}
+
+/** The owner approves, from the browser `cookie`, everything the device page offers. */
+async function approveDevice(userCode: string, cookie: string): Promise<void> {
+  const page = await devicePage(userCode, cookie);
+  expect(page.status, page.headers.get("location") ?? "").toBe(200);
+  const offered = offeredValues(await page.text(), "scopes");
+  const approved = await deviceDecision(userCode, cookie, offered);
+  await approved.body?.cancel();
+  expect(approved.status).toBe(200);
+}
+
+function devicePoll(clientId: string, code: string) {
+  return token(server, {
+    grant_type: DEVICE_GRANT,
+    device_code: code,
+    client_id: clientId,
+  });
+}
+
+/** Where a device page sends a browser it asks to sign in again. */
+function expectSignInAgain(answer: Response, userCode: string): void {
+  expect(answer.status).toBe(302);
+  const to = new URL(answer.headers.get("location")!, server.apiUrl);
+  expect(to.pathname, String(to)).toBe("/auth/sign-in");
+  expect(to.searchParams.get("prompt"), String(to)).toBe("login");
+  expect(to.searchParams.get("return_to"), String(to)).toBe(
+    `/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+  );
+}
+
+/** A listener on loopback that answers each request with `listener`. */
+async function stand(
+  listener: RequestListener,
+): Promise<{ origin: string; server: Server }> {
+  const standing = createServer(listener);
+  await new Promise<void>((resolve) => {
+    standing.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = standing.address() as AddressInfo;
+  return { origin: `http://127.0.0.1:${String(port)}`, server: standing };
+}
+
+async function fold(standing: Server): Promise<void> {
+  standing.closeAllConnections();
+  await new Promise<void>((resolve) => standing.close(() => resolve()));
+}
+
+/** Addresses that do not answer as this instance, by why. */
+async function strangers(): Promise<{
+  other: string;
+  redirect: string;
+  closed: string;
+  silent: string;
+  fold(): Promise<void>;
+}> {
+  const other = await stand((_, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ name: "Other", instance_id: randomUUID() }));
+  });
+  const redirect = await stand((_, response) => {
+    response.writeHead(302, { location: `${server.apiUrl}/` });
+    response.end();
+  });
+  const silent = await stand(() => {});
+  const gone = await stand(() => {});
+  await fold(gone.server);
+  return {
+    other: other.origin,
+    redirect: redirect.origin,
+    closed: gone.origin,
+    silent: silent.origin,
+    async fold() {
+      await Promise.all(
+        [other, redirect, silent].map((one) => fold(one.server)),
+      );
+    },
+  };
+}
+
+/** The instance's own address under its other loopback name. */
+function otherName(at: string): string {
+  const url = new URL(at);
+  url.hostname = url.hostname === "localhost" ? "127.0.0.1" : "localhost";
+  return url.origin;
+}
+
 /** Each act, as a request that reaches it and changes nothing a later act depends on. */
 function acts(): readonly {
   name: string;
@@ -285,6 +459,44 @@ describe("an app's token", () => {
       (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
         .status,
     ).toBe(200);
+  });
+
+  it("writes no item at a challenged archive restore or a challenged backup restore, though the same restores by a token whose owner signed in just now write it", async () => {
+    const id = await note();
+    const exported = await fetch(
+      `${server.apiUrl}/export?format=archive&files=false`,
+      { headers: { authorization: `Bearer ${server.workingKey}` } },
+    );
+    expect(exported.status).toBe(200);
+    const holding = new Uint8Array(await exported.arrayBuffer());
+    const ran = await call(server.managementKey, "POST", "/backups");
+    expect(ran.status, JSON.stringify(ran.body)).toBe(200);
+    const kept = ran.body.backup as { instance_id: string; name: string };
+    const fromBackup = `/backups/${kept.instance_id}/${kept.name}/restore`;
+    await purge(id);
+    expect(await itemStatus(id)).toBe(404);
+
+    const app = await registerApp(server, SCOPE);
+    const stale = await connect(app, await signIn());
+    await server.advanceClock(6 * MINUTE);
+    expectChallenged(
+      await call(stale.access, "POST", "/restore", holding),
+      "archive",
+    );
+    expect(await itemStatus(id)).toBe(404);
+    expectChallenged(await call(stale.access, "POST", fromBackup), "backup");
+    expect(await itemStatus(id)).toBe(404);
+
+    // The witness: each restore writes the note back for a token whose owner
+    // signed in just now.
+    const fresh = await connect(app, await signIn());
+    const restored = await call(fresh.access, "POST", "/restore", holding);
+    expect(restored.status, JSON.stringify(restored.body)).toBe(200);
+    expect(await itemStatus(id)).toBe(200);
+    await purge(id);
+    const again = await call(fresh.access, "POST", fromBackup);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(await itemStatus(id)).toBe(200);
   });
 
   it("restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes", async () => {
@@ -504,6 +716,95 @@ describe("max_age at the authorization endpoint", () => {
   });
 });
 
+describe("max_age at the device authorization endpoint", () => {
+  it("sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check", async () => {
+    const clientId = await deviceClient();
+    // A grant that holds the scope already, so an older browser may approve
+    // the next codes.
+    const first = await deviceCode(clientId);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    await approveDevice(first.body.user_code, await signIn());
+    const stale = await signIn();
+    await server.advanceClock(6 * MINUTE);
+
+    // The witness: without max_age the older browser approves at once, and
+    // the token carries its older sign-in.
+    const plain = await deviceCode(clientId);
+    await approveDevice(plain.body.user_code, stale);
+    const plainToken = await devicePoll(clientId, plain.body.device_code);
+    expect(plainToken.status, JSON.stringify(plainToken.body)).toBe(200);
+    expectChallenged(
+      await call(plainToken.body.access_token!, "PATCH", "/config", {
+        [SWITCH]: true,
+      }),
+      "without max_age",
+    );
+
+    const asked = await deviceCode(clientId, { max_age: "300" });
+    expect(asked.status, JSON.stringify(asked.body)).toBe(200);
+    const userCode = asked.body.user_code as string;
+    expectSignInAgain(await devicePage(userCode, stale), userCode);
+    expectSignInAgain(
+      await deviceDecision(userCode, stale, SCOPE.split(" ")),
+      userCode,
+    );
+    const pending = await devicePoll(clientId, asked.body.device_code);
+    expect(pending.body.error).toBe("authorization_pending");
+
+    await approveDevice(userCode, await signIn());
+    await server.advanceClock((asked.body.interval as number) * 1000 + 1000);
+    const issued = await devicePoll(clientId, asked.body.device_code);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    const on = await call(issued.body.access_token!, "PATCH", "/config", {
+      [SWITCH]: true,
+    });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+    expect(
+      (
+        await call(issued.body.access_token!, "PATCH", "/config", {
+          [SWITCH]: false,
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("sends a browser that signed in before the code was asked for to sign in again under max_age=0, and approves from a sign-in made after it", async () => {
+    const clientId = await deviceClient();
+    const first = await deviceCode(clientId);
+    await approveDevice(first.body.user_code, await signIn());
+    const before = await signIn();
+    await server.advanceClock(1000);
+    const asked = await deviceCode(clientId, { max_age: "0" });
+    expect(asked.status, JSON.stringify(asked.body)).toBe(200);
+    const userCode = asked.body.user_code as string;
+    expectSignInAgain(await devicePage(userCode, before), userCode);
+    await approveDevice(userCode, await signIn());
+    const issued = await devicePoll(clientId, asked.body.device_code);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    const on = await call(issued.body.access_token!, "PATCH", "/config", {
+      [SWITCH]: true,
+    });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+    expect(
+      (
+        await call(issued.body.access_token!, "PATCH", "/config", {
+          [SWITCH]: false,
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("refuses a max_age that is not a whole number of seconds with 400 invalid_request", async () => {
+    const clientId = await deviceClient();
+    for (const value of ["-1", "5.5", "soon", ""]) {
+      const asked = await deviceCode(clientId, { max_age: value });
+      expect(asked.status, `${value}: ${JSON.stringify(asked.body)}`).toBe(400);
+      expect(asked.body.error, value).toBe("invalid_request");
+      expect(asked.body.device_code, value).toBeUndefined();
+    }
+  });
+});
+
 describe("a key and the private socket", () => {
   it("refuses a key, even one holding every permission the acts take, with 403 app_sign_in_required and never a challenge", async () => {
     const key = await mint(["backups.manage", "config.manage"]);
@@ -572,10 +873,124 @@ describe("a key and the private socket", () => {
   });
 });
 
+describe("the check that the new sign-in address answers as this instance", () => {
+  it("refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing", async () => {
+    const away = await strangers();
+    try {
+      const app = await registerApp(server, SCOPE);
+      const { access } = await connect(app, await signIn());
+      const before = await call(server.managementKey, "GET", "/config");
+      for (const to of [away.other, away.redirect, away.closed, away.silent]) {
+        const checked = await call(access, "POST", "/config/address-check", {
+          sign_in_address: to,
+        });
+        expect(checked.status, JSON.stringify(checked.body)).toBe(200);
+        expect(checked.body.sign_in_address_check, to).toEqual({
+          passed: false,
+          reason: "not_this_instance",
+        });
+        const moved = await call(access, "PATCH", "/config", {
+          sign_in_address: to,
+          confirm_sign_in_address_change: true,
+        });
+        expect(moved.status, `${to} ${JSON.stringify(moved.body)}`).toBe(409);
+        expect(moved.body.error.code, to).toBe("sign_in_address_check_failed");
+        expect(moved.body.error.details, to).toEqual({
+          reason: "not_this_instance",
+        });
+        await expectMatchesSchema("PATCH", "/config", 409, moved.body);
+      }
+      expect((await call(server.managementKey, "GET", "/config")).body).toEqual(
+        before.body,
+      );
+      expect(await issuerOrigin(server)).toBe(origin);
+      // Nothing ended: the token that asked still reads.
+      expect((await call(access, "GET", "/config")).status).toBe(200);
+    } finally {
+      await away.fold();
+    }
+  }, 60_000);
+
+  it("names why an address failed the check while private addresses are allowed: unreachable, timed_out or not_this_instance", async () => {
+    const away = await strangers();
+    expect((await local("PATCH", "/config", { [SWITCH]: true })).status).toBe(
+      200,
+    );
+    try {
+      for (const [to, reason] of [
+        [away.closed, "unreachable"],
+        [away.silent, "timed_out"],
+        [away.other, "not_this_instance"],
+        [away.redirect, "not_this_instance"],
+      ] as const) {
+        const checked = await call(
+          server.managementKey,
+          "POST",
+          "/config/address-check",
+          { sign_in_address: to },
+        );
+        expect(checked.status, JSON.stringify(checked.body)).toBe(200);
+        expect(checked.body.sign_in_address_check, to).toEqual({
+          passed: false,
+          reason,
+        });
+        await expectMatchesSchema(
+          "POST",
+          "/config/address-check",
+          200,
+          checked.body,
+        );
+      }
+    } finally {
+      expect(
+        (await local("PATCH", "/config", { [SWITCH]: false })).status,
+      ).toBe(200);
+      await away.fold();
+    }
+  }, 60_000);
+
+  it("is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden", async () => {
+    const away = await strangers();
+    try {
+      const app = await registerApp(server, SCOPE);
+      const { access } = await connect(app, await signIn());
+      const asked = {
+        sign_in_address: away.closed,
+        confirm_sign_in_address_change: true,
+        skip_sign_in_address_check: true,
+      };
+      const refused = await call(access, "PATCH", "/config", asked);
+      expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+      expect(refused.body.error.code).toBe("forbidden");
+      expect(await issuerOrigin(server)).toBe(origin);
+
+      const moved = await local("PATCH", "/config", asked);
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+      expect(await issuerOrigin(server)).toBe(away.closed);
+      // The witness: without the field, the check runs for the private
+      // local command too, and the instance's own address passes it.
+      const unchecked = await local("PATCH", "/config", {
+        sign_in_address: away.other,
+        confirm_sign_in_address_change: true,
+      });
+      expect(unchecked.status, JSON.stringify(unchecked.body)).toBe(409);
+      expect(unchecked.body.error.code).toBe("sign_in_address_check_failed");
+      const back = await local("PATCH", "/config", {
+        sign_in_address: origin,
+        confirm_sign_in_address_change: true,
+      });
+      expect(back.status, JSON.stringify(back.body)).toBe(200);
+      expect(await issuerOrigin(server)).toBe(origin);
+    } finally {
+      await away.fold();
+    }
+  });
+});
+
 describe("moving the sign-in address", () => {
   it("is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps", async () => {
     const from = await issuerOrigin(server);
-    const to = `https://moved-${randomUUID().slice(0, 8)}.example`;
+    const to = otherName(from);
     const app = await registerApp(server, SCOPE);
     const other = await registerApp(server, SCOPE);
     const cookie = await signIn(from);
@@ -591,6 +1006,7 @@ describe("moving the sign-in address", () => {
     });
     expect(checked.status, JSON.stringify(checked.body)).toBe(200);
     expect(checked.body.requires_confirmation).toBe(true);
+    expect(checked.body.sign_in_address_check).toEqual({ passed: true });
     const codes = (checked.body.consequences as { code: string }[]).map(
       (consequence) => consequence.code,
     );
