@@ -169,9 +169,7 @@ describe("the names of the audit log's actions", () => {
     expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
     const bulking = new Date(Date.now() - 1000).toISOString();
     const bulk = await client.bulkEdges({
-      edges: [
-        { from_id: items[1]!, to_id: items[2]!, edge_type: edgeType },
-      ],
+      edges: [{ from_id: items[1]!, to_id: items[2]!, edge_type: edgeType }],
     });
     expect(bulk.ok, JSON.stringify(bulk.error)).toBe(true);
     const bulked = bulk.data.results[0]!.id!;

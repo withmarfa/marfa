@@ -1837,9 +1837,7 @@ describe("a copy stream resumed from a cursor and the frames it carries", () => 
         "event_type",
         "from_type",
       ]);
-      expect((frame.data as { from_type: string }).from_type).toBe(
-        "core.note",
-      );
+      expect((frame.data as { from_type: string }).from_type).toBe("core.note");
       expect(frame.data).not.toHaveProperty("listed");
       expect((frame.data as { edge: object }).edge).not.toHaveProperty(
         "listed",

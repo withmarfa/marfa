@@ -311,9 +311,9 @@ describe("what a key is told of an item it cannot read through a readable one", 
 
     const read = await blind.client.getItem(note);
     expect(read.status).toBe(200);
-    expect(
-      read.data.item.edges?.[edgeType]?.data.map((x) => x.to_id),
-    ).toEqual([secret]);
+    expect(read.data.item.edges?.[edgeType]?.data.map((x) => x.to_id)).toEqual([
+      secret,
+    ]);
 
     const page = await blind.client.listItems({
       source: ctx.source,
@@ -344,9 +344,9 @@ describe("what a key is told of an item it cannot read through a readable one", 
           x.event === "edge.created" &&
           (x.data as { edge: { id: string } }).edge.id === edge,
       );
-      expect(
-        (created?.data as { edge: { to_id: string } }).edge.to_id,
-      ).toBe(secret);
+      expect((created?.data as { edge: { to_id: string } }).edge.to_id).toBe(
+        secret,
+      );
     });
   });
 

@@ -385,8 +385,7 @@ export class EdgeDoor {
     if (
       body.edge_type === "parent-of" &&
       [...this.edges.values()].some(
-        (edge) =>
-          edge.edge_type === "parent-of" && edge.to_id === body.to_id,
+        (edge) => edge.edge_type === "parent-of" && edge.to_id === body.to_id,
       )
     ) {
       return answers.edgeCardinality({
@@ -432,8 +431,7 @@ export class EdgeDoor {
       };
       const refused = moveRefusal(held, ends);
       if (refused !== undefined) return refused;
-      const moves =
-        ends.from_id !== held.from_id || ends.to_id !== held.to_id;
+      const moves = ends.from_id !== held.from_id || ends.to_id !== held.to_id;
       for (const end of ["from", "to"] as const) {
         const id = ends[`${end}_id`];
         if (moves && !this.holds(id)) return answers.edgeEndNotFound(end, id);
@@ -532,8 +530,7 @@ export class EdgeDoor {
     return new Map(
       [...this.edges.values()]
         .filter(
-          (edge) =>
-            edge.edge_type === "in-folder" && edge.to_id === folderId,
+          (edge) => edge.edge_type === "in-folder" && edge.to_id === folderId,
         )
         .map((edge) => [edge.from_id, edge.properties?.path]),
     );
@@ -659,8 +656,7 @@ export function withoutPlacements(
   rows: QueuedWrite[],
 ): QueuedWrite[] {
   return rows.filter(
-    (row) =>
-      !(row.kind.endsWith("_edge") && row.to_id === harness.settings.id),
+    (row) => !(row.kind.endsWith("_edge") && row.to_id === harness.settings.id),
   );
 }
 
@@ -705,8 +701,7 @@ export function sentEdgeWrites(harness: FolderHarness): string[] {
       return edges
         .filter((edge) => edge.edge_type !== "in-folder")
         .map(
-          (edge) =>
-            `create ${edge.from_id} ${edge.edge_type} ${edge.to_id}`,
+          (edge) => `create ${edge.from_id} ${edge.edge_type} ${edge.to_id}`,
         );
     }
     if (request.method === "DELETE" && request.pathname.startsWith("/edges/")) {

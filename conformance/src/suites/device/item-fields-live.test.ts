@@ -431,9 +431,7 @@ it("drains a draft carrying a state, a capture location and edges as one write",
     51.5, -0.25,
   ]);
   const drawn = value(await device.edgesFrom(id));
-  expect(drawn.map((edge) => edge.to_id).sort()).toEqual(
-    [...targets].sort(),
-  );
+  expect(drawn.map((edge) => edge.to_id).sort()).toEqual([...targets].sort());
 
   expect(
     value(await device.drain()).verdicts.map((verdict) => verdict.verdict),
@@ -519,9 +517,7 @@ it("reads the rest of a create's edges the answer cuts off, before the drain ret
   // Every target shows one edge, and each is the server's own: the ten the
   // answer left out were read while the create settled.
   const shown = value(await device.edgesFrom(id));
-  expect(shown.map((edge) => edge.to_id).sort()).toEqual(
-    [...targets].sort(),
-  );
+  expect(shown.map((edge) => edge.to_id).sort()).toEqual([...targets].sort());
   expect(shown.map((edge) => edge.id).sort()).toEqual(
     served.map((edge) => edge.id).sort(),
   );

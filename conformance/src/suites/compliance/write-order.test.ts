@@ -337,8 +337,7 @@ it("announces the moved endpoints when a waiting delete removes the edge", async
       .filter((event) => event.event.startsWith("edge."))
       .map((event) => ({
         event: event.event,
-        edge: (event.data as { edge: { from_id: string; to_id: string } })
-          .edge,
+        edge: (event.data as { edge: { from_id: string; to_id: string } }).edge,
       }));
     expect(
       edges.map(({ event, edge }) => [event, edge.from_id, edge.to_id]),

@@ -147,8 +147,8 @@ describe("client-minted ids", () => {
             evts.some(
               (e) =>
                 e.event === "edge.created" &&
-                (e.data as { edge?: { from_id?: string } })?.edge
-                  ?.from_id === source.data.item.id,
+                (e.data as { edge?: { from_id?: string } })?.edge?.from_id ===
+                  source.data.item.id,
             ),
           `edge.created for the client-minted edge ${id}`,
           context.signal,

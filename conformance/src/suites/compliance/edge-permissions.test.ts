@@ -1251,9 +1251,7 @@ describe("an edge write says nothing of a to item the credential cannot read", (
       name: "POST /edges/bulk (atomic)",
       write: (edgeType, target) =>
         writer.bulkEdges({
-          edges: [
-            { from_id: source, to_id: target, edge_type: edgeType },
-          ],
+          edges: [{ from_id: source, to_id: target, edge_type: edgeType }],
         }),
     },
     {
@@ -1261,9 +1259,7 @@ describe("an edge write says nothing of a to item the credential cannot read", (
       write: (edgeType, target) =>
         writer.bulkEdges({
           atomic: false,
-          edges: [
-            { from_id: source, to_id: target, edge_type: edgeType },
-          ],
+          edges: [{ from_id: source, to_id: target, edge_type: edgeType }],
         }),
     },
     {

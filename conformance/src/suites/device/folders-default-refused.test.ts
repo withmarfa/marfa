@@ -350,8 +350,7 @@ describe("folders: a refused default edge", () => {
             "shelved-in",
       )
       .map(
-        (request) =>
-          (JSON.parse(request.body) as { from_id: string }).from_id,
+        (request) => (JSON.parse(request.body) as { from_id: string }).from_id,
       );
     expect(sources).toHaveLength(2);
 

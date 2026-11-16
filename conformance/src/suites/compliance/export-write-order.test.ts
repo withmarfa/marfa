@@ -100,9 +100,9 @@ it("restores an archive as its selection stood when read, whatever lands while i
     expect((await reader.getItem(newest.id)).data.item.properties).toEqual(
       newest.properties,
     );
-    expect(
-      (await reader.getEdge(witness.data.edge.id)).data.edge.to_id,
-    ).toBe(retained.id);
+    expect((await reader.getEdge(witness.data.edge.id)).data.edge.to_id).toBe(
+      retained.id,
+    );
   } finally {
     await source.clearFault();
     await pending;

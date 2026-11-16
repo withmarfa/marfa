@@ -622,9 +622,9 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
     before,
   );
   // The witness: the same edge moves onto a note.
-  expect(
-    value(await device.checkEdgeMove(link.id, { to_id: third })),
-  ).toEqual({ refused: false });
+  expect(value(await device.checkEdgeMove(link.id, { to_id: third }))).toEqual({
+    refused: false,
+  });
   value(
     await device.updateEdge(link.id, {
       properties: {},

@@ -533,9 +533,7 @@ describe("a writer while a restore writes", () => {
         }),
       "POST /edges/bulk": () =>
         working.bulkEdges({
-          edges: [
-            { from_id: ends[1]!, to_id: ends[0]!, edge_type: edgeType },
-          ],
+          edges: [{ from_id: ends[1]!, to_id: ends[0]!, edge_type: edgeType }],
         }),
       "POST /blobs": () =>
         working.uploadBlob(

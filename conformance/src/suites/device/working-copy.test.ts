@@ -3648,9 +3648,7 @@ describe("a local read of edges answers both ends", () => {
       head: "10",
       items: { "core.note": [{ item: { id: "ticket" } }] },
       edges: {
-        "parent-of": [
-          { id: "beneath", from_id: "project", to_id: "ticket" },
-        ],
+        "parent-of": [{ id: "beneath", from_id: "project", to_id: "ticket" }],
       },
     });
     const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {

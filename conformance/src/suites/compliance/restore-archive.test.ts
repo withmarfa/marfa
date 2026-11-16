@@ -1328,10 +1328,7 @@ describe("what a restore answers", () => {
       ],
     );
     const edges = (extra: Record<string, unknown>[] = []) =>
-      [
-        { id: edgeId, from_id: a, to_id: b, edge_type: ids.edgeType },
-        ...extra,
-      ]
+      [{ id: edgeId, from_id: a, to_id: b, edge_type: ids.edgeType }, ...extra]
         .map((edge) => `${JSON.stringify({ edge })}\n`)
         .join("");
     const types = `${JSON.stringify({

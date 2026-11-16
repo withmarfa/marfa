@@ -417,11 +417,7 @@ describe("an edit that moves an edge's end", () => {
         { properties: {}, version: 1, from_id: OLDEST },
         "validation_error",
       ],
-      [
-        SUCCESSION,
-        { properties: {}, version: 1, to_id: NEWER },
-        "edge_cycle",
-      ],
+      [SUCCESSION, { properties: {}, version: 1, to_id: NEWER }, "edge_cycle"],
     ] as const) {
       refusedAs(await device.updateEdge(id, edit), code, JSON.stringify(edit));
     }

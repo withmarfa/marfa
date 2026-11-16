@@ -418,8 +418,7 @@ describe("event stream contract", () => {
           evts.some(
             (e) =>
               e.event === "edge.created" &&
-              (e.data as { edge?: { to_id?: string } }).edge?.to_id ===
-                copy,
+              (e.data as { edge?: { to_id?: string } }).edge?.to_id === copy,
           ),
         `edge.created for the copy ${String(copy)}`,
         signal,
@@ -427,8 +426,7 @@ describe("event stream contract", () => {
       const created = events.find(
         (e) =>
           e.event === "edge.created" &&
-          (e.data as { edge?: { to_id?: string } }).edge?.to_id ===
-            copy,
+          (e.data as { edge?: { to_id?: string } }).edge?.to_id === copy,
       );
       const data = created?.data as {
         edge: { from_id: string; edge_type: string };
@@ -1350,9 +1348,7 @@ describe("which event each write announces", () => {
     const to_id = await seed("bulk-edge-target");
     const send = async (n: number, outcome: string): Promise<string> => {
       const r = await client.bulkEdges({
-        edges: [
-          { from_id, to_id, edge_type: "about", properties: { n } },
-        ],
+        edges: [{ from_id, to_id, edge_type: "about", properties: { n } }],
       });
       expect(r.status, JSON.stringify(r.error)).toBe(200);
       expect(r.data.results[0]?.outcome).toBe(outcome);
@@ -1392,8 +1388,7 @@ describe("which event each write announces", () => {
       expect(patched.status, JSON.stringify(patched.error)).toBe(200);
     }, signal);
     const edgeFrames = frames.filter(
-      (e) =>
-        (e.data as { edge?: { from_id?: string } }).edge?.from_id === id,
+      (e) => (e.data as { edge?: { from_id?: string } }).edge?.from_id === id,
     );
     expect(edgeFrames.map((e) => e.event).sort()).toEqual([
       "edge.created",
@@ -1429,8 +1424,7 @@ describe("which event each write announces", () => {
       expect(landed.data.results[0]?.outcome).toBe("updated");
     }, signal);
     const edgeFrames = frames.filter(
-      (e) =>
-        (e.data as { edge?: { from_id?: string } }).edge?.from_id === id,
+      (e) => (e.data as { edge?: { from_id?: string } }).edge?.from_id === id,
     );
     expect(edgeFrames.map((e) => e.event).sort()).toEqual([
       "edge.created",

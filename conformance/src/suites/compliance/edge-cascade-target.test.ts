@@ -135,9 +135,7 @@ describe("an edge that cascades on delete takes write on its to item's type", ()
       write: (edgeType, target) =>
         writer.bulkEdges({
           atomic: true,
-          edges: [
-            { from_id: source, to_id: target, edge_type: edgeType },
-          ],
+          edges: [{ from_id: source, to_id: target, edge_type: edgeType }],
         }),
     },
     {
@@ -145,9 +143,7 @@ describe("an edge that cascades on delete takes write on its to item's type", ()
       write: (edgeType, target) =>
         writer.bulkEdges({
           atomic: false,
-          edges: [
-            { from_id: source, to_id: target, edge_type: edgeType },
-          ],
+          edges: [{ from_id: source, to_id: target, edge_type: edgeType }],
         }),
     },
     {

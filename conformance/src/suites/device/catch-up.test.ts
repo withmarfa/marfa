@@ -2986,9 +2986,7 @@ describe("catch-up keeps the copy to its slice", () => {
       const outcome = await read;
       expect(outcome.ok).toBe(true);
       return outcome.ok
-        ? (outcome.value as { to_id: string }[]).map(
-            (edge) => edge.to_id,
-          )
+        ? (outcome.value as { to_id: string }[]).map((edge) => edge.to_id)
         : [];
     };
 

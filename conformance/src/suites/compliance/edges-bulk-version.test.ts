@@ -210,9 +210,7 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     // The witness: the type is gone, so a triple no edge holds is refused.
     const unheld = await client.bulkEdges({
       atomic: false,
-      edges: [
-        { from_id: source, to_id: await note(), edge_type: edgeType },
-      ],
+      edges: [{ from_id: source, to_id: await note(), edge_type: edgeType }],
     });
     expect(unheld.status).toBe(200);
     expect(unheld.data.results[0]).toMatchObject({

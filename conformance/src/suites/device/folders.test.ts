@@ -3925,8 +3925,7 @@ describe("files and items", () => {
     ).toEqual([expect.objectContaining({ title: "Source" })]);
 
     const bound = queued.value.find(
-      (row) =>
-        row.kind === "create_item" && row.item_id === edges[0]?.to_id,
+      (row) => row.kind === "create_item" && row.item_id === edges[0]?.to_id,
     );
     expect(
       bound,

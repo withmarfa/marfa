@@ -242,9 +242,9 @@ describe("a conflicted copy from the terminal", () => {
 
     // The server holds the link.
     const served = rows(await c.cli.json(["items", "edges", copy]));
-    expect(
-      served.map((edge) => `${edge.edge_type} ${edge.to_id}`),
-    ).toContain(`derived-from ${id}`);
+    expect(served.map((edge) => `${edge.edge_type} ${edge.to_id}`)).toContain(
+      `derived-from ${id}`,
+    );
 
     // Each command below opens the store again, so the copy answers the link
     // from what it saved, not from the process that caught up.

@@ -1099,12 +1099,12 @@ describe("custom edge-type registration", () => {
         .filter((t) => !t.id.includes("."))
         .map((t) => [t.id, t.written_from]),
     );
-    // A child names its parent; everything else is written by its source,
-    // an attachment included, which names what it was made for.
-    expect(writtenFrom["parent-of"]).toBe("target");
-    expect(writtenFrom["attached-to"]).toBe("source");
-    expect(writtenFrom["comments-on"]).toBe("source");
-    expect(writtenFrom["references"]).toBe("source");
+    // A child names its parent; everything else is written from its from
+    // end, an attachment included, which names what it was made for.
+    expect(writtenFrom["parent-of"]).toBe("to");
+    expect(writtenFrom["attached-to"]).toBe("from");
+    expect(writtenFrom["comments-on"]).toBe("from");
+    expect(writtenFrom["references"]).toBe("from");
     // No file writes the placement of a file, so the edge names no end.
     expect(writtenFrom["in-folder"]).toBe("none");
   });
@@ -1181,9 +1181,9 @@ describe("custom edge-type registration", () => {
     });
     expect(r.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(r.data.edge_type.written_from).toBe("target");
+    expect(r.data.edge_type.written_from).toBe("to");
 
-    // The default is the source, and says so.
+    // The default is the from end, and says so.
     const plainId = `mock.written-default.${ctx.runId}`;
     const plain = await client.registerEdgeType({
       label: "Test edge type",
@@ -1192,7 +1192,7 @@ describe("custom edge-type registration", () => {
     });
     expect(plain.status).toBe(201);
     trackEdgeType(ctx, plainId);
-    expect(plain.data.edge_type.written_from).toBe("source");
+    expect(plain.data.edge_type.written_from).toBe("from");
 
     // An edge no file writes names no end, and needs no name to write it under.
     const noneId = `mock.written-none.${ctx.runId}`;
@@ -1206,9 +1206,9 @@ describe("custom edge-type registration", () => {
     trackEdgeType(ctx, noneId);
     expect(none.data.edge_type.written_from).toBe("none");
     const listedNone = await client.listEdgeTypes();
-    expect(listedNone.data.data.find((t) => t.id === noneId)?.written_from).toBe(
-      "none",
-    );
+    expect(
+      listedNone.data.data.find((t) => t.id === noneId)?.written_from,
+    ).toBe("none");
     const bogus = await client.registerEdgeType({
       label: "Test edge type",
       id: `mock.written-bogus.${ctx.runId}`,
@@ -1217,8 +1217,8 @@ describe("custom edge-type registration", () => {
     });
     expect(bogus.status).toBe(400);
 
-    // The target's file can only write an edge under a name read from the
-    // target, so a type written there must declare one.
+    // The to end's file can only write an edge under a name read from that
+    // end, so a type written there must declare one.
     const nameless = await client.registerEdgeType({
       label: "Test edge type",
       id: `mock.written-nameless.${ctx.runId}`,
@@ -1228,13 +1228,19 @@ describe("custom edge-type registration", () => {
     expect(nameless.status).toBe(400);
     expect(nameless.error?.error.code).toBe("validation_error");
 
-    const elsewhere = await client.registerEdgeType({
-      label: "Test edge type",
-      id: `mock.written-elsewhere.${ctx.runId}`,
-      cardinality: "one-to-many",
-      ...({ written_from: "middle" } as Record<string, unknown>),
-    });
-    expect(elsewhere.status).toBe(400);
+    for (const written_from of ["middle", "source", "target"]) {
+      const elsewhere = await client.registerEdgeType({
+        label: "Test edge type",
+        id: `mock.written-elsewhere.${ctx.runId}`,
+        cardinality: "one-to-many",
+        reverse_name: `mock.written-elsewhere-by.${ctx.runId}`,
+        ...({ written_from } as Record<string, unknown>),
+      });
+      expect(elsewhere.status, written_from).toBe(400);
+      expect(elsewhere.error?.error.code, written_from).toBe(
+        "validation_error",
+      );
+    }
   });
 
   it("refuses an id that is not an edge type identifier with 400 validation_error, and registers one that is", async () => {

@@ -2073,14 +2073,14 @@ describe("edges in frontmatter", () => {
       to_id: beta,
       edge_type: "unwritten",
     };
-    const catalog = (written_from: "none" | "source") =>
+    const catalog = (written_from: "none" | "from") =>
       edgeTypeCatalog([edgeType("unwritten", { written_from })]);
-    // The witness: the same edge of a type written at its source is a line.
+    // The witness: the same edge of a type written from its from end is a line.
     const witness = await edgeHarness(
       "folder-edge-written",
       [titled(alpha, "Alpha"), titled(beta, "Beta")],
       [edge],
-      { edgeTypes: () => catalog("source") },
+      { edgeTypes: () => catalog("from") },
     );
     harness = witness.harness;
     expect((await harness.folder.pull()).ok).toBe(true);

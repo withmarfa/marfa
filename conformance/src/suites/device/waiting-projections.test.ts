@@ -478,9 +478,9 @@ it("keeps a created item's edge and refuses its waiting delete unsent when the r
   expect(write?.verdict).toBe("refused");
   expect(write?.answer, JSON.stringify(write)).toBeNull();
   const kept = await device.edgesFrom(created.made);
-  expect(
-    kept.ok && kept.value.map((edge) => [edge.id, edge.to_id]),
-  ).toEqual([[created.drawn, drawnTarget]]);
+  expect(kept.ok && kept.value.map((edge) => [edge.id, edge.to_id])).toEqual([
+    [created.drawn, drawnTarget],
+  ]);
 
   // The read is not asked again.
   expect((await device.drain()).ok).toBe(true);

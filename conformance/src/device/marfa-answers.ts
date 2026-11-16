@@ -1232,10 +1232,7 @@ export const answers = {
     refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),
   /** A move of an edge end whose type holds more than one at the end that
    *  stays (`edges/move-many`). */
-  edgeMoveRefused: (
-    field: "from_id" | "to_id",
-    message: string,
-  ): Answer =>
+  edgeMoveRefused: (field: "from_id" | "to_id", message: string): Answer =>
     refusal(400, "validation_error", message, {
       errors: [{ path: field, message }],
     }),

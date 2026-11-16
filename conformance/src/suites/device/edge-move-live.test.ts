@@ -216,8 +216,8 @@ it("re-parents a note offline in one write a real server takes, never leaving it
         events
           .filter(
             (event) =>
-              (event.data as { edge?: { to_id?: string } }).edge
-                ?.to_id === child,
+              (event.data as { edge?: { to_id?: string } }).edge?.to_id ===
+              child,
           )
           .map((event) => event.event),
         "the server announced the move as more than one change",

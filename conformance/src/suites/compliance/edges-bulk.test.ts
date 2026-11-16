@@ -460,9 +460,7 @@ describe("edges.bulk", () => {
 
     const a = await makePair();
     const ok = await writer.bulkEdges({
-      edges: [
-        { from_id: a.sourceId, to_id: a.targetId, edge_type: "about" },
-      ],
+      edges: [{ from_id: a.sourceId, to_id: a.targetId, edge_type: "about" }],
     });
     expect(ok.ok).toBe(true);
     expect(ok.data.counts.created).toBe(1);
@@ -484,9 +482,7 @@ describe("edges.bulk", () => {
 
     const b = await makePair();
     const rejected = await denied.bulkEdges({
-      edges: [
-        { from_id: b.sourceId, to_id: b.targetId, edge_type: "about" },
-      ],
+      edges: [{ from_id: b.sourceId, to_id: b.targetId, edge_type: "about" }],
     });
     expect(rejected.ok).toBe(false);
     // `403`, as on the item door beside it: the batch was refused for a

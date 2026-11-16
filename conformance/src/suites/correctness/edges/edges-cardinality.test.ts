@@ -209,9 +209,7 @@ describe("cardinality on every write path", () => {
     });
     expect(outbound.status).toBe(400);
     expect(outbound.error?.error.code).toBe("edge_constraint_violation");
-    expect(outbound.error?.error.details).toEqual(
-      full(oneToOne, "from_id", a),
-    );
+    expect(outbound.error?.error.details).toEqual(full(oneToOne, "from_id", a));
     const inbound = await client.createEdge({
       from_id: d,
       to_id: b,
@@ -219,9 +217,7 @@ describe("cardinality on every write path", () => {
     });
     expect(inbound.status).toBe(400);
     expect(inbound.error?.error.code).toBe("edge_constraint_violation");
-    expect(inbound.error?.error.details).toEqual(
-      full(oneToOne, "to_id", b),
-    );
+    expect(inbound.error?.error.details).toEqual(full(oneToOne, "to_id", b));
 
     await place(a, b, oneToMany);
     const second = await client.createEdge({
@@ -231,9 +227,7 @@ describe("cardinality on every write path", () => {
     });
     expect(second.status).toBe(400);
     expect(second.error?.error.code).toBe("edge_constraint_violation");
-    expect(second.error?.error.details).toEqual(
-      full(oneToMany, "to_id", b),
-    );
+    expect(second.error?.error.details).toEqual(full(oneToMany, "to_id", b));
 
     expect(await targetsOf(a, oneToOne)).toEqual([b]);
     expect(await targetsOf(a, oneToMany)).toEqual([b]);
@@ -380,15 +374,11 @@ describe("cardinality on every write path", () => {
     const inbound = await create({ [oneToOne]: [held] });
     expect(inbound.status).toBe(400);
     expect(inbound.error?.error.code).toBe("edge_constraint_violation");
-    expect(inbound.error?.error.details).toEqual(
-      full(oneToOne, "to_id", held),
-    );
+    expect(inbound.error?.error.details).toEqual(full(oneToOne, "to_id", held));
     const many = await create({ [oneToMany]: [held] });
     expect(many.status).toBe(400);
     expect(many.error?.error.code).toBe("edge_constraint_violation");
-    expect(many.error?.error.details).toEqual(
-      full(oneToMany, "to_id", held),
-    );
+    expect(many.error?.error.details).toEqual(full(oneToMany, "to_id", held));
     // The new item is the source, and one set names it twice.
     const minted = generateId();
     const outbound = await create({ [oneToOne]: [other, held] }, minted);

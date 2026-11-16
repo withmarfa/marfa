@@ -1109,8 +1109,7 @@ describe("a folder's first sync", () => {
     expect(
       [...edges.edges.values()].filter(
         (edge) =>
-          edge.edge_type === "in-folder" &&
-          edge.to_id === folder?.settings.id,
+          edge.edge_type === "in-folder" && edge.to_id === folder?.settings.id,
       ),
     ).toHaveLength(60);
   });

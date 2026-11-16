@@ -590,8 +590,8 @@ describe("edges CRUD", () => {
           seen.some(
             (e) =>
               e.event === "edge.created" &&
-              (e.data as { edge: { from_id: string; to_id: string } })
-                .edge.to_id === added,
+              (e.data as { edge: { from_id: string; to_id: string } }).edge
+                .to_id === added,
           ),
         "the witness write's edge.created",
         signal,
@@ -604,9 +604,9 @@ describe("edges CRUD", () => {
 
     expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
     expect((await client.getEdge(droppedEdge.id)).status).toBe(404);
-    expect(
-      (await edgesOf("in-collection")).map((e) => e.to_id).sort(),
-    ).toEqual([stays!, added!].sort());
+    expect((await edgesOf("in-collection")).map((e) => e.to_id).sort()).toEqual(
+      [stays!, added!].sort(),
+    );
     expect((await client.getEdge(referencesEdge!.id)).data.edge).toEqual(
       referencesEdge,
     );
@@ -680,8 +680,7 @@ describe("edges CRUD", () => {
             seen.some(
               (e) =>
                 e.event === "edge.created" &&
-                (e.data as { edge: { to_id: string } }).edge.to_id ===
-                  added,
+                (e.data as { edge: { to_id: string } }).edge.to_id === added,
             ),
           "the witness write's edge.created",
         );
@@ -690,9 +689,8 @@ describe("edges CRUD", () => {
             .filter((e) => e.event.startsWith("edge."))
             .map((e) => ({
               event: e.event,
-              edge: (
-                e.data as { edge: { from_id: string; to_id: string } }
-              ).edge,
+              edge: (e.data as { edge: { from_id: string; to_id: string } })
+                .edge,
             }))
             .filter(({ edge }) => edge.from_id === itemId)
             .map(({ event, edge }) => [event, edge.to_id]),
