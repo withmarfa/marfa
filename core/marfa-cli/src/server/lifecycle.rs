@@ -652,9 +652,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let backups_say = answered
         .as_ref()
         .and_then(|health| health.backups.as_ref())
-        .and_then(|backups| {
-            backups.words(state.runtime == Runtime::Docker, private.as_ref())
-        });
+        .and_then(|backups| backups.words(state.runtime == Runtime::Docker, private.as_ref()));
     let report = json!({
         "dir": folder.dir,
         "name": state.name,

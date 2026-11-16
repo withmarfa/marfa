@@ -123,7 +123,7 @@ impl Folder {
         } else {
             let locator = area.display().to_string();
             let recorded = db
-                .read(move |tx| rows::attached_folder(tx, &locator))
+                .read(move |tx| rows::folder_at(tx, &locator))
                 .await
                 .map_err(started)?;
             match recorded {

@@ -42,7 +42,6 @@ use crate::db::{Db, Write};
 use crate::failure::Failure;
 use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
-pub use s3::ObjectStoreSettings;
 use disk::{Disk, Place, Staged};
 pub use disk::{MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
@@ -53,6 +52,7 @@ use rows::Held;
 pub use rows::{
     CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,
 };
+pub use s3::ObjectStoreSettings;
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -127,6 +127,14 @@ impl Wanted {
             None => Wanted::Disk,
         }
     }
+}
+
+/// What the store beside the disk is to be: what the settings name, the instance whose files a
+/// backup folder holds, and the folders it must be outside of.
+pub struct Beside<'a> {
+    pub wanted: Wanted,
+    pub instance: &'a str,
+    pub kept: Vec<(&'static str, PathBuf)>,
 }
 
 /// The store beside the disk, as one reading of the settings attached it.
@@ -235,7 +243,7 @@ async fn object_store(
             }
             let locator = settings.locator();
             let recorded = db
-                .read(move |tx| rows::attached_object_store(tx, &locator))
+                .read(move |tx| rows::object_store_at(tx, &locator))
                 .await
                 .map_err(started)?;
             match recorded {
@@ -252,9 +260,9 @@ async fn object_store(
         Marker::Refused(error) => {
             tracing::warn!(%error, "The object store did not say which store it is");
             Err(refused(format!(
-            "did not say which store it is: {}",
-            upkeep::object_store_said(&error)
-        )))
+                "did not say which store it is: {}",
+                upkeep::object_store_said(&error)
+            )))
         }
     }
 }
@@ -289,8 +297,10 @@ async fn attach(
             let (checked, kept) = (root.clone(), kept.to_vec());
             let taken = async {
                 tokio::task::spawn_blocking(move || {
-                    let kept: Vec<(&str, &Path)> =
-                        kept.iter().map(|(what, path)| (*what, path.as_path())).collect();
+                    let kept: Vec<(&str, &Path)> = kept
+                        .iter()
+                        .map(|(what, path)| (*what, path.as_path()))
+                        .collect();
                     folder::outside(&checked, &kept)
                 })
                 .await
@@ -361,9 +371,11 @@ impl Blobs {
     pub async fn open(
         db: &Db,
         (root, held): (&Path, Option<File>),
-        wanted: Wanted,
-        instance: &str,
-        kept: Vec<(&'static str, PathBuf)>,
+        Beside {
+            wanted,
+            instance,
+            kept,
+        }: Beside<'_>,
         secret: &str,
         faults: Arc<Faults>,
         at: String,

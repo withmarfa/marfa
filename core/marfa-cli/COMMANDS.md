@@ -2218,7 +2218,7 @@ marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>
 
 ### marfa backups folder
 
-The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority (--socket).
+The backup folder that the `backup_path` setting names. Requires private local authority (--socket).
 
 ```text
 marfa backups folder [OPTIONS] <COMMAND>

@@ -3203,12 +3203,12 @@ export interface components {
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off`: `no_backup_destination` when neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` is set, or `turned_off` when `backup_interval_seconds` is 0, which is also given beside `failing`.
+                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`.
                  * @enum {string}
                  */
-                reason?: "no_backup_destination" | "turned_off";
+                reason?: "no_backup_destination" | "turned_off" | "destination_unusable";
                 /**
-                 * @description Where Marfa puts backups: `folder` for the backup folder `MARFA_BACKUP_PATH` names, `bucket` for the object store `S3_BUCKET` names. Present only for a caller that holds `instance.read`, and only when one is set.
+                 * @description Where Marfa puts backups: `folder` for the backup folder `backup_path` names, `bucket` for the object store `object_store_bucket` names. Present only for a caller that holds `instance.read`, and only when one is in use.
                  * @enum {string}
                  */
                 destination?: "folder" | "bucket";
@@ -3246,7 +3246,7 @@ export interface components {
                  * @example 0
                  */
                 last_backup_files_waiting?: number | null;
-                /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there and a destination that can't be used. Present only for a caller that holds `instance.read`. */
                 store_error?: string | null;
                 /**
                  * @description How many parts a check found altered or, in a backup folder, unreadable, and not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set.
@@ -5832,11 +5832,11 @@ export interface components {
          */
         AttentionConcern: {
             /**
-             * @description health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off, failing, incomplete, or folder unlocked; clock: ahead or behind; unavailable: no answer.
+             * @description health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off or failing; setting: a secret to set again; clock: ahead or behind; unavailable: no answer.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "clock" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, the check that could not answer, a backup concern such as `no_backup_destination`, `run`, `incomplete`, `parts_damaged`, or `folder_unlocked`, or a clock concern `clock_ahead` or `clock_behind`. */
+            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "unavailable";
+            /** @description The component, job, connector, folder, or key ID, the check that couldn't answer, a backup concern such as `no_backup_destination`, `run` or `store`, a secret setting's key, or a clock concern `clock_ahead` or `clock_behind`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
@@ -6299,9 +6299,9 @@ export interface components {
             enrichment_enabled?: boolean;
             /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. */
             enrichment_ocr_enabled?: boolean;
-            /** @description `true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+            /** @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. */
             error_reporting_enabled?: boolean;
-            /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+            /** @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. */
             heartbeat_enabled?: boolean;
             /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
             name?: string;
@@ -6327,6 +6327,35 @@ export interface components {
             addresses?: string[];
             /** @description The address people sign in at, an origin with no path. Absent: this computer's own address. */
             sign_in_address?: string;
+            /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
+            backup_path?: string;
+            /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
+            object_store_bucket?: string;
+            /** @description The region of the object store. Absent: `us-east-1`. */
+            object_store_region?: string;
+            /**
+             * Format: uri
+             * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it.
+             */
+            object_store_endpoint?: string;
+            /** @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. */
+            object_store_path_style?: boolean;
+            /** @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. */
+            object_store_prefix?: string;
+            /**
+             * @description The access key ID for the object store.
+             * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
+             */
+            object_store_access_key_id?: string;
+            /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. */
+            webhook_allow_private_addresses?: boolean;
+            /**
+             * @description The key of each secret setting stored with a value Marfa can read. Marfa never returns a secret's value.
+             * @example [
+             *       "object_store_secret_access_key"
+             *     ]
+             */
+            secrets_set?: string[];
         };
         /** @description An error response. */
         InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
@@ -7412,6 +7441,10 @@ export interface components {
             unreadable?: boolean;
             /** @description The keys of the other settings a rule across settings ties to this one. */
             together: string[];
+            /** @description `true` if the setting holds a secret. Marfa then answers `value`, `default` and `stored` as `null`. */
+            secret: boolean;
+            /** @description `true` if a secret setting holds a value Marfa can read. Present only for a secret. */
+            set?: boolean;
         };
         /** @description A rule that holds across several settings. */
         ConfigSettingRule: {
@@ -34276,9 +34309,9 @@ export interface operations {
                     enrichment_enabled?: boolean;
                     /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. */
                     enrichment_ocr_enabled?: boolean;
-                    /** @description `true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+                    /** @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. */
                     error_reporting_enabled?: boolean;
-                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. */
                     heartbeat_enabled?: boolean;
                     /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
                     name?: string;
@@ -34306,6 +34339,42 @@ export interface operations {
                     sign_in_address?: string;
                     /** @description `true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing. */
                     confirm_sign_in_address_change?: boolean;
+                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
+                    backup_path?: string;
+                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
+                    object_store_bucket?: string;
+                    /** @description The region of the object store. Absent: `us-east-1`. */
+                    object_store_region?: string;
+                    /**
+                     * Format: uri
+                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it.
+                     */
+                    object_store_endpoint?: string;
+                    /** @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. */
+                    object_store_path_style?: boolean;
+                    /** @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. */
+                    object_store_prefix?: string;
+                    /**
+                     * @description The access key ID for the object store.
+                     * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
+                     */
+                    object_store_access_key_id?: string;
+                    /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. */
+                    webhook_allow_private_addresses?: boolean;
+                    /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    object_store_secret_access_key?: string;
+                    /**
+                     * Format: uri
+                     * @description The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     */
+                    heartbeat_url?: string;
+                    /**
+                     * Format: uri
+                     * @description The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     */
+                    error_webhook_url?: string;
+                    /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
+                    secrets_set?: string[];
                 };
             };
         };
@@ -34499,9 +34568,9 @@ export interface operations {
                     enrichment_enabled?: boolean | null;
                     /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. `null` removes it, so the server's default applies. */
                     enrichment_ocr_enabled?: boolean | null;
-                    /** @description `true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /** @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies. */
                     error_reporting_enabled?: boolean | null;
-                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. `null` removes it, so the server's default applies. */
                     heartbeat_enabled?: boolean | null;
                     /**
                      * @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing.
@@ -34534,6 +34603,42 @@ export interface operations {
                     sign_in_address?: string | null;
                     /** @description `true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing. */
                     confirm_sign_in_address_change?: boolean;
+                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. `null` removes it, so the server's default applies. */
+                    backup_path?: string | null;
+                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies. */
+                    object_store_bucket?: string | null;
+                    /** @description The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies. */
+                    object_store_region?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it. `null` removes it, so the server's default applies.
+                     */
+                    object_store_endpoint?: string | null;
+                    /** @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies. */
+                    object_store_path_style?: boolean | null;
+                    /** @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies. */
+                    object_store_prefix?: string | null;
+                    /**
+                     * @description The access key ID for the object store. `null` removes it, so the server's default applies.
+                     * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
+                     */
+                    object_store_access_key_id?: string | null;
+                    /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. `null` removes it, so the server's default applies. */
+                    webhook_allow_private_addresses?: boolean | null;
+                    /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it. */
+                    object_store_secret_access_key?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. `null` or an empty string removes it.
+                     */
+                    heartbeat_url?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it.
+                     */
+                    error_webhook_url?: string | null;
+                    /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
+                    secrets_set?: string[];
                 };
             };
         };
@@ -34727,7 +34832,8 @@ export interface operations {
                      *           "default": 1048576,
                      *           "stored": null,
                      *           "rule": "A whole number, from 1 to 1099511627776",
-                     *           "together": []
+                     *           "together": [],
+                     *           "secret": false
                      *         },
                      *         {
                      *           "key": "max_bulk_request_bytes",
@@ -34736,7 +34842,8 @@ export interface operations {
                      *           "default": 16777216,
                      *           "stored": null,
                      *           "rule": "A whole number, from 1 to 33554432",
-                     *           "together": []
+                     *           "together": [],
+                     *           "secret": false
                      *         }
                      *       ],
                      *       "rules": [
@@ -36248,7 +36355,8 @@ export interface operations {
                      *           "files/01a10128-f3e1-7ab1-b58c-a89836a748a8"
                      *         ],
                      *         "message": "Instance 01a10128-f3e1-7ab1-b58c-a89836a748a8 wrote this archive. If it took backups to this backup folder, its backups, their parts and its file copies are in backups/01a10128-f3e1-7ab1-b58c-a89836a748a8, backup-parts/01a10128-f3e1-7ab1-b58c-a89836a748a8 and files/01a10128-f3e1-7ab1-b58c-a89836a748a8. Delete them only once that instance no longer runs and nothing else restores from them."
-                     *       }
+                     *       },
+                     *       "secrets_to_set": []
                      *     }
                      */
                     "application/json": {
@@ -36323,6 +36431,8 @@ export interface operations {
                         /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them. */
                         not_restored: components["schemas"]["NotRestored"][];
                         previous_instance?: components["schemas"]["PreviousInstance"];
+                        /** @description The secret settings the archive's instance had set that this instance holds no value it can read for. Set each again; the attention list names them until you do. */
+                        secrets_to_set: string[];
                     };
                 };
             };
@@ -36558,7 +36668,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `no_backup_destination`: the instance has nowhere to put backups, so it keeps none. Set `MARFA_BACKUP_PATH` to a folder, or `S3_BUCKET` to an object store, to keep them. */
+            /** @description `no_backup_destination`: the instance has nowhere to put backups, so it keeps none. Set `backup_path` to a folder, or `object_store_bucket` to an object store, to keep them. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -37034,7 +37144,8 @@ export interface operations {
                      *       "backup": {
                      *         "name": "20261003T102400.836Z.json",
                      *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
-                     *       }
+                     *       },
+                     *       "secrets_to_set": []
                      *     }
                      */
                     "application/json": {
@@ -37120,6 +37231,8 @@ export interface operations {
                              */
                             instance_id: string;
                         };
+                        /** @description The secret settings the archive's instance had set that this instance holds no value it can read for. Set each again; the attention list names them until you do. */
+                        secrets_to_set: string[];
                     };
                 };
             };

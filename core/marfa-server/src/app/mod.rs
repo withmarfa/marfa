@@ -198,9 +198,11 @@ impl App {
         let blobs = Blobs::open(
             &db,
             (&start.blob_path, blob_lock),
-            blobs::Wanted::of(&settings.live()),
-            &instance_id,
-            crate::settings::together::kept_folders(&start),
+            blobs::Beside {
+                wanted: blobs::Wanted::of(&settings.live()),
+                instance: &instance_id,
+                kept: crate::settings::together::kept_folders(&start),
+            },
             &start.auth_secret,
             faults.clone(),
             at.clone(),

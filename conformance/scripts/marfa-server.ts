@@ -256,6 +256,36 @@ const MEASURING_SETTINGS = {
 };
 
 /**
+ * The stored settings a server with hooks seeds from these variables, which a
+ * server without hooks ignores: the adapter writes them through
+ * `PATCH /config` instead, as an owner would. An empty value sets nothing.
+ */
+const SEEDED_BY_NAME: Record<string, "text" | "boolean"> = {
+  MARFA_BACKUP_PATH: "text",
+  MARFA_OBJECT_STORE_BUCKET: "text",
+  MARFA_OBJECT_STORE_REGION: "text",
+  MARFA_OBJECT_STORE_ENDPOINT: "text",
+  MARFA_OBJECT_STORE_PATH_STYLE: "boolean",
+  MARFA_OBJECT_STORE_PREFIX: "text",
+  MARFA_OBJECT_STORE_ACCESS_KEY_ID: "text",
+  MARFA_OBJECT_STORE_SECRET_ACCESS_KEY: "text",
+  MARFA_HEARTBEAT_URL: "text",
+  MARFA_ERROR_WEBHOOK_URL: "text",
+  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: "boolean",
+};
+
+function storedFrom(env: Record<string, string | undefined>) {
+  const body: Record<string, string | boolean> = {};
+  for (const [name, kind] of Object.entries(SEEDED_BY_NAME)) {
+    const value = env[name];
+    if (value === undefined || value === "") continue;
+    const key = name.slice("MARFA_".length).toLowerCase();
+    body[key] = kind === "boolean" ? /^(true|1|yes|on)$/i.test(value) : value;
+  }
+  return body;
+}
+
+/**
  * The program `MARFA_SERVER_BIN` names. It is never guessed: a release build
  * without the test hooks would boot and fail every fixture that needs them.
  */
@@ -834,7 +864,15 @@ export async function bootServer(args: BootOptions): Promise<void> {
         authorization: `Bearer ${managementKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify(MEASURING_SETTINGS),
+      body: JSON.stringify({
+        ...MEASURING_SETTINGS,
+        ...storedFrom({
+          ...process.env,
+          MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
+            process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
+          ...args.env,
+        }),
+      }),
     });
     if (!set.ok) {
       throw new Error(

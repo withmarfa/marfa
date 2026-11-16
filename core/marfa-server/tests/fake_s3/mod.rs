@@ -528,11 +528,11 @@ impl FakeS3 {
     /// The settings that name this store, in `bucket` under `prefix`.
     pub fn settings(&self, bucket: &str, prefix: &str) -> Vec<(String, String)> {
         [
-            ("S3_BUCKET", bucket),
-            ("S3_PREFIX", prefix),
-            ("S3_ENDPOINT", self.endpoint.as_str()),
-            ("S3_ACCESS_KEY_ID", "test-key"),
-            ("S3_SECRET_ACCESS_KEY", "test-secret"),
+            ("MARFA_OBJECT_STORE_BUCKET", bucket),
+            ("MARFA_OBJECT_STORE_PREFIX", prefix),
+            ("MARFA_OBJECT_STORE_ENDPOINT", self.endpoint.as_str()),
+            ("MARFA_OBJECT_STORE_ACCESS_KEY_ID", "test-key"),
+            ("MARFA_OBJECT_STORE_SECRET_ACCESS_KEY", "test-secret"),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value.to_string()))

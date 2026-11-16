@@ -105,9 +105,7 @@ fn read(path: &Path) -> Result<Option<Option<[u8; KEY_BYTES]>>, Failure> {
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(unreadable)?;
-    Ok(Some(
-        std::str::from_utf8(&bytes).ok().and_then(parse),
-    ))
+    Ok(Some(std::str::from_utf8(&bytes).ok().and_then(parse)))
 }
 
 /// A crash at any step leaves no file or a whole one.
@@ -257,7 +255,10 @@ mod tests {
         let path = dir.path().join(FILE_NAME);
         assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, PRIVATE_FILE);
         let sealed = first
-            .seal("object_store_secret_access_key", &Secret::new("hush".into()))
+            .seal(
+                "object_store_secret_access_key",
+                &Secret::new("hush".into()),
+            )
             .unwrap();
         assert!(!sealed.contains("hush"));
         let second = Sealer::open_beside(&database(&dir)).unwrap();
@@ -271,7 +272,9 @@ mod tests {
     fn a_lost_key_is_made_again_and_cannot_open_what_the_old_one_sealed() {
         let dir = TempDir::new().unwrap();
         let first = Sealer::open_beside(&database(&dir)).unwrap();
-        let sealed = first.seal("heartbeat_url", &Secret::new("x".into())).unwrap();
+        let sealed = first
+            .seal("heartbeat_url", &Secret::new("x".into()))
+            .unwrap();
         fs::write(dir.path().join("marfa.db"), "").unwrap();
         fs::remove_file(dir.path().join(FILE_NAME)).unwrap();
         let again = Sealer::open_beside(&database(&dir)).unwrap();

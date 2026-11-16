@@ -42,7 +42,13 @@ enum Ask<T> {
 
 /// The fields a `/config` body may name.
 pub fn fields() -> Vec<&'static str> {
-    let mut names = vec!["instance_id", "name", "enforcement", CONFIRMATION, SECRETS_SET];
+    let mut names = vec![
+        "instance_id",
+        "name",
+        "enforcement",
+        CONFIRMATION,
+        SECRETS_SET,
+    ];
     names.extend(ENTRIES.iter().map(|entry| entry.key));
     names
 }
@@ -158,7 +164,9 @@ impl Request {
                     None => errors.push((field.to_string(), "must be the instance's id".into())),
                 },
                 SECRETS_SET => {
-                    let names = value.as_array().filter(|names| names.iter().all(Value::is_string));
+                    let names = value
+                        .as_array()
+                        .filter(|names| names.iter().all(Value::is_string));
                     if names.is_none() {
                         errors.push((field.to_string(), "must be a list of setting keys".into()));
                     }
@@ -534,8 +542,10 @@ async fn check_backup_path(app: &App, request: &Request) -> Result<()> {
         together::kept_folders(&app.settings.start),
     );
     let looked = tokio::task::spawn_blocking(move || {
-        let kept: Vec<(&str, &std::path::Path)> =
-            kept.iter().map(|(what, path)| (*what, path.as_path())).collect();
+        let kept: Vec<(&str, &std::path::Path)> = kept
+            .iter()
+            .map(|(what, path)| (*what, path.as_path()))
+            .collect();
         super::blobs::folder::outside(&folder, &kept)
     });
     match tokio::time::timeout(std::time::Duration::from_secs(5), looked).await {

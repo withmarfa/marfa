@@ -250,11 +250,7 @@ mod tests {
     fn nothing_is_on_when_nothing_is_set() {
         let (config, problems) = read(&[]);
         assert!(problems.is_empty());
-        assert!(
-            config.traces.is_none()
-                && config.logs.is_none()
-                && config.exceptions.is_none()
-        );
+        assert!(config.traces.is_none() && config.logs.is_none() && config.exceptions.is_none());
         assert_eq!(config.service, "marfa-server");
         assert_eq!(config.environment, "production");
         assert_eq!(config.ratio, 0.05);

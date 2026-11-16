@@ -462,7 +462,10 @@ mod tests {
         );
         assert_eq!(
             archived(&serde_json::json!({ "key": "trash_retention_days", "value": 7 })).unwrap(),
-            ("trash_retention_days".to_string(), Archived::Value("7".to_string()))
+            (
+                "trash_retention_days".to_string(),
+                Archived::Value("7".to_string())
+            )
         );
         for machine in [
             "addresses",

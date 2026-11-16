@@ -11,12 +11,17 @@ use crate::app::addresses::{self, Address};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Rule {
-    Whole { min: u64, max: u64 },
+    Whole {
+        min: u64,
+        max: u64,
+    },
     Boolean,
     Address,
     Addresses,
     /// Text of at most `max` characters, or nothing.
-    Text { max: usize },
+    Text {
+        max: usize,
+    },
     /// An absolute http or https URL with no user name or password, or nothing.
     Endpoint,
     /// An absolute http or https URL, kept as written, or nothing.
@@ -148,7 +153,9 @@ impl Entry {
             }
             Rule::Text { max } => {
                 let kept = if self.is_secret() { text } else { text.trim() };
-                if kept.is_empty() || kept.chars().count() > max || kept.chars().any(char::is_control)
+                if kept.is_empty()
+                    || kept.chars().count() > max
+                    || kept.chars().any(char::is_control)
                 {
                     return Err(format!(
                         "must be text of 1 to {max} characters, with no control characters"
@@ -157,7 +164,10 @@ impl Entry {
                 Some(kept.to_string())
             }
             Rule::Endpoint => Some(url(text.trim(), true)?),
-            Rule::Url => Some(url(if self.is_secret() { text } else { text.trim() }, false)?),
+            Rule::Url => Some(url(
+                if self.is_secret() { text } else { text.trim() },
+                false,
+            )?),
             Rule::Prefix => Some(prefix(text.trim())?),
             Rule::Folder => Some(folder(text.trim())?),
         };
@@ -248,7 +258,12 @@ impl Entry {
 
     /// A blank or unreadable row counts as absent, then the seed, then the default. A secret's
     /// row opens only with `sealer`.
-    fn resolve(&self, seeds: &Seeds, sealer: Option<&Sealer>, row: Option<&str>) -> (Value, Reading) {
+    fn resolve(
+        &self,
+        seeds: &Seeds,
+        sealer: Option<&Sealer>,
+        row: Option<&str>,
+    ) -> (Value, Reading) {
         let read = row.filter(|text| !text.is_empty()).map(|text| {
             if self.is_secret() {
                 sealer
@@ -339,7 +354,9 @@ impl Value {
             Value::Addresses(list) => {
                 Json::from(list.iter().map(Address::origin).collect::<Vec<_>>())
             }
-            Value::Text(text) => text.as_ref().map_or(Json::Null, |text| Json::from(text.as_str())),
+            Value::Text(text) => text
+                .as_ref()
+                .map_or(Json::Null, |text| Json::from(text.as_str())),
             Value::Secret(_) => Json::Null,
         }
     }
