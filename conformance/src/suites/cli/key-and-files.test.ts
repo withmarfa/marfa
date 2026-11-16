@@ -171,6 +171,41 @@ describe("a key from MARFA_API_KEY", () => {
     expect(given.code).toBe(3);
     expect(other.arrivals.length).toBeGreaterThan(0);
   });
+
+  it("sends logout's token only to the server MARFA_API_URL names, and refuses a --url for another server", async () => {
+    const other = await listen("127.0.0.1", unavailable);
+    const otherUrl = `http://127.0.0.1:${String(other.port)}`;
+    const keychainOff = c.cli.withEnv({
+      MARFA_NO_KEYCHAIN: "1",
+      MARFA_API_KEY: "marfa_at_handed",
+    });
+
+    const refused = await keychainOff.refused([
+      "--url",
+      otherUrl,
+      "logout",
+      "--client-id",
+      "fixture",
+    ]);
+    expect(refused.code).toBe(2);
+    expect(refused.envelope.error.code).toBe("usage");
+    expect(refused.envelope.error.message).toContain("MARFA_API_URL");
+    expect(other.arrivals).toEqual([]);
+
+    // The witness: a token passed with --key is the other server's to be asked.
+    const given = await keychainOff.run([
+      "--json",
+      "--url",
+      otherUrl,
+      "--key",
+      "marfa_at_handed",
+      "logout",
+      "--client-id",
+      "fixture",
+    ]);
+    expect(given.code).not.toBe(0);
+    expect(other.arrivals.length).toBeGreaterThan(0);
+  });
 });
 
 const BODY = Buffer.from("the bytes of a stored file\n");

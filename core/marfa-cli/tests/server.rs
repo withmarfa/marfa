@@ -2719,6 +2719,43 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
 }
 
 #[test]
+fn a_refused_address_is_traced_to_the_install_the_service_runs_wherever_it_is_installed() {
+    let rig = Rig::new("n-hint");
+    rig.native_installed(&["--access", "local"]);
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    let elsewhere = rig.root.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let url = format!("http://127.0.0.1:{}", rig.port);
+    let ask = |autostart: &Path| {
+        let output = output_of(
+            quiet::marfa()
+                .env("HOME", &elsewhere)
+                .env("MARFA_AUTOSTART_ROOT", autostart)
+                .env("MARFA_NO_KEYCHAIN", "1")
+                .env("MARFA_API_URL", &url)
+                .env("MARFA_API_KEY", "marfa_k1_fixture")
+                .args(["items", "list"]),
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let dir = rig.real_dir();
+    let said = ask(&rig.home());
+    assert!(
+        said.contains(&format!("marfa server status --dir {}", dir.display()))
+            && said.contains(&format!("marfa server start --dir {}", dir.display())),
+        "{said}"
+    );
+    // The witness: with no service registered, nothing names the folder.
+    let said = ask(&elsewhere);
+    assert!(
+        !said.contains(&dir.display().to_string())
+            && said.contains("no install in the default folder"),
+        "{said}"
+    );
+}
+
+#[test]
 fn an_install_keeps_its_runtime_and_a_release_is_for_docker() {
     let rig = Rig::new("n-runtime");
     rig.native_installed(&["--access", "local"]);
@@ -3400,6 +3437,8 @@ fn a_server_on_the_path_is_never_the_one_run_starts() {
     let rig = Rig::new("r-path");
     rig.native_installed(&["--access", "local"]);
     fs::remove_file(rig.root.join("bin/marfa-server")).unwrap();
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
     let elsewhere = rig.root.join("elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();
     script(&elsewhere.join("marfa-server"), FAKE_SERVER);

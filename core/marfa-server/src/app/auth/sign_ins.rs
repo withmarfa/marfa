@@ -4,7 +4,7 @@ use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 use super::Visit;
-use super::owner::checked_name;
+use super::owner::said_name;
 use super::session::{self, ENDED, Session};
 use crate::app::App;
 use crate::app::access::Caller;
@@ -211,7 +211,7 @@ fn to_rename(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Named> {
 }
 
 pub fn new_name(text: &str) -> Result<String> {
-    checked_name(text)?.ok_or_else(|| Refusal::validation("Give the sign-in a name."))
+    said_name(text, "Give the sign-in a name.")
 }
 
 pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -> Result<SignIn> {

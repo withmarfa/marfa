@@ -31,7 +31,12 @@ fn scratch(name: &str) -> std::path::PathBuf {
 }
 
 fn run(home: &Path, url: &str, args: &[&str]) -> Ran {
+    run_with(home, url, args, &[])
+}
+
+fn run_with(home: &Path, url: &str, args: &[&str], more: &[(&str, &Path)]) -> Ran {
     let output = quiet::marfa()
+        .envs(more.iter().copied())
         .env("HOME", home)
         .env("MARFA_API_URL", url)
         .env("MARFA_API_KEY", "marfa_k1_fixture")
@@ -156,8 +161,21 @@ fn a_refused_connection_to_this_machine_asks_whether_the_server_runs() {
         ran.stderr
     );
     assert!(
+        ran.stderr.contains(
+            "no install in the default folder, or run by a service on this machine, serves it"
+        ) && ran.stderr.contains("marfa server status --dir <folder>"),
+        "no install serves it, so the command names no folder: {}",
         ran.stderr
-            .contains("Is the server running? `marfa server status`"),
+    );
+
+    // An install in the default folder that serves the address is the one to ask.
+    let port = url.rsplit(':').next().unwrap();
+    install_serving(&home, port);
+    let ran = run(&home, &url, &["items", "list"]);
+    assert!(
+        ran.stderr.contains("`marfa server status` shows it")
+            && ran.stderr.contains("`marfa server start` starts it")
+            && !ran.stderr.contains("--dir"),
         "{}",
         ran.stderr
     );
@@ -192,10 +210,16 @@ fn local_only() -> Answer {
 }
 
 fn install_serving(home: &Path, port: &str) -> std::path::PathBuf {
-    let folder = home.join("marfa-server");
+    install_in(&home.join("marfa-server"), port, true)
+}
+
+/// An install in `folder`, with its socket where it is running.
+fn install_in(folder: &Path, port: &str, running: bool) -> std::path::PathBuf {
     let socket = folder.join("data").join("control").join("marfa.sock");
     std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
-    std::fs::write(&socket, "").unwrap();
+    if running {
+        std::fs::write(&socket, "").unwrap();
+    }
     std::fs::write(
         folder.join(".env"),
         format!(
@@ -321,4 +345,84 @@ fn a_sign_in_address_change_names_its_consequences_and_the_flag_that_confirms_it
     );
     assert_eq!(ran.code, 1, "{}", ran.stderr);
     assert!(ran.stderr.contains("JSON object"), "{}", ran.stderr);
+}
+
+/// A launchd agent for a server installed in `folder`, as the installer writes it, where the
+/// stand-in root's login agents are kept.
+fn register(root: &Path, name: &str, folder: &Path) {
+    let agents = root.join("Library/LaunchAgents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join(format!("so.marfa.server.{name}.plist")),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n<key>Label</key>\n<string>so.marfa.server.{name}</string>\n<key>ProgramArguments</key>\n<array>\n<string>/usr/local/bin/marfa</string>\n<string>server</string>\n<string>run</string>\n<string>--dir</string>\n<string>{}</string>\n</array>\n</dict>\n</plist>\n",
+            folder.display()
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_install_in_another_folder_is_found_from_the_service_that_runs_it() {
+    let home = scratch("elsewhere-home");
+    let root = scratch("elsewhere-root");
+    let folder = scratch("elsewhere-folder").join("my server");
+    std::fs::create_dir_all(&folder).unwrap();
+    register(&root, "work", &folder);
+    let more = [("MARFA_AUTOSTART_ROOT", root.as_path())];
+
+    // Stopped: the hint names the folder, and each command works as printed.
+    let url = closed_port();
+    let port = url.rsplit(':').next().unwrap().to_string();
+    install_in(&folder, &port, false);
+    let ran = run_with(&home, &url, &["items", "list"], &more);
+    let quoted = format!("'{}'", folder.display());
+    assert!(
+        ran.stderr
+            .contains(&format!("`marfa server status --dir {quoted}` shows it"))
+            && ran
+                .stderr
+                .contains(&format!("`marfa server start --dir {quoted}` starts it")),
+        "{}",
+        ran.stderr
+    );
+    // The witness: the same refusal with no service registered finds nothing.
+    let ran = run(&home, &url, &["items", "list"]);
+    assert!(
+        !ran.stderr.contains(&format!("--dir {quoted}")),
+        "{}",
+        ran.stderr
+    );
+
+    // Running: the refused local command is printed with the real socket.
+    let door = Door::open(vec![local_only()]);
+    let port = door.url.rsplit(':').next().unwrap().to_string();
+    let socket = install_in(&folder, &port, true);
+    let ran = run_with(&home, &door.url, &["backups", "list"], &more);
+    assert!(
+        ran.stderr.contains(&format!(
+            "marfa --socket '{}' backups list",
+            socket.display()
+        )),
+        "{}",
+        ran.stderr
+    );
+    let door = Door::open(vec![local_only()]);
+    let ran = run(&home, &door.url, &["backups", "list"]);
+    assert!(!ran.stderr.contains("--socket '"), "{}", ran.stderr);
+
+    // An install that serves the address with no socket yet says where to start it.
+    let door = Door::open(vec![local_only()]);
+    let port = door.url.rsplit(':').next().unwrap().to_string();
+    install_in(&folder, &port, false);
+    let _ = std::fs::remove_file(folder.join("data/control/marfa.sock"));
+    let ran = run_with(&home, &door.url, &["backups", "list"], &more);
+    assert!(
+        ran.stderr.contains("its socket is not there")
+            && ran
+                .stderr
+                .contains(&format!("marfa server start --dir {quoted}")),
+        "{}",
+        ran.stderr
+    );
 }

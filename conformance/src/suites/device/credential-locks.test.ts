@@ -276,7 +276,12 @@ interface Running {
 }
 
 /** Starts the binary against `origin` under `keychain`, with a home of its own. */
-function marfaAt(keychain: string, origin: string, args: string[]): Running {
+function marfaAt(
+  keychain: string,
+  origin: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): Running {
   const home = mkdtempSync(
     join(realpathSync(tmpdir()), "marfa-credential-home-"),
   );
@@ -287,7 +292,7 @@ function marfaAt(keychain: string, origin: string, args: string[]): Running {
     requireBinary(),
     ["--json", "--url", origin, ...args],
     {
-      env: { ...env, MARFA_KEYCHAIN: keychain, HOME: home },
+      env: { ...env, MARFA_KEYCHAIN: keychain, HOME: home, ...extraEnv },
       timeout: 30_000,
     },
   );
@@ -745,6 +750,77 @@ describe("a kept credential", ON_MACOS, () => {
       );
       expect(await keptFor(origin), `${name}: still kept`).toBeNull();
     }
+  });
+
+  it("revokes the token it is handed when the keychain is off, and says so only when the server then refuses it", async () => {
+    const before = keychainFile();
+    const cases = [
+      { name: "its client", clientId: "fixture", stillWorks: false },
+      // The witness: another client's id is answered alike and ends nothing.
+      { name: "another client", clientId: "other", stillWorks: true },
+    ];
+    for (const { name, clientId, stillWorks } of cases) {
+      const prefix = `/credential-${randomUUID()}`;
+      const origin = `${server.url}${prefix}`;
+      const at = (path: string) => `${server.url}${prefix}${path}`;
+      server.answer("GET", `${prefix}/.well-known/oauth-authorization-server`, {
+        kind: "json",
+        status: 200,
+        body: {
+          issuer: new URL(server.url).origin,
+          token_endpoint: at("/token"),
+          device_authorization_endpoint: at("/device"),
+          registration_endpoint: at("/register"),
+          revocation_endpoint: at("/revoke"),
+        },
+      });
+      server.answer("POST", `${prefix}/revoke`, {
+        kind: "json",
+        status: 200,
+        body: {},
+      });
+      server.answer("GET", `${prefix}/`, ROOT);
+      server.answer(
+        "GET",
+        `${prefix}/profile`,
+        stillWorks
+          ? { kind: "json", status: 200, body: { name: "Fixture owner" } }
+          : {
+              kind: "json",
+              status: 401,
+              body: { error: { code: "unauthorized", message: "revoked" } },
+            },
+      );
+      const out = await marfaAt(
+        keychain.path,
+        origin,
+        ["logout", "--client-id", clientId],
+        { MARFA_NO_KEYCHAIN: "1", MARFA_API_KEY: "marfa_at_handed" },
+      ).done;
+      const revoke = server.requests.find(
+        (request) =>
+          request.method === "POST" && request.pathname === `${prefix}/revoke`,
+      );
+      expect(new URLSearchParams(revoke!.body).get("token"), name).toBe(
+        "marfa_at_handed",
+      );
+      expect(new URLSearchParams(revoke!.body).get("client_id"), name).toBe(
+        clientId,
+      );
+      expect(
+        new URLSearchParams(revoke!.body).get("token_type_hint"),
+        name,
+      ).toBe("access_token");
+      if (stillWorks) {
+        expect(out.code, `${name}: ${out.stdout}`).toBe(1);
+      } else {
+        expect(out.code, `${name}: ${out.stderr}`).toBe(0);
+        expect(JSON.parse(out.stdout), name).toMatchObject({
+          accepted: false,
+        });
+      }
+    }
+    expect(keychainFile()).toBe(before);
   });
 
   it("forgets a kept key without sending anything", async () => {

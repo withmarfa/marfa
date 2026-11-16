@@ -40,6 +40,16 @@ async function diskStatus(room: number): Promise<string | undefined> {
   return body.components.disk?.status;
 }
 
+async function diskError(): Promise<string | undefined> {
+  const response = await fetch(`${server.apiUrl}/health`, {
+    headers: { Authorization: `Bearer ${server.managementKey}` },
+  });
+  const body = (await response.json()) as {
+    components: Record<string, { error?: string }>;
+  };
+  return body.components.disk?.error;
+}
+
 describe("GET /health with a disk reserve above the fixed line", () => {
   it("answers the disk component degraded below a reserve above 64 MiB, and ok at it", async () => {
     // The witness: room at the reserve is ok, so the degraded answers below
@@ -49,5 +59,20 @@ describe("GET /health with a disk reserve above the fixed line", () => {
     expect(await diskStatus(RESERVE - 1)).toBe("degraded");
     // Under 1 MiB is down whatever the reserve is.
     expect(await diskStatus(MiB - 1)).toBe("down");
+  });
+
+  it("says in the disk component's error that the reserve is not less than the volume, naming the setting, where it is not", async () => {
+    await server.setFault(`size:blobs=${String(RESERVE / 2)}`);
+    await server.setFault(`free:database=${String(100 * MiB)}`);
+    await server.setFault(`free:blobs=${String(100 * MiB)}`);
+    expect(await diskError()).toContain(
+      "disk reserve of 256 MiB (disk_reserve_bytes) is not less than the 128 MiB",
+    );
+    // The witness: a volume the reserve fits in says only that room is short.
+    await server.setFault(`size:blobs=${String(RESERVE * 2)}`);
+    const short = await diskError();
+    expect(short).toContain("less than the disk reserve of 256 MiB");
+    expect(short).not.toContain("not less than the");
+    await server.clearFault();
   });
 });

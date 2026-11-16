@@ -625,6 +625,14 @@ async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
     let page = instance.get("/auth/owner/passkeys", &instance.owner).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.text.contains("data-passkey-remove"));
+    assert!(
+        page.text
+            .contains(&format!("data-passkey-rename-form=\"{id}\"")),
+        "{}",
+        page.text
+    );
+    let name = listed[0]["name"].as_str().unwrap();
+    assert!(page.text.contains(&format!("value=\"{name}\"")));
     let removed = instance
         .delete(&format!("/owner/passkeys/{id}"), &instance.owner)
         .await;

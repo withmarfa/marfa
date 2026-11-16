@@ -827,6 +827,81 @@ async fn a_rollback_reads_only_the_files_the_disk_lacks_and_needs_room_only_for_
 }
 
 #[tokio::test]
+async fn a_folder_on_the_servers_volume_that_would_leave_less_than_the_reserve_says_so_in_health() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    let (file, _) = instance.file(b"a file the folder has no room for").await;
+    instance
+        .app
+        .faults
+        .set("free:backups", Some("2097152"))
+        .unwrap();
+
+    let replicated = instance.run("blob-replicate").await;
+    assert_eq!(replicated["outcome"], "error", "{replicated}");
+    assert_eq!(replicated["result"]["copied"], 0, "{replicated}");
+    let health = instance.health().await;
+    let told = health["store_error"].as_str().unwrap();
+    assert!(told.contains("has 2 MiB free"), "{told}");
+    assert!(
+        told.contains("disk reserve of 128 MiB (disk_reserve_bytes)"),
+        "{told}"
+    );
+    assert!(!copy_of(folder.path(), &instance.id(), &file).exists());
+
+    instance
+        .app
+        .faults
+        .set("free:backups", Some("1073741824"))
+        .unwrap();
+    let replicated = instance.run("blob-replicate").await;
+    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert!(copy_of(folder.path(), &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn an_archive_that_would_leave_less_than_the_reserve_on_the_servers_volume_is_not_written() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    instance.note("a note").await;
+    let own = folder.path().join("backups").join(instance.id());
+    instance
+        .app
+        .faults
+        .set("free:backups", Some("2097152"))
+        .unwrap();
+
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let told = body["error"]["message"].as_str().unwrap();
+    assert!(told.contains("has 2 MiB free"), "{told}");
+    assert!(
+        told.contains("disk reserve of 128 MiB (disk_reserve_bytes)"),
+        "{told}"
+    );
+    assert!(names_in(&own).is_empty(), "{:?}", names_in(&own));
+    // The refusal comes before the archive's files are spooled, and what was read is removed.
+    let tmp = instance.data.path().join("blobs").join("tmp");
+    for _ in 0..250 {
+        if names_in(&tmp).is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(names_in(&tmp), Vec::<String>::new());
+
+    // The witness: the same run with room puts the archive.
+    instance
+        .app
+        .faults
+        .set("free:backups", Some("1073741824"))
+        .unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(names_in(&own).len(), 1);
+}
+
+#[tokio::test]
 async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_afresh() {
     let parent = TempDir::new().unwrap();
     let folder = parent.path().join("disk");

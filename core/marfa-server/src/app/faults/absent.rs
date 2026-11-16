@@ -85,6 +85,10 @@ impl Faults {
         None
     }
 
+    pub fn size(&self, _volume: Volume) -> Option<Option<u64>> {
+        None
+    }
+
     pub fn refusing(&self, _point: &Point) -> bool {
         false
     }

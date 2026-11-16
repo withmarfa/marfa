@@ -20,7 +20,7 @@ pub use self::challenge::Sealer;
 pub use self::challenge::{LIFE_MS as CHALLENGE_LIFE_MS, UNREAD as UNREAD_ANSWERED};
 pub use self::store::Listed;
 use super::limits::{hold_to, passkey_challenge_lanes};
-use super::owner::{self, Owner, checked_name};
+use super::owner::{self, Owner, said_name};
 use super::session::{self, New, Opened};
 use super::sign_in::{SIGN_IN_FAILED, SIGNED_IN};
 use super::{Note, Visit, carries_sessions, note};
@@ -180,7 +180,7 @@ pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
 }
 
 fn passkey_name(text: &str) -> Result<String> {
-    checked_name(text)?.ok_or_else(|| Refusal::validation("Give the passkey a name."))
+    said_name(text, "Give the passkey a name.")
 }
 
 pub struct Adding {

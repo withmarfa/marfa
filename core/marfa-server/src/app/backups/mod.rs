@@ -24,7 +24,7 @@ use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
-use super::blobs::{Blob, Hash};
+use super::blobs::{Blob, Hash, folder_shortfall};
 use super::clock::Stamp;
 use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE};
 use super::housekeeping::{self, Report, Run};
@@ -1314,11 +1314,20 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
         .collect();
     hold(app, &destination.id(), &name, files, in_store).await?;
     let copied = uncopied.len();
+    let mut shared = None;
     let lost = match destination {
         Destination::Bucket(_) => readable_nowhere(app, uncopied).await?,
-        Destination::Folder(folder) => copy_files(app, destination, folder, uncopied).await?,
+        Destination::Folder(folder) => {
+            copy_files(app, destination, folder, uncopied, &mut shared).await?
+        }
     };
-    let backup = taken.send(app, &lost, app.blobs.check())?;
+    let bound = taken.bound(&lost)?;
+    if let Destination::Folder(folder) = destination
+        && let Some(why) = folder_shortfall(app, folder.root(), &mut shared, bound).await
+    {
+        return Err(destination.failed_while("writing the backup", &why));
+    }
+    let backup = taken.send(app, &lost, bound, app.blobs.check());
     let limit = backup.limit;
     let bytes = put_stream(app, backup);
     let size = match destination {
@@ -1410,6 +1419,7 @@ async fn copy_files(
     destination: &Destination,
     folder: &Arc<Folder>,
     hashes: Vec<String>,
+    shared: &mut Option<bool>,
 ) -> Result<Vec<String>> {
     let target = Store::Folder(folder.files());
     let mut unreachable = std::collections::BTreeSet::new();
@@ -1426,7 +1436,7 @@ async fn copy_files(
         let Some(blob) = blob else {
             return Err(purged_while_taken(&hash));
         };
-        let failed = match replicate_one(app, &target, &blob, &mut unreachable).await? {
+        let failed = match replicate_one(app, &target, &blob, &mut unreachable, shared).await? {
             Replicated::Copied | Replicated::Passed => None,
             Replicated::Unreadable => {
                 lost.push(hash);

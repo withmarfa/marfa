@@ -57,7 +57,7 @@ Anyone who can read the project's deploy logs can use a recovery code, so leave 
 
 Railway does not update this instance for you, and you should not let it update the image by itself. Keep the image tag pinned to the release you deployed.
 
-Before Marfa 0.1, a release cannot read the database or the export of another release, so a newer release means a new instance, not a new tag on this one. Don't change the tag on a running instance. To try a newer release, create a new project from the template.
+Before Marfa 0.1, a release does not promise to read the database or the export of another release, so a newer release means a new instance, not a new tag on this one. Don't change the tag on a running instance. To try a newer release, create a new project from the template.
 
 - **Template updates do not apply.** Railway [template updates](https://docs.railway.com/templates/updates) work only for services that come from a GitHub repository, and its documentation says there is no mechanism to check for updates to Docker images.
 - **Leave image auto updates off.** Railway can [update an image automatically](https://docs.railway.com/deployments/image-auto-updates) inside a maintenance window, which would put a newer build on your database.

@@ -157,7 +157,7 @@ mod tests {
     }
 
     fn room(dir: &std::path::Path, faults: Arc<Faults>, reserve: u64) -> Room {
-        Room::at(faults, dir.to_path_buf(), reserve)
+        Room::new(faults, dir.to_path_buf(), reserve)
     }
 
     fn unreserved(dir: &std::path::Path) -> Room {

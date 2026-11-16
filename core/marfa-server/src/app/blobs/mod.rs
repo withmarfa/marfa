@@ -9,6 +9,7 @@ pub mod link;
 pub mod range;
 pub mod references;
 pub mod restore;
+mod room;
 mod rows;
 pub mod s3;
 pub mod store;
@@ -17,7 +18,7 @@ pub mod upkeep;
 use std::fs::File;
 use std::future::Future;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,12 +32,12 @@ use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS,
-    HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie, Volume,
+    HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie,
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{housekeeping, provenance, stored};
-use crate::db::{Db, Write, volume};
+use crate::db::{Db, Write};
 use crate::failure::Failure;
 use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::settings::start::ObjectStoreSettings;
@@ -45,6 +46,7 @@ pub use disk::{MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
+pub use room::{Room, bytes_in_words, copy_shortfall, folder_shortfall, room, shortfall};
 use rows::Held;
 pub use rows::{
     CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,
@@ -740,54 +742,6 @@ fn refusal_in(failure: &Failed) -> Option<Refusal> {
     }
 }
 
-/// Refuses a body that would leave less free on the blob volume than the reserve.
-fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()> {
-    room_on(faults, Volume::Blobs, root, reserve, incoming)
-}
-
-/// Refuses a body that would leave less free on `root`'s volume than the reserve.
-fn room_on(faults: &Faults, which: Volume, root: &Path, reserve: u64, incoming: u64) -> Result<()> {
-    if reserve == 0 {
-        return Ok(());
-    }
-    let Some(available) = faults
-        .free(which)
-        .unwrap_or_else(|| volume::free_bytes(root))
-    else {
-        return Ok(());
-    };
-    if available.saturating_sub(incoming) < reserve {
-        return Err(insufficient()
-            .with_detail("reserve_bytes", reserve)
-            .with_detail("available_bytes", available));
-    }
-    Ok(())
-}
-
-/// The reserve a file the server writes on the disk store's volume must leave free there.
-#[derive(Clone)]
-pub struct Room {
-    faults: Arc<Faults>,
-    root: PathBuf,
-    reserve: u64,
-}
-
-impl Room {
-    #[cfg(test)]
-    pub fn at(faults: Arc<Faults>, root: PathBuf, reserve: u64) -> Room {
-        Room {
-            faults,
-            root,
-            reserve,
-        }
-    }
-
-    /// Refuses where the volume already has less free than the reserve. It blocks.
-    pub fn check(&self) -> Result<()> {
-        room(&self.faults, &self.root, self.reserve, 0)
-    }
-}
-
 /// Bytes on the disk that no record names yet, locked against deletion until it is dropped, once the record's write has ended.
 struct Placed {
     recording: Recording,
@@ -890,11 +844,11 @@ impl App {
     }
 
     pub fn room(&self) -> Room {
-        Room {
-            faults: self.faults.clone(),
-            root: self.blobs.disk.root().to_path_buf(),
-            reserve: self.settings.live().get(DISK_RESERVE_BYTES),
-        }
+        Room::new(
+            self.faults.clone(),
+            self.blobs.disk.root().to_path_buf(),
+            self.settings.live().get(DISK_RESERVE_BYTES),
+        )
     }
 
     pub fn blob_read_idle(&self) -> Duration {

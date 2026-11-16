@@ -362,7 +362,11 @@ impl Remote {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
             None => match non_empty(std::env::var("MARFA_API_KEY").ok()) {
                 Some(key) => {
-                    Self::refuse_key_for_another_server(named, &origin)?;
+                    Self::refuse_key_for_another_server(
+                        named,
+                        &origin,
+                        non_empty(std::env::var("MARFA_API_URL").ok()),
+                    )?;
                     (Some(key), Some(CredentialSource::Environment))
                 }
                 None => match auth::resolve_credential(&origin, renew_stale) {
@@ -380,11 +384,15 @@ impl Remote {
     }
 
     /// The environment exports the server and its key as a pair.
-    fn refuse_key_for_another_server(named: &Named, origin: &str) -> Result<(), CliError> {
+    fn refuse_key_for_another_server(
+        named: &Named,
+        origin: &str,
+        exported: Option<String>,
+    ) -> Result<(), CliError> {
         if named.url.is_none() {
             return Ok(());
         }
-        let Some(exported) = non_empty(std::env::var("MARFA_API_URL").ok()) else {
+        let Some(exported) = exported else {
             return Ok(());
         };
         if marfa_core::http::origin_of(&exported).ok().as_deref() == Some(origin) {
@@ -393,6 +401,41 @@ impl Remote {
         Err(CliError::Usage(format!(
             "MARFA_API_KEY is for the server MARFA_API_URL names, not {origin}: pass --key for that server or set MARFA_API_URL to it"
         )))
+    }
+
+    /// The server and the key `--key` or `MARFA_API_KEY` hand a command, chosen as `resolve` does:
+    /// none for a profile, whose credential is its own.
+    pub fn handed_key(named: &Named) -> Result<Option<(String, String)>, CliError> {
+        Self::handed_key_with(
+            named,
+            non_empty(std::env::var("MARFA_API_KEY").ok()),
+            non_empty(std::env::var("MARFA_API_URL").ok()),
+        )
+    }
+
+    fn handed_key_with(
+        named: &Named,
+        environment_key: Option<String>,
+        environment_url: Option<String>,
+    ) -> Result<Option<(String, String)>, CliError> {
+        if named.profile.is_some() {
+            return Ok(None);
+        }
+        // As `resolve` does, an empty `--key` is a key given: no token goes, and the environment's
+        // does not stand in for it.
+        if named.key.as_deref() == Some("") {
+            return Ok(None);
+        }
+        let from_environment = named.key.is_none();
+        let Some(key) = named.key.clone().or(environment_key.clone()) else {
+            return Ok(None);
+        };
+        let url = Self::url_named_with(named, environment_url.clone(), environment_key.is_some())?;
+        if from_environment {
+            let origin = marfa_core::http::origin_of(&url)?;
+            Self::refuse_key_for_another_server(named, &origin, environment_url)?;
+        }
+        Ok(Some((url, key)))
     }
 
     /// A profile's server, with the credential the keychain keeps for it or
@@ -1009,6 +1052,81 @@ mod tests {
             Some(key) => Remote::keyed(&door.url, key).unwrap(),
             None => Remote::public_at(&door.url).unwrap(),
         }
+    }
+
+    fn handed(
+        named: &Named,
+        key: Option<&str>,
+        url: Option<&str>,
+    ) -> Result<Option<(String, String)>, CliError> {
+        Remote::handed_key_with(named, key.map(str::to_string), url.map(str::to_string))
+    }
+
+    #[test]
+    fn an_environment_token_goes_only_to_the_server_the_environment_names() {
+        let at = |url: &str| Named {
+            url: Some(url.to_string()),
+            ..Named::default()
+        };
+        // The witness: the pair the environment exports is handed on whole.
+        let found = handed(
+            &at("https://b.example"),
+            Some("marfa_at_a"),
+            Some("https://b.example"),
+        );
+        assert!(
+            matches!(&found, Ok(Some((url, key))) if url == "https://b.example" && key == "marfa_at_a"),
+            "{found:?}"
+        );
+        // --url B beside MARFA_API_URL A is the other server's token.
+        let refused = handed(
+            &at("https://b.example"),
+            Some("marfa_at_a"),
+            Some("https://a.example"),
+        );
+        assert!(
+            matches!(&refused, Err(CliError::Usage(message)) if message.contains("not https://b.example")),
+            "{refused:?}"
+        );
+        // A key passed with --key belongs to the server --url names, whatever the environment says.
+        let flagged = Named {
+            key: Some("marfa_at_flag".into()),
+            ..at("https://b.example")
+        };
+        let found = handed(&flagged, Some("marfa_at_a"), Some("https://a.example"));
+        assert!(
+            matches!(&found, Ok(Some((url, key))) if url == "https://b.example" && key == "marfa_at_flag"),
+            "{found:?}"
+        );
+        assert!(matches!(
+            handed(&at("https://b.example"), None, None),
+            Ok(None)
+        ));
+        // An empty --key is a key given, as it is to `resolve`: no token goes, and the
+        // environment's does not stand in for it.
+        let emptied = Named {
+            key: Some(String::new()),
+            ..at("https://b.example")
+        };
+        let found = handed(&emptied, Some("marfa_at_a"), Some("https://b.example"));
+        assert!(matches!(found, Ok(None)), "{found:?}");
+    }
+
+    #[test]
+    fn a_profile_is_handed_no_token_from_the_environment() {
+        let profile = Named {
+            profile: Some(Chosen::new("demo".into(), ChosenBy::Flag)),
+            ..Named::default()
+        };
+        let found = handed(&profile, Some("marfa_at_a"), Some("https://a.example"));
+        assert!(matches!(found, Ok(None)), "{found:?}");
+        // The witness: the same environment without the profile is handed on.
+        let bare = Named {
+            url: Some("https://a.example".into()),
+            ..Named::default()
+        };
+        let found = handed(&bare, Some("marfa_at_a"), Some("https://a.example"));
+        assert!(matches!(found, Ok(Some(_))), "{found:?}");
     }
 
     #[test]

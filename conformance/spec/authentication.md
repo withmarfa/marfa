@@ -110,6 +110,14 @@ When the server renders the owner's Password and passkeys page, the server MUST 
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
+### `authentication/passkey-page-rename`
+
+When the server renders the owner's Password and passkeys page, the server MUST give each passkey listed on it a control that renames the passkey through `PATCH /owner/passkeys/{id}`.
+
+**Reason:** a name chosen at registration, or left to the device, is the only way to tell two passkeys apart, and renaming is the repair when it is wrong.
+
+**Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
+
 ### `authentication/passkey-duplicate`
 
 When a registration names a credential ID already registered on the instance, the server MUST refuse it with `409`.

@@ -16,6 +16,7 @@ mod logs;
 mod names;
 mod native;
 mod prompt;
+mod registered;
 mod run;
 mod service;
 mod systemd;
@@ -60,18 +61,13 @@ pub enum ServerCommand {
     /// question has a flag, and `--yes` or a non-terminal answers none: the
     /// flag or the default is used.
     Install(InstallArgs),
-    /// Move the server to the release now installed, and update its database.
+    /// Move the server to the release now installed.
     ///
-    /// A native server runs the `marfa-server` installed beside this `marfa`,
-    /// so install the release you want first (Homebrew, or the install
-    /// script), then run this. A Docker install moves to the release you name
-    /// with `--release`, or to this binary's own. A release whose database
-    /// schema is newer copies the database beside it first, when it holds
-    /// data, then updates it. The copy is the database file's name with
-    /// `.before-upgrade` added, beside it, and the next such update replaces
-    /// it. The command says where the copy is. It refuses an older release
-    /// than the one installed, because an older release does not know what a
-    /// newer one changed in the database.
+    /// Before Marfa 0.1, a release does not promise to open the database of another release, so a
+    /// newer release needs a new install, and this moves a server only between builds of one
+    /// release. A native server runs the `marfa-server` installed beside this `marfa`. A Docker
+    /// install moves to the release you name with `--release`, or to this binary's own. It
+    /// refuses an older release than the one installed.
     Upgrade(UpgradeArgs),
     /// Whether the server runs, its release and address, and whether it is claimed.
     ///
@@ -370,22 +366,73 @@ impl PrivateCommand {
 /// The socket inside a Docker install's container.
 const CONTAINER_SOCKET: &str = "/data/control/marfa.sock";
 
-/// The private local command of the server at `origin`, if this machine's install is that server.
-pub fn private_command_for(origin: &str) -> Option<PrivateCommand> {
-    let asked = url::Url::parse(origin).ok()?;
-    let folder = Folder::new(&DirArgs { dir: None }).ok()?;
-    let (state, _) = folder.state().ok()??;
-    let on_this_port = marfa_telemetry::host::is_loopback(&asked)
-        && asked.port_or_known_default() == Some(state.port);
-    let at_its_address = state
-        .address
-        .as_deref()
-        .and_then(|address| url::Url::parse(address).ok())
-        .is_some_and(|address| address.origin() == asked.origin());
-    if !on_this_port && !at_its_address {
-        return None;
+/// The install on this machine that serves a server address.
+pub struct Serving {
+    folder: Folder,
+    state: State,
+    /// Whether this is the folder a command without `--dir` means.
+    default: bool,
+}
+
+impl Serving {
+    /// The private local command of the install, if it has one to run now.
+    pub fn private(&self) -> Option<PrivateCommand> {
+        PrivateCommand::of(&self.state, &self.folder)
     }
-    PrivateCommand::of(&state, &folder)
+
+    /// `command`, with `--dir` unless this is the default install.
+    pub fn command(&self, command: &str) -> String {
+        if self.default {
+            format!("marfa server {command}")
+        } else {
+            format!(
+                "marfa server {command} --dir {}",
+                crate::hint::shell_word(&self.folder.dir.display().to_string())
+            )
+        }
+    }
+
+    pub fn dir(&self) -> &std::path::Path {
+        &self.folder.dir
+    }
+}
+
+/// The install on this machine that serves `origin`.
+pub fn serving(origin: &str) -> Option<Serving> {
+    let asked = url::Url::parse(origin).ok()?;
+    let default = Folder::new(&DirArgs { dir: None })
+        .ok()
+        .map(|folder| folder.dir);
+    let mut dirs: Vec<PathBuf> = default.iter().cloned().collect();
+    for dir in registered::folders() {
+        if let Ok(folder) = Folder::new(&DirArgs { dir: Some(dir) })
+            && !dirs.contains(&folder.dir)
+        {
+            dirs.push(folder.dir);
+        }
+    }
+    for dir in dirs {
+        let folder = Folder { dir };
+        let Ok(Some((state, _))) = folder.state() else {
+            continue;
+        };
+        let on_this_port = marfa_telemetry::host::is_loopback(&asked)
+            && asked.port_or_known_default() == Some(state.port);
+        let at_its_address = state
+            .address
+            .as_deref()
+            .and_then(|address| url::Url::parse(address).ok())
+            .is_some_and(|address| address.origin() == asked.origin());
+        if on_this_port || at_its_address {
+            let is_default = default.as_ref() == Some(&folder.dir);
+            return Some(Serving {
+                folder,
+                state,
+                default: is_default,
+            });
+        }
+    }
+    None
 }
 
 /// The path with the part that exists made real, so that a link in it is
