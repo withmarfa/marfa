@@ -2033,10 +2033,10 @@ mod dispatch {
     #[test]
     fn a_tag_write_names_the_version_it_was_given() {
         use clap::Parser;
-        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let tags = r#"{"tags":[]}"#;
         let door = Door::open(vec![
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", tags),
         ]);
         for args in [
             ["marfa", "items", "tag", "i", "a", "--version", "3"].as_slice(),
@@ -2059,13 +2059,13 @@ mod dispatch {
         let key = |value: &str| items::IdempotencyArgs {
             idempotency_key: Some(value.into()),
         };
-        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let tags = r#"{"tags":[]}"#;
         let door = Door::open(vec![
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", r#"{"tags":[]}"#),
-            Answer::json("200 OK", r#"{"extensions":{}}"#),
-            Answer::json("200 OK", r#"{"extensions":{}}"#),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json("200 OK", r#"{"data":[]}"#),
         ]);
         let remote = remote_at(&door);
         items::run(

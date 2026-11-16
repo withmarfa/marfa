@@ -1687,7 +1687,7 @@ pub(crate) mod tests {
             purged_only,
             "tombstone  v2  purged 2026-01-01T00:00:00.000Z  settled 2026-01-02T00:00:00.000Z"
         );
-        let moved = describe(&json!({"tombstones": [tombstone]})).unwrap();
+        let moved = describe(&json!({"data": [tombstone]})).unwrap();
         assert_eq!(moved, purged_only);
     }
 
