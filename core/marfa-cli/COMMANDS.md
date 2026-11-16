@@ -165,13 +165,17 @@ marfa login [OPTIONS]
 
 ## logout
 
-Sign out of a server: the token is revoked and forgotten.
+Sign out of a server: the token is revoked and forgotten. With the keychain off, it revokes the token passed with --key or MARFA_API_KEY.
 
 ### marfa logout
 
 ```text
 marfa logout [OPTIONS]
 ```
+
+| Option | Description |
+| --- | --- |
+| `--client-id <ID>` | With the keychain off, the client id the token was issued to, as `marfa login --print-token` printed it. The server revokes a token only for that client. |
 
 ## setup
 

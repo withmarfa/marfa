@@ -517,3 +517,108 @@ fn signing_out_and_forgetting_use_the_kept_server_though_a_key_is_exported() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(!keychain.holds(url));
 }
+
+/// `logout` with the keychain off, for the token it is handed.
+fn logout_off(keychain: &Isolated, url: &str, token: &str, extra: &[&str]) -> std::process::Output {
+    keychain
+        .marfa()
+        .env("MARFA_NO_KEYCHAIN", "1")
+        .env("MARFA_API_KEY", token)
+        .args(["--json", "--url", url, "logout"])
+        .args(extra)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn logging_out_with_the_keychain_off_revokes_the_token_it_is_handed() {
+    let keychain = keychain_holding("logout-off", "https://elsewhere.example");
+    let before = std::fs::read(keychain.keychain_path()).unwrap();
+
+    // An access token: discovery, the revocation, then the server refuses the token.
+    let door = Door::open_at(|origin| {
+        vec![
+            Answer::json("200 OK", &discovery(origin)),
+            Answer::json("200 OK", "{}"),
+            Answer::json(
+                "401 Unauthorized",
+                r#"{"error":{"code":"unauthorized","message":"No."}}"#,
+            ),
+        ]
+    });
+    let ran = logout_off(
+        &keychain,
+        &door.url,
+        "marfa_at_handed",
+        &["--client-id", "registered"],
+    );
+    assert!(ran.status.success(), "{ran:?}");
+    let said: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
+    assert_eq!(said["revoked"], true, "{said}");
+    let sent = door.received();
+    assert_eq!(sent.len(), 3);
+    assert!(sent[1].path().ends_with("/revoke"), "{}", sent[1].path());
+    assert_eq!(sent[1].method(), "POST");
+    for part in [
+        "token=marfa_at_handed",
+        "token_type_hint=access_token",
+        "client_id=registered",
+    ] {
+        assert!(sent[1].body.contains(part), "{}", sent[1].body);
+    }
+    assert!(sent[1].header("authorization").is_none());
+
+    // The witness: a client that is not the token's leaves it working, which is said.
+    let door = Door::open_at(|origin| {
+        vec![
+            Answer::json("200 OK", &discovery(origin)),
+            Answer::json("200 OK", "{}"),
+            Answer::json("200 OK", "{}"),
+        ]
+    });
+    let ran = logout_off(
+        &keychain,
+        &door.url,
+        "marfa_at_handed",
+        &["--client-id", "other"],
+    );
+    assert_eq!(ran.status.code(), Some(1), "{ran:?}");
+    assert!(
+        String::from_utf8_lossy(&ran.stderr).contains("still accepts the token"),
+        "{ran:?}"
+    );
+
+    // A refresh token has nothing to try it with, so it is only sent.
+    let door = Door::open_at(|origin| {
+        vec![
+            Answer::json("200 OK", &discovery(origin)),
+            Answer::json("200 OK", "{}"),
+        ]
+    });
+    let ran = logout_off(
+        &keychain,
+        &door.url,
+        "marfa_rt_handed",
+        &["--client-id", "registered"],
+    );
+    assert!(ran.status.success(), "{ran:?}");
+    let said: serde_json::Value = serde_json::from_slice(&ran.stdout).unwrap();
+    assert!(said["revoked"].is_null(), "{said}");
+    let sent = door.received();
+    assert_eq!(sent.len(), 2);
+    assert!(sent[1].body.contains("token_type_hint=refresh_token"));
+
+    // Neither a key nor a token without its client is sent anywhere.
+    let door = Door::open(vec![]);
+    let ran = logout_off(&keychain, &door.url, "marfa_k1_key", &["--client-id", "x"]);
+    assert_eq!(ran.status.code(), Some(1), "{ran:?}");
+    let ran = logout_off(&keychain, &door.url, "marfa_at_handed", &[]);
+    assert_eq!(ran.status.code(), Some(2), "{ran:?}");
+    assert!(String::from_utf8_lossy(&ran.stderr).contains("--client-id"));
+    assert_eq!(door.received().len(), 0);
+
+    assert!(
+        std::fs::read(keychain.keychain_path()).unwrap() == before,
+        "a logout with the keychain off changed it"
+    );
+}

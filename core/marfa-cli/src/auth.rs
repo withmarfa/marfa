@@ -656,20 +656,46 @@ pub fn revoke(kept: &Kept) -> Result<bool, CliError> {
         ..
     } = kept
     {
-        cleartext::guard(revocation_endpoint);
-        let door = Remote::public_at(revocation_endpoint)?;
         let (token, hint) = match refresh_token {
-            Some(refresh_token) => (refresh_token.as_str(), "refresh_token"),
-            None => (access_token.as_str(), "access_token"),
+            Some(refresh_token) => (refresh_token.as_str(), REFRESH_TOKEN),
+            None => (access_token.as_str(), ACCESS_TOKEN),
         };
-        door.json(&Request::post(&[]).public().reading().form(&[
-            ("token", token),
-            ("token_type_hint", hint),
-            ("client_id", client_id),
-        ]))?;
+        revoke_token(revocation_endpoint, token, hint, client_id)?;
         return Ok(true);
     }
     Ok(false)
+}
+
+pub const ACCESS_TOKEN: &str = "access_token";
+pub const REFRESH_TOKEN: &str = "refresh_token";
+
+/// Which kind of token this is, by the prefix the server gives each.
+pub fn token_kind(token: &str) -> Option<&'static str> {
+    if token.starts_with("marfa_at_") {
+        Some(ACCESS_TOKEN)
+    } else if token.starts_with("marfa_rt_") {
+        Some(REFRESH_TOKEN)
+    } else {
+        None
+    }
+}
+
+/// Asks the server's revocation door to end `token`, which was issued to `client_id`.
+/// The door answers the same for a token it does not know or that belongs to another client.
+pub fn revoke_token(
+    endpoint: &str,
+    token: &str,
+    hint: &str,
+    client_id: &str,
+) -> Result<(), CliError> {
+    cleartext::guard(endpoint);
+    let door = Remote::public_at(endpoint)?;
+    door.json(&Request::post(&[]).public().reading().form(&[
+        ("token", token),
+        ("token_type_hint", hint),
+        ("client_id", client_id),
+    ]))?;
+    Ok(())
 }
 
 pub fn signed_out(origin: &str) -> CliError {

@@ -163,8 +163,8 @@ enum Command {
     Whoami,
     /// Sign in to a server as an app: a code the owner approves in the browser.
     Login(login::LoginArgs),
-    /// Sign out of a server: the token is revoked and forgotten.
-    Logout,
+    /// Sign out of a server: the token is revoked and forgotten. With the keychain off, it revokes the token passed with --key or MARFA_API_KEY.
+    Logout(logout::LogoutArgs),
     /// Claim a new instance, obtain a setup code, or open a browser handoff.
     Setup {
         #[command(subcommand)]
@@ -540,7 +540,7 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
     if matches!(
         command,
         Command::Login(_)
-            | Command::Logout
+            | Command::Logout(_)
             | Command::Device(_)
             | Command::Folders { .. }
             | Command::Docs(_)
@@ -561,7 +561,7 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
 fn keychain_profile_refusal(command: &Command, named: &Named) -> Result<(), CliError> {
     let what = match command {
         Command::Login(args) if !args.print_token => "login",
-        Command::Logout => "logout",
+        Command::Logout(_) => "logout",
         Command::Keys {
             command: keys::KeysCommand::Keep,
         } => "keys keep",
@@ -679,7 +679,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             &out,
             &crate::autostart::resume_after_credential_kept,
         ),
-        Command::Logout => logout::run(&named, &out),
+        Command::Logout(args) => logout::run(&args, &named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
         Command::Profile { command } => profile::run(command, &remote()?, &out),
         Command::Apps { command } => apps::run(command, &remote()?, &out),

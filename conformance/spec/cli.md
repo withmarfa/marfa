@@ -624,6 +624,30 @@ If `logout` signs out of a sign-in that kept no revocation endpoint, or whose re
 
 **Tests:** `device/credential-locks.test.ts › reports a sign-out the server did not revoke as revoked: false, and forgets the token either way`.
 
+### `cli/command-logout-off`
+
+While the keychain is off, when `logout` is given a sign-in token with `--key` or `MARFA_API_KEY` and the client id it was issued to with `--client-id`, the CLI MUST ask the revocation endpoint that the server's discovery document names to revoke the token for that client, with the token's type.
+
+**Reason:** a token printed by `login --print-token` is kept nowhere, so a sign-out that only forgot it would end nothing. The revocation door needs the client the token was issued to.
+
+**Tests:** `device/credential-locks.test.ts › revokes the token it is handed when the keychain is off, and says so only when the server then refuses it`.
+
+### `cli/command-logout-off-still-works`
+
+While the keychain is off, if the server still accepts an access token after `logout` asked for its revocation, then the CLI MUST exit 1.
+
+**Reason:** the revocation door answers the same for a token it did not end, as when the client id is another client's, so its answer proves nothing.
+
+**Tests:** `device/credential-locks.test.ts › revokes the token it is handed when the keychain is off, and says so only when the server then refuses it`.
+
+### `cli/command-logout-off-confirmed`
+
+While the keychain is off, when the server refuses an access token after `logout` asked for its revocation, the CLI MUST report `revoked: true`.
+
+**Reason:** a refusal is the only proof the token no longer works; a refresh token has no such check.
+
+**Tests:** `device/credential-locks.test.ts › revokes the token it is handed when the keychain is off, and says so only when the server then refuses it`.
+
 ### `cli/command-keys-forget-offline`
 
 When `keys forget` runs, the CLI MUST forget the credential kept for the server without sending a request.
