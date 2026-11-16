@@ -22,7 +22,7 @@ async fn write(app: Arc<App>, caller: Caller, uri: Uri, body: JsonBody, mode: Mo
     caller.require(Permission::ConfigManage)?;
     query::only(&uri, &[])?;
     let body = body.open_object().await?;
-    let request = Request::from_body(mode, &body, &config::fields())?;
+    let request = Request::from_body(mode, &body, &config::fields(), app.settings.sealer())?;
     let answer = config::update(&app, &caller, request).await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }
@@ -49,7 +49,7 @@ pub async fn address_check(
     caller.require(Permission::ConfigManage)?;
     query::only(&uri, &[])?;
     let body = body.open_object().await?;
-    let request = Request::from_body(Mode::Patch, &body, &CHECK_FIELDS)?;
+    let request = Request::from_body(Mode::Patch, &body, &CHECK_FIELDS, app.settings.sealer())?;
     Ok(json_answer(
         StatusCode::OK,
         &config::check(&app, request).await?,

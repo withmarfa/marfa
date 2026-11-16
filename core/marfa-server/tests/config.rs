@@ -249,10 +249,10 @@ async fn reporting_is_turned_from_off_to_on_only_where_a_receiver_is_set() {
         assert_eq!(cleared.error_paths(), [field], "{field}");
         assert_eq!(bare.config().await[field], false, "{field}");
     }
-    let heard = Instance::start(&[("MARFA_HEARTBEAT_URL", "https://beat.example/x")]).await;
+    let heard = Instance::start(&[]).await;
     assert_eq!(
         heard
-            .patch(json!({ "heartbeat_enabled": true }))
+            .patch(json!({ "heartbeat_url": "https://beat.example/x", "heartbeat_enabled": true }))
             .await
             .status,
         StatusCode::OK
@@ -783,11 +783,20 @@ async fn audit_rows(instance: &Instance) -> i64 {
 async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_reads() {
     let secret = "salt-that-must-not-print";
     let hook = "https://hooks.example/token-that-must-not-print";
-    let instance = Instance::start(&[
-        ("MARFA_KEY_SALT", secret),
-        ("MARFA_ERROR_WEBHOOK_URL", hook),
-    ])
-    .await;
+    let instance = Instance::start(&[("MARFA_KEY_SALT", secret)]).await;
+    let set = instance
+        .call(
+            Method::PATCH,
+            "/config",
+            Some(json!({ "error_webhook_url": hook })),
+        )
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.text);
+    assert!(
+        !set.text.contains("token-that-must-not-print"),
+        "{}",
+        set.text
+    );
 
     instance.spoil("audit_retention_days", "soon").await;
 
@@ -804,8 +813,21 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
             .unwrap()
     };
     assert_eq!(named("MARFA_KEY_SALT")["set"], true);
-    assert_eq!(named("MARFA_HEARTBEAT_URL")["set"], false);
-    assert_eq!(named("MARFA_ERROR_WEBHOOK_URL")["secret"], true);
+    assert_eq!(named("MARFA_AUTH_SECRET")["set"], false);
+    let stored = |key: &str| {
+        listed.body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["key"] == key)
+            .cloned()
+            .unwrap()
+    };
+    let hook_line = stored("error_webhook_url");
+    assert_eq!(hook_line["secret"], true);
+    assert_eq!(hook_line["set"], true);
+    assert_eq!(hook_line["value"], Value::Null);
+    assert_eq!(stored("heartbeat_url")["set"], false);
 
     let line = listed.body["data"]
         .as_array()

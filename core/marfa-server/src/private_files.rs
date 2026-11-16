@@ -354,6 +354,7 @@ impl Kept {
                 .file_name()
                 .ok_or_else(|| refused(&database, "does not end in a file name"))?;
             files.push(secrets.folder.join(&secrets.name));
+            files.push(crate::settings::sealed::path_of(database_path));
             // Not `.server-lock`, already locked: on NFS or CIFS closing any descriptor drops it.
             files.extend(
                 [
@@ -606,6 +607,36 @@ mod tests {
             assert!(failure.message.contains("symbolic link"), "{failure}");
         }
         assert_eq!(mode(&outside), 0o755);
+    }
+
+    #[test]
+    fn the_settings_key_is_made_private_kept_from_others_and_refused_as_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("marfa.settings.key");
+        fs::write(&key, "").unwrap();
+        chmod(&key, 0o644);
+        kept(dir.path(), &dir.path().join("blobs")).unwrap();
+        assert_eq!(mode(&key), 0o600);
+
+        // A POSIX access control list grants nothing past a mode that gives the group nothing.
+        chmod(&key, 0o640);
+        if let_another_account(&key, Grant::ReadFile) {
+            assert!(reach(&key).itself);
+            kept(dir.path(), &dir.path().join("blobs")).unwrap();
+            assert_eq!(reach(&key), marfa_acl::Reach::default());
+        } else {
+            eprintln!("the access control list case skipped: this file system keeps none");
+        }
+
+        let elsewhere = dir.path().join("elsewhere");
+        fs::rename(&key, &elsewhere).unwrap();
+        chmod(&elsewhere, 0o644);
+        std::os::unix::fs::symlink(&elsewhere, &key).unwrap();
+        let failure = kept(dir.path(), &dir.path().join("blobs"))
+            .err()
+            .expect("refused");
+        assert!(failure.message.contains("symbolic link"), "{failure}");
+        assert_eq!(mode(&elsewhere), 0o644);
     }
 
     #[test]

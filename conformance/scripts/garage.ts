@@ -1,6 +1,6 @@
 /**
  * Boot a single-node Garage as the object store the suite attaches to the
- * server, and write the `S3_*` values that name it.
+ * server, and write the `MARFA_OBJECT_STORE_*` values that name it.
  *
  *   tsx scripts/garage.ts up [--state <dir>] [--port <n>]
  *   tsx scripts/garage.ts down [--state <dir>]
@@ -225,13 +225,13 @@ async function up(args: Args): Promise<void> {
   ]);
 
   const env = [
-    `S3_BUCKET=${BUCKET}`,
-    "S3_REGION=garage",
-    `S3_ENDPOINT=http://127.0.0.1:${String(s3Port)}`,
-    `S3_ACCESS_KEY_ID=${keyId}`,
-    `S3_SECRET_ACCESS_KEY=${secret}`,
-    "S3_FORCE_PATH_STYLE=true",
-    "S3_PREFIX=blobs",
+    `MARFA_OBJECT_STORE_BUCKET=${BUCKET}`,
+    "MARFA_OBJECT_STORE_REGION=garage",
+    `MARFA_OBJECT_STORE_ENDPOINT=http://127.0.0.1:${String(s3Port)}`,
+    `MARFA_OBJECT_STORE_ACCESS_KEY_ID=${keyId}`,
+    `MARFA_OBJECT_STORE_SECRET_ACCESS_KEY=${secret}`,
+    "MARFA_OBJECT_STORE_PATH_STYLE=true",
+    "MARFA_OBJECT_STORE_PREFIX=blobs",
     "",
   ].join("\n");
   writeFileSync(p.env, env);

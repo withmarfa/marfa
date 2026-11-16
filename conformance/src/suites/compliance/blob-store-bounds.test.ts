@@ -86,20 +86,22 @@ async function objectStoreOf(operator: MarfaClient): Promise<{
   const s3 = (await operator.listBlobStores()).data.data.find(
     (store) => store.kind === "s3",
   )!;
-  const prefix = s3.locator.slice(`s3://${process.env.S3_BUCKET!}/`.length);
+  const prefix = s3.locator.slice(
+    `s3://${process.env.MARFA_OBJECT_STORE_BUCKET!}/`.length,
+  );
   const objects = new S3Client({
-    region: process.env.S3_REGION!,
-    endpoint: process.env.S3_ENDPOINT!,
+    region: process.env.MARFA_OBJECT_STORE_REGION!,
+    endpoint: process.env.MARFA_OBJECT_STORE_ENDPOINT!,
     forcePathStyle: true,
     credentials: {
-      accessKeyId: process.env.S3_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+      accessKeyId: process.env.MARFA_OBJECT_STORE_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.MARFA_OBJECT_STORE_SECRET_ACCESS_KEY!,
     },
   });
   const keysOf = async (hash: string) => {
     const listed = await objects.send(
       new ListObjectsV2Command({
-        Bucket: process.env.S3_BUCKET!,
+        Bucket: process.env.MARFA_OBJECT_STORE_BUCKET!,
         Prefix: `${prefix}/blobs/${hash.slice("sha256:".length)}`,
       }),
     );
@@ -474,7 +476,7 @@ describe("an integrity run over the object store's copies", () => {
       // object of the same length still names the store that wrote it.
       await objects.send(
         new DeleteObjectCommand({
-          Bucket: process.env.S3_BUCKET!,
+          Bucket: process.env.MARFA_OBJECT_STORE_BUCKET!,
           Key: await keyOf(hashes.missing),
         }),
       );
@@ -489,7 +491,7 @@ describe("an integrity run over the object store's copies", () => {
       ] as const) {
         await objects.send(
           new PutObjectCommand({
-            Bucket: process.env.S3_BUCKET!,
+            Bucket: process.env.MARFA_OBJECT_STORE_BUCKET!,
             Key: await keyOf(hashes[name]),
             Body: bytes,
             Metadata: metadata,
@@ -581,7 +583,7 @@ describe("an object store's answer for an object it did not write", () => {
         MARFA_BLOB_CLEANUP_ENABLED: "false",
       });
       const s3 = await objectStoreOf(operator);
-      const bucket = process.env.S3_BUCKET!;
+      const bucket = process.env.MARFA_OBJECT_STORE_BUCKET!;
       const disk = (await operator.listBlobStores()).data.data.find(
         (store) => store.kind === "disk",
       )!;
@@ -660,7 +662,7 @@ describe("an object store that answers with another store's marker", () => {
         MARFA_BLOB_CLEANUP_ENABLED: "false",
       });
       const s3 = await objectStoreOf(operator);
-      const bucket = process.env.S3_BUCKET!;
+      const bucket = process.env.MARFA_OBJECT_STORE_BUCKET!;
       const disk = (await operator.listBlobStores()).data.data.find(
         (store) => store.kind === "disk",
       )!;

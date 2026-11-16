@@ -18,10 +18,11 @@ pub mod upkeep;
 use std::fs::File;
 use std::future::Future;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use futures_util::StreamExt;
 use futures_util::future::join_all;
 use serde_json::json;
@@ -39,8 +40,8 @@ use super::unit::Unit;
 use super::{housekeeping, provenance, stored};
 use crate::db::{Db, Write};
 use crate::failure::Failure;
-use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
-use crate::settings::start::ObjectStoreSettings;
+use crate::settings::registry::Snapshot as Settings;
+use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use disk::{Disk, Place, Staged};
 pub use disk::{MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
@@ -51,6 +52,7 @@ use rows::Held;
 pub use rows::{
     CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,
 };
+pub use s3::ObjectStoreSettings;
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -107,10 +109,70 @@ pub struct Link {
     pub ttl_seconds: u64,
 }
 
-pub struct Blobs {
-    disk: Arc<Disk>,
+/// What the destination settings ask the store beside the disk to be.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Wanted {
+    Disk,
+    Bucket(ObjectStoreSettings),
+    Folder(PathBuf),
+}
+
+impl Wanted {
+    pub fn of(settings: &Settings) -> Wanted {
+        if let Some(bucket) = ObjectStoreSettings::of(settings) {
+            return Wanted::Bucket(bucket);
+        }
+        match settings.get(BACKUP_PATH) {
+            Some(folder) => Wanted::Folder(PathBuf::from(folder)),
+            None => Wanted::Disk,
+        }
+    }
+}
+
+/// What the store beside the disk is to be: what the settings name, the instance whose files a
+/// backup folder holds, and the folders it must be outside of.
+pub struct Beside<'a> {
+    pub wanted: Wanted,
+    pub instance: &'a str,
+    pub kept: Vec<(&'static str, PathBuf)>,
+}
+
+/// The store beside the disk, as one reading of the settings attached it.
+struct Attached {
+    wanted: Wanted,
     s3: Option<Arc<S3>>,
     folder: Option<Arc<Folder>>,
+    /// Why the store `wanted` names is not attached, in the owner's words.
+    trouble: Option<String>,
+}
+
+impl Attached {
+    fn troubled(wanted: Wanted, failure: Failure) -> Attached {
+        let place = match wanted {
+            Wanted::Folder(_) => "backup folder",
+            _ => "object store",
+        };
+        let message = failure.message.trim_end_matches('.').to_string();
+        Attached {
+            wanted,
+            s3: None,
+            folder: None,
+            trouble: Some(format!(
+                "{message}. Until the {place} can be used, files are kept on this server's disk \
+                 alone and no backup is taken."
+            )),
+        }
+    }
+}
+
+pub struct Blobs {
+    disk: Arc<Disk>,
+    attached: ArcSwap<Attached>,
+    /// One change of store at a time.
+    following: tokio::sync::Mutex<()>,
+    instance: String,
+    /// The folders a backup folder must be outside of, each with what it is.
+    kept: Vec<(&'static str, PathBuf)>,
     gate: Arc<Gate>,
     faults: Arc<Faults>,
     signer: link::Signer,
@@ -164,7 +226,8 @@ async fn object_store(
             match tokio::time::timeout(CHECK_DEADLINE, s3.mark()).await {
                 Ok(Ok(())) => Ok(s3),
                 Ok(Err(error)) => Err(refused(format!(
-                    "holds no store marker and took none: {error}"
+                    "holds no store marker and took none: {}",
+                    upkeep::object_store_said(&error)
                 ))),
                 Err(_) => Err(refused(
                     "holds no store marker and took none in time".to_string(),
@@ -180,28 +243,139 @@ async fn object_store(
             }
             let locator = settings.locator();
             let recorded = db
-                .read(move |tx| rows::attached_object_store(tx, &locator))
+                .read(move |tx| rows::object_store_at(tx, &locator))
                 .await
                 .map_err(started)?;
             match recorded {
                 Some(id) => {
-                    tracing::warn!(%error, "The object store did not answer at start; its copies wait");
+                    tracing::warn!(%error, "The object store did not answer; its copies wait");
                     S3::new(settings, id).map_err(started)
                 }
-                None => Err(refused(format!("did not answer: {error}"))),
+                None => Err(refused(format!(
+                    "did not answer: {}",
+                    upkeep::object_store_said(&error)
+                ))),
             }
         }
-        Marker::Refused(error) => Err(refused(format!("did not say which store it is: {error}"))),
+        Marker::Refused(error) => {
+            tracing::warn!(%error, "The object store did not say which store it is");
+            Err(refused(format!(
+                "did not say which store it is: {}",
+                upkeep::object_store_said(&error)
+            )))
+        }
     }
+}
+
+/// How long a backup folder is given to be looked at and taken.
+const FOLDER_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Takes the store `wanted` names; one that cannot be used is attached as trouble, never refused.
+async fn attach(
+    db: &Db,
+    wanted: Wanted,
+    instance: &str,
+    kept: &[(&'static str, PathBuf)],
+) -> Attached {
+    match &wanted {
+        Wanted::Disk => Attached {
+            wanted,
+            s3: None,
+            folder: None,
+            trouble: None,
+        },
+        Wanted::Bucket(settings) => match object_store(db, settings, None).await {
+            Ok(s3) => Attached {
+                s3: Some(Arc::new(s3)),
+                wanted,
+                folder: None,
+                trouble: None,
+            },
+            Err(failure) => Attached::troubled(wanted, failure),
+        },
+        Wanted::Folder(root) => {
+            let (checked, kept) = (root.clone(), kept.to_vec());
+            let taken = async {
+                tokio::task::spawn_blocking(move || {
+                    let kept: Vec<(&str, &Path)> = kept
+                        .iter()
+                        .map(|(what, path)| (*what, path.as_path()))
+                        .collect();
+                    folder::outside(&checked, &kept)
+                })
+                .await
+                .map_err(started)??;
+                Folder::open(db, root, instance).await
+            };
+            match tokio::time::timeout(FOLDER_DEADLINE, taken).await {
+                Ok(Ok(opened)) => Attached {
+                    folder: Some(Arc::new(opened)),
+                    wanted,
+                    s3: None,
+                    trouble: None,
+                },
+                Ok(Err(failure)) => Attached::troubled(wanted, failure),
+                Err(_) => Attached::troubled(
+                    wanted.clone(),
+                    Failure::start(format!(
+                        "The backup folder {} did not answer in time",
+                        root.display()
+                    )),
+                ),
+            }
+        }
+    }
+}
+
+/// Records the disk and `attached` as the stores in use, and every other store as detached.
+async fn record(
+    db: &Db,
+    disk: &Disk,
+    attached: &Attached,
+    at: String,
+) -> std::result::Result<(), Refusal> {
+    let rows: Vec<(String, &'static str, String)> = std::iter::once((
+        disk.id().to_string(),
+        "disk",
+        disk.root().display().to_string(),
+    ))
+    .chain(attached.folder.iter().map(|folder| {
+        let files = folder.files();
+        (
+            files.id().to_string(),
+            "folder",
+            files.root().display().to_string(),
+        )
+    }))
+    .chain(
+        attached
+            .s3
+            .iter()
+            .map(|s3| (s3.id().to_string(), "s3", s3.locator().to_string())),
+    )
+    .collect();
+    db.write(Write::own(), move |tx| {
+        for (id, kind, locator) in &rows {
+            rows::attach(tx, id, kind, locator, &at)?;
+        }
+        let kept: Vec<&str> = rows.iter().map(|(id, _, _)| id.as_str()).collect();
+        rows::detach_others(tx, &kept, &at)
+    })
+    .await
 }
 
 impl Blobs {
     /// The folder is changed only once nothing refuses the start; `held` is its lock if taken.
+    /// A store beside the disk that cannot be used is reported, not refused, unless the blob
+    /// folder is empty and that store must refill it.
     pub async fn open(
         db: &Db,
         (root, held): (&Path, Option<File>),
-        object: Option<&ObjectStoreSettings>,
-        backup: Option<(&Path, &str)>,
+        Beside {
+            wanted,
+            instance,
+            kept,
+        }: Beside<'_>,
         secret: &str,
         faults: Arc<Faults>,
         at: String,
@@ -219,58 +393,76 @@ impl Blobs {
                 .await
                 .map_err(started)?
         };
-        let s3 = match object {
-            Some(settings) => Some(Arc::new(
-                object_store(db, settings, unfilled.then_some(root)).await?,
-            )),
-            None if unfilled => return Err(folder_missing(root, "")),
-            None => None,
+        let attached = match (&wanted, unfilled) {
+            (Wanted::Bucket(settings), true) => Attached {
+                s3: Some(Arc::new(object_store(db, settings, Some(root)).await?)),
+                wanted,
+                folder: None,
+                trouble: None,
+            },
+            (_, true) => return Err(folder_missing(root, "")),
+            (_, false) => attach(db, wanted, instance, &kept).await,
         };
-        let backup = match backup {
-            Some((folder, instance)) => Some(Arc::new(Folder::open(db, folder, instance).await?)),
-            None => None,
-        };
+        if let Some(trouble) = &attached.trouble {
+            tracing::error!("{trouble}");
+        }
         let folder = root.to_path_buf();
         let disk = Arc::new(
             tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
                 .await
                 .map_err(started)??,
         );
-        let attached: Vec<(String, &'static str, String)> = std::iter::once((
-            disk.id().to_string(),
-            "disk",
-            disk.root().display().to_string(),
-        ))
-        .chain(backup.iter().map(|folder| {
-            let files = folder.files();
-            (
-                files.id().to_string(),
-                "folder",
-                files.root().display().to_string(),
-            )
-        }))
-        .chain(
-            s3.iter()
-                .map(|s3| (s3.id().to_string(), "s3", s3.locator().to_string())),
-        )
-        .collect();
-        db.write(Write::own(), move |tx| {
-            for (id, kind, locator) in &attached {
-                rows::attach(tx, id, kind, locator, &at)?;
-            }
-            let kept: Vec<&str> = attached.iter().map(|(id, _, _)| id.as_str()).collect();
-            rows::detach_others(tx, &kept, &at)
-        })
-        .await
-        .map_err(started)?;
+        record(db, &disk, &attached, at).await.map_err(started)?;
         Ok(Blobs {
             disk,
-            s3,
-            folder: backup,
+            attached: ArcSwap::from_pointee(attached),
+            following: tokio::sync::Mutex::new(()),
+            instance: instance.to_string(),
+            kept,
             gate: Arc::new(Gate::default()),
             faults,
             signer,
         })
+    }
+
+    /// Whether the store in use is what `wanted` names, and could be used.
+    pub fn follows(&self, wanted: &Wanted) -> bool {
+        let attached = self.attached.load();
+        attached.wanted == *wanted && attached.trouble.is_none()
+    }
+
+    /// Takes the store `wanted` names in place of the one in use, or tries again to take one that
+    /// could not be used. Work that began with the old store keeps it until it ends.
+    pub async fn follow(
+        &self,
+        db: &Db,
+        wanted: impl FnOnce() -> Wanted,
+        at: impl FnOnce() -> String,
+    ) {
+        let _one = self.following.lock().await;
+        // Read once the lock is held, so the last change of the settings is the one followed.
+        let wanted = wanted();
+        if self.follows(&wanted) {
+            return;
+        }
+        let next = attach(db, wanted, &self.instance, &self.kept).await;
+        if let Err(refused) = record(db, &self.disk, &next, at()).await {
+            tracing::error!(%refused, "The stores in use could not be recorded; the old ones stay");
+            return;
+        }
+        match &next.trouble {
+            Some(trouble) => tracing::error!("{trouble}"),
+            None => tracing::info!("The store beside the disk follows the settings"),
+        }
+        let old = self.attached.swap(Arc::new(next));
+        if let Some(folder) = &old.folder {
+            folder.let_go();
+        }
+    }
+
+    /// Why the store the settings name is not in use, in the owner's words.
+    pub fn trouble(&self) -> Option<String> {
+        self.attached.load().trouble.clone()
     }
 
     /// How long a store is given to answer.
@@ -278,20 +470,28 @@ impl Blobs {
         self.faults.store_check_deadline().unwrap_or(CHECK_DEADLINE)
     }
 
-    /// The object store, where one is configured.
+    /// The object store, where one is in use.
     pub fn s3(&self) -> Option<Arc<S3>> {
-        self.s3.clone()
+        self.attached.load().s3.clone()
     }
 
-    /// The backup folder, where one is configured.
+    /// The backup folder, where one is in use.
     pub fn folder(&self) -> Option<Arc<Folder>> {
-        self.folder.clone()
+        self.attached.load().folder.clone()
+    }
+
+    /// The object store's prefix, where one is in use.
+    pub fn bucket_prefix(&self) -> Option<String> {
+        match &self.attached.load().wanted {
+            Wanted::Bucket(settings) if self.s3().is_some() => Some(settings.prefix.clone()),
+            _ => None,
+        }
     }
 
     /// Lets another server open the blob folder and the backup folder's files area.
     pub fn let_go(&self) {
         self.disk.let_go();
-        if let Some(folder) = &self.folder {
+        if let Some(folder) = &self.folder() {
             folder.let_go();
         }
     }
@@ -312,7 +512,8 @@ impl Blobs {
 
     /// The store backups name their files in: the object store or the backup folder.
     pub fn backup_store_id(&self) -> Option<String> {
-        match (&self.s3, &self.folder) {
+        let attached = self.attached.load();
+        match (&attached.s3, &attached.folder) {
             (Some(s3), _) => Some(s3.id().to_string()),
             (None, Some(folder)) => Some(folder.files().id().to_string()),
             (None, None) => None,
@@ -321,7 +522,8 @@ impl Blobs {
 
     /// Whether a blob is copied to another store than the disk.
     pub fn replicates(&self) -> bool {
-        self.s3.is_some() || self.folder.is_some()
+        let attached = self.attached.load();
+        attached.s3.is_some() || attached.folder.is_some()
     }
 
     /// What a blob fault makes `store` read of `hash`; only the disk store is ever faulted.
@@ -334,13 +536,15 @@ impl Blobs {
 
     /// The attached stores, the disk first.
     fn attached(&self) -> Vec<Store> {
+        let attached = self.attached.load();
         std::iter::once(Store::Disk(self.disk.clone()))
             .chain(
-                self.folder
+                attached
+                    .folder
                     .iter()
                     .map(|folder| Store::Folder(folder.files().clone())),
             )
-            .chain(self.s3.iter().map(|s3| Store::S3(s3.clone())))
+            .chain(attached.s3.iter().map(|s3| Store::S3(s3.clone())))
             .collect()
     }
 
@@ -1188,7 +1392,7 @@ impl App {
     /// The object store's own link while it holds a copy, else the instance's.
     pub async fn mint_link(&self, caller: &Caller, hash: &Hash, ttl: u64) -> Result<Link> {
         let found = self.find_blob(caller, hash).await?;
-        if let Some(s3) = &self.blobs.s3
+        if let Some(s3) = &self.blobs.s3()
             && let Some(object) = found.object_in(&Store::S3(s3.clone()))
         {
             let lifetime = Duration::from_secs(ttl);

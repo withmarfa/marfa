@@ -599,52 +599,41 @@ async fn a_recorded_folder_missing_at_start_leaves_the_start_alone_and_fails_eac
 }
 
 #[tokio::test]
-async fn the_server_refuses_to_start_with_both_destinations_or_a_folder_it_would_lose_or_cannot_find()
+async fn a_seed_for_both_destinations_or_a_folder_it_would_lose_refuses_and_a_missing_folder_is_reported()
  {
     let data = TempDir::new().unwrap();
     let elsewhere = TempDir::new().unwrap();
-    let both = Settings::read(Environment::from_pairs(&[
+    let database = data.path().join("marfa.db");
+    let refused = |more: &[(&str, &str)]| {
+        let mut pairs = vec![
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ];
+        pairs.extend_from_slice(more);
+        Settings::read(Environment::from_pairs(&pairs))
+            .err()
+            .map(|refused| refused.lines.join("\n"))
+            .unwrap_or_default()
+    };
+    let both = refused(&[
         ("MARFA_BACKUP_PATH", elsewhere.path().to_str().unwrap()),
-        ("S3_BUCKET", "bucket"),
-    ]));
-    let refused = both.err().unwrap().lines.join("\n");
+        ("MARFA_OBJECT_STORE_BUCKET", "bucket"),
+    ]);
     assert!(
-        refused.contains("S3_BUCKET") && refused.contains("MARFA_BACKUP_PATH"),
-        "{refused}"
+        both.contains("MARFA_OBJECT_STORE_BUCKET") && both.contains("MARFA_BACKUP_PATH"),
+        "{both}"
     );
-    let relative = Settings::read(Environment::from_pairs(&[("MARFA_BACKUP_PATH", "backups")]));
-    assert!(relative.is_err());
-
+    assert!(!refused(&[("MARFA_BACKUP_PATH", "backups")]).is_empty());
     let inside = data.path().join("backups");
-    fs::create_dir_all(&inside).unwrap();
-    let refused = App::start(settings(data.path(), &inside, &[]))
-        .await
-        .err()
-        .unwrap()
-        .message;
-    assert!(refused.contains("inside the data directory"), "{refused}");
-
-    let blobs = elsewhere.path().join("blobs");
-    let inside = blobs.join("backups");
-    fs::create_dir_all(&inside).unwrap();
-    let refused = App::start(settings(
-        data.path(),
-        &inside,
-        &[("MARFA_BLOB_PATH", blobs.to_str().unwrap())],
-    ))
-    .await
-    .err()
-    .unwrap()
-    .message;
-    assert!(refused.contains("inside the blob folder"), "{refused}");
+    let lost = refused(&[("MARFA_BACKUP_PATH", inside.to_str().unwrap())]);
+    assert!(lost.contains("inside the data directory"), "{lost}");
 
     let missing = elsewhere.path().join("not mounted");
-    let refused = App::start(settings(data.path(), &missing, &[]))
+    let app = App::start(settings(data.path(), &missing, &[]))
         .await
-        .err()
-        .unwrap()
-        .message;
-    assert!(refused.contains("does not exist"), "{refused}");
+        .unwrap();
+    let trouble = app.blobs.trouble().unwrap();
+    assert!(trouble.contains("does not exist"), "{trouble}");
     assert!(!missing.exists());
 }
 

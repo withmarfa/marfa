@@ -113,6 +113,10 @@ stays because that thing is what it checks.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
+- `compliance/secret-settings.test.ts` searches the database file and the log
+  beside it for a secret setting's value, because the contract is about the
+  bytes at rest, and removes or damages `marfa.settings.key` while the server is
+  stopped, because only a lost or broken disk loses the key.
 - `compliance/type-conflicts.test.ts` writes a stored type definition. Only a
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,
@@ -210,8 +214,9 @@ and a value passed for one replaces its own:
   names, it is unset unless the last boot of the same state had it there.
   `MARFA_SIGN_IN_ADDRESS=` boots with none.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
-  webhook delivery to private addresses allowed, so the fixtures can use a
-  receiver on the loopback address.
+  private addresses allowed (`allow_private_addresses`), so the fixtures can
+  use a receiver and the object store on the loopback address. A release build
+  without hooks takes the setting through the private socket.
 - `MARFA_TEST_HOOKS` true.
 
 ## Stopping a server nobody stopped

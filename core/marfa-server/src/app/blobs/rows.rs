@@ -428,24 +428,25 @@ pub fn copies_at_folder(tx: &Transaction<'_>, locator: &str) -> Result<bool> {
     )?)
 }
 
-/// The attached object store recorded at this locator.
-pub fn attached_object_store(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> {
+/// The object store recorded at this locator: an attached one first, then the latest attached.
+pub fn object_store_at(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> {
     Ok(tx
         .query_row(
-            "SELECT id FROM stores WHERE kind = 's3' AND locator = ?1 AND detached_at IS NULL \
-             ORDER BY attached_at DESC, id LIMIT 1",
+            "SELECT id FROM stores WHERE kind = 's3' AND locator = ?1 \
+             ORDER BY detached_at IS NULL DESC, attached_at DESC, id LIMIT 1",
             [locator],
             |row| row.get(0),
         )
         .optional()?)
 }
 
-/// The attached backup folder store recorded at this locator.
-pub fn attached_folder(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> {
+/// The backup folder store recorded at this locator: an attached one first, then the latest
+/// attached, since a change of `backup_path` detaches it until the setting names it again.
+pub fn folder_at(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> {
     Ok(tx
         .query_row(
-            "SELECT id FROM stores WHERE kind = 'folder' AND locator = ?1 AND detached_at IS NULL \
-             ORDER BY attached_at DESC, id LIMIT 1",
+            "SELECT id FROM stores WHERE kind = 'folder' AND locator = ?1 \
+             ORDER BY detached_at IS NULL DESC, attached_at DESC, id LIMIT 1",
             [locator],
             |row| row.get(0),
         )

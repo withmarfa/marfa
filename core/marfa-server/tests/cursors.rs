@@ -66,7 +66,8 @@ impl Instance {
             ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
             ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
-            ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
         ];
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app = App::start(settings).await.unwrap();

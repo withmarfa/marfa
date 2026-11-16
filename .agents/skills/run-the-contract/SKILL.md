@@ -36,7 +36,7 @@ pnpm garage:up
 set -a; . .marfa-state/garage/garage.env; set +a
 ```
 
-`garage:up` starts one node under `.marfa-state/garage/`, makes a bucket and a key, and writes the `S3_*` values to `garage.env`. Source it before `marfa:up`: the server attaches the store only when `S3_BUCKET` is set. Pass `--state <dir>` to put it elsewhere.
+`garage:up` starts one node under `.marfa-state/garage/`, makes a bucket and a key, and writes the `MARFA_OBJECT_STORE_*` values to `garage.env`. Source it before `marfa:up`: a server with test hooks takes them as the defaults of the `object_store_*` stored settings, and attaches the store only when `MARFA_OBJECT_STORE_BUCKET` is set. A server without hooks has the adapter write them through `PATCH /config` on the private socket, which alone changes `allow_private_addresses`. Pass `--state <dir>` to put it elsewhere.
 
 ## 3. Boot the server
 
@@ -45,7 +45,7 @@ pnpm marfa:up
 set -a; . .marfa-state/env; set +a
 ```
 
-`marfa:up` boots `MARFA_SERVER_BIN` on `127.0.0.1` under a supervisor, claims the owner through the private socket, mints the fixture keys and writes `.marfa-state/env`. It turns off the rate limiter, enrichment and OCR and allows private webhook addresses. Vitest reads only `conformance/.env` itself, so source the state's env file. Pass `--state <dir>` and `--port <n>` to change where and on which port; `TARGET-INTERFACE.md`, "What `marfa:up` does", has the rest.
+`marfa:up` boots `MARFA_SERVER_BIN` on `127.0.0.1` under a supervisor, claims the owner through the private socket, mints the fixture keys and writes `.marfa-state/env`. It turns off the rate limiter, enrichment and OCR and allows private addresses, so receivers and the object store on loopback are reached. Vitest reads only `conformance/.env` itself, so source the state's env file. Pass `--state <dir>` and `--port <n>` to change where and on which port; `TARGET-INTERFACE.md`, "What `marfa:up` does", has the rest.
 
 ## 4. Build the device, for device and CLI fixtures
 
@@ -91,7 +91,7 @@ For a report by contract chapter, run `pnpm chapter-report --report reports/run/
 ## 8. The other two checks
 
 - `pnpm mcp:conformance` runs the MCP project's conformance tool against `/mcp` on the booted server. A check that fails by design is pinned in `scripts/mcp-conformance.ts` with its reason; any other failing check fails the run, and so does a pinned check that passes.
-- `pnpm drill:restore` is the restore drill. It needs the `S3_*` values and `MARFA_SERVER_BIN`, boots its own servers under `.marfa-drill/`, backs one up, deletes its data, restores into a fresh server, compares the archive export and every file's bytes, and writes `reports/restore-drill.md`.
+- `pnpm drill:restore` is the restore drill. It needs the `MARFA_OBJECT_STORE_*` values and `MARFA_SERVER_BIN`, boots its own servers under `.marfa-drill/`, backs one up, deletes its data, restores into a fresh server, compares the archive export and every file's bytes, and writes `reports/restore-drill.md`.
 
 ## 9. Tear down
 

@@ -6,11 +6,12 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -36,7 +37,6 @@ import {
 import { same } from "../../utils/drill.js";
 import {
   bootFreshServer,
-  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
@@ -51,7 +51,7 @@ import { diskHolds, inspectStores } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
- * Backups to a folder the owner names with `MARFA_BACKUP_PATH`: one manifest
+ * Backups to a folder the owner names with `backup_path`: one manifest
  * per backup under `backups/<instance id>/`, the parts it names under
  * `backup-parts/<instance id>/`, a copy of each file a backup names
  * under `files/<instance id>/`, and a restore from the folder alone into a
@@ -61,7 +61,7 @@ const folder = mkdtempSync(join(tmpdir(), "marfa-backup-folder-"));
 const away = `${folder}-away`;
 const YEAR_SECONDS = "31536000";
 const FOLDER_ONLY = {
-  S3_BUCKET: "",
+  MARFA_OBJECT_STORE_BUCKET: "",
   MARFA_BACKUP_PATH: folder,
   MARFA_BACKUP_INTERVAL_SECONDS: "0",
 };
@@ -1001,45 +1001,141 @@ describe("a backup folder that lacks a file or its disk", () => {
 });
 
 describe("where backups may go", () => {
-  it("refuses to start with both S3_BUCKET and MARFA_BACKUP_PATH set", async () => {
-    const refused = await bootRefused("backup-folder-both", {
-      extraEnv: { S3_BUCKET: "a-bucket", MARFA_BACKUP_PATH: folder },
-    });
+  const DISK = {
+    MARFA_OBJECT_STORE_BUCKET: "",
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
+  };
+
+  /** The `errors` a `400 validation_error` names, by path. */
+  function refusedPaths(answer: { status: number; error?: unknown }) {
+    expect(answer.status, JSON.stringify(answer.error)).toBe(400);
+    const error = (
+      answer.error as {
+        error: {
+          code: string;
+          details?: { errors?: { path: string; message: string }[] };
+        };
+      }
+    ).error;
+    expect(error.code).toBe("validation_error");
+    return error.details?.errors ?? [];
+  }
+
+  it("refuses a write to /config that would set both object_store_bucket and backup_path, and keeps what was stored", async () => {
+    const server = await bootFreshServer("backup-folder-both", DISK);
     try {
-      expect(refused.code).toBe(1);
-      expect(refused.output).toMatch(
-        /S3_BUCKET and MARFA_BACKUP_PATH are both set/,
+      const { operator } = clientsFor(server);
+      const taken = await operator.patchConfig({ backup_path: folder });
+      expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+
+      const errors = refusedPaths(
+        await operator.patchConfig({ object_store_bucket: "a-bucket" }),
       );
+      expect(errors.map((error) => error.path)).toEqual([
+        "object_store_bucket",
+      ]);
+      expect(errors[0]!.message).toContain("backup_path");
+
+      const held = (await operator.getConfig()).data as Record<string, unknown>;
+      expect(held.backup_path).toBe(folder);
+      expect(held).not.toHaveProperty("object_store_bucket");
     } finally {
-      await refused.stop();
+      await server.stop();
     }
   });
 
-  it("refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none", async () => {
+  it("refuses a backup folder inside its data directory or its blob folder, judged where links lead, and makes none", async () => {
     const blobs = mkdtempSync(join(tmpdir(), "marfa-backup-blobs-"));
-    const missing = join(folder, "not mounted");
+    const server = await bootFreshServer("backup-folder-inside", {
+      ...DISK,
+      MARFA_BLOB_PATH: blobs,
+    });
+    const outside = mkdtempSync(join(tmpdir(), "marfa-backup-outside-"));
     try {
+      const { operator } = clientsFor(server);
+      const data = dirname(server.sqlitePath);
+      const linked = join(outside, "into-the-blobs");
+      symlinkSync(blobs, linked);
       for (const [path, says] of [
-        [join(blobs, "backups"), /inside the blob folder/],
-        [missing, /does not exist/],
+        [join(blobs, "backups"), "inside the blob folder"],
+        [join(data, "backups"), "inside the data directory"],
+        [join(linked, "backups"), "inside the blob folder"],
       ] as const) {
-        const refused = await bootRefused("backup-folder-refused", {
-          extraEnv: {
-            S3_BUCKET: "",
-            MARFA_BLOB_PATH: blobs,
-            MARFA_BACKUP_PATH: path,
-          },
-        });
-        try {
-          expect(refused.code).toBe(1);
-          expect(refused.output).toMatch(says);
-        } finally {
-          await refused.stop();
-        }
+        const errors = refusedPaths(
+          await operator.patchConfig({ backup_path: path }),
+        );
+        expect(
+          errors.map((error) => error.path),
+          path,
+        ).toEqual(["backup_path"]);
+        expect(errors[0]!.message, path).toContain(says);
+        expect(existsSync(path), path).toBe(false);
       }
-      expect(existsSync(missing)).toBe(false);
+      expect(await operator.getConfig()).toMatchObject({
+        data: expect.not.objectContaining({ backup_path: expect.anything() }),
+      });
+
+      // The witness: a folder outside both is taken.
+      const taken = await operator.patchConfig({ backup_path: `${outside}/` });
+      expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+      expect((taken.data as Record<string, unknown>).backup_path).toBe(outside);
     } finally {
+      await server.stop();
+      rmSync(outside, { recursive: true, force: true });
       rmSync(blobs, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a backup folder that does not exist as unusable, keeps serving files, makes none, and takes it once it exists", async () => {
+    const server = await bootFreshServer("backup-folder-missing", DISK);
+    const parent = mkdtempSync(join(tmpdir(), "marfa-backup-later-"));
+    const missing = join(parent, "not mounted");
+    try {
+      const { operator, working } = clientsFor(server);
+      const owner = ownerOf(server);
+      const set = await operator.patchConfig({ backup_path: missing });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+
+      const unusable = await waitFor(
+        "the folder to be reported unusable",
+        async () => {
+          const backups = (await health(server)).backups;
+          return backups.reason === "destination_unusable"
+            ? backups
+            : undefined;
+        },
+      );
+      expect(unusable.status).toBe("failing");
+      expect(String(unusable.store_error)).toContain("does not exist");
+      const concerns = (await attentionOf(server)).filter(
+        (concern) => concern.kind === "backup" && concern.reference === "store",
+      );
+      expect(concerns.map((concern) => concern.title)).toEqual([
+        "The backup destination cannot be used",
+      ]);
+
+      const bytes = bytesOf("kept on the disk", 64);
+      const upload = await working.uploadBlob(bytes, "text/plain");
+      expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+      const read = await operator.downloadBlob(upload.data.hash);
+      expect(new Uint8Array(read.data)).toEqual(bytes);
+      expect(existsSync(missing)).toBe(false);
+
+      mkdirSync(missing);
+      const run = await owner.runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      const id = await instanceIdOf(server);
+      expect(
+        readdirSync(join(missing, "backups", id)).filter((name) =>
+          name.endsWith(".json"),
+        ),
+      ).toHaveLength(1);
+      expect((await health(server)).backups.reason).not.toBe(
+        "destination_unusable",
+      );
+    } finally {
+      await server.stop();
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 });

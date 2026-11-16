@@ -57,7 +57,7 @@ pub struct Folder {
 pub enum Adoptable {
     /// Its files area holds this store's marker, so there is nothing to adopt.
     Held,
-    /// The folder `MARFA_BACKUP_PATH` names is not there.
+    /// The folder `backup_path` names is not there.
     Missing,
     /// Its files area holds the marker of the store with this id.
     Foreign(String),
@@ -94,8 +94,8 @@ pub fn outside(root: &Path, data: &[(&str, &Path)]) -> Result<(), Failure> {
         let dir = resolved(dir);
         if folder.starts_with(&dir) {
             return Err(Failure::start(format!(
-                "MARFA_BACKUP_PATH names {}, which is inside the {what} {}. A backup there is \
-                 lost with what it backs up: name a folder outside it, best on another disk.",
+                "backup_path names {}, which is inside the {what} {}. A backup there is lost \
+                 with what it backs up: name a folder outside it, best on another disk.",
                 root.display(),
                 dir.display()
             )));
@@ -123,7 +123,7 @@ impl Folder {
         } else {
             let locator = area.display().to_string();
             let recorded = db
-                .read(move |tx| rows::attached_folder(tx, &locator))
+                .read(move |tx| rows::folder_at(tx, &locator))
                 .await
                 .map_err(started)?;
             match recorded {
@@ -141,9 +141,9 @@ impl Folder {
                     tokio::task::spawn_blocking(move || {
                         if !made.is_dir() {
                             return Err(Failure::start(format!(
-                                "MARFA_BACKUP_PATH names {}, which does not exist. Create it, or \
-                                 mount the disk it is on, then start again: the server makes \
-                                 only the folders inside it.",
+                                "backup_path names {}, which does not exist. Create it, or \
+                                 mount the disk it is on: the server makes only the folders \
+                                 inside it.",
                                 made.display()
                             )));
                         }

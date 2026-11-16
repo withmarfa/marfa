@@ -54,7 +54,7 @@ async function health(server: FreshServer) {
 
 describe("a backup the object store does not take", () => {
   const store = ownObjectStore();
-  const bucket = bucketAt(store.S3_PREFIX);
+  const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
   let server: FreshServer;
 
   beforeAll(async () => {
@@ -78,7 +78,7 @@ describe("a backup the object store does not take", () => {
     expect(created.status, JSON.stringify(created.error)).toBe(201);
     expect((await health(server)).backups.status).toBe("ok");
 
-    await server.restart({ env: { S3_ENDPOINT: UNREACHABLE } });
+    await server.restart({ env: { MARFA_OBJECT_STORE_ENDPOINT: UNREACHABLE } });
     const refused = await ownerOf(server).runBackup();
     expect(refused.status, JSON.stringify(refused.data)).toBe(503);
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
@@ -115,7 +115,7 @@ describe("a backup the object store does not take", () => {
 
   it("runs the next scheduled backup after a failed one when nothing has changed since the last backup put", async () => {
     const before = await bucket.backupKeys();
-    await server.restart({ env: { S3_ENDPOINT: UNREACHABLE } });
+    await server.restart({ env: { MARFA_OBJECT_STORE_ENDPOINT: UNREACHABLE } });
     const refused = await ownerOf(server).runBackup();
     expect(refused.status, JSON.stringify(refused.data)).toBe(503);
     expect((await health(server)).backups.status).toBe("failing");
@@ -134,7 +134,7 @@ describe("a backup the object store does not take", () => {
 
 describe("a backup cut short", () => {
   const store = ownObjectStore();
-  const bucket = bucketAt(store.S3_PREFIX);
+  const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
   let server: FreshServer;
   let large: { id: string; version: number } | undefined;
 
@@ -169,7 +169,10 @@ describe("a backup cut short", () => {
     expect(done.status, JSON.stringify(done.error)).toBe(200);
     const { instance_id, name } = done.data.backup;
     expect(await bucket.backupKeys()).toEqual(
-      [...before, `${store.S3_PREFIX}/backups/${instance_id}/${name}`].sort(),
+      [
+        ...before,
+        `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${instance_id}/${name}`,
+      ].sort(),
     );
   });
 
@@ -214,7 +217,7 @@ describe("a backup cut short", () => {
     const keys = await bucket.backupKeys();
     expect(keys).toHaveLength(before.length + 1);
     expect(keys).toContain(
-      `${store.S3_PREFIX}/backups/${done.data.backup.instance_id}/${done.data.backup.name}`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${done.data.backup.instance_id}/${done.data.backup.name}`,
     );
   });
 
@@ -245,7 +248,7 @@ describe("a backup cut short", () => {
 describe("a file no store can give, in a backup to the object store", () => {
   it("puts the backup, names the file lost and in health, and clears health with the next backup that loses none", async () => {
     const store = ownObjectStore();
-    const bucket = bucketAt(store.S3_PREFIX);
+    const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backup-lost-file", {
       ...store,
       MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,

@@ -23,7 +23,9 @@ afterAll(async () => {
 });
 
 /** One of the values the run booted the server with. */
-function bootEnv(name: "MARFA_API_URL" | "S3_ENDPOINT"): string {
+function bootEnv(
+  name: "MARFA_API_URL" | "MARFA_OBJECT_STORE_ENDPOINT",
+): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(
@@ -128,7 +130,7 @@ describe("how a blob's bytes are served", () => {
     const stored = await client.getBlobUrl(hash);
     expect(stored.status).toBe(200);
     expect(new URL(stored.data.url).host).toBe(
-      new URL(bootEnv("S3_ENDPOINT")).host,
+      new URL(bootEnv("MARFA_OBJECT_STORE_ENDPOINT")).host,
     );
     const fromStore = await fetch(stored.data.url);
     expect(fromStore.status).toBe(200);

@@ -7,6 +7,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { PUBLIC_ONLY } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
@@ -98,9 +99,7 @@ describe("webhook address resolution", () => {
     const id = await subscribe("rebind.test", "rebind");
     // The target boots again with private addresses refused, as a production
     // instance runs, and stays so until the file ends.
-    await server.restart({
-      env: { MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: "false" },
-    });
+    await server.restart({ env: PUBLIC_ONLY });
     // The first lookup answers a public address that the socket reaches on
     // loopback, where the receiver listens, so no packet leaves the machine.
     // A second lookup answers ::1, where nothing listens: a target that

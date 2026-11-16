@@ -4,8 +4,8 @@
  *
  *   tsx scripts/restore-drill.ts [--folder] [--state <dir>] [--keep]
  *
- * Needs `MARFA_SERVER_BIN`. With the bucket, it needs the `S3_*` names in the
- * environment too, which it reads and never prints. `S3_PREFIX` is not read:
+ * Needs `MARFA_SERVER_BIN`. With the bucket, it needs the `MARFA_OBJECT_STORE_*` names in the
+ * environment too, which it reads and never prints. `MARFA_OBJECT_STORE_PREFIX` is not read:
  * the drill sets it to a prefix of its own, `drill/<id>`, and removes what is
  * under it, with its own state directory, at the end unless `--keep` is
  * given. With `--folder`, the servers back up to `<state>/folder` through
@@ -50,10 +50,10 @@ import { bootServer, serverProgram, stopServer } from "./marfa-server.js";
 /** The names the bucket needs. The endpoint and the addressing style may be
  *  unset, which names the provider's own defaults. */
 const REQUIRED_NAMES = [
-  "S3_BUCKET",
-  "S3_REGION",
-  "S3_ACCESS_KEY_ID",
-  "S3_SECRET_ACCESS_KEY",
+  "MARFA_OBJECT_STORE_BUCKET",
+  "MARFA_OBJECT_STORE_REGION",
+  "MARFA_OBJECT_STORE_ACCESS_KEY_ID",
+  "MARFA_OBJECT_STORE_SECRET_ACCESS_KEY",
 ] as const;
 /** Well past the object store's multipart threshold (the upload's part
  *  size, 5 MiB), so the restore reads a multipart object back as well as a
@@ -309,19 +309,19 @@ async function fingerprint(
 
 async function deletePrefix(prefix: string): Promise<number> {
   const client = new S3Client({
-    region: process.env.S3_REGION ?? "",
-    ...(process.env.S3_ENDPOINT
+    region: process.env.MARFA_OBJECT_STORE_REGION ?? "",
+    ...(process.env.MARFA_OBJECT_STORE_ENDPOINT
       ? {
-          endpoint: process.env.S3_ENDPOINT,
-          forcePathStyle: process.env.S3_FORCE_PATH_STYLE !== "false",
+          endpoint: process.env.MARFA_OBJECT_STORE_ENDPOINT,
+          forcePathStyle: process.env.MARFA_OBJECT_STORE_PATH_STYLE !== "false",
         }
       : {}),
     credentials: {
-      accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
-      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
+      accessKeyId: process.env.MARFA_OBJECT_STORE_ACCESS_KEY_ID ?? "",
+      secretAccessKey: process.env.MARFA_OBJECT_STORE_SECRET_ACCESS_KEY ?? "",
     },
   });
-  const bucket = process.env.S3_BUCKET ?? "";
+  const bucket = process.env.MARFA_OBJECT_STORE_BUCKET ?? "";
   let removed = 0;
   let token: string | undefined;
   try {
@@ -382,8 +382,8 @@ async function main(): Promise<void> {
   const folder = join(args.state, "folder");
   say(
     args.folder
-      ? `${new Date().toISOString()}. Backup folder \`MARFA_BACKUP_PATH\`, no object store.`
-      : `${new Date().toISOString()}. Bucket named by \`S3_BUCKET\`, prefix \`${prefix}/\`, ${process.env.S3_ENDPOINT ? "an endpoint set" : "no endpoint set"}.`,
+      ? `${new Date().toISOString()}. Backup folder set by \`backup_path\`, no object store.`
+      : `${new Date().toISOString()}. Bucket named by \`MARFA_OBJECT_STORE_BUCKET\`, prefix \`${prefix}/\`, ${process.env.MARFA_OBJECT_STORE_ENDPOINT ? "an endpoint set" : "no endpoint set"}.`,
   );
   say("");
 
@@ -393,9 +393,9 @@ async function main(): Promise<void> {
   for (const dir of [sourceState, restoredState, folder]) {
     mkdirSync(dir, { recursive: true });
   }
-  process.env.S3_PREFIX = prefix;
+  process.env.MARFA_OBJECT_STORE_PREFIX = prefix;
   const destination: Record<string, string> = args.folder
-    ? { S3_BUCKET: "", MARFA_BACKUP_PATH: folder }
+    ? { MARFA_OBJECT_STORE_BUCKET: "", MARFA_BACKUP_PATH: folder }
     : {};
   const boot = (state: string) =>
     bootServer({

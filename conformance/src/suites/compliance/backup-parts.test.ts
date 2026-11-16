@@ -78,11 +78,11 @@ interface Place {
 
 function bucketPlace(): Place {
   const store = ownObjectStore();
-  const bucket = bucketAt(store.S3_PREFIX);
+  const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
   const part = (instance: string, name: string) =>
-    `${store.S3_PREFIX}/backup-parts/${instance}/${name}`;
+    `${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${instance}/${name}`;
   const manifest = (instance: string, backup: string) =>
-    `${store.S3_PREFIX}/backups/${instance}/${backup}`;
+    `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${instance}/${backup}`;
   return {
     env: store,
     async parts(instance) {
@@ -108,7 +108,7 @@ function folderPlace(): Place {
   const parts = (instance: string) => join(root, "backup-parts", instance);
   const backups = (instance: string) => join(root, "backups", instance);
   return {
-    env: { S3_BUCKET: "", MARFA_BACKUP_PATH: root },
+    env: { MARFA_OBJECT_STORE_BUCKET: "", MARFA_BACKUP_PATH: root },
     parts(instance) {
       const dir = parts(instance);
       return Promise.resolve(

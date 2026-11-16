@@ -418,7 +418,7 @@ impl App {
             Readable::Silent => return Err(unavailable()),
             Readable::Nowhere => {}
         }
-        let Some(s3) = self.blobs.s3.clone() else {
+        let Some(s3) = self.blobs.s3() else {
             return Ok(Absent::Missing);
         };
         let looked = named.hash.clone();

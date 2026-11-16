@@ -854,6 +854,7 @@ export interface RestoreArchiveResponse {
   entries_skipped: string[];
   line_kinds_skipped: string[];
   settings_without_receiver: string[];
+  secrets_to_set: string[];
   enforcement_added: string[];
   enforcement_skipped: string[];
   not_restored: { kind: string; message: string }[];

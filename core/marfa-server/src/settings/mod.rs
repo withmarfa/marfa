@@ -3,6 +3,7 @@
 mod environment;
 pub mod registry;
 pub(crate) mod rule;
+pub mod sealed;
 mod secrets;
 pub mod start;
 pub mod start_only;
@@ -18,6 +19,7 @@ use arc_swap::ArcSwap;
 
 use crate::failure::Failure;
 use registry::{ENTRIES, Seeds};
+use sealed::Sealer;
 use secrets::Given;
 use start::Fixed;
 
@@ -76,10 +78,12 @@ impl Accepted {
         #[cfg(not(feature = "test-hooks"))]
         let given = self.given;
         let filled = secrets::open(given, &self.fixed.database)?;
-        let live = Snapshot::resolve(&self.seeds, &[], 0);
+        let sealer = Sealer::open_beside(&self.fixed.database)?;
+        let live = Snapshot::resolve(&self.seeds, Some(&sealer), &[], 0);
         Ok(Settings {
             start: Arc::new(Start::new(self.fixed, filled.key_salt, filled.auth_secret)),
             seeds: Arc::new(self.seeds),
+            sealer: Arc::new(sealer),
             start_only: self.start_only,
             live: ArcSwap::from_pointee(live),
             generation: AtomicU64::new(0),
@@ -110,6 +114,7 @@ pub(crate) fn report_unreadable(key: &str) {
 pub struct Settings {
     pub start: Arc<Start>,
     seeds: Arc<Seeds>,
+    sealer: Arc<Sealer>,
     start_only: Vec<start_only::Listed>,
     live: ArcSwap<Snapshot>,
     generation: AtomicU64,
@@ -159,7 +164,7 @@ impl Settings {
     /// A row that no longer reads stays in the table and its setting falls back, since a stop
     /// here could not be mended through the API.
     pub fn apply_stored(&self, stored: &[(String, String)]) {
-        let snapshot = Snapshot::resolve(&self.seeds, stored, 0);
+        let snapshot = Snapshot::resolve(&self.seeds, Some(&self.sealer), stored, 0);
         for key in snapshot.unreadable() {
             report_unreadable(key);
         }
@@ -173,7 +178,12 @@ impl Settings {
     }
 
     pub(crate) fn publish(&self, generation: u64, stored: &[(String, String)]) {
-        let snapshot = Arc::new(Snapshot::resolve(&self.seeds, stored, generation));
+        let snapshot = Arc::new(Snapshot::resolve(
+            &self.seeds,
+            Some(&self.sealer),
+            stored,
+            generation,
+        ));
         self.live.rcu(|current| {
             if current.generation() < generation {
                 snapshot.clone()
@@ -188,7 +198,11 @@ impl Settings {
     }
 
     pub fn candidate(&self, stored: &[(String, String)]) -> Snapshot {
-        Snapshot::resolve(&self.seeds, stored, 0)
+        Snapshot::resolve(&self.seeds, Some(&self.sealer), stored, 0)
+    }
+
+    pub(crate) fn sealer(&self) -> &Sealer {
+        &self.sealer
     }
 
     pub fn start_only(&self) -> &[start_only::Listed] {
@@ -437,63 +451,6 @@ mod tests {
         let settings = opened(&[salt, auth]);
         assert_eq!(settings.start.key_salt, salt.1);
         assert_eq!(settings.start.auth_secret, auth.1);
-    }
-
-    #[test]
-    fn an_object_store_is_attached_by_its_bucket_and_read_with_its_defaults() {
-        assert!(read(&[]).ok().unwrap().fixed().object_store.is_none());
-        let unprefixed = read(&[("S3_BUCKET", "marfa")]).ok().unwrap();
-        assert_eq!(unprefixed.fixed.object_store.unwrap().prefix, "marfa");
-        let read_back = read(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", "/one/two/")]);
-        let store = read_back.ok().unwrap().fixed.object_store.unwrap();
-        assert_eq!(
-            (
-                store.bucket.as_str(),
-                store.region.as_str(),
-                store.prefix.as_str()
-            ),
-            ("marfa", "us-east-1", "one/two")
-        );
-        assert!(store.path_style && store.endpoint.is_none());
-        assert_eq!(store.locator(), "s3://marfa/one/two");
-    }
-
-    #[test]
-    fn refuses_a_prefix_or_endpoint_that_cannot_name_the_store() {
-        for prefix in ["a/../b", "a b", "a//b", "./a"] {
-            let lines = refused(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", prefix)]);
-            assert_eq!(lines.len(), 1, "{prefix}");
-        }
-        let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", "ftp://key@host")]);
-        assert!(!lines[0].contains("key@host"), "{}", lines[0]);
-        assert!(read(&[("S3_BUCKET", "m"), ("S3_FORCE_PATH_STYLE", "maybe")]).is_ok());
-        let styled = [
-            ("S3_BUCKET", "m"),
-            ("S3_ENDPOINT", "http://127.0.0.1:3900"),
-            ("S3_FORCE_PATH_STYLE", "OFF"),
-        ];
-        let store = read(&styled).ok().unwrap().fixed.object_store.unwrap();
-        assert!(!store.path_style);
-        assert_eq!(
-            refused(&[styled[0], styled[1], ("S3_FORCE_PATH_STYLE", "maybe")]).len(),
-            1
-        );
-    }
-
-    #[test]
-    fn refuses_an_endpoint_that_carries_a_credential_and_never_repeats_it() {
-        for endpoint in [
-            "http://key:secret@127.0.0.1:3900",
-            "https://key@s3.example.com",
-            "https://:secret@s3.example.com",
-        ] {
-            let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", endpoint)]);
-            assert_eq!(lines.len(), 1, "{endpoint}");
-            assert!(lines[0].contains("S3_ACCESS_KEY_ID"), "{}", lines[0]);
-            assert!(lines[0].contains("S3_SECRET_ACCESS_KEY"), "{}", lines[0]);
-            assert!(!lines[0].contains("secret@"), "{}", lines[0]);
-            assert!(!lines[0].contains("key"), "{}", lines[0]);
-        }
     }
 
     #[test]

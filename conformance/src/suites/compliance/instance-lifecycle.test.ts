@@ -489,13 +489,6 @@ describe("starting with a setting outside its rule", () => {
       "team",
       'OTEL_RESOURCE_ATTRIBUTES must be comma-separated key=value pairs with percent-encoded values (got "team")',
     ],
-    [
-      "S3_ENDPOINT",
-      "not a URL",
-      "nope",
-      // An address can carry a credential, so the refusal gives no value.
-      "S3_ENDPOINT must be an absolute http or https URL",
-    ],
   ];
 
   // The witness for every refusal below: the largest or smallest value each
@@ -507,11 +500,7 @@ describe("starting with a setting outside its rule", () => {
         MARFA_AUDIT_RETENTION_DAYS: "36500",
         MARFA_EVENT_LOG_RETENTION_DAYS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
-        S3_ENDPOINT: "https://objects.example.test",
         OTEL_RESOURCE_ATTRIBUTES: "team=a%20b",
-        // With no bucket the endpoint is parsed and never reached, whatever
-        // object store the run's environment names.
-        S3_BUCKET: "",
         MARFA_VERSION_RECENT_DAYS: "40",
         MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "40",
         MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
@@ -555,14 +544,14 @@ describe("starting with a setting outside its rule", () => {
       const secret = "padded-secret-value";
 
       const lines = await refusedOverSettings({
-        S3_SECRET_ACCESS_KEY: ` ${secret} `,
+        MARFA_POSTHOG_PROJECT_TOKEN: ` ${secret} `,
         MARFA_AUDIT_RETENTION_DAYS: "36501",
       });
 
       expect([...lines].sort()).toEqual(
         [
           'MARFA_AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
-          "S3_SECRET_ACCESS_KEY has whitespace around it, which would be part of the secret; remove it",
+          "MARFA_POSTHOG_PROJECT_TOKEN has whitespace around it, which would be part of the secret; remove it",
         ].sort(),
       );
       expect(lines.join("\n")).not.toContain(secret);
