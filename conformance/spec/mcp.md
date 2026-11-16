@@ -238,6 +238,14 @@ When `marfa_delete` is called with the `confirm` token its preview of the same I
 
 **Tests:** `compliance/mcp.test.ts › trashes the items with the confirmation the preview gave`.
 
+### `mcp/delete-atomic`
+
+If `marfa_delete`, called with a `confirm` token that holds, fails after it has begun to move items, then the server MUST leave every item the call named, and every item their trash would take, as it was.
+
+**Reason:** `marfa_delete` shares its trash with `POST /items/trash` (`items/trash-several-atomic`), and a person who agreed to a count must not find part of it done.
+
+**Tests:** `compliance/mcp-scripted.test.ts › leaves every item as it was when the confirmed trash fails, and trashes them all without the fault`.
+
 ### `mcp/delete-total`
 
 When `marfa_delete` answers, the server MUST answer under `total` how many items the key can read the trash moves, counting once an item that more than one named item would take.

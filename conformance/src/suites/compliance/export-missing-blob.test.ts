@@ -168,6 +168,35 @@ describe("an archive export on an instance with one disk store", () => {
     expect(Object.keys(missing)).toContain(hash);
   });
 
+  it("keeps a copy that hashes to the blob's name when the export reads it again, though its first read did not", async () => {
+    const content = bytesOf("a blob whose copy is put right in between", 140);
+    const hash = await upload(working, content);
+    await noteNaming(working, hash);
+    const read = () =>
+      fetch(`${server!.apiUrl}/export?format=archive`, {
+        headers: { Authorization: `Bearer ${server!.workingKey}` },
+      });
+
+    // The first read of the blob's bytes is damaged, and the export waits
+    // before the second, the read that checks the copy again. The copy is put
+    // right while it waits. The witness is the test before this one: the same
+    // damage left in place for both reads strikes the copy.
+    await damageBlobs(server!, [hash]);
+    await server!.setFault("hold:blob-read=2");
+    const sent = read();
+    await server!.waitForHold("hold:blob-read");
+    await server!.clearFault("damage:blob");
+    await server!.clearFault("hold:blob-read");
+    const res = await sent;
+    expect(res.status).toBe(200);
+    await expect(res.arrayBuffer()).rejects.toThrow();
+
+    expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(1);
+    const { missing, carried } = await archiveOf(working);
+    expect(Object.keys(missing)).not.toContain(hash);
+    expect(Object.keys(carried)).toContain(hash);
+  });
+
   it("answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob", async () => {
     const owner = ownerOf(server!);
     const content = bytesOf("a blob behind a folder that cannot be read", 150);

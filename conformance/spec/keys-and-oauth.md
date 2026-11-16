@@ -2513,9 +2513,9 @@ When a device authorization request omits `scope` or names no scope after whites
 
 ### `keys-and-oauth/device-code-at-rest`
 
-The server MUST NOT write a device code it issued, as the code itself, to the database file it keeps its data in.
+The server MUST NOT write a device code it issued, as the code itself, to the database file it keeps its data in or to the log beside it.
 
-**Reason:** Whoever presents the code once the person approves is handed the tokens, so a copy of the database file must not be enough to present it. Access and refresh tokens are written the same way.
+**Reason:** Whoever presents the code once the person approves is handed the tokens, so a copy of the database file and its log must not be enough to present it. Access and refresh tokens are written the same way.
 
 **Tests:** `compliance/device-grant.test.ts › is held by the server as something other than the code it issued, and still polls`.
 

@@ -1881,8 +1881,9 @@ it("preserves an admitted addition when constraint evolutions compete", async ()
   };
   expect((await client.registerEdgeType(definition)).status).toBe(201);
   trackEdgeType(ctx, definition.id);
+  const added = ["core.task", "core.message"];
   const attempts = await Promise.all(
-    ["core.task", "core.message"].map((type) => {
+    added.map((type) => {
       const evolution = {
         ...definition,
         from_type_constraints: ["core.note", type],
@@ -1892,10 +1893,16 @@ it("preserves an admitted addition when constraint evolutions compete", async ()
     }),
   );
   expect(attempts.map((one) => one.status).sort()).toEqual([200, 409]);
+  const winner = attempts.findIndex((one) => one.status === 200);
+  const loser = attempts[1 - winner]!;
+  expect(loser.error?.error.code).toBe("conflict");
   const held = (await client.listEdgeTypes()).data.data.find(
     (one) => one.id === definition.id,
   );
-  expect(held?.from_type_constraints).toHaveLength(2);
+  // The winning request's addition is the one held, and the other's is not.
+  expect([...(held?.from_type_constraints ?? [])].sort()).toEqual(
+    ["core.note", added[winner]!].sort(),
+  );
   const combined = {
     ...definition,
     from_type_constraints: ["core.note", "core.task", "core.message"],

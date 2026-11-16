@@ -152,6 +152,45 @@ describe("owner and delegated profile changes", () => {
     expect(result).not.toHaveProperty("ok");
     await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
+  it("refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not", async () => {
+    const made = await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "Profile name lost",
+        source: "profile-name-lost",
+        profile_permissions: { name: "write" },
+      },
+    });
+    expect(made.status).toBe(201);
+    const key = made.body.key as string;
+    const name = async () =>
+      (await controlRequest(server.controlSocket, "/owner")).body.name;
+
+    // The request waits after it was admitted, while `change` is made.
+    const held = async (target: string, change: boolean) => {
+      await server.setFault("hold:write=profile.update@1");
+      const pending = profile({ name: target }, key);
+      await server.waitForHold("hold:write");
+      if (change) {
+        const narrowed = await controlRequest(
+          server.controlSocket,
+          `/keys/${String(made.body.id)}`,
+          { method: "PATCH", body: { profile_permissions: {} } },
+        );
+        expect(narrowed.status).toBe(200);
+      }
+      await server.clearFault("hold:write");
+      return pending;
+    };
+
+    // The witness: held the same way and left alone, the change lands.
+    expect((await held("Kept while held", false)).status).toBe(200);
+    expect(await name()).toBe("Kept while held");
+
+    const before = await name();
+    expect((await held("Lost while held", true)).status).toBe(403);
+    expect(await name()).toBe(before);
+  });
   it("requires the private local command and refuses explicit email-write grants", async () => {
     for (const path of ["/owner", "/profile"]) {
       const unauthenticated = await fetch(server.apiUrl + path, {

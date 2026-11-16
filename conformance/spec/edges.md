@@ -1674,9 +1674,15 @@ When an endpoint constraint evolution succeeds, the server MUST preserve every s
 
 ### `edges/types-evolve-atomic`
 
-When two `POST /edge-types` requests with `evolve_constraints: true` each add a different endpoint constraint to the same stored definition at once, the server MUST answer one `200` and the other `409 conflict`, and hold the additions of the one answered `200`.
+When two `POST /edge-types` requests with `evolve_constraints: true` each add a different endpoint constraint to the same stored definition at once, the server MUST answer one `200` and the other `409 conflict`.
 
 **Reason:** a request prepared from an earlier definition cannot remove another admitted request's additions.
+
+**Tests:** `compliance/edge-types.test.ts › preserves an admitted addition when constraint evolutions compete`.
+
+### `edges/types-evolve-winner-held`
+
+When two `POST /edge-types` requests with `evolve_constraints: true` each add a different endpoint constraint to the same stored definition at once, the server MUST hold in the definition the addition of the request it answered `200`.
 
 **Tests:** `compliance/edge-types.test.ts › preserves an admitted addition when constraint evolutions compete`.
 

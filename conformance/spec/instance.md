@@ -1140,7 +1140,7 @@ When the server starts on an image of its data directory taken at any one instan
 
 ### `instance/stop-writes-into-file`
 
-When the server is stopped on `SIGTERM` or `SIGINT` while no other process is reading the database file, the server MUST leave the database file holding every write it acknowledged, with none of them left in a file beside it.
+When the server is stopped on `SIGTERM` or `SIGINT` while no other process holds a read of the database file open, the server MUST leave the database file holding every write it acknowledged, with none of them left in a file beside it.
 
 **Reason:** an owner who stops the instance and copies the data directory must not lose the writes the log still held.
 
@@ -1148,9 +1148,9 @@ When the server is stopped on `SIGTERM` or `SIGINT` while no other process is re
 
 ### `instance/stop-reader-keeps-writes`
 
-While another process is reading the database file, when the server is stopped on `SIGTERM` or `SIGINT`, the server MUST keep every write it acknowledged in the database files, so that the next start answers it.
+While another process holds open a read of the database file that began before the server's last acknowledged write, when the server is stopped on `SIGTERM` or `SIGINT`, the server MUST keep every write it acknowledged in the database files, so that the next start answers it.
 
-**Reason:** a process that reads the database file, such as a replicator, can keep the stop from moving every write into the file itself, and the next start finds the rest beside it.
+**Reason:** a process that keeps a read open, such as a replicator, can keep the stop from moving every write into the file itself, and the next start finds the rest beside it.
 
 **Tests:** `compliance/database-file.test.ts › leaves the writes in the log while another connection holds a snapshot, and the next start answers every one of them`.
 
@@ -1189,6 +1189,26 @@ When the server starts on a claimed database, under a `MARFA_KEY_SALT` other tha
 When the server starts on a claimed database, under a `MARFA_KEY_SALT` other than the one its keys were minted under, and a request that carries no credential sends `POST /keys`, the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another MARFA_KEY_SALT`.
+
+### `instance/claim-survives-missing-credentials`
+
+When the server starts on a claimed database file whose owner row or key rows are missing, the server MUST answer the setup status as claimed.
+
+**Reason:** missing credentials do not establish authority to replace the owner.
+
+**Tests:** `compliance/database-file.test.ts › does not reopen setup after deleting %s rows`.
+
+### `instance/claim-missing-no-setup-code`
+
+When the server starts on a claimed database file whose owner row or key rows are missing, the server MUST NOT print a setup code.
+
+**Tests:** `compliance/database-file.test.ts › does not reopen setup after deleting %s rows`.
+
+### `instance/claim-missing-refuses-claim`
+
+When the server starts on a claimed database file whose owner row or key rows are missing, the server MUST refuse every request to claim the instance with `409`, whether it arrives on the private socket or over HTTP.
+
+**Tests:** `compliance/database-file.test.ts › does not reopen setup after deleting %s rows`.
 
 ### `instance/claim-missing-owner-recovery`
 
@@ -1314,7 +1334,15 @@ When `GET /health` is called while an attempt of the `database_write` probe's wr
 
 **Reason:** the operation takes no credential, so what a caller can make the server do through it stays small.
 
-**Tests:** `compliance/health.test.ts › answers the calls within ten seconds of its last write with that write's outcome, and writes again after`, `› commits its write once in ten seconds however many callers ask`.
+**Tests:** `compliance/health.test.ts › answers the calls within ten seconds of its last write with that write's outcome, and writes again after`.
+
+### `instance/health-write-once`
+
+The server MUST attempt the write of the `database_write` probe at most once in ten seconds, however many callers ask.
+
+**Reason:** the operation takes no credential, so the writes a caller can make the server attempt through it stay few. A second attempt in the window would answer `ok` where the first answered `down`, so a caller sees a cap broken as a change of outcome within one window.
+
+**Tests:** `compliance/health.test.ts › commits its write once in ten seconds however many callers ask`.
 
 ### `instance/health-write-again`
 
@@ -1387,6 +1415,14 @@ If the server starts on a database file whose structure is not the one the schem
 ### `instance/upgrade-migrates-older`
 
 When the server starts on a database an earlier schema version of its own wrote, whose structure is the one that version declares, the server MUST upgrade it before it takes a request, and answer it from then on as at the version it now has.
+
+**Tests:** waiting on #2802.
+
+### `instance/upgrade-failure-keeps-old`
+
+If upgrading a database fails before it is whole, then the server MUST refuse to start and leave the database answering as it did at the schema version it was at before the start.
+
+**Reason:** an upgrade that stops partway must not leave a database that is neither version.
 
 **Tests:** waiting on #2802.
 
@@ -2228,7 +2264,7 @@ Where `MARFA_TEST_CLOCK_OFFSET_MS` is set, the server MUST read the time as that
 
 While `MARFA_TEST_HOOKS` is true, the server MUST answer a sign-in's `created_at` as the time the server reads.
 
-**Reason:** A session, a sign-in token and an authorization link carry a time the server later compares with its clock. If one kept the system's time, moving the clock would put the two out of step.
+**Reason:** a browser session carries a time the server later compares with its clock. If it kept the system's time, moving the clock would put the two out of step.
 
 **Tests:** `compliance/test-hooks.test.ts › stamps a sign-in with the time the server reads`.
 
