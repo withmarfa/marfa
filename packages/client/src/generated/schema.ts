@@ -31195,6 +31195,11 @@ export interface operations {
                 resource?: string;
                 /** @description `login` asks the person to sign in again; `none` returns `login_required` or `consent_required` instead of showing a page. */
                 prompt?: "login" | "none" | "consent";
+                /**
+                 * @description How many seconds ago the person may have signed in. If they signed in longer ago, Marfa asks them to sign in again before it answers, as `401 insufficient_user_authentication` asks; `0` always asks.
+                 * @example 300
+                 */
+                max_age?: number;
             };
             header?: never;
             path?: never;

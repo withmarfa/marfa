@@ -2108,7 +2108,7 @@ describe("a restore refused while its body is still arriving", () => {
       expect(forbidden.status).toBe(403);
       expect(
         (JSON.parse(forbidden.text) as { error: { code: string } }).error.code,
-      ).toBe("forbidden");
+      ).toBe("app_sign_in_required");
       expect(forbidden.sent).toBe(false);
 
       const refused = await owner.restoreArchive(body);
