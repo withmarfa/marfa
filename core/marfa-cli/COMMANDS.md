@@ -71,7 +71,7 @@ A command that ends in a fault also sends one exception to PostHog's error track
 
 ## Owner tasks
 
-The instance draws no owner console, so each task an owner has is a command. Most need `--socket`, the private socket on the server's machine, or a key that holds the permission the command names.
+The instance draws no owner console, so each task an owner has is a command. Each takes a key or an app that holds the permission the command names, or `--socket`, the private socket on the server's machine. Claiming the instance and recovering the owner's password take `--socket` alone.
 
 | Task | Commands |
 | --- | --- |
@@ -243,7 +243,7 @@ marfa owner [OPTIONS] <COMMAND>
 
 ### marfa owner show
 
-Show the instance's owner.
+Show the owner's profile: the name, email and avatar the credential reads.
 
 ```text
 marfa owner show [OPTIONS]
@@ -251,7 +251,7 @@ marfa owner show [OPTIONS]
 
 ### marfa owner passkeys
 
-Manage the owner's registered passkeys using private machine authority.
+Manage the owner's registered passkeys.
 
 ```text
 marfa owner passkeys [OPTIONS] <COMMAND>
@@ -259,7 +259,7 @@ marfa owner passkeys [OPTIONS] <COMMAND>
 
 ### marfa owner passkeys list
 
-List every registered owner passkey (private socket required).
+List every registered owner passkey. Requires `sign_ins.manage`.
 
 ```text
 marfa owner passkeys list [OPTIONS]
@@ -267,7 +267,7 @@ marfa owner passkeys list [OPTIONS]
 
 ### marfa owner passkeys rename
 
-Rename one owner passkey (private socket required).
+Rename one owner passkey. Requires `sign_ins.manage`.
 
 ```text
 marfa owner passkeys rename [OPTIONS] --name <NAME> <ID>
@@ -283,7 +283,7 @@ marfa owner passkeys rename [OPTIONS] --name <NAME> <ID>
 
 ### marfa owner passkeys delete
 
-Delete one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
+Delete one passkey. Existing sign-ins and other passkeys stay usable. Requires `sign_ins.manage`.
 
 ```text
 marfa owner passkeys delete [OPTIONS] <ID>
@@ -295,7 +295,7 @@ marfa owner passkeys delete [OPTIONS] <ID>
 
 ### marfa owner passkeys add
 
-Open the owner sign-in page, where you sign in yourself and then reach the passkey page (private socket required).
+Open the owner sign-in page, where you sign in yourself and then reach the passkey page. Requires `sign_ins.manage`.
 
 ```text
 marfa owner passkeys add [OPTIONS]
@@ -319,7 +319,7 @@ marfa owner recover [OPTIONS]
 
 ### marfa owner update
 
-Change the owner's email, display name, or avatar (private socket required).
+Change the owner's email, display name, or avatar. Requires `profile` write on each.
 
 ```text
 marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--clear-avatar>
@@ -388,7 +388,7 @@ marfa apps [OPTIONS] <COMMAND>
 
 ### marfa apps list
 
-List approved apps. Requires grants.manage or private machine authority.
+List approved apps. Requires `grants.manage`.
 
 ```text
 marfa apps list [OPTIONS]
@@ -396,7 +396,7 @@ marfa apps list [OPTIONS]
 
 ### marfa apps narrow
 
-Reduce an app's access. Ends tokens and refresh chains that exceed it. Requires private machine authority (--socket).
+Reduce an app's access. Ends tokens and refresh chains that exceed it. Requires `grants.manage`.
 
 ```text
 marfa apps narrow [OPTIONS] <ID>
@@ -413,7 +413,7 @@ marfa apps narrow [OPTIONS] <ID>
 
 ### marfa apps revoke
 
-End an app's grant. Requires grants.manage or private machine authority.
+End an app's grant. Requires `grants.manage`.
 
 ```text
 marfa apps revoke [OPTIONS] <ID>
@@ -439,7 +439,7 @@ marfa sign-ins [OPTIONS] <COMMAND>
 
 ### marfa sign-ins list
 
-List every browser, app and key that can reach the server, each with its name, its kind and when it was last used. Needs direct local authority (--socket).
+List every browser, app and key that can reach the server, each with its name, its kind and when it was last used. Requires `sign_ins.manage`.
 
 ```text
 marfa sign-ins list [OPTIONS]
@@ -447,7 +447,7 @@ marfa sign-ins list [OPTIONS]
 
 ### marfa sign-ins rename
 
-Give an app or a key a new name. A key's name is its label; a browser's comes from the browser and can't be changed. Needs direct local authority (--socket).
+Give an app or a key a new name. A key's name is its label; a browser's comes from the browser and can't be changed. Requires `sign_ins.manage`.
 
 ```text
 marfa sign-ins rename [OPTIONS] <ID> <NAME>
@@ -460,7 +460,7 @@ marfa sign-ins rename [OPTIONS] <ID> <NAME>
 
 ### marfa sign-ins end
 
-End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays, and so do the keys an app minted unless --revoke-keys is given. Needs direct local authority (--socket).
+End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays, and so do the keys an app minted unless --revoke-keys is given. Requires `sign_ins.manage`.
 
 ```text
 marfa sign-ins end [OPTIONS] <ID>
@@ -476,7 +476,7 @@ marfa sign-ins end [OPTIONS] <ID>
 
 ### marfa sign-ins end-all
 
-End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It refuses, ending nothing, when a --keep names no sign-in. It ends them one at a time, carries on past one it cannot end, says how many it ended and names each one it could not. Needs direct local authority (--socket).
+End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It refuses, ending nothing, when a --keep names no sign-in. It ends them one at a time, carries on past one it cannot end, says how many it ended and names each one it could not. Requires `sign_ins.manage`.
 
 ```text
 marfa sign-ins end-all [OPTIONS]
@@ -526,7 +526,7 @@ marfa items list [OPTIONS]
 
 ### marfa items summaries
 
-Item names, sources and creation times, newest first. Use `--socket`.
+Item names, sources and creation times, newest first, of the types the credential reads.
 
 ```text
 marfa items summaries [OPTIONS]
@@ -542,7 +542,7 @@ marfa items summaries [OPTIONS]
 
 ### marfa items bin
 
-Read and empty the bin through direct local authority. Use `--socket`.
+Read and empty the bin, as far as the credential reads its types. Requires `items.purge`.
 
 ```text
 marfa items bin [OPTIONS] <COMMAND>
@@ -1899,7 +1899,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 | --- | --- |
 | `--label <LABEL>` | What the key is for. |
 | `--source <SOURCE>` | The key's own source, which an item written under the key is keyed by and stamped with unless the write names one the key claims. |
-| `--permission <PERMISSION>` | A permission, repeatable. One of `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read`, `grants.manage`, `instance.read`, `instance.maintain`, `connectors.manage`, `blobs.manage`, `keys.manage`. |
+| `--permission <PERMISSION>` | A permission, repeatable. One of `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read`, `grants.manage`, `instance.read`, `instance.maintain`, `connectors.manage`, `blobs.manage`, `backups.manage`, `sign_ins.manage`, `keys.manage`. |
 | `--type-permission <PATTERN=LEVEL>` | A type pattern and its level, `core.note=write`, repeatable. |
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
 | `--edge-permission <TYPE=LEVEL>` | An edge type and its level, `references=write`, repeatable. |
@@ -1944,7 +1944,7 @@ marfa keys update [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--label <LABEL>` | What the key is for. |
-| `--permission <PERMISSION>` | A permission, repeatable. One of `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read`, `grants.manage`, `instance.read`, `instance.maintain`, `connectors.manage`, `blobs.manage`, `keys.manage`. |
+| `--permission <PERMISSION>` | A permission, repeatable. One of `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read`, `grants.manage`, `instance.read`, `instance.maintain`, `connectors.manage`, `blobs.manage`, `backups.manage`, `sign_ins.manage`, `keys.manage`. |
 | `--type-permission <PATTERN=LEVEL>` | A type pattern and its level, `core.note=write`, repeatable. |
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
 | `--edge-permission <TYPE=LEVEL>` | An edge type and its level, `references=write`, repeatable. |
@@ -2185,7 +2185,7 @@ marfa backups [OPTIONS] <COMMAND>
 
 ### marfa backups list
 
-The backups where the instance keeps them, its backup folder or its object store, newest first, from every instance that put them there. Requires private local authority (--socket).
+The backups where the instance keeps them, its backup folder or its object store, newest first, from every instance that put them there. Requires `backups.manage`.
 
 ```text
 marfa backups list [OPTIONS]
@@ -2193,7 +2193,7 @@ marfa backups list [OPTIONS]
 
 ### marfa backups run
 
-Take a backup now, whether or not anything changed since the last one. Requires private local authority (--socket).
+Take a backup now, whether or not anything changed since the last one. Requires `backups.manage`.
 
 ```text
 marfa backups run [OPTIONS]
@@ -2218,7 +2218,7 @@ marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>
 
 ### marfa backups folder
 
-The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority (--socket).
+The backup folder that `MARFA_BACKUP_PATH` names. Requires `backups.manage`.
 
 ```text
 marfa backups folder [OPTIONS] <COMMAND>
@@ -2481,7 +2481,7 @@ marfa events [OPTIONS]
 
 ## attention
 
-What needs the owner's attention: a degraded component, a failed job, a connector or folder with a problem, a key about to expire, and any check that could not answer. Needs --socket.
+What needs the owner's attention: a degraded component, a failed job, a connector or folder with a problem, a key about to expire, and any check that could not answer. Requires `instance.read`.
 
 ### marfa attention
 
@@ -2521,7 +2521,7 @@ marfa housekeeping run [OPTIONS] <NAME>
 
 ### marfa housekeeping confirm-clock
 
-Take the server's clock as right (private socket required). While the clock reads more than 7 days later than the server's trusted time, the jobs that delete old records do nothing; this lets them run now. A clock more than an hour behind that time is named on the attention list until this runs or the clock catches up.
+Take the server's clock as right. Requires `instance.maintain`. While the clock reads more than 7 days later than the server's trusted time, the jobs that delete old records do nothing; this lets them run now. A clock more than an hour behind that time is named on the attention list until this runs or the clock catches up.
 
 ```text
 marfa housekeeping confirm-clock [OPTIONS]

@@ -22,6 +22,7 @@ The server registers the following jobs, each run at the interval in the table. 
 | `blob-integrity`           | hour                      | Checks blob copies and removes copies whose bytes are missing or altered.                                                                                                                                                                                                            | no                            |
 | `blob-orphans`             | day                       | Reports unreferenced blobs and purges them after the grace period.                                                                                                                                                                                                                   | yes                           |
 | `enrichment-sweep`         | 30 seconds                | Extracts searchable text and image dimensions from uploaded files.                                                                                                                                                                                                                   | no                            |
+| `attention-check`          | 5 minutes                 | Checks what needs the owner's attention and announces each new entry (`events/attention-raised`). | no |
 | `bulk-action-gc`           | hour                      | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                                      | yes                           |
 | `table-row-cleanup`        | hour                      | Removes the rows and change logs of purged items, the batches of a table's change log older than `row_log_retention_days`, and rewrites the order a table keeps after its `order` changed and the search index of its rows after what it marks searchable changed, a page at a time. | yes                           |
 | `backup`                   | `backup_interval_seconds` | Puts a backup of the instance in the backup folder or the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                        | no                            |
@@ -46,11 +47,11 @@ When a key or app token lacking `instance.read` sends `GET /housekeeping`, the s
 
 ### `housekeeping/always-listed`
 
-The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `credential-cleanup`, `bulk-action-gc`, `table-row-cleanup`, `blob-replicate`, `blob-integrity` and `enrichment-sweep` on every instance, whatever its settings and its `/config`.
+The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `credential-cleanup`, `bulk-action-gc`, `table-row-cleanup`, `blob-replicate`, `blob-integrity`, `enrichment-sweep` and `attention-check` on every instance, whatever its settings and its `/config`.
 
 **Reason:** jobs controlled by `/config` stay registered so that a later choice can start work without a restart. A disabled job skips work; a zero retention keeps everything.
 
-**Tests:** `compliance/housekeeping-listing.test.ts › lists the twelve jobs every instance runs, and no job that something switches on, on an instance with none of them`, `compliance/credential-cleanup.test.ts › lists every job the server runs, and runs the credential clean-up on demand`.
+**Tests:** `compliance/housekeeping-listing.test.ts › lists the jobs every instance runs, and no job that something switches on, on an instance with none of them`, `compliance/credential-cleanup.test.ts › lists every job the server runs, and runs the credential clean-up on demand`.
 
 ### `housekeeping/switched-heartbeat`
 
@@ -740,11 +741,17 @@ While the server's clock is more than 7 days later than the trusted time, when a
 
 ### `housekeeping/clock-confirm`
 
-When the private local command sends `POST /_control/clock/confirm` (`marfa housekeeping confirm-clock`), the server MUST take the clock's time as the trusted time, and answer it as `confirmed_at`.
+When a caller holding `instance.maintain` sends `POST /clock/confirm` (`marfa housekeeping confirm-clock`), the server MUST take the clock's time as the trusted time, and answer it as `confirmed_at`.
 
 **Reason:** an instance that was off for months looks the same as a clock set wrong, and only the owner can say which it is.
 
-**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps by the clock when it is set back, and keeps the trusted time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps by the clock when it is set back, and keeps the trusted time through a crash`, `compliance/owner-tasks.test.ts › lets a key holding each permission do each owner task`.
+
+### `housekeeping/clock-confirm-permission`
+
+If a credential without `instance.maintain` sends `POST /clock/confirm`, then the server MUST answer `403 forbidden` with `details.required_scope` `instance.maintain`.
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`.
 
 ### `housekeeping/clock-steady-day`
 

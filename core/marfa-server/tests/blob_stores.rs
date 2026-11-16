@@ -1649,7 +1649,7 @@ impl Instance {
     async fn avatar(&self, bytes: &[u8]) -> String {
         let request = Request::builder()
             .method(Method::PUT)
-            .uri("/owner/avatar")
+            .uri("/profile/avatar")
             .body(Body::from(bytes.to_vec()))
             .unwrap();
         let stored = send(&self.control, request).await;
@@ -1690,7 +1690,7 @@ async fn the_owners_avatar_is_replicated_and_purged_only_once_replaced() {
 
     assert_eq!(instance.copies(&second).await.len(), 2);
     std::fs::remove_file(instance.file(&second)).unwrap();
-    let served = instance.call(Method::GET, "/owner/avatar", None).await;
+    let served = instance.call(Method::GET, "/profile/avatar", None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.bytes, jpeg(9));
 }
@@ -1714,7 +1714,7 @@ async fn a_avatar_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
     assert_eq!(run["purged"], 1, "{run}");
     assert_eq!(instance.blobs_named(&witness), 0);
     assert_eq!(instance.blobs_named(&avatar), 1);
-    let served = instance.call(Method::GET, "/owner/avatar", None).await;
+    let served = instance.call(Method::GET, "/profile/avatar", None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.bytes, bytes);
 }

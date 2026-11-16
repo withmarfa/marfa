@@ -243,8 +243,8 @@ fn a_missing_credential_leaves_by_five() {
 }
 
 #[test]
-fn owner_update_requires_socket_before_resolving_credentials() {
-    let (code, stdout, stderr) = run(&["--json", "owner", "update", "--name", "New owner"]);
+fn owner_recover_requires_socket_before_resolving_credentials() {
+    let (code, stdout, stderr) = run(&["--json", "owner", "recover", "--stdin"]);
     assert_eq!(code, 2);
     assert!(stdout.is_empty());
     assert!(

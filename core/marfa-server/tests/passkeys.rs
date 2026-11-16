@@ -831,11 +831,11 @@ async fn a_user_handle_must_be_the_owners_when_it_is_sent() {
     let device = Device::new();
     instance.add(&device).await;
     let read = Request::builder()
-        .uri("/owner")
+        .uri("/_control/setup/status")
         .body(Body::empty())
         .unwrap();
-    let owner = send(instance.control.clone(), read).await;
-    let id = uuid::Uuid::parse_str(owner.body["id"].as_str().unwrap()).unwrap();
+    let status = send(instance.control.clone(), read).await;
+    let id = uuid::Uuid::parse_str(status.body["owner_id"].as_str().unwrap()).unwrap();
     for (handle, wanted, counter) in [
         (json!(text(&[7; 16])), StatusCode::UNAUTHORIZED, 1),
         (json!(text(id.as_bytes())), StatusCode::OK, 2),

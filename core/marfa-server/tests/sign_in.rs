@@ -308,7 +308,7 @@ async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
     while faults.list().iter().all(|fault| fault.waiting == 0) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let mut change = post("/owner", &json!({ "email": "moved@example.test" }));
+    let mut change = post("/profile", &json!({ "email": "moved@example.test" }));
     *change.method_mut() = Method::PATCH;
     let changed = send(instance.control.clone(), change).await;
     assert_eq!(changed.status, StatusCode::OK);

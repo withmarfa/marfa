@@ -2839,87 +2839,37 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
 }
 
 #[tokio::test]
-async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
+async fn every_door_takes_the_scope_that_writes_the_sign_in_email() {
     let instance = Instance::signed_in().await;
     let asked = "core.note:read profile.email:write";
-    let registration = |scope: &str| {
-        json!({
-            "client_name": "a fixture app",
-            "application_type": "native",
-            "redirect_uris": [CALLBACK],
-            "grant_types": ["authorization_code", "refresh_token"],
-            "response_types": ["code"],
-            "token_endpoint_auth_method": "none",
-            "scope": scope,
-        })
-    };
-    let refused = instance
-        .send(post_json("/oauth/register", &registration(asked)))
+    let registered = instance
+        .send(post_json(
+            "/oauth/register",
+            &json!({
+                "client_name": "a fixture app",
+                "application_type": "native",
+                "redirect_uris": [CALLBACK],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",
+                "scope": asked,
+            }),
+        ))
         .await;
-    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    refused_as(&refused, "invalid_scope");
-    let client = instance.register_with(registration(OFFLINE_NOTES)).await;
-
+    assert_eq!(registered.status, StatusCode::CREATED, "{}", registered.text);
+    let client = text_at(&registered.json(), "client_id").to_string();
     let authorization = request_with(&client, &[("scope", Some(asked))]);
-    for cookie in [None, Some(instance.cookie.as_str())] {
-        let refused = instance.send(get(&authorization, cookie)).await;
-        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-        refused_as(&refused, "invalid_scope");
-    }
-    let open = request_with(&client, &[("scope", Some(NOTES))]);
-    let landed = instance.send(get(&open, Some(&instance.cookie))).await;
-    assert_eq!(landed.status, StatusCode::FOUND, "{}", landed.text);
+    let shown = instance
+        .send(get(&authorization, Some(&instance.cookie)))
+        .await;
+    assert_ne!(shown.status, StatusCode::BAD_REQUEST, "{}", shown.text);
 
-    let device = instance.register_device(NOTES).await;
+    let device = instance.register_device(asked).await;
     let fields = [("client_id", device.as_str()), ("scope", asked)];
-    let refused = instance
+    let issued = instance
         .send(post_form("/oauth/device-authorization", None, &fields))
         .await;
-    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    refused_as(&refused, "invalid_scope");
-
-    let link = instance.consent_link(&client, NOTES).await;
-    let refused = instance.decide(&link, &["profile.email:write"]).await;
-    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    let consents = "SELECT count(*) FROM oauth_consents";
-    assert_eq!(instance.count(consents).await, 0);
-
-    let code = instance.code(&client, OFFLINE_NOTES).await;
-    let exchange = |code: &str, scope: Option<&str>| {
-        let mut fields = vec![
-            ("grant_type", "authorization_code".to_string()),
-            ("client_id", client.clone()),
-            ("code", code.to_string()),
-            ("code_verifier", VERIFIER.to_string()),
-            ("redirect_uri", CALLBACK.to_string()),
-        ];
-        fields.extend(scope.map(|scope| ("scope", scope.to_string())));
-        fields
-    };
-    let form = exchange(&code, Some(asked));
-    let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let refused = instance.send(post_form("/oauth/token", None, &form)).await;
-    refused_as(&refused, "invalid_scope");
-
-    let form = exchange(&code, None);
-    let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let issued = instance.send(post_form("/oauth/token", None, &form)).await;
     assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
-    let issued = issued.json();
-    let fields = [
-        ("grant_type", "refresh_token"),
-        ("client_id", client.as_str()),
-        ("refresh_token", text_at(&issued, "refresh_token")),
-        ("scope", asked),
-    ];
-    let refused = instance
-        .send(post_form("/oauth/token", None, &fields))
-        .await;
-    refused_as(&refused, "invalid_scope");
-    let refreshed = instance
-        .refresh(&client, text_at(&issued, "refresh_token"))
-        .await;
-    assert_eq!(refreshed.status, StatusCode::OK, "{}", refreshed.text);
 }
 
 fn registering(content_type: Option<&str>, bearer: Option<&str>, body: &Value) -> Request<Body> {
@@ -3666,8 +3616,8 @@ async fn an_access_token_whose_end_does_not_read_is_refused_and_never_taken_as_e
 
 impl Instance {
     /// A key that holds the permission each of these writes asks, which only the private local command may use.
-    async fn key_caller(&self) -> (Caller, String) {
-        let key = self.key_holding(&["grants.manage", "keys.manage"]).await;
+    async fn key_caller(&self, permissions: &[&str]) -> (Caller, String) {
+        let key = self.key_holding(permissions).await;
         let keys::Presented::Live(found) = keys::authenticate(&self.app, text_at(&key, "key"))
             .await
             .unwrap()
@@ -3678,20 +3628,20 @@ impl Instance {
     }
 }
 
-fn only_local(refused: Result<impl std::fmt::Debug, marfa_server::app::refusal::Refusal>) {
+fn forbidden(refused: Result<impl std::fmt::Debug, marfa_server::app::refusal::Refusal>) {
     let refusal = refused.unwrap_err();
     assert_eq!(refusal.code, Code::Forbidden, "{refusal:?}");
 }
 
 #[tokio::test]
-async fn a_key_cannot_narrow_a_grant_inside_the_write() {
+async fn a_key_without_grants_manage_cannot_narrow_a_grant_inside_the_write() {
     let instance = Instance::signed_in().await;
     let client = instance.register("core.note:read core.note:write").await;
     instance
         .tokens(&client, "core.note:read core.note:write")
         .await;
     let grant = instance.grant_of(&client).await;
-    let (caller, _) = instance.key_caller().await;
+    let (caller, _) = instance.key_caller(&["keys.manage"]).await;
     let both = ScopeSet::parse("core.note:read core.note:write");
     let asked = Narrowing {
         scopes: ScopeSet::parse("core.note:read"),
@@ -3705,7 +3655,7 @@ async fn a_key_cannot_narrow_a_grant_inside_the_write() {
         asked,
     )
     .await;
-    only_local(refused);
+    forbidden(refused);
     assert_eq!(instance.grant_of(&client).await["scopes"], grant["scopes"]);
 
     let witness = instance
@@ -3719,12 +3669,12 @@ async fn a_key_cannot_narrow_a_grant_inside_the_write() {
 }
 
 #[tokio::test]
-async fn a_key_cannot_end_or_rename_a_sign_in_inside_the_write() {
+async fn a_key_without_sign_ins_manage_cannot_end_or_rename_a_sign_in_inside_the_write() {
     let instance = Instance::signed_in().await;
     let client = instance.register(NOTES).await;
     instance.tokens(&client, NOTES).await;
     let grant = instance.grant_of(&client).await;
-    let (caller, key_id) = instance.key_caller().await;
+    let (caller, key_id) = instance.key_caller(&["grants.manage", "keys.manage"]).await;
     let before = instance.sign_ins().await;
 
     for id in [text_at(&grant, "id"), key_id.as_str()] {
@@ -3736,10 +3686,10 @@ async fn a_key_cannot_end_or_rename_a_sign_in_inside_the_write() {
             Visit::default(),
         )
         .await;
-        only_local(ended);
+        forbidden(ended);
         let renamed =
             sign_ins::rename(&instance.app, &caller, id.to_string(), "taken".into()).await;
-        only_local(renamed);
+        forbidden(renamed);
     }
     assert_eq!(instance.sign_ins().await.len(), before.len());
     assert!(

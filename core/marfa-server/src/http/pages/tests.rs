@@ -464,11 +464,10 @@ mod consent_pages {
             let after = html.find("</form>").unwrap();
             let words = html[from..to].replace('\n', " ");
             let mut form = html[to..after].to_owned();
-            if let (Some(start), Some(end)) = (
-                form.find("<section class=\"device-check\""),
-                form.find("</section>"),
-            ) {
-                form.replace_range(start..end + "</section>\n".len(), "");
+            if let Some(start) = form.find("<section class=\"device-check\"")
+                && let Some(end) = form[start..].find("</section>")
+            {
+                form.replace_range(start..start + end + "</section>\n".len(), "");
             }
             let rest = form
                 .lines()

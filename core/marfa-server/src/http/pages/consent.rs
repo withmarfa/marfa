@@ -226,6 +226,7 @@ struct ConsentBody<'a> {
     profile: Vec<Row>,
     powers: Vec<PowerRow>,
     powers_title: &'static str,
+    powers_each: &'static str,
     powers_summary: String,
 }
 
@@ -329,6 +330,7 @@ pub fn consent(view: &Consent) -> Result<Page> {
         powers_summary: powers_summary(powers.len()),
         powers,
         powers_title: words::POWERS_TITLE,
+        powers_each: words::POWERS_EACH,
     })?;
     document(
         "Allow access",

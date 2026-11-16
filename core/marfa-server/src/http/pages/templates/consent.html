@@ -40,9 +40,19 @@
 <p class="hint">Choose which types to allow. A type left at No access is not included.</p>
 {% for one in item.types %}{% call rows::level(one) %}{% endcall %}{% endfor %}</div>
 {% endif %}{% endfor %}{% if !profile.is_empty() %}<h3>Your profile</h3>
-{% for row in profile %}{% call rows::level(row) %}{% endcall %}{% endfor %}{% endif %}{% if !powers.is_empty() %}<h3>{{ powers_title }}</h3>
-<p class="hint">{{ powers_summary }}</p>
-{% for power in powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}{% endif %}</div>
+{% for row in profile %}{% call rows::level(row) %}{% endcall %}{% endfor %}{% endif %}{% if !powers.is_empty() %}<section class="powers" data-powers aria-labelledby="powers-all-title">
+<div class="row power powers-all">
+<div class="text">
+<label class="title" id="powers-all-title" for="powers-all">{{ powers_title }}</label>
+<div class="line" id="powers-all-note">{{ powers_summary }}</div>
+</div>
+<input type="checkbox" role="switch" id="powers-all" data-powers-all aria-describedby="powers-all-note" hidden>
+</div>
+<details class="powers-each" data-powers-each>
+<summary>{{ powers_each }}</summary>
+{% for power in powers %}{% call rows::power(power) %}{% endcall %}{% endfor %}</details>
+</section>
+{% endif %}</div>
 <p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 {% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 5 minutes.</p>
 {% endif %}{% if let Some(code) = device_code %}<section class="device-check" aria-labelledby="device-check-title">

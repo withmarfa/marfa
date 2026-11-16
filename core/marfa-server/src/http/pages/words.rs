@@ -14,6 +14,7 @@ pub fn level(level: Level) -> &'static str {
 pub const CHOOSE_TYPES_WORD: &str = "Choose types";
 pub const EDIT_LINE: &str = "Edit includes adding and deleting items.";
 pub const POWERS_TITLE: &str = "Look after this Marfa";
+pub const POWERS_EACH: &str = "Choose one by one";
 pub const UNDONE_MARK: &str = "Can't be undone.";
 
 pub struct PowerWords {

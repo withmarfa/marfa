@@ -701,6 +701,46 @@ When a purge has taken an edge's from item, the server MUST withhold the edge's 
 
 **Tests:** `compliance/edge-events.test.ts › withholds a purged item's edges from a subscriber that could not read it, live and on a replay`.
 
+## What needs the owner's attention
+
+A check of what needs the owner's attention (`GET /attention`, and the `attention-check` housekeeping job) announces each entry it finds that no earlier check announced.
+
+### `events/attention-raised`
+
+When a check of what needs the owner's attention finds an entry with a `kind` and `reference` that the last check did not list, the server MUST announce one `attention.raised` event carrying the entry as `attention`.
+
+**Reason:** an app follows the instance's health from the stream or a webhook rather than reading the list again and again.
+
+**Tests:** `compliance/attention-events.test.ts › sends a new attention entry once on the stream of a credential holding instance.read, and to no other`, `› announces an entry from the attention-check job when nobody reads the list`.
+
+### `events/attention-once`
+
+While an entry stays in what needs the owner's attention, the server MUST NOT announce it again at a later check.
+
+**Reason:** the event says an entry appeared, so one that stays is told once, and one that goes away and comes back is told again.
+
+**Tests:** `compliance/attention-events.test.ts › sends a new attention entry once on the stream of a credential holding instance.read, and to no other`.
+
+### `events/attention-reader`
+
+The server MUST send an `attention.raised` event only to a stream or a webhook whose credential holds `instance.read`.
+
+**Tests:** `compliance/attention-events.test.ts › sends a new attention entry once on the stream of a credential holding instance.read, and to no other`.
+
+### `events/attention-unfiltered`
+
+The server MUST NOT send an `attention.raised` event on a stream that names a `type` or is a copy stream.
+
+**Reason:** the entry is about the instance, not an item of any type, and a device's copy stream carries only what its working copy holds.
+
+**Tests:** `compliance/attention-events.test.ts › sends no attention entry on a stream that names a type`.
+
+### `events/attention-webhook`
+
+When a webhook subscribed to `attention.raised`, whose maker holds `instance.read`, is active as an entry is announced, the server MUST deliver the event to it, whatever its `type_filter`.
+
+**Tests:** `compliance/attention-events.test.ts › delivers a new attention entry to a webhook subscribed to attention.raised`.
+
 ## A stream and the source filter
 
 The source filter is `enforcement.source_filter` as it holds for the stream's credential: its own override's if the override names one, and else the instance's (`types/source-filter`). A copy stream is held to `reach/frame-excluded` instead.

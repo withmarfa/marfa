@@ -18,7 +18,7 @@ fn command() -> Command {
     cmd
 }
 #[test]
-fn every_passkey_command_refuses_remote_before_loading_credentials() {
+fn every_passkey_command_asks_for_a_credential_off_the_socket() {
     for args in [
         vec!["list"],
         vec!["rename", "p1", "--name", "Studio"],
@@ -34,11 +34,12 @@ fn every_passkey_command_refuses_remote_before_loading_credentials() {
                 "passkeys",
             ])
             .args(args)
+            .env("MARFA_NO_KEYCHAIN", "1")
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(output.status.code(), Some(5));
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("requires --socket PATH"), "{stderr}");
+        assert!(stderr.contains("no_credential"), "{stderr}");
     }
 }
 #[test]
@@ -80,7 +81,7 @@ fn add_uses_configured_url_without_a_browser_and_survives_opener_failure() {
             assert!(
                 request
                     .line
-                    .starts_with("GET /_control/owner/passkeys/add-url HTTP/1.1"),
+                    .starts_with("GET /owner/passkeys/add-url HTTP/1.1"),
                 "{request:?}"
             );
             assert!(request.header("authorization").is_none());

@@ -28,7 +28,7 @@ When a request that carries no bearer token and arrives by the public listener s
 
 If `GET /attention` carries a query field, then the server MUST answer `400 validation_error`.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-concerns`
 
@@ -36,7 +36,7 @@ When `GET /attention` completes its checks, the server MUST include degraded or 
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-no-backup`
 
@@ -126,7 +126,7 @@ While `instance/backup-health-parts-damaged` holds, when `GET /attention` comple
 
 Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0, `instance/backup-health-parts-damaged` does not hold and no entry is listed under `instance/attention-backup-unlocked`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
-**Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-clock-ahead`
 
@@ -148,13 +148,13 @@ While the server's clock is more than an hour earlier than the trusted time, the
 
 If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-empty`
 
 When every attention check completes without finding a concern, the server MUST return an empty `data` array from `GET /attention`.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ## Background work
 

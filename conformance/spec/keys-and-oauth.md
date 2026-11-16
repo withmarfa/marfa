@@ -1795,6 +1795,20 @@ The server MUST offer each permission a request names, among the Choose access c
 
 **Tests:** `compliance/approval-screens.test.ts › offers every permission turned off, on both pages`.
 
+### `keys-and-oauth/approval-powers-grouped`
+
+Where a request names a permission, the server MUST show the permissions it offers on the consent screen and the device approval page under one switch titled `Look after this Marfa`, turned off, with a control titled `Choose one by one` that opens the switch of each permission.
+
+**Reason:** the permissions look after the instance rather than reach what the owner keeps, so a person approves them together or chooses among them.
+
+**Tests:** `compliance/approval-screens.test.ts › groups the permissions a request names under one switch, turned off, that opens to choose them one by one, on both pages`.
+
+### `keys-and-oauth/approval-powers-none`
+
+Where a request names no permission, the server MUST NOT show the switch titled `Look after this Marfa` on the consent screen or the device approval page.
+
+**Tests:** `compliance/approval-screens.test.ts › shows no switch for the permissions to a request that names none, on both pages`.
+
 ### `keys-and-oauth/approval-powers-marked`
 
 Where a request names `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each on the consent screen and the device approval page as unable to be undone, among the Choose access controls and in the words of the Full access choice.

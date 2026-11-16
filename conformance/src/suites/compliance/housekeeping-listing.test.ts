@@ -11,7 +11,7 @@ import { operatorOf } from "../../utils/moved-clock.js";
 import { DISK_ONLY, ownObjectStore } from "../../utils/own-blob-server.js";
 
 /**
- * Which jobs `GET /housekeeping` lists. Twelve are listed on every instance.
+ * Which jobs `GET /housekeeping` lists. Thirteen are listed on every instance.
  * Three are listed only where something switches them on: the heartbeat by
  * the receiver the environment names, the orphan sweep by `blob_cleanup_enabled`
  * and the backup by a place to put backups and `backup_interval_seconds`.
@@ -23,6 +23,7 @@ import { DISK_ONLY, ownObjectStore } from "../../utils/own-blob-server.js";
  */
 
 const EVERY_INSTANCE = [
+  "attention-check",
   "audit-cleanup",
   "blob-integrity",
   "blob-replicate",
@@ -62,7 +63,7 @@ async function listed(
 
 describe("the jobs the listing holds", () => {
   it(
-    "lists the twelve jobs every instance runs, and no job that something switches on, on an instance with none of them",
+    "lists the jobs every instance runs, and no job that something switches on, on an instance with none of them",
     async () => {
       // The orphan sweep is on by default, so the instance has it too.
       const { names } = await listed("housekeeping-listing-bare", DISK_ONLY);

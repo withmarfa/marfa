@@ -248,7 +248,7 @@ fn span(ms: i64) -> String {
     }
 }
 
-const CONFIRM: &str = "`marfa housekeeping confirm-clock --socket PATH`";
+const CONFIRM: &str = "`marfa housekeeping confirm-clock`";
 
 fn clocked(standing: Standing) -> Option<Concern> {
     match standing {
@@ -264,8 +264,8 @@ fn clocked(standing: Standing) -> Option<Concern> {
             description: format!(
                 "The server's clock reads {wall}, {} later than the last time the server trusted, \
                  {trusted}. Jobs that delete old records do nothing until {ends}, once the clock \
-                 has run a day without jumping. If the clock is right, run {CONFIRM} on the \
-                 server to let them run now. If it is wrong, set it right.",
+                 has run a day without jumping. If the clock is right, run {CONFIRM} to let \
+                 them run now. If it is wrong, set it right.",
                 span(wall.ms() - trusted.ms())
             ),
         }),
@@ -277,7 +277,7 @@ fn clocked(standing: Standing) -> Option<Concern> {
                 "The server's clock reads {wall}, {} earlier than the last time the server \
                  trusted, {trusted}. The server stamps records by its clock, so records written \
                  now can carry earlier times than records written before. If the clock is right, \
-                 run {CONFIRM} on the server. If it is wrong, set it right.",
+                 run {CONFIRM}. If it is wrong, set it right.",
                 span(trusted.ms() - wall.ms())
             ),
         }),
