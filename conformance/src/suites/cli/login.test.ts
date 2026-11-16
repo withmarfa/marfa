@@ -39,7 +39,7 @@ afterAll(async () => {
     form.set("token", refreshToken);
     form.set("token_type_hint", "refresh_token");
     form.set("client_id", clientId);
-    const revoked = await fetch(`${c.apiUrl}/auth/oauth2/revoke`, {
+    const revoked = await fetch(`${c.apiUrl}/oauth/revoke`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: form,
@@ -89,7 +89,7 @@ describe("the owner", () => {
   it("signs in with a device code approved in a browser session, and the token reaches the data plane", async () => {
     // The client, registered the way the binary registers itself, so the
     // binary is handed an id rather than keeping one.
-    const registration = await fetch(`${c.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${c.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -208,7 +208,7 @@ describe("the owner", () => {
     expect(Array.isArray(listed.data)).toBe(true);
 
     // Once the token has ended, whoami says so with the credential exit code.
-    const revoked = await fetch(`${c.apiUrl}/auth/oauth2/revoke`, {
+    const revoked = await fetch(`${c.apiUrl}/oauth/revoke`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -272,7 +272,7 @@ describe("a sign-in whose device code is no longer valid", () => {
   }
 
   it("ends a login whose device code the server removed with exit 3, saying to run marfa login again", async () => {
-    const registration = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -289,14 +289,17 @@ describe("a sign-in whose device code is no longer valid", () => {
     const login = await startLogin();
     // 1000 newer codes that nobody enters make the server remove the login's.
     for (let n = 0; n < 1000; n++) {
-      const response = await fetch(`${server.apiUrl}/auth/device/code`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: other,
-          scope: "core.note:read",
-        }),
-      });
+      const response = await fetch(
+        `${server.apiUrl}/oauth/device-authorization`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: other,
+            scope: "core.note:read",
+          }),
+        },
+      );
       expect(response.status).toBe(200);
       await response.body?.cancel();
     }

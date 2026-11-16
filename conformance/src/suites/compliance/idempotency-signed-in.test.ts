@@ -30,7 +30,7 @@ interface Tokens {
 beforeAll(async () => {
   server = await bootFreshServer("idempotency-signed-in");
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   origin = new URL(((await discovery.json()) as { issuer: string }).issuer)
     .origin;
@@ -52,7 +52,7 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function register(name: string): Promise<string> {
-  const registration = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  const registration = await fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -73,7 +73,7 @@ async function tokenFor(
   clientId: string,
   form: Record<string, string>,
 ): Promise<Tokens> {
-  const response = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server!.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin },
     body: new URLSearchParams({ client_id: clientId, ...form }),
@@ -99,7 +99,7 @@ async function approve(clientId: string): Promise<Tokens> {
     scope: SCOPE,
   });
   const authorize = await fetch(
-    `${server!.apiUrl}/auth/oauth2/authorize?${params.toString()}`,
+    `${server!.apiUrl}/oauth/authorize?${params.toString()}`,
     { redirect: "manual", headers: { cookie } },
   );
   let consent: URL;
@@ -113,13 +113,13 @@ async function approve(clientId: string): Promise<Tokens> {
     expect(body.redirect).toBe(true);
     consent = new URL(body.url ?? "", origin);
   }
-  expect(consent.pathname).toBe("/auth/authorize");
+  expect(consent.pathname).toBe("/auth/consent");
   const form = new URLSearchParams({
-    accept: "true",
-    oauth_query: consent.search.slice(1),
+    decision: "approve",
+    authorization_request: consent.search.slice(1),
   });
   for (const scope of SCOPE.split(" ")) form.append("scopes", scope);
-  const decision = await fetch(`${server!.apiUrl}/auth/authorize/decision`, {
+  const decision = await fetch(`${server!.apiUrl}/auth/consent`, {
     method: "POST",
     redirect: "manual",
     headers: {

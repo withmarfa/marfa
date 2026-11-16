@@ -73,10 +73,10 @@ codes! {
     EdgeNotFound = "edge_not_found", 404;
     EdgeTypeNotFound = "edge_type_not_found", 404;
     EndpointNotFound = "endpoint_not_found", 404;
+    GrantNotFound = "grant_not_found", 404;
     HousekeepingJobNotFound = "housekeeping_job_not_found", 404;
     ItemNotFound = "item_not_found", 404;
     NotFound = "not_found", 404;
-    OauthGrantNotFound = "oauth_grant_not_found", 404;
     OwnerNotFound = "owner_not_found", 404;
     PasskeyNotFound = "passkey_not_found", 404;
     RowNotFound = "row_not_found", 404;

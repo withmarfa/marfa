@@ -121,8 +121,8 @@ pub fn now_seconds() -> u64 {
 /// The document is held to the origin it was read from (RFC 8414 section
 /// 3.3): the binary is about to post a person's credential to what it names.
 pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
-    let value = remote
-        .json(&Request::get(&["auth", ".well-known", "oauth-authorization-server"]).public())?;
+    let value =
+        remote.json(&Request::get(&[".well-known", "oauth-authorization-server"]).public())?;
     let discovery: Discovery = serde_json::from_value(value).map_err(|error| {
         CliError::Invalid(format!(
             "the discovery document at {} is not one this build reads: {error}",
@@ -131,9 +131,7 @@ pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
     })?;
     let read_from = Url::parse(remote.url())
         .map_err(|error| CliError::Invalid(format!("the server url is not a URL: {error}")))?;
-    let issuer = Url::parse(&discovery.issuer)
-        .map_err(|error| CliError::Invalid(format!("the issuer is not a URL: {error}")))?;
-    if issuer.origin() != read_from.origin() {
+    if discovery.issuer != read_from.origin().ascii_serialization() {
         return Err(CliError::Invalid(format!(
             "the discovery document at {} names {} as its issuer; refusing to sign in through a server that speaks for another",
             remote.origin(),
@@ -463,11 +461,12 @@ fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError>
     ]));
     let token = match answer {
         Ok(value) => token_set(value)?,
-        // Only a dead grant drops the token; a 429 or any other refusal
-        // leaves it. The origin stays current so the next command names the
-        // server and `marfa login`.
-        Err(CliError::Refused { code, .. })
-            if code == "invalid_grant" || code == "invalid_client" =>
+        // Only a dead grant, or a token endpoint that is no longer served,
+        // drops the token; a 429 or any other refusal leaves it. The origin
+        // stays current so the next command names the server and
+        // `marfa login`.
+        Err(CliError::Refused { code, status, .. })
+            if code == "invalid_grant" || code == "invalid_client" || status == 404 =>
         {
             credentials::drop(origin)?;
             return Err(signed_out(origin));
@@ -760,11 +759,11 @@ mod tests {
 
     fn document(origin: &str, issuer_origin: &str) -> String {
         serde_json::json!({
-            "issuer": format!("{issuer_origin}/auth"),
-            "token_endpoint": format!("{origin}/auth/oauth2/token"),
-            "device_authorization_endpoint": format!("{origin}/auth/device/code"),
-            "registration_endpoint": format!("{origin}/auth/oauth2/register"),
-            "revocation_endpoint": format!("{origin}/auth/oauth2/revoke"),
+            "issuer": issuer_origin,
+            "token_endpoint": format!("{origin}/oauth/token"),
+            "device_authorization_endpoint": format!("{origin}/oauth/device-authorization"),
+            "registration_endpoint": format!("{origin}/oauth/register"),
+            "revocation_endpoint": format!("{origin}/oauth/revoke"),
             "scopes_supported": ["offline_access", "*:read", "core.note:read", "keys.mint"]
         })
         .to_string()
@@ -958,7 +957,7 @@ mod tests {
         let discovery = discover(&Remote::public_at(&door.url).unwrap()).unwrap();
         assert_eq!(
             door.received()[0].path(),
-            "/auth/.well-known/oauth-authorization-server"
+            "/.well-known/oauth-authorization-server"
         );
         assert_eq!(
             default_scope(&discovery).unwrap(),
@@ -1018,10 +1017,24 @@ mod tests {
             "{refused:?}"
         );
 
+        for issuer in ["/auth", "/"] {
+            let door = Door::open_at(|own| {
+                let mut pathed: Value = serde_json::from_str(&document(own, own)).unwrap();
+                pathed["issuer"] = Value::String(format!("{own}{issuer}"));
+                vec![Answer::json("200 OK", &pathed.to_string())]
+            });
+            let refused = discover(&Remote::public_at(&door.url).unwrap());
+            door.received();
+            assert!(
+                matches!(&refused, Err(CliError::Invalid(message)) if message.contains("speaks for another")),
+                "an issuer of {issuer} on the same origin is another issuer: {refused:?}"
+            );
+        }
+
         let other_port = closed_origin();
         let door = Door::open_at(|own| {
             let mut moved: Value = serde_json::from_str(&document(own, own)).unwrap();
-            moved["token_endpoint"] = Value::String(format!("{other_port}/auth/oauth2/token"));
+            moved["token_endpoint"] = Value::String(format!("{other_port}/oauth/token"));
             vec![Answer::json("200 OK", &moved.to_string())]
         });
         let refused = discover(&Remote::public_at(&door.url).unwrap());
@@ -1040,7 +1053,7 @@ mod tests {
         ]);
         let discovery: Discovery = serde_json::from_str(&document(&door.url, &door.url)).unwrap();
         poll(&discovery, "client", "dc").unwrap();
-        let revocation = format!("{}/auth/oauth2/revoke", door.url);
+        let revocation = format!("{}/oauth/revoke", door.url);
         let kept = Kept::Token {
             access_token: "marfa_at_x".into(),
             refresh_token: Some("marfa_rt_x".into()),
@@ -1091,7 +1104,7 @@ mod tests {
         }
         let sent = door.received();
         assert_eq!(sent.len(), 4);
-        assert_eq!(sent[0].path(), "/auth/oauth2/token");
+        assert_eq!(sent[0].path(), "/oauth/token");
         assert!(
             sent[0]
                 .body
@@ -1221,6 +1234,36 @@ mod tests {
     }
 
     #[test]
+    fn a_token_endpoint_that_is_no_longer_served_ends_the_sign_in() {
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_core::contract::CONTRACT_VERSION
+        );
+        let door = Door::open(vec![
+            Answer::json("200 OK", &root),
+            Answer::json(
+                "404 Not Found",
+                r#"{"error":{"code":"not_found","message":"Not found"}}"#,
+            ),
+        ]);
+        let endpoint = format!("{}/auth/oauth2/token", door.url);
+        let origin = door.url.clone();
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
+        let outcome = refresh(&origin, None);
+        door.received();
+        assert!(
+            matches!(outcome, Err(CliError::SignedOut { .. })),
+            "{outcome:?}"
+        );
+        assert_eq!(credentials::read(&origin).unwrap(), None);
+        assert_eq!(
+            credentials::current().unwrap().as_deref(),
+            Some(origin.as_str())
+        );
+    }
+
+    #[test]
     fn no_step_of_signing_in_is_announced_as_a_write() {
         let root = format!(
             r#"{{"name":"marfa","contract":{}}}"#,
@@ -1275,12 +1318,12 @@ mod tests {
         assert_eq!(
             paths,
             [
-                "/auth/oauth2/register",
-                "/auth/device/code",
-                "/auth/oauth2/token",
+                "/oauth/register",
+                "/oauth/device-authorization",
+                "/oauth/token",
                 "/",
-                "/auth/oauth2/token",
-                "/auth/oauth2/revoke",
+                "/oauth/token",
+                "/oauth/revoke",
                 "/items",
             ]
         );

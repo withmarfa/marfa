@@ -965,21 +965,17 @@ describe("a kept credential", ON_MACOS, () => {
     const prefix = `/credential-${randomUUID()}`;
     const origin = `${server.url}${prefix}`;
     const at = (path: string) => `${server.url}${prefix}${path}`;
-    server.answer(
-      "GET",
-      `${prefix}/auth/.well-known/oauth-authorization-server`,
-      {
-        kind: "json",
-        status: 200,
-        body: {
-          issuer: at("/auth"),
-          token_endpoint: at("/token"),
-          device_authorization_endpoint: at("/device"),
-          registration_endpoint: at("/register"),
-          revocation_endpoint: at("/revoke"),
-        },
+    server.answer("GET", `${prefix}/.well-known/oauth-authorization-server`, {
+      kind: "json",
+      status: 200,
+      body: {
+        issuer: new URL(server.url).origin,
+        token_endpoint: at("/token"),
+        device_authorization_endpoint: at("/device"),
+        registration_endpoint: at("/register"),
+        revocation_endpoint: at("/revoke"),
       },
-    );
+    });
     server.answer("POST", `${prefix}/device`, {
       kind: "json",
       status: 200,

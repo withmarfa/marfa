@@ -36,10 +36,13 @@ const NOT_JSON: Record<string, string> = {
   "POST /restore": "a gzip archive",
   "PUT /owner/picture": "the bytes of a picture",
   "PUT /profile/picture": "the bytes of a picture",
+  "POST /oauth/token": "a form, as RFC 6749 defines",
+  "POST /oauth/revoke": "a form, as RFC 7009 defines",
+  "POST /oauth/device-authorization": "a form, as RFC 8628 defines",
 };
 
-/** A published door that takes JSON, answered by the sign-in library. */
-const SIGN_IN_LIBRARY = "POST /auth/oauth2/register";
+/** A published door that takes JSON and refuses in the shape of RFC 7591. */
+const REGISTRATION = "POST /oauth/register";
 
 /** One way of sending a body that is not sent as JSON. */
 const WAYS: {
@@ -89,7 +92,7 @@ async function jsonDoors(): Promise<string[]> {
       const door = `${method.toUpperCase()} ${path}`;
       const types = Object.keys(body.content ?? {});
       if (types.some((type) => /^application\/([a-z-.]+\+)?json/i.test(type))) {
-        if (door !== SIGN_IN_LIBRARY) doors.push(door);
+        if (door !== REGISTRATION) doors.push(door);
       } else if (!(door in NOT_JSON)) {
         unclassified.push(door);
       }
@@ -139,7 +142,7 @@ async function send(
   // keep their own proof.
   if (
     door === "PATCH /owner" ||
-    door === "PATCH /auth/grants/{id}" ||
+    door === "PATCH /grants/{id}" ||
     template.startsWith("/owner/")
   )
     return localFetch(socket(), `${apiUrl}${path}`, {
@@ -364,13 +367,13 @@ describe("a door that does not take its body as JSON", () => {
     expect(res.status).toBe(202);
   });
 
-  it("leaves a registration that is not sent as JSON to the sign-in library, which answers 415 in its own shape", async () => {
+  it("refuses a registration that is not sent as JSON 400 invalid_client_metadata in the shape of RFC 7591", async () => {
     const registration = {
       redirect_uris: ["https://example.com/callback"],
       client_name: `${ctx.source}-not-json-registration`,
     };
     // The witness: the same registration sent as JSON is made.
-    const made = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const made = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(registration),
@@ -381,7 +384,7 @@ describe("a door that does not take its body as JSON", () => {
       { "Content-Type": "text/plain" },
       {} as Record<string, string>,
     ]) {
-      const res = await fetch(`${apiUrl}/auth/oauth2/register`, {
+      const res = await fetch(`${apiUrl}/oauth/register`, {
         method: "POST",
         headers,
         body: new Blob([JSON.stringify(registration)], {
@@ -389,9 +392,10 @@ describe("a door that does not take its body as JSON", () => {
         }),
       });
       const body = (await res.json()) as Record<string, unknown>;
-      expect(res.status, JSON.stringify(headers)).toBe(415);
-      expect(body.code).toBe("UNSUPPORTED_MEDIA_TYPE");
-      expect(body).not.toHaveProperty("error");
+      expect(res.status, JSON.stringify(headers)).toBe(400);
+      expect(body.error).toBe("invalid_client_metadata");
+      expect(typeof body.error_description).toBe("string");
+      expect(Object.keys(body).sort()).toEqual(["error", "error_description"]);
     }
   });
 });

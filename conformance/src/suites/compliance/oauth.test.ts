@@ -33,56 +33,64 @@ afterAll(async () => {
  * `device-grant.test.ts`, each on a server of its own with an owner.
  */
 describe("OAuth provider", () => {
-  it("serves the authorization server metadata under the issuer path", async () => {
-    const r = await fetch(
-      `${apiUrl}/.well-known/oauth-authorization-server/auth`,
-    );
+  it("serves the authorization server metadata at the root, naming the instance's origin as its issuer", async () => {
+    const r = await fetch(`${apiUrl}/.well-known/oauth-authorization-server`);
     expect(r.status).toBe(200);
     const doc = (await r.json()) as Record<string, unknown>;
     // The issuer carries the server's configured base URL, which need not be
-    // the loopback address the suite dials; its path is what identifies it.
-    const issuer = new URL(doc.issuer as string);
-    expect(issuer.pathname).toBe("/auth");
+    // the loopback address the suite dials: an origin, with no path and no
+    // trailing slash.
+    const issuer = String(doc.issuer);
+    expect(issuer).toBe(new URL(issuer).origin);
     for (const endpoint of [
       "token_endpoint",
       "authorization_endpoint",
       "registration_endpoint",
     ]) {
       const url = new URL(doc[endpoint] as string);
-      expect(url.origin).toBe(issuer.origin);
-      expect(url.pathname.startsWith("/auth")).toBe(true);
+      expect(url.origin).toBe(issuer);
+      expect(url.pathname.startsWith("/oauth/")).toBe(true);
     }
     expect(new URL(doc.registration_endpoint as string).pathname).toBe(
-      "/auth/oauth2/register",
+      "/oauth/register",
     );
     expect(doc.response_types_supported).toContain("code");
     expect(doc.code_challenge_methods_supported).toContain("S256");
   });
 
-  it("serves the authorization server metadata under both of its spellings, alike", async () => {
-    const read = async (path: string) => {
-      const r = await fetch(`${apiUrl}${path}`);
-      expect(r.status, path).toBe(200);
-      return (await r.json()) as Record<string, unknown>;
-    };
-    const metadata = await read("/.well-known/oauth-authorization-server/auth");
-    expect(await read("/auth/.well-known/oauth-authorization-server")).toEqual(
-      metadata,
+  it("answers the issuer-path spellings of the metadata as it answers a path it does not serve", async () => {
+    const unknown = await fetch(`${apiUrl}/.well-known/no-such-document`);
+    const unknownBody = (await unknown.json()) as { error: { code: string } };
+    expect(unknown.status).toBe(404);
+    // The witness: the document is served at the root.
+    const root = await fetch(
+      `${apiUrl}/.well-known/oauth-authorization-server`,
     );
+    expect(root.status).toBe(200);
+    await root.body?.cancel();
+    for (const path of [
+      "/auth/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server/auth",
+    ]) {
+      const r = await fetch(`${apiUrl}${path}`);
+      expect(r.status, path).toBe(404);
+      expect(
+        ((await r.json()) as { error: { code: string } }).error.code,
+        path,
+      ).toBe(unknownBody.error.code);
+    }
   });
 
   it("names every endpoint under the issuer, and serves the code, refresh and device grants and no other", async () => {
-    const r = await fetch(
-      `${apiUrl}/.well-known/oauth-authorization-server/auth`,
-    );
+    const r = await fetch(`${apiUrl}/.well-known/oauth-authorization-server`);
     const doc = (await r.json()) as Record<string, unknown>;
     const issuer = String(doc.issuer);
     expect(doc).toMatchObject({
-      authorization_endpoint: `${issuer}/oauth2/authorize`,
-      token_endpoint: `${issuer}/oauth2/token`,
-      registration_endpoint: `${issuer}/oauth2/register`,
-      revocation_endpoint: `${issuer}/oauth2/revoke`,
-      device_authorization_endpoint: `${issuer}/device/code`,
+      authorization_endpoint: `${issuer}/oauth/authorize`,
+      token_endpoint: `${issuer}/oauth/token`,
+      registration_endpoint: `${issuer}/oauth/register`,
+      revocation_endpoint: `${issuer}/oauth/revoke`,
+      device_authorization_endpoint: `${issuer}/oauth/device-authorization`,
     });
     expect(doc.grant_types_supported).toEqual([
       "authorization_code",
@@ -93,7 +101,7 @@ describe("OAuth provider", () => {
 
   it("serves the protected resource metadata, naming this server as the resource and its issuer as the authorization server", async () => {
     const metadata = (await (
-      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server`)
     ).json()) as { issuer: string };
     const r = await fetch(`${apiUrl}/.well-known/oauth-protected-resource`);
     expect(r.status).toBe(200);
@@ -105,7 +113,7 @@ describe("OAuth provider", () => {
 
   it("serves protected resource metadata for each MCP endpoint, naming the endpoint as the resource", async () => {
     const metadata = (await (
-      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server`)
     ).json()) as { issuer: string };
     const origin = new URL(metadata.issuer).origin;
     for (const path of ["/mcp", "/mcp/schema", "/mcp/admin"]) {
@@ -165,7 +173,7 @@ describe("OAuth provider", () => {
 
   it("advertises client ID metadata documents beside public clients", async () => {
     const doc = (await (
-      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server`)
     ).json()) as {
       client_id_metadata_document_supported?: unknown;
       token_endpoint_auth_methods_supported?: unknown;
@@ -184,7 +192,7 @@ describe("OAuth provider", () => {
       token_endpoint_auth_method: "none",
     });
     expect(r.status).toBe(201);
-    await expectMatchesSchema("POST", "/auth/oauth2/register", 201, r.data);
+    await expectMatchesSchema("POST", "/oauth/register", 201, r.data);
     expect(typeof r.data.client_id).toBe("string");
     expect((r.data.client_id as string).length).toBeGreaterThan(0);
     expect(r.data.application_type).toBe("native");
@@ -193,7 +201,7 @@ describe("OAuth provider", () => {
     expect((r.data.scope as string).split(" ").sort()).toEqual(DATA_ALONE);
     // The witness: discovery publishes permissions the default leaves out.
     const discovery = (await (
-      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server`)
     ).json()) as { scopes_supported: string[] };
     expect(discovery.scopes_supported).toEqual(
       expect.arrayContaining(["keys.mint", "config.manage", "items.purge"]),
@@ -319,14 +327,14 @@ describe("OAuth provider", () => {
       redirect_uris: ["not a url"],
     });
     expect(r.status).toBe(400);
-    await expectMatchesSchema("POST", "/auth/oauth2/register", 400, r.data);
+    await expectMatchesSchema("POST", "/oauth/register", 400, r.data);
     const body = r.data as { error?: string; error_description?: string };
     expect(body.error).toBe("invalid_redirect_uri");
     expect(typeof body.error_description).toBe("string");
   });
 
   it("refuses a token request with no proof of the client", async () => {
-    const r = await fetch(`${apiUrl}/auth/oauth2/token`, {
+    const r = await fetch(`${apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "grant_type=authorization_code&code=nope&client_id=nope",
@@ -348,7 +356,7 @@ describe("OAuth provider", () => {
     expect(registered.status).toBe(201);
     const clientId = registered.data.client_id as string;
     const revoke = (form: Record<string, string>) =>
-      fetch(`${apiUrl}/auth/oauth2/revoke`, {
+      fetch(`${apiUrl}/oauth/revoke`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ client_id: clientId, ...form }),
@@ -361,8 +369,8 @@ describe("OAuth provider", () => {
         const r = await revoke(
           hint === "" ? { token } : { token, token_type_hint: hint },
         );
-        await r.body?.cancel();
         expect(r.status, `${token} ${hint}`).toBe(200);
+        await expectMatchesSchema("POST", "/oauth/revoke", 200, await r.json());
       }
     }
     const none = await revoke({});
@@ -373,7 +381,7 @@ describe("OAuth provider", () => {
   });
 
   it("refuses a grant type it does not support", async () => {
-    const r = await fetch(`${apiUrl}/auth/oauth2/token`, {
+    const r = await fetch(`${apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "grant_type=password&username=a&password=b&client_id=nope",

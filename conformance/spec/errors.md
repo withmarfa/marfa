@@ -6,7 +6,7 @@ What every refusal looks like, and the refusals no other chapter owns. A refusal
 
 ### `errors/envelope`
 
-When the server refuses a request other than `HEAD`, the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings, unless the answer is the page of `errors/html-page` or is under `/auth/*` in the sign-in library's own shape, in plain text or as an HTML page.
+When the server refuses a request other than `HEAD`, the server MUST answer a JSON body whose `error` object carries `code` and `message`, both strings, unless the answer is the page of `errors/html-page`, a page under `/auth/*` that refuses in plain text or as an HTML page, or an error an OAuth protocol endpoint under `/oauth/` answers in the shape of RFC 6749, RFC 6750, RFC 7009, RFC 7591 or RFC 8628.
 
 **Reason:** a client reads every refusal of the server's own from one shape, whichever operation answered it.
 
@@ -38,7 +38,7 @@ The server MUST NOT carry a `status` member in the `error` object of a refusal.
 
 The server MUST give the `code` of every refusal it answers in the envelope as one of the codes in the table at the end of this chapter, in lowercase snake case.
 
-**Reason:** a client branches on the code, so a code outside the table is one no client was told of. The answers under `/auth/*` that are in the sign-in library's own shapes use its own codes, and a page there refuses in plain text.
+**Reason:** a client branches on the code, so a code outside the table is one no client was told of. The OAuth protocol endpoints under `/oauth/` answer their own errors with the codes of their RFCs, and a page under `/auth/*` refuses in plain text.
 
 **Tests:** `compliance/error-codes.test.ts › answers every refusal across the published operations with a code from the table`.
 
@@ -80,7 +80,7 @@ When a request to a path outside `/inbound/` carries an `X-Request-ID` of 1 to 1
 
 **Reason:** a request to `/inbound/` comes from a sender and not a Marfa client, and its headers are content (`inbound-webhooks/request-id-own`).
 
-**Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`, `› answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
+**Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`, `› answers a body that is not JSON with a 400 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 
 ### `errors/request-id-replaced`
 
@@ -104,25 +104,25 @@ When the server replays an answer for an `Idempotency-Key`, the server MUST carr
 
 ### `errors/body-invalid-json`
 
-If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body sends a body that is not valid JSON under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
+If a request to an operation other than `POST /oauth/register` that takes a JSON body sends a body that is not valid JSON under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/adversarial.test.ts › malformed JSON body returns 400 validation_error`.
 
 ### `errors/body-empty`
 
-If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body sends an empty body under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
+If a request to an operation other than `POST /oauth/register` that takes a JSON body sends an empty body under a JSON `Content-Type`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/adversarial.test.ts › empty body POST returns 400 validation_error`.
 
 ### `errors/body-not-object`
 
-If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON object sends a JSON array in its place, then the server MUST answer `400 validation_error`.
+If a request to an operation other than `POST /oauth/register` that takes a JSON object sends a JSON array in its place, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/adversarial.test.ts › array instead of object returns 400 validation_error`.
 
 ### `errors/json-content-type`
 
-When a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body is not sent with a JSON `Content-Type`, because the header is missing or names another type, with a body or without one, the server MUST answer `400 validation_error`.
+When a request to an operation other than `POST /oauth/register` that takes a JSON body is not sent with a JSON `Content-Type`, because the header is missing or names another type, with a body or without one, the server MUST answer `400 validation_error`.
 
 **Reason:** a body that is not read as JSON would reach the operation as an empty object, and an operation whose schema accepts `{}` would run a write the caller never sent, such as replacing an extension namespace's data with `{}`. A client that forgets the header is told, instead of losing data or learning nothing.
 
@@ -130,19 +130,19 @@ When a request to an operation other than `POST /auth/oauth2/register` that take
 
 ### `errors/json-content-type-nothing`
 
-If a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body is not sent with a JSON `Content-Type`, then the server MUST NOT perform the operation's write.
+If a request to an operation other than `POST /oauth/register` that takes a JSON body is not sent with a JSON `Content-Type`, then the server MUST NOT perform the operation's write.
 
 **Tests:** `compliance/json-body-doors.test.ts › changes nothing on these doors when the body is not sent as JSON`.
 
 ### `errors/json-content-type-spelling`
 
-When a request to an operation other than `POST /auth/oauth2/register` that takes a JSON body is sent with a `Content-Type` of `application/json` or `application/<name>+json`, in any case and with or without parameters, the server MUST read the body as JSON.
+When a request to an operation other than `POST /oauth/register` that takes a JSON body is sent with a `Content-Type` of `application/json` or `application/<name>+json`, in any case and with or without parameters, the server MUST read the body as JSON.
 
 **Tests:** `compliance/json-body-doors.test.ts › still reads a body sent as JSON, whatever the case or parameters of its type`, `› writes each of these doors when the body is sent as JSON`.
 
 ### `errors/json-order`
 
-When a request to an operation requiring a credential, other than `POST /auth/oauth2/register`, that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
+When a request to an operation requiring a credential, other than `POST /oauth/register`, that takes a JSON body meets more than one of these refusals, the server MUST give the first in this order: no credential, `401 unauthorized`; a standing permission the operation checks before it reads the body, `403 forbidden`; a body not sent as JSON, `400 validation_error`; the grant the stored item's type asks for, `403 type_not_permitted`.
 
 **Reason:** a caller that may not use the operation learns that first, whatever it sent. The grant on an item's type is checked against the stored item after the body is read, so a key without it is answered `400` for a body that is not JSON, which tells it nothing about the item.
 
@@ -154,7 +154,7 @@ A request body that names a key its operation does not declare is refused where 
 
 ### `errors/undeclared-body-key`
 
-If a request to an operation that takes a JSON body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, except on `PUT /items/{id}/extensions/{namespace}`, `POST /auth/oauth2/register`, `POST /types`, `PUT /types/{id}`, `POST /types/normalize` and `POST /edge-types`.
+If a request to an operation that takes a JSON body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, except on `PUT /items/{id}/extensions/{namespace}`, `POST /oauth/register`, `POST /types`, `PUT /types/{id}`, `POST /types/normalize` and `POST /edge-types`.
 
 **Reason:** a key the server dropped answers a request half performed as success. A caller who misspells `dry_run`, or sends `data` where `properties` belongs, is told the whole of it landed. The two bodies left open are open by design, and the four that define a schema refuse the key as `invalid_schema`, which `types/unknown-key` and `edges/types-register-unknown-key` state.
 
@@ -182,25 +182,25 @@ If the server refuses a request under `errors/undeclared-body-key`, then the ser
 
 ### `errors/undeclared-body-key-open`
 
-The server MUST NOT refuse a top-level key of the body of `PUT /items/{id}/extensions/{namespace}` or of `POST /auth/oauth2/register` as undeclared.
+The server MUST NOT refuse a top-level key of the body of `PUT /items/{id}/extensions/{namespace}` or of `POST /oauth/register` as undeclared.
 
 **Reason:** the first body is the extension's own document, whose keys its namespace decides. The second follows RFC 7591, under which a server ignores client metadata it does not understand.
 
-**Tests:** `compliance/undeclared-body-keys.test.ts › PUT /items/{id}/extensions/{namespace} stores the extension's own document, whatever its keys`, `› POST /auth/oauth2/register ignores client metadata it does not understand`.
+**Tests:** `compliance/undeclared-body-keys.test.ts › PUT /items/{id}/extensions/{namespace} stores the extension's own document, whatever its keys`, `› POST /oauth/register ignores client metadata it does not understand`.
 
-## Registration, which the sign-in library answers
+## Registration
 
 ### `errors/register-wrong-content-type`
 
-When `POST /auth/oauth2/register` carries a body under a `Content-Type` other than `application/json`, in any case and with or without parameters, the server MUST answer `415` with a body of `message` and a `code` of `UNSUPPORTED_MEDIA_TYPE`, and no `error` member.
+When `POST /oauth/register` carries a body under a `Content-Type` other than `application/json`, in any case and with or without parameters, the server MUST answer `400` with a body of only `error`, set to `invalid_client_metadata`, and `error_description`.
 
-**Reason:** registration takes JSON but belongs to the sign-in library, which refuses a body that is not JSON in its own shape and not with `errors/json-content-type`.
+**Reason:** RFC 7591 refuses client metadata the server cannot read as `invalid_client_metadata`, so a client reads every refusal of registration in that one shape.
 
-**Tests:** `compliance/json-body-doors.test.ts › leaves a registration that is not sent as JSON to the sign-in library, which answers 415 in its own shape`, `compliance/declared-refusals.test.ts › is refused 415 in the shape the document declares for a body that is not JSON`.
+**Tests:** `compliance/json-body-doors.test.ts › refuses a registration that is not sent as JSON 400 invalid_client_metadata in the shape of RFC 7591`, `compliance/declared-refusals.test.ts › is refused 400 in the shape the document declares for a body that is not JSON`.
 
 ### `errors/register-bearer-refused`
 
-When `POST /auth/oauth2/register` sends, as JSON, a registration the server accepts from a caller with no credential, and carries an `Authorization` bearer the sign-in library does not accept, an API key included, the server MUST answer `401` with a body whose `error` is `invalid_token`.
+When `POST /oauth/register` sends, as JSON, a registration the server accepts from a caller with no credential, and carries an `Authorization` bearer, an API key included, the server MUST answer `401` with a body whose `error` is `invalid_token`.
 
 **Reason:** registration takes no credential, so a bearer it is sent is read as an initial access token.
 
@@ -208,11 +208,11 @@ When `POST /auth/oauth2/register` sends, as JSON, a registration the server acce
 
 ### `errors/register-wrong-content-type-headers`
 
-When the server answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
+When the server answers `POST /oauth/register` with `400 invalid_client_metadata` for a body that is not JSON, the server MUST NOT carry `X-Error-Code` on the answer.
 
 **Reason:** the answer is in the registration standard's shape and not the envelope, where a refusal carries the header.
 
-**Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
+**Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 400 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 
 ## An `Idempotency-Key` that cannot be served
 
@@ -332,7 +332,7 @@ If a write cannot get the store's write lock within the instance's write wait of
 
 ### `errors/contention-declared`
 
-The server MUST declare `503 write_contention` in its OpenAPI document on every operation that takes a credential and on `POST /auth/oauth2/register`.
+The server MUST declare `503 write_contention` in its OpenAPI document on every operation that takes a credential and on `POST /oauth/register`.
 
 **Reason:** a client generated from the document then knows the refusal it must retry.
 
@@ -396,11 +396,11 @@ If `POST /housekeeping/{name}/run` cannot get the write lock within the write wa
 
 ### `errors/contention-registration`
 
-If `POST /auth/oauth2/register` cannot get the write lock within the write wait, then the server MUST answer `503 write_contention` in the envelope.
+If `POST /oauth/register` cannot get the write lock within the write wait, then the server MUST answer `503 write_contention` in the envelope.
 
-**Reason:** registration takes no credential and the sign-in library serves it, but it writes.
+**Reason:** registration takes no credential, but it writes.
 
-**Tests:** `compliance/write-contention.test.ts › refuses a client registration, which the sign-in library writes`.
+**Tests:** `compliance/write-contention.test.ts › refuses a client registration, which writes with no credential`.
 
 ### `errors/contention-bulk-page`
 
@@ -800,10 +800,10 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `edge_not_found`                     | 404                 | No edge the caller may read has this id.                                                                                                                                                                  |
 | `edge_type_not_found`                | 404                 | No edge type is registered under this identifier.                                                                                                                                                         |
 | `endpoint_not_found`                 | 404                 | The connector's registration has no endpoint with this id.                                                                                                                                                |
+| `grant_not_found`                    | 404                 | No app grant has this id.                                                                                                                                                                                 |
 | `housekeeping_job_not_found`         | 404                 | The instance runs no housekeeping job of this name, or has switched it off.                                                                                                                               |
 | `item_not_found`                     | 404                 | No item the caller may read has this id: it does not exist, is in the bin, or is of a type the caller may not read.                                                                                       |
 | `not_found`                          | 404                 | The request names a path or address the server does not serve.                                                                                                                                            |
-| `oauth_grant_not_found`              | 404                 | No app grant has this id.                                                                                                                                                                                 |
 | `owner_not_found`                    | 404                 | The instance has no owner yet.                                                                                                                                                                            |
 | `passkey_not_found`                  | 404                 | No passkey of the owner has this id.                                                                                                                                                                      |
 | `row_not_found`                      | 404                 | The item's table holds no row with this id.                                                                                                                                                               |

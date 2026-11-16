@@ -435,7 +435,7 @@ describe("a stream answers to a credential only a server of its own can make", (
       const server = own!;
       const token = await approvedAppToken(server);
       const authorization = { Authorization: `Bearer ${server.workingKey}` };
-      const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+      const listed = await fetch(`${server.apiUrl}/grants`, {
         headers: authorization,
       });
       expect(listed.status).toBe(200);
@@ -458,10 +458,10 @@ describe("a stream answers to a credential only a server of its own can make", (
           signal,
         );
 
-        const revoked = await fetch(
-          `${server.apiUrl}/auth/grants/${held[0]!.id}`,
-          { method: "DELETE", headers: authorization },
-        );
+        const revoked = await fetch(`${server.apiUrl}/grants/${held[0]!.id}`, {
+          method: "DELETE",
+          headers: authorization,
+        });
         expect(revoked.status).toBe(200);
         const after = await noteOn(server, "grant-after");
 
@@ -504,7 +504,7 @@ describe("a stream answers to a credential only a server of its own can make", (
           signal,
         );
 
-        const revoked = await fetch(`${server.apiUrl}/auth/oauth2/revoke`, {
+        const revoked = await fetch(`${server.apiUrl}/oauth/revoke`, {
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({

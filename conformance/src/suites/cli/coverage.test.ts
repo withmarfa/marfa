@@ -11,6 +11,9 @@ import { Cli, requireBinary } from "./harness.js";
  * moved first.
  */
 
+/** Published operations a person's browser sends, never a command line. */
+const BROWSER_ONLY = ["authorizeApp"];
+
 interface Row {
   operation_id: string;
   command: string;
@@ -47,13 +50,19 @@ describe("every published operation is reached", () => {
 
   it("names a command for every published operation", () => {
     const known = new Set(rows.map((row) => row.operation_id));
-    const missing = published.filter((id) => !known.has(id));
+    const missing = published.filter(
+      (id) => !known.has(id) && !BROWSER_ONLY.includes(id),
+    );
     expect(missing, "published operations the binary does not reach").toEqual(
       [],
     );
     for (const row of rows) {
       expect(row.command, `${row.operation_id} names no command`).toMatch(/\S/);
     }
+  });
+
+  it("leaves out only operations the server publishes", () => {
+    for (const id of BROWSER_ONLY) expect(published).toContain(id);
   });
 
   it("names nothing the server no longer publishes", () => {

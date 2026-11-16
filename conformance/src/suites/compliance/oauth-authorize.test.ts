@@ -54,7 +54,7 @@ async function landing(
 async function consentScreen(query: URLSearchParams): Promise<URL> {
   const consent = await landing(query);
   expect(consent?.pathname, `landed on ${String(consent)}`).toBe(
-    "/auth/authorize",
+    "/auth/consent",
   );
   return consent!;
 }
@@ -93,6 +93,58 @@ describe("authorization with consent", () => {
     expect(sent?.searchParams.get("error")).toBe("access_denied");
     expect(sent?.searchParams.get("state")).toBe("signed-in-fixture");
     expect(sent?.searchParams.get("code")).toBeNull();
+  });
+
+  it("refuses a consent post that names neither approve nor deny, and records no consent and issues no code", async () => {
+    const app = await registerApp(server, NOTES);
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, NOTES, pkce()),
+    );
+    const request = consent.search.slice(1);
+    const posts: [string, string][][] = [
+      [
+        ["decision", "accept"],
+        ["authorization_request", request],
+      ],
+      [
+        ["decision", "APPROVE"],
+        ["authorization_request", request],
+      ],
+      [
+        ["decision", ""],
+        ["authorization_request", request],
+      ],
+      [
+        ["accept", "true"],
+        ["authorization_request", request],
+      ],
+      [["authorization_request", request]],
+      [["decision", "approve"]],
+    ];
+    for (const fields of posts) {
+      const refused = await fetch(`${server.apiUrl}/auth/consent`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          cookie,
+          origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams([...fields, ["scopes", NOTES]]),
+      });
+      const body = (await refused.json()) as { error?: { code?: string } };
+      expect(refused.status, JSON.stringify(fields)).toBe(400);
+      expect(body.error?.code, JSON.stringify(fields)).toBe("validation_error");
+      expect(
+        refused.headers.get("location"),
+        JSON.stringify(fields),
+      ).toBeNull();
+    }
+    // The witness: no consent was recorded, so the app is asked again, and a
+    // post that names its decision is answered with a code.
+    await consentScreen(authorizeQuery(app.clientId, NOTES, pkce()));
+    const sent = await decide(server, origin, cookie, consent, true, [NOTES]);
+    expect(sent?.searchParams.get("code")).not.toBeNull();
   });
 
   it("issues a token for only the scopes the person chose", async () => {
@@ -216,9 +268,7 @@ describe("authorization with consent", () => {
   it("sends its issuer with the code and with each error it sends to a redirect URI", async () => {
     const issuer = (
       (await (
-        await fetch(
-          `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
-        )
+        await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
       ).json()) as { issuer: string }
     ).issuer;
     for (const { name, sent } of await responses()) {
@@ -406,7 +456,7 @@ describe("the request an app sends", () => {
     expect(sent?.searchParams.get("error")).toBe("unsupported_response_type");
     // The witness: the same request with the code type reaches the consent screen.
     const asked = await landing(authorizeQuery(app.clientId, NOTES, pkce()));
-    expect(asked?.pathname).toBe("/auth/authorize");
+    expect(asked?.pathname).toBe("/auth/consent");
   });
 
   it("sends a request from an app not registered for the authorization code grant to the redirect URI as unauthorized_client", async () => {
@@ -420,12 +470,12 @@ describe("the request an app sends", () => {
     const asked = await landing(
       authorizeQuery(registered.clientId, NOTES, pkce()),
     );
-    expect(asked?.pathname).toBe("/auth/authorize");
+    expect(asked?.pathname).toBe("/auth/consent");
   });
 
   it("answers a device code request from an app not registered for the device grant 400 unauthorized_client", async () => {
     const ask = (clientId: string): Promise<Response> =>
-      fetch(`${server.apiUrl}/auth/device/code`, {
+      fetch(`${server.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ client_id: clientId, scope: NOTES }),
@@ -506,7 +556,7 @@ describe("the request an app sends", () => {
         cookie,
       ),
     );
-    expect(registered?.pathname).toBe("/auth/authorize");
+    expect(registered?.pathname).toBe("/auth/consent");
   });
 });
 
@@ -774,7 +824,7 @@ describe("an app's own type namespace", () => {
       ],
     });
     const ask = (scope: string): Promise<Response> =>
-      fetch(`${server.apiUrl}/auth/device/code`, {
+      fetch(`${server.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ client_id: app.clientId, scope }),

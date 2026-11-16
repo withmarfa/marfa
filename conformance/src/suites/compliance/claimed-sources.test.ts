@@ -1298,10 +1298,10 @@ describe("a key's claims", () => {
 
   it("refuses a reserved prefix, even to the owner", async () => {
     for (const reserved of [
-      "oauth:client:person",
+      "oauth:client",
       "OAuth:client:person",
-      "restored:oauth:client:person",
-      " Restored:oauth:client:person ",
+      "restored:oauth:client",
+      " Restored:oauth:client ",
     ]) {
       const refused = await owner.createKey({
         label: "reserved",
@@ -1338,7 +1338,7 @@ describe("a key's claims", () => {
     trackKey(ctx, target.data.id);
 
     const refusedUpdate = await owner.updateKey(target.data.id, {
-      sources: [folder, "restored:oauth:client:person"],
+      sources: [folder, "restored:oauth:client"],
     });
     expect(
       refusedUpdate.status,

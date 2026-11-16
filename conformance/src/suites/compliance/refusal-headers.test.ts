@@ -34,8 +34,8 @@ let apiKey: string;
 /** A server booted to answer 429 and 503, which the run's server does not. */
 let limited: FreshServer | undefined;
 
-/** The registration the sign-in library answers. */
-const REGISTRATION = "/auth/oauth2/register";
+/** The registration door, which refuses in the shape of RFC 7591. */
+const REGISTRATION = "/oauth/register";
 
 /** Low enough to reach in a few requests. */
 const KEYS_LIMIT = 3;
@@ -456,7 +456,7 @@ describe("X-Request-ID", () => {
 });
 
 describe("the client registration door", () => {
-  it("answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both", async () => {
+  it("answers a body that is not JSON with a 400 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both", async () => {
     // The witness: a refusal of Marfa's own carries both.
     const own = await fetch(`${apiUrl}/items`, {
       headers: { "X-Request-ID": "witness-1" },
@@ -465,12 +465,12 @@ describe("the client registration door", () => {
     expect(own.headers.get("X-Error-Code")).toBe("unauthorized");
     expect(own.headers.get("X-Request-ID")).toBe("witness-1");
 
-    const res = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const res = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "text/plain", "X-Request-ID": "witness-2" },
       body: "{}",
     });
-    expect(res.status).toBe(415);
+    expect(res.status).toBe(400);
     expect(res.headers.get("X-Error-Code")).toBeNull();
     expect(res.headers.get("X-Request-ID")).toBe("witness-2");
   });

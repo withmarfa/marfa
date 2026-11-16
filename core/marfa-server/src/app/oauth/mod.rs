@@ -65,5 +65,5 @@ impl Problem {
 pub type Answered<T> = std::result::Result<T, Problem>;
 
 pub fn issuer(app: &App) -> String {
-    format!("{}/auth", app.addresses().sign_in().origin())
+    app.addresses().sign_in().origin().to_string()
 }

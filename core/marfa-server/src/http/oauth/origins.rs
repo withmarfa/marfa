@@ -18,12 +18,8 @@ use crate::http::root::DOCUMENT;
 
 const METHODS: &str = "GET, HEAD, PUT, POST, DELETE, PATCH";
 /// RFC 9700 section 2.6: no page's scripts may read these.
-const AUTHORIZATION_DOORS: [&str; 4] = [
-    "/auth/oauth2/authorize",
-    "/auth/authorize",
-    "/auth/authorize/decision",
-    "/auth/device/consent",
-];
+const AUTHORIZATION_DOORS: [&str; 3] =
+    ["/oauth/authorize", "/auth/consent", "/auth/device/consent"];
 
 /// A browser lets a page read only the safelisted response headers unless the answer lists the rest.
 const SAFELISTED: [&str; 7] = [

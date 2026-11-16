@@ -75,9 +75,9 @@ async function post(
   };
 }
 
-/** The grants `GET /auth/grants` lists, by client. */
+/** The grants `GET /grants` lists, by client. */
 async function grantedClients(): Promise<string[]> {
-  const response = await fetch(`${server.apiUrl}/auth/grants`, {
+  const response = await fetch(`${server.apiUrl}/grants`, {
     headers: { authorization: `Bearer ${server.workingKey}` },
   });
   expect(response.status).toBe(200);
@@ -196,7 +196,7 @@ describe("the resource parameter", () => {
           cookie,
         ),
       );
-      expect(consent?.pathname, String(consent)).toBe("/auth/authorize");
+      expect(consent?.pathname, String(consent)).toBe("/auth/consent");
       const sent = await decide(server, origin, cookie, consent!, true, [
         NOTES,
       ]);
@@ -280,7 +280,7 @@ describe("the resource parameter", () => {
       app,
       NOTES,
     );
-    const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+    const response = await fetch(`${server.apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams([
@@ -566,14 +566,14 @@ describe("revocation", () => {
     const app = await registerApp(server, NOTES);
     const issued = await connect(server, origin, cookie, app, NOTES);
     expect(await itemsStatus(server, issued.access_token!)).toBe(200);
-    const revoked = await post("/auth/oauth2/revoke", {
+    const revoked = await post("/oauth/revoke", {
       token: issued.access_token!,
       token_type_hint: "access_token",
       client_id: app.clientId,
     });
     expect(revoked.status).toBe(200);
     expect(await itemsStatus(server, issued.access_token!)).toBe(401);
-    const again = await post("/auth/oauth2/revoke", {
+    const again = await post("/oauth/revoke", {
       token: issued.access_token!,
       client_id: app.clientId,
     });
@@ -595,7 +595,7 @@ describe("revocation", () => {
       true,
     );
 
-    const revoked = await post("/auth/oauth2/revoke", {
+    const revoked = await post("/oauth/revoke", {
       token: issued.refresh_token!,
       token_type_hint: "refresh_token",
       client_id: app.clientId,
@@ -614,6 +614,6 @@ describe("revocation", () => {
         cookie,
       ),
     );
-    expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
+    expect(asked?.pathname, String(asked)).toBe("/auth/consent");
   });
 });

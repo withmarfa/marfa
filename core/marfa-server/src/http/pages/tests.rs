@@ -173,7 +173,7 @@ fn a_hostile_value_stays_text_on_every_other_page() {
 fn a_continue_link_goes_only_to_a_path_on_the_instance() {
     for (given, link) in [
         ("/owner", "/owner"),
-        ("/auth/authorize?a=1&b=2", "/auth/authorize?a=1&amp;b=2"),
+        ("/auth/consent?a=1&b=2", "/auth/consent?a=1&amp;b=2"),
         ("//evil.example", "/"),
         ("/\\evil.example", "/"),
         ("https://evil.example", "/"),

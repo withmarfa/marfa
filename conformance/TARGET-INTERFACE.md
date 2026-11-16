@@ -70,7 +70,7 @@ address set unless the last boot of the same state had one on that port, as a
 restart on the same port does. It reads the port from
 this boot's readiness log record before requesting `/health`, then reaches the
 server at the address the server reports as its own in
-`/auth/.well-known/oauth-authorization-server`, `localhost` or `127.0.0.1`. A restart
+`/.well-known/oauth-authorization-server`, `localhost` or `127.0.0.1`. A restart
 ignores earlier readiness records. An explicitly occupied IPv4 port fails the
 boot instead of accepting another listener's health response.
 

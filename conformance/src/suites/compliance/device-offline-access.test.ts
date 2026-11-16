@@ -26,7 +26,7 @@ afterAll(async () => {
 describe("offline_access on a device", () => {
   it("refuses a registration naming offline_access for grant types that cannot refresh, and names refresh_token", async () => {
     const register = (grantTypes: string[]) =>
-      fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+      fetch(`${server!.apiUrl}/oauth/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -61,7 +61,7 @@ describe("offline_access on a device", () => {
     expect(approved.status).toBe(200);
     expect(approved.body.access_token).toBeTruthy();
     expect(approved.body.refresh_token).toBeTruthy();
-    const refreshed = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+    const refreshed = await fetch(`${server!.apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -92,7 +92,7 @@ describe("offline_access on a device", () => {
     const approved = await flow.poll();
     expect(approved.status).toBe(200);
     expect(approved.body.refresh_token).toBeTruthy();
-    const refreshed = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+    const refreshed = await fetch(`${server!.apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

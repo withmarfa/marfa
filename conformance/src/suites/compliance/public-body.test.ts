@@ -278,7 +278,7 @@ describe("a credential whose authority changes while its body arrives", () => {
       headers,
       tools,
       async () => {
-        const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+        const listed = await fetch(`${server.apiUrl}/grants`, {
           headers: bearer(server.managementKey),
         });
         const grants = (
@@ -286,13 +286,10 @@ describe("a credential whose authority changes while its body arrives", () => {
         ).data;
         const grant = grants.find((each) => each.client_id === app.clientId);
         expect(grant, "the approved app has no grant").toBeDefined();
-        const revoked = await fetch(
-          `${server.apiUrl}/auth/grants/${grant!.id}`,
-          {
-            method: "DELETE",
-            headers: bearer(server.managementKey),
-          },
-        );
+        const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
+          method: "DELETE",
+          headers: bearer(server.managementKey),
+        });
         expect(revoked.ok, String(revoked.status)).toBe(true);
       },
     );
@@ -510,10 +507,10 @@ const OPEN_DOORS = [
   "/auth/sign-in",
   "/auth/passkeys/sign-in/options",
   "/auth/passkeys/sign-in",
-  "/auth/authorize/decision",
-  "/auth/oauth2/token",
-  "/auth/oauth2/revoke",
-  "/auth/device/code",
+  "/auth/consent",
+  "/oauth/token",
+  "/oauth/revoke",
+  "/oauth/device-authorization",
   "/auth/device",
   "/auth/device/consent",
 ];

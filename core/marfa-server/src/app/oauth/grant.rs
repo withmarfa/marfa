@@ -15,7 +15,7 @@ use crate::app::unit::Unit;
 use crate::app::webhooks;
 
 const TYPE: &str = "system.connection";
-pub(super) const CONSENT_SOURCE: &str = "marfa/oauth2/consent";
+pub(super) const CONSENT_SOURCE: &str = "marfa/oauth/consent";
 pub(super) const DEVICE_SOURCE: &str = "marfa/oauth/device";
 /// The grant has its own entry, and its item another by what was done to it.
 pub(super) const GRANT_WRITE: &str = "item.create";

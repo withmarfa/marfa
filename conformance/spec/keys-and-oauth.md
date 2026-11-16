@@ -871,6 +871,14 @@ Where a name is set on a source, the server MUST answer that name as the source'
 
 **Tests:** `compliance/source-names.test.ts › is the name set on it, then its key's label, then its code`.
 
+### `keys-and-oauth/app-source-code`
+
+When an app signed in to the instance writes an item, the server MUST store as the item's `source` the code `oauth:` followed by the app's `client_id`.
+
+**Reason:** an instance has one owner, so the app alone names what it wrote, and the same app keeps one source across its sign-ins.
+
+**Tests:** `compliance/source-names.test.ts › is oauth: followed by the app's client_id, on what the app writes and in the sources it lists`.
+
 ### `keys-and-oauth/source-name-app`
 
 Where no name is set on the source an app signed in to the instance writes under, the server MUST answer the app's sign-in name as the source's `name`, with `name_from` `app`.
@@ -1117,19 +1125,21 @@ When the server answers `429 rate_limited` in the error envelope to a request ma
 
 ### `keys-and-oauth/as-metadata`
 
-The server MUST serve its authorization server metadata at `/.well-known/oauth-authorization-server/auth` without a credential, with `issuer` at its `/auth` path, `code` among `response_types_supported` and `S256` among `code_challenge_methods_supported`.
+The server MUST serve its authorization server metadata at `/.well-known/oauth-authorization-server` without a credential, with `issuer` set to the origin of its sign-in address, with no path and no trailing slash, `code` among `response_types_supported` and `S256` among `code_challenge_methods_supported`.
 
-**Tests:** `compliance/oauth.test.ts › serves the authorization server metadata under the issuer path`.
+**Reason:** RFC 8414 and the MCP authorization specification have a client compare `issuer`, and the `iss` of an authorization response, to the issuer it built the metadata address from, character for character.
 
-### `keys-and-oauth/discovery-spellings`
+**Tests:** `compliance/oauth.test.ts › serves the authorization server metadata at the root, naming the instance's origin as its issuer`.
 
-The server MUST serve at `/auth/.well-known/oauth-authorization-server` the same authorization server metadata it serves at `/.well-known/oauth-authorization-server/auth`.
+### `keys-and-oauth/discovery-one-path`
 
-**Tests:** `compliance/oauth.test.ts › serves the authorization server metadata under both of its spellings, alike`.
+If a request asks for the authorization server metadata at a path other than `/.well-known/oauth-authorization-server`, such as `/auth/.well-known/oauth-authorization-server` or `/.well-known/oauth-authorization-server/auth`, then the server MUST answer it as it answers a path it does not serve.
+
+**Tests:** `compliance/oauth.test.ts › answers the issuer-path spellings of the metadata as it answers a path it does not serve`.
 
 ### `keys-and-oauth/discovery-endpoints`
 
-The server MUST name in its authorization server metadata the authorization, token, registration, revocation and device authorization endpoints, each under the issuer.
+The server MUST name in its authorization server metadata the authorization, token, registration, revocation and device authorization endpoints as the issuer followed by `/oauth/authorize`, `/oauth/token`, `/oauth/register`, `/oauth/revoke` and `/oauth/device-authorization`.
 
 **Tests:** `compliance/oauth.test.ts › names every endpoint under the issuer, and serves the code, refresh and device grants and no other`.
 
@@ -1181,13 +1191,13 @@ The server MUST advertise `client_id_metadata_document_supported` as `true` in i
 
 ### `keys-and-oauth/register-answer`
 
-When a client registers at `POST /auth/oauth2/register`, which takes no credential, the server MUST answer `201` with a `client_id` and the metadata it registered.
+When a client registers at `POST /oauth/register`, which takes no credential, the server MUST answer `201` with a `client_id` and the metadata it registered.
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
 ### `keys-and-oauth/register-unsupported-metadata`
 
-When client metadata at `POST /auth/oauth2/register` holds a member the server does not support, such as `dpop_bound_access_tokens`, `subject_type`, `software_statement` or `resources`, the server MUST answer `201` without that member.
+When client metadata at `POST /oauth/register` holds a member the server does not support, such as `dpop_bound_access_tokens`, `subject_type`, `software_statement` or `resources`, the server MUST answer `201` without that member.
 
 **Reason:** RFC 7591 section 2 has a server ignore metadata it does not understand, and section 3.1.1 a software statement it does not support, and an answer without the member tells the client it was not honored.
 
@@ -1195,7 +1205,7 @@ When client metadata at `POST /auth/oauth2/register` holds a member the server d
 
 ### `keys-and-oauth/register-resource-uri`
 
-If client metadata at `POST /auth/oauth2/register` names in `resources` a value that is not an absolute URI without a fragment, then the server MUST answer `400 invalid_target`.
+If client metadata at `POST /oauth/register` names in `resources` a value that is not an absolute URI without a fragment, then the server MUST answer `400 invalid_target`.
 
 **Reason:** RFC 8707 section 2 holds a resource indicator to an absolute URI with no fragment.
 
@@ -1203,13 +1213,13 @@ If client metadata at `POST /auth/oauth2/register` names in `resources` a value 
 
 ### `keys-and-oauth/register-auth-methods`
 
-When valid client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `none` or leaves it out, the server MUST register the client with `none`.
+When valid client metadata at `POST /oauth/register` names `token_endpoint_auth_method` as `none` or leaves it out, the server MUST register the client with `none`.
 
 **Tests:** `compliance/oauth-client-auth-methods.test.ts › registers a public client, the method a registration names or leaves out`.
 
 ### `keys-and-oauth/register-other-auth-method`
 
-If client metadata at `POST /auth/oauth2/register` names a `token_endpoint_auth_method` other than `none`, then the server MUST answer `400 invalid_client_metadata` with an `error_description` naming that method.
+If client metadata at `POST /oauth/register` names a `token_endpoint_auth_method` other than `none`, then the server MUST answer `400 invalid_client_metadata` with an `error_description` naming that method.
 
 **Reason:** An app proves itself at each sign-in with PKCE and holds no secret, so registration refuses any other method before an app relies on it.
 
@@ -1309,7 +1319,7 @@ If a registration names a redirect URI that does not parse, then the server MUST
 
 ### `keys-and-oauth/register-body-cap`
 
-If a body sent to `POST /auth/oauth2/register` is larger than 8192 bytes, then the server MUST answer `413 request_too_large`.
+If a body sent to `POST /oauth/register` is larger than 8192 bytes, then the server MUST answer `413 request_too_large`.
 
 **Reason:** Registration takes no credential and answers every origin. Every value a registered client keeps is a value its body carries, so the body cap bounds the metadata one client holds to 8192 bytes. The bounds on the values themselves add up to 7202 characters, so a registration at every bound still fits. Marfa's own clients register in about 200 bytes.
 
@@ -1317,7 +1327,7 @@ If a body sent to `POST /auth/oauth2/register` is larger than 8192 bytes, then t
 
 ### `keys-and-oauth/register-redirect-limit`
 
-If a registration at `POST /auth/oauth2/register` names more than 10 redirect URIs, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
+If a registration at `POST /oauth/register` names more than 10 redirect URIs, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
 
 **Reason:** The consent screen names every origin a client's redirect URIs span, and a web page or hosted assistant registers one or two.
 
@@ -1325,7 +1335,7 @@ If a registration at `POST /auth/oauth2/register` names more than 10 redirect UR
 
 ### `keys-and-oauth/register-redirect-uri-bound`
 
-If a registration at `POST /auth/oauth2/register` names a redirect URI of more than 256 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
+If a registration at `POST /oauth/register` names a redirect URI of more than 256 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
 
 **Reason:** Registration takes no credential, and each value it stores is kept and shown on the consent screen, so each has a bound of its own.
 
@@ -1333,7 +1343,7 @@ If a registration at `POST /auth/oauth2/register` names a redirect URI of more t
 
 ### `keys-and-oauth/register-name-bound`
 
-If a registration at `POST /auth/oauth2/register` sets `client_name`, `software_id` or `software_version` to more than 100 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
+If a registration at `POST /oauth/register` sets `client_name`, `software_id` or `software_version` to more than 100 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
 
 **Reason:** Registration takes no credential, and the audit log keeps the name for as long as it keeps the registration's record.
 
@@ -1341,25 +1351,25 @@ If a registration at `POST /auth/oauth2/register` sets `client_name`, `software_
 
 ### `keys-and-oauth/register-uri-bound`
 
-If a registration at `POST /auth/oauth2/register` sets `client_uri`, `logo_uri`, `tos_uri` or `policy_uri` to more than 512 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
+If a registration at `POST /oauth/register` sets `client_uri`, `logo_uri`, `tos_uri` or `policy_uri` to more than 512 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
 
 **Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
 
 ### `keys-and-oauth/register-scope-bound`
 
-If a registration at `POST /auth/oauth2/register` sets `scope` to more than 1024 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names `scope`.
+If a registration at `POST /oauth/register` sets `scope` to more than 1024 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names `scope`.
 
 **Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
 
 ### `keys-and-oauth/register-contacts-bound`
 
-If a registration at `POST /auth/oauth2/register` names more than 5 `contacts`, or a contact of more than 254 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata`.
+If a registration at `POST /oauth/register` names more than 5 `contacts`, or a contact of more than 254 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata`.
 
 **Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
 
 ### `keys-and-oauth/register-session-ignored`
 
-When a registration at `POST /auth/oauth2/register` carries the owner's browser session cookie, from any origin, the server MUST register the client as it registers the same metadata sent without one.
+When a registration at `POST /oauth/register` carries the owner's browser session cookie, from any origin, the server MUST register the client as it registers the same metadata sent without one.
 
 **Reason:** Registration answers every origin, so a page the owner visits can send the owner's cookie along; the cookie must neither refuse the registration nor give the client anything the owner did not approve.
 
@@ -1367,7 +1377,7 @@ When a registration at `POST /auth/oauth2/register` carries the owner's browser 
 
 ### `keys-and-oauth/register-idle-removed`
 
-When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_hours`.
+When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `unapproved_app_retention_hours`.
 
 **Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations. `keys-and-oauth/register-unoffered-bound` holds how many are kept at once, and this retention how long each is kept: until the first run of the job that reaches it after it has been idle for the retention. Each run that removes clients writes one `auth.clients.purged` audit record for each batch of up to 200 it removes.
 
@@ -1391,7 +1401,7 @@ While a grant names a registered client, live or revoked, the server MUST keep t
 
 ### `keys-and-oauth/register-offered-kept`
 
-When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `dcr_client_retention_hours` from then, however long ago it registered.
+When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `unapproved_app_retention_hours` from then, however long ago it registered.
 
 **Reason:** A page may keep its registration between visits, so a registration older than the retention can be the one the owner is deciding on; the job must not remove it from under the decision.
 
@@ -1427,7 +1437,7 @@ A signed-in person approves an app on the consent screen, and the decision ends 
 
 ### `keys-and-oauth/consent-screen`
 
-When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/authorize`, a consent screen offering each scope the request names that no standing consent covers.
+When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/consent`, a consent screen offering each scope the request names that no standing consent covers.
 
 **Reason:** A scope the person's standing consent already covers is shown as held and not offered again (`keys-and-oauth/approval-held-shown`). The server adds it to an approval while the consent still covers it (`keys-and-oauth/approval-held-now`).
 
@@ -1444,6 +1454,14 @@ When a person approves on the consent screen and `keys-and-oauth/consent-nothing
 When a person declines on the consent screen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a declined consent to the redirect URI as access_denied with the request's state`.
+
+### `keys-and-oauth/consent-decision-required`
+
+If a post to `/auth/consent` carries no `authorization_request`, or a `decision` that is missing or is anything other than `approve` or `deny`, then the server MUST refuse it `400 validation_error`, record no consent and issue no code.
+
+**Reason:** A post that names neither answer is neither a yes nor a no, so it is not read as either: a form from before the decision field, or a decision in another case, would otherwise decline or approve for the person.
+
+**Tests:** `compliance/oauth-authorize.test.ts › refuses a consent post that names neither approve nor deny, and records no consent and issues no code`.
 
 ### `keys-and-oauth/consent-nothing-denies`
 
@@ -1675,7 +1693,7 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 ### `keys-and-oauth/consent-page-confirm`
 
-When a signed-in owner opens `/auth/authorize` for a request that names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the consent screen holding the "Confirm it's you" dialog, whatever the age of the session.
+When a signed-in owner opens `/auth/consent` for a request that names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the consent screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
 **Reason:** The screen is shown to a session older than five minutes, which confirms it's the owner when Approve is pressed, and to a fresh one, because a screen left open can pass its five minutes before the person decides.
 
@@ -1683,13 +1701,13 @@ When a signed-in owner opens `/auth/authorize` for a request that names a scope 
 
 ### `keys-and-oauth/consent-page-reads`
 
-When a browser session that signed in more than five minutes ago opens `/auth/authorize` for a request whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the consent screen holding no "Confirm it's you" dialog.
+When a browser session that signed in more than five minutes ago opens `/auth/consent` for a request whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the consent screen holding no "Confirm it's you" dialog.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago a request that only reads, with no question`.
 
 ## What the approval pages offer
 
-The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
+The consent screen at `/auth/consent` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
 
 ### `keys-and-oauth/approval-full-access`
 
@@ -1833,7 +1851,7 @@ If an approval posted from the consent screen or the device approval page names 
 
 Where a request names the all-data scope `*:read` or `*:write`, or the content scope `content:read` or `content:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for that scope, and one control for each item type registered on the instance that the app's registration can be approved for by name, except the types under the `system` and `marfa` roots and the types the app already holds in full.
 
-**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. Your content is all data but the `system` and `marfa` types, and it is what an app that names no scope is registered for (`keys-and-oauth/register-default-scope`), so its row offers the same types, and the owner of an app such as an MCP client can narrow it to some of them. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with a list of scopes is offered every registered type, because naming a type its list's all-data or content scope covers adds nothing to what it may ask for. An app registered with no list is offered only the types the server's supported scopes name, those it was started with, so a type registered since, such as a `user` or publisher type, gets no control and is reached only by all data or content. Registering through `POST /auth/oauth2/register` always stores a list, the scopes named or, where it names none, those `keys-and-oauth/register-default-scope` states, so only an app registered another way has none.
+**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. Your content is all data but the `system` and `marfa` types, and it is what an app that names no scope is registered for (`keys-and-oauth/register-default-scope`), so its row offers the same types, and the owner of an app such as an MCP client can narrow it to some of them. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with a list of scopes is offered every registered type, because naming a type its list's all-data or content scope covers adds nothing to what it may ask for. An app registered with no list is offered only the types the server's supported scopes name, those it was started with, so a type registered since, such as a `user` or publisher type, gets no control and is reached only by all data or content. Registering through `POST /oauth/register` always stores a list, the scopes named or, where it names none, those `keys-and-oauth/register-default-scope` states, so only an app registered another way has none.
 
 **Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`, `› keeps the types an app holds when it asks again for all data, and shows them as held`, `› offers an app that names no scope the owner's content and links, read only beside read and edit or chosen types, and no permission`, `› offers content with the choice to choose types, at no level above the one asked, on both pages`.
 
@@ -1949,7 +1967,7 @@ When an authorization request naming `prompt=none` from nobody signed in names a
 
 ### `keys-and-oauth/code-exchange`
 
-When an app exchanges a code at `POST /auth/oauth2/token` with the verifier that matches its challenge, while the grant the code was issued under stands, the server MUST answer `200` with a bearer `access_token`.
+When an app exchanges a code at `POST /oauth/token` with the verifier that matches its challenge, while the grant the code was issued under stands, the server MUST answer `200` with a bearer `access_token`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › exchanges a code once, and refuses it again with invalid_grant`, `› sends the code to the private-use redirect URI the app registered, which the app exchanges there`.
 
@@ -1991,25 +2009,25 @@ If an app exchanges a code after the browser session that approved it has ended,
 
 ### `keys-and-oauth/token-no-client`
 
-If a request to `POST /auth/oauth2/token` carries no proof of the client, then the server MUST answer `400 invalid_request`.
+If a request to `POST /oauth/token` carries no proof of the client, then the server MUST answer `400 invalid_request`.
 
 **Tests:** `compliance/oauth.test.ts › refuses a token request with no proof of the client`.
 
 ### `keys-and-oauth/token-unsupported-grant`
 
-If a request to `POST /auth/oauth2/token` names a grant type the server does not serve, then the server MUST answer `400 unsupported_grant_type`.
+If a request to `POST /oauth/token` names a grant type the server does not serve, then the server MUST answer `400 unsupported_grant_type`.
 
 **Tests:** `compliance/oauth.test.ts › refuses a grant type it does not support`.
 
 ### `keys-and-oauth/token-client-grant`
 
-If a request to `POST /auth/oauth2/token` names a grant type the client's registration does not allow, where a registration naming `authorization_code` allows `refresh_token`, then the server MUST answer `400 unauthorized_client`.
+If a request to `POST /oauth/token` names a grant type the client's registration does not allow, where a registration naming `authorization_code` allows `refresh_token`, then the server MUST answer `400 unauthorized_client`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › answers a token request for a grant the app is not registered for 400 unauthorized_client`.
 
 ### `keys-and-oauth/client-credential-refused`
 
-If a request to `POST /auth/oauth2/token`, `POST /auth/device/code` or `POST /auth/oauth2/revoke` carries an `Authorization` header, or a `client_secret`, `client_assertion` or `client_assertion_type` field, empty or not, then the server MUST answer `401 invalid_client`, whatever else the request holds or lacks.
+If a request to `POST /oauth/token`, `POST /oauth/device-authorization` or `POST /oauth/revoke` carries an `Authorization` header, or a `client_secret`, `client_assertion` or `client_assertion_type` field, empty or not, then the server MUST answer `401 invalid_client`, whatever else the request holds or lacks.
 
 **Reason:** Every client is public and proves itself with its code verifier or its device code, so a credential of the client's own is one no registered client holds, and each door refuses it the same way.
 
@@ -2165,19 +2183,19 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 ### `keys-and-oauth/revoke-answer-ok`
 
-When `POST /auth/oauth2/revoke` names a token the server holds, the server MUST answer `200`.
+When `POST /oauth/revoke` names a token the server holds, the server MUST answer `200`.
 
 **Tests:** `compliance/oauth-tokens.test.ts › of an access token ends it at once`, `› of a refresh token ends the app's grant: its tokens, its listing and the person's consent`.
 
 ### `keys-and-oauth/revoke-access-token`
 
-When an app revokes an access token at `POST /auth/oauth2/revoke`, the server MUST refuse that token `401 unauthorized` from then on.
+When an app revokes an access token at `POST /oauth/revoke`, the server MUST refuse that token `401 unauthorized` from then on.
 
 **Tests:** `compliance/oauth-tokens.test.ts › of an access token ends it at once`.
 
 ### `keys-and-oauth/revoke-refresh-token`
 
-When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST end the app's grant: its tokens, its entry in `GET /auth/grants` and the person's consent.
+When an app revokes its refresh token at `POST /oauth/revoke`, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
 
 **Reason:** RFC 7009 is the one way an app says "disconnect me", and an app that used it was still connected while the grant's records stood.
 
@@ -2201,19 +2219,19 @@ If a revocation names no token, then the server MUST answer `400 invalid_request
 
 ### `keys-and-oauth/grants-list`
 
-When a caller holding `grants.manage` sends `GET /auth/grants`, the server MUST answer every app the person approved, each with its `id`, `kind`, `client_id`, `scopes`, `status` and `granted_at`, in one page whose `next_cursor` is `null`.
+When a caller holding `grants.manage` sends `GET /grants`, the server MUST answer every app the person approved, each with its `id`, `kind`, `client_id`, `scopes`, `status` and `granted_at`, in one page whose `next_cursor` is `null`.
 
 **Tests:** `compliance/auth-grants.test.ts › lists each app the person approved, with its client, scopes and status, in one page`.
 
 ### `keys-and-oauth/grants-page-fields`
 
-When `GET /auth/grants` lists a grant, the server MUST give it `client_name`, the name the app registered or `null`, and `origins`, the origin of each redirect URI a web client registered, empty for a native client.
+When `GET /grants` lists a grant, the server MUST give it `client_name`, the name the app registered or `null`, and `origins`, the origin of each redirect URI a web client registered, empty for a native client.
 
 **Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the consent screen and in the grants listing`, `› reads the origin as scheme, host and port, whatever path, port or trailing slash the redirect URI carries`, `› allows no origin for a native app's redirect URI`.
 
 ### `keys-and-oauth/grants-kind`
 
-When `GET /auth/grants` lists a grant, the server MUST report `kind` as `cli` for a client registered with the `software_id` `so.marfa.cli`, otherwise `web` for a client with approved web origins, otherwise `app`.
+When `GET /grants` lists a grant, the server MUST report `kind` as `cli` for a client registered with the `software_id` `so.marfa.cli`, otherwise `web` for a client with approved web origins, otherwise `app`.
 
 **Reason:** The `marfa` command line registers that `software_id` (RFC 7591 section 2). Its grant and its name do not tell it from another program that signs in with the device grant, so a client with another `software_id`, or none, is an app, device grant or not. Any client can send any `software_id`, so the kind labels the app for the owner and decides no access. This classifies the registered app without changing its stored connection kind or its owner's sign-in category.
 
@@ -2221,13 +2239,13 @@ When `GET /auth/grants` lists a grant, the server MUST report `kind` as `cli` fo
 
 ### `keys-and-oauth/grant-narrow-authority`
 
-If a request other than the private local command's sends `PATCH /auth/grants/{id}`, then the server MUST refuse it, `401 unauthorized` where it carries no credential and `403 forbidden` where it carries one.
+If a request other than the private local command's sends `PATCH /grants/{id}`, then the server MUST refuse it, `401 unauthorized` where it carries no credential and `403 forbidden` where it carries one.
 
 **Tests:** `compliance/auth-grants.test.ts › requires the local command and reports an unknown grant`.
 
 ### `keys-and-oauth/grant-narrow-ceiling`
 
-When the owner sends `PATCH /auth/grants/{id}` with `scopes` and `expected_scopes`, the server MUST refuse `403 forbidden` if the resulting type, link, metadata, profile or permission scope set exceeds the live grant's effective access.
+When the owner sends `PATCH /grants/{id}` with `scopes` and `expected_scopes`, the server MUST refuse `403 forbidden` if the resulting type, link, metadata, profile or permission scope set exceeds the live grant's effective access.
 
 **Reason:** Removing an overriding entry can widen a wildcard, so the comparison is of effective access rather than literal membership.
 
@@ -2235,19 +2253,19 @@ When the owner sends `PATCH /auth/grants/{id}` with `scopes` and `expected_scope
 
 ### `keys-and-oauth/grant-narrow-stale`
 
-If `expected_scopes` at `PATCH /auth/grants/{id}` differs from the live consent or projected grant's scopes when the update commits, then the server MUST refuse `409 conflict` without changing access.
+If `expected_scopes` at `PATCH /grants/{id}` differs from the live consent or projected grant's scopes when the update commits, then the server MUST refuse `409 conflict` without changing access.
 
 **Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
 
 ### `keys-and-oauth/grant-narrow-commit`
 
-When `PATCH /auth/grants/{id}` narrows a live grant, the server MUST commit its consent, projection, token withdrawal, pending code withdrawal and audit together under the grant's consent lock.
+When `PATCH /grants/{id}` narrows a live grant, the server MUST commit its consent, projection, token withdrawal, pending code withdrawal and audit together under the grant's consent lock.
 
 **Tests:** `compliance/auth-grants.test.ts › rolls back narrowed access and tokens when its audit cannot be written`.
 
 ### `keys-and-oauth/grant-narrow-tokens`
 
-When `PATCH /auth/grants/{id}` reduces a grant, the server MUST end access tokens and refresh chains whose scopes exceed the resulting grant, along with outstanding authorization and device codes.
+When `PATCH /grants/{id}` reduces a grant, the server MUST end access tokens and refresh chains whose scopes exceed the resulting grant, along with outstanding authorization and device codes.
 
 **Reason:** Covered token chains remain usable; a chain that ends must authorize again at the remaining access, and increasing it requires fresh approval.
 
@@ -2255,13 +2273,13 @@ When `PATCH /auth/grants/{id}` reduces a grant, the server MUST end access token
 
 ### `keys-and-oauth/grant-narrow-answer`
 
-When `PATCH /auth/grants/{id}` succeeds, the server MUST answer `200` with the resulting `scopes`.
+When `PATCH /grants/{id}` succeeds, the server MUST answer `200` with the resulting `scopes`.
 
 **Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
 
 ### `keys-and-oauth/grant-narrow-missing`
 
-If `PATCH /auth/grants/{id}` names no live app grant of the owner, then the server MUST answer `404 oauth_grant_not_found`.
+If `PATCH /grants/{id}` names no live app grant of the owner, then the server MUST answer `404 grant_not_found`.
 
 **Tests:** `compliance/auth-grants.test.ts › requires the local command and reports an unknown grant`.
 
@@ -2275,7 +2293,7 @@ If a caller without `grants.manage` lists or revokes grants, then the server MUS
 
 ### `keys-and-oauth/grants-no-credential`
 
-If a request with no credential sends `GET /auth/grants`, then the server MUST answer `401 unauthorized`.
+If a request with no credential sends `GET /grants`, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`.
 
@@ -2283,7 +2301,7 @@ If a request with no credential sends `GET /auth/grants`, then the server MUST a
 
 While a credential does not hold `grants.manage`, the server MUST answer every operation that reads items, edges or events as it answers a credential whose type map does not reach `system.connection`, whatever the credential's type map grants.
 
-**Reason:** A `system.connection` item is an app the owner approved, with its `client_id` and the scopes it holds, which is what `GET /auth/grants` lists, so it is read with the permission that listing takes (`keys-and-oauth/grants-permission`).
+**Reason:** A `system.connection` item is an app the owner approved, with its `client_id` and the scopes it holds, which is what `GET /grants` lists, so it is read with the permission that listing takes (`keys-and-oauth/grants-permission`).
 
 **Tests:** `compliance/auth-grants.test.ts › shows a system.connection item at no door to a credential without grants.manage, though it reads every type`, `› shows an app's system.connection items only where it holds grants.manage, whatever data scope it holds`.
 
@@ -2297,13 +2315,13 @@ If a credential without `grants.manage` names `system.connection` as a type an i
 
 ### `keys-and-oauth/grant-revoke-answer`
 
-When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `200` with `{"ok": true}`.
+When a caller holding `grants.manage` revokes a grant at `DELETE /grants/{id}`, the server MUST answer `200` with `{"ok": true}`.
 
-**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`, `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
+**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`, `compliance/oauth-refusals.test.ts › answers 404 grant_not_found for an id that is no app's grant, and revokes one that is`.
 
 ### `keys-and-oauth/grant-revoke-ends-grant`
 
-When a grant is revoked at `DELETE /auth/grants/{id}`, the server MUST end it: refuse the app's tokens `401 unauthorized`, stop listing the grant and show the consent screen to the app's next authorization request.
+When a grant is revoked at `DELETE /grants/{id}`, the server MUST end it: refuse the app's tokens `401 unauthorized`, stop listing the grant and show the consent screen to the app's next authorization request.
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
 
@@ -2317,7 +2335,7 @@ When a grant is revoked without `revoke_keys`, the server MUST leave every key t
 
 ### `keys-and-oauth/refresh-revoke-keeps-keys`
 
-When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST leave every key the app minted, and every key those keys minted, working.
+When an app revokes its refresh token at `POST /oauth/revoke`, the server MUST leave every key the app minted, and every key those keys minted, working.
 
 **Reason:** An app that disconnects itself says nothing about the keys it handed out, and those keys may serve someone else by now.
 
@@ -2341,7 +2359,7 @@ When a grant is revoked with `revoke_keys` set to `true`, the server MUST revoke
 
 ### `keys-and-oauth/revoke-keys-unreadable`
 
-If `DELETE /auth/grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `revoke_keys` value other than `true` or `false`, or names `revoke_keys` more than once, then the server MUST answer `400 validation_error` and end nothing.
+If `DELETE /grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `revoke_keys` value other than `true` or `false`, or names `revoke_keys` more than once, then the server MUST answer `400 validation_error` and end nothing.
 
 **Reason:** An app's keys end only when the caller says so in the one spelling the contract states, so a mistyped flag such as `1` or `yes`, or two values that disagree, never answers success while the keys still work.
 
@@ -2349,9 +2367,9 @@ If `DELETE /auth/grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `revoke
 
 ### `keys-and-oauth/grant-unknown`
 
-If `DELETE /auth/grants/{id}` names an id that is no app's grant, then the server MUST answer `404 oauth_grant_not_found`.
+If `DELETE /grants/{id}` names an id that is no app's grant, then the server MUST answer `404 grant_not_found`.
 
-**Tests:** `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
+**Tests:** `compliance/oauth-refusals.test.ts › answers 404 grant_not_found for an id that is no app's grant, and revokes one that is`.
 
 ### `keys-and-oauth/app-rate-window`
 
@@ -2367,7 +2385,7 @@ A web page connects as an app does, registered as a web client, whose redirect U
 
 ### `keys-and-oauth/page-origin-allowed`
 
-While `GET /auth/grants` lists a grant to a web client, the server MUST answer each request whose `Origin` is the origin of a redirect URI the client registered, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
+While `GET /grants` lists a grant to a web client, the server MUST answer each request whose `Origin` is the origin of a redirect URI the client registered, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
 
 **Reason:** The address is the one the page registered and the approval page showed, never the `Origin` a browser reports, because registration takes no credential and only the owner's approval makes an address trusted. It lasts as long as some listed grant names it, so two pages on one address keep it until the last is disconnected.
 
@@ -2375,7 +2393,7 @@ While `GET /auth/grants` lists a grant to a web client, the server MUST answer e
 
 ### `keys-and-oauth/page-origin-refused`
 
-If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is off the loopback, that `cors_origins` does not name, and that is the origin of no redirect URI of a web client `GET /auth/grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
+If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is off the loopback, that `cors_origins` does not name, and that is the origin of no redirect URI of a web client `GET /grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
 
 **Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, and a native app's redirect URI, which is where a program on a device listens rather than a page, are all refused.
 
@@ -2391,7 +2409,7 @@ The server MUST NOT answer any request with `Access-Control-Allow-Credentials`.
 
 ### `keys-and-oauth/discovery-every-origin`
 
-When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server/auth`, `GET /auth/.well-known/oauth-authorization-server`, `GET /.well-known/oauth-protected-resource` and the protected resource metadata of each MCP endpoint, `GET /.well-known/oauth-protected-resource/mcp`, `/mcp/schema` and `/mcp/admin`, with `Access-Control-Allow-Origin: *`.
+When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server`, `GET /.well-known/oauth-protected-resource` and the protected resource metadata of each MCP endpoint, `GET /.well-known/oauth-protected-resource/mcp`, `/mcp/schema` and `/mcp/admin`, with `Access-Control-Allow-Origin: *`.
 
 **Reason:** A page that is not yet approved has to find the endpoints before it can ask for approval, and these documents take no credential and say nothing that belongs to the owner.
 
@@ -2399,7 +2417,7 @@ When a request carries an `Origin`, the server MUST answer `GET /.well-known/oau
 
 ### `keys-and-oauth/register-every-origin`
 
-When a request to `POST /auth/oauth2/register` carries an `Origin`, the server MUST answer it with `Access-Control-Allow-Origin: *`.
+When a request to `POST /oauth/register` carries an `Origin`, the server MUST answer it with `Access-Control-Allow-Origin: *`.
 
 **Reason:** A page registers itself from the browser before it opens the approval window, so registration answers every origin; a browser lets no page read an answer that carries `*` to a request sent with cookies.
 
@@ -2407,7 +2425,7 @@ When a request to `POST /auth/oauth2/register` carries an `Origin`, the server M
 
 ### `keys-and-oauth/register-preflight`
 
-When a preflight from any origin asks to send `POST` to `/auth/oauth2/register`, the server MUST answer it with `Access-Control-Allow-Origin: *`, `POST` as the only allowed method and `Content-Type` as the only allowed header.
+When a preflight from any origin asks to send `POST` to `/oauth/register`, the server MUST answer it with `Access-Control-Allow-Origin: *`, `POST` as the only allowed method and `Content-Type` as the only allowed header.
 
 **Tests:** `compliance/web-page-register.test.ts › allows a preflight for registration with POST and Content-Type, and nothing more`.
 
@@ -2427,13 +2445,13 @@ When a request carries an `Origin` that `cors_origins` names, the server MUST an
 
 ### `keys-and-oauth/device-code-issued`
 
-When a client asks `POST /auth/device/code` for a scope it may be granted, the server MUST answer `200` with a `device_code`, a `user_code`, a `verification_uri` and `verification_uri_complete` at `/auth/device`, `expires_in` of 600 and `interval` of 5.
+When a client asks `POST /oauth/device-authorization` for a scope it may be granted, the server MUST answer `200` with a `device_code`, a `user_code`, a `verification_uri` and `verification_uri_complete` at `/auth/device`, `expires_in` of 600 and `interval` of 5.
 
 **Tests:** `compliance/device-grant.test.ts › is issued with its codes, where to enter it, ten minutes to live and a five-second interval`.
 
 ### `keys-and-oauth/device-code-client-grant`
 
-If `POST /auth/device/code` comes from a client whose registration does not name the device grant, then the server MUST answer `400 unauthorized_client`.
+If `POST /oauth/device-authorization` comes from a client whose registration does not name the device grant, then the server MUST answer `400 unauthorized_client`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › answers a device code request from an app not registered for the device grant 400 unauthorized_client`.
 
@@ -2455,13 +2473,13 @@ The server MUST NOT hold a device code it issued as the code itself.
 
 ### `keys-and-oauth/device-unpublished-scope`
 
-If a client asks `POST /auth/device/code` for a scope the instance does not publish, then the server MUST answer `400 invalid_scope`.
+If a client asks `POST /oauth/device-authorization` for a scope the instance does not publish, then the server MUST answer `400 invalid_scope`.
 
 **Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for a scope the instance does not publish`.
 
 ### `keys-and-oauth/device-permission-scope-closed`
 
-If a client asks `POST /auth/device/code` for a scope under one of the ten permission roots that is not one of the twelve permission names, `<root>.*:read` and `<root>.*:write` included, then the server MUST answer `400 invalid_scope`.
+If a client asks `POST /oauth/device-authorization` for a scope under one of the ten permission roots that is not one of the twelve permission names, `<root>.*:read` and `<root>.*:write` included, then the server MUST answer `400 invalid_scope`.
 
 **Reason:** The roots are reserved for the permissions, so a scope under one that no permission names asks for a power that does not exist, and cannot name a type.
 
@@ -2469,7 +2487,7 @@ If a client asks `POST /auth/device/code` for a scope under one of the ten permi
 
 ### `keys-and-oauth/device-offline-no-refresh`
 
-If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /auth/device/code` for `offline_access`, then the server MUST answer `400 invalid_scope`.
+If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /oauth/device-authorization` for `offline_access`, then the server MUST answer `400 invalid_scope`.
 
 **Reason:** The client could never exchange a refresh token, and an access token alone would leave it to sign the person in again with no way to know why.
 
@@ -2477,7 +2495,7 @@ If a client whose `grant_types` name neither `refresh_token` nor `authorization_
 
 ### `keys-and-oauth/device-published-scope`
 
-When a client asks `POST /auth/device/code` for a scope the instance publishes to every client and the client is not registered for, the server MUST issue the code.
+When a client asks `POST /oauth/device-authorization` for a scope the instance publishes to every client and the client is not registered for, the server MUST issue the code.
 
 **Reason:** A client registered before the instance published a scope can still be approved for it.
 
@@ -2485,7 +2503,7 @@ When a client asks `POST /auth/device/code` for a scope the instance publishes t
 
 ### `keys-and-oauth/device-no-catch-up`
 
-When a client asks `POST /auth/device/code` for a scope the client is not registered for, the server MUST leave the client's registration as it was.
+When a client asks `POST /oauth/device-authorization` for a scope the client is not registered for, the server MUST leave the client's registration as it was.
 
 **Reason:** Nobody is signed in when a device asks, and a client's public id is all the request needs, so a change here would let a stranger widen what the client's later approval screens offer.
 
@@ -2493,7 +2511,7 @@ When a client asks `POST /auth/device/code` for a scope the client is not regist
 
 ### `keys-and-oauth/device-pending`
 
-When a client polls `POST /auth/oauth2/token` with a device code nobody has decided, as the code's first poll or at least the interval after its previous one, the server MUST answer `400 authorization_pending`.
+When a client polls `POST /oauth/token` with a device code nobody has decided, as the code's first poll or at least the interval after its previous one, the server MUST answer `400 authorization_pending`.
 
 **Tests:** `compliance/device-grant.test.ts › answers authorization_pending to a poll of a code nobody has decided`, `compliance/signed-in-apps.test.ts › is issued a code for a published scope it is not registered for, and its registration is as it was`.
 
@@ -2607,7 +2625,7 @@ If a signed-in person opens the device approval page for a pending code whose cl
 
 ### `keys-and-oauth/browser-origin`
 
-If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin and `null` included, then the server MUST answer `403 forbidden` before it reads the form.
+If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/consent` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin and `null` included, then the server MUST answer `403 forbidden` before it reads the form.
 
 **Reason:** A form posted under the owner's cookie acts as the owner, so approving a web page lets it call the instance with the credential it holds and never with the owner's browser session.
 
@@ -2615,7 +2633,7 @@ If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `PO
 
 ### `keys-and-oauth/browser-no-origin`
 
-When a form post to `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
+When a form post to `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/consent` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`.
 
@@ -2773,7 +2791,7 @@ If the queue of password sign-ins that carry no known device cookie, waiting for
 
 ### `keys-and-oauth/register-address-limit`
 
-Where `rate_limit_enabled` is `true`, if one address has sent ten `POST /auth/oauth2/register` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+Where `rate_limit_enabled` is `true`, if one address has sent ten `POST /oauth/register` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
 
 **Reason:** Registration needs no credential, and each one stores a client.
 
@@ -2781,7 +2799,7 @@ Where `rate_limit_enabled` is `true`, if one address has sent ten `POST /auth/oa
 
 ### `keys-and-oauth/device-code-address-limit`
 
-Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth/device/code` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /oauth/device-authorization` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
 
 **Reason:** A device code request needs no credential, and each one stores a code a person may be asked to type.
 
@@ -3201,7 +3219,7 @@ The server MUST NOT list a key that is revoked or past its `expires_at` at `GET 
 
 If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`.
 
-**Reason:** These doors reach every sign-in, the owner's browsers included, and a key or an app that could end them could leave itself the only way in. A key or an app acts on other keys and apps only at `/keys` and `/auth/grants`, within the permissions it holds. The private local command holds the right to every sign-in.
+**Reason:** These doors reach every sign-in, the owner's browsers included, and a key or an app that could end them could leave itself the only way in. A key or an app acts on other keys and apps only at `/keys` and `/grants`, within the permissions it holds. The private local command holds the right to every sign-in.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403, and no credential 401`.
 
@@ -3235,7 +3253,7 @@ When `DELETE /owner/sign-ins/{id}` has ended an app, the server MUST answer `400
 
 When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted, and every key those keys minted, working.
 
-**Reason:** As at `DELETE /auth/grants/{id}`, a key is minted on purpose and listed as a sign-in of its own, so ending an app ends its own tokens and leaves its keys to be ended with it or on their own.
+**Reason:** As at `DELETE /grants/{id}`, a key is minted on purpose and listed as a sign-in of its own, so ending an app ends its own tokens and leaves its keys to be ended with it or on their own.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › stay working when the app ends without revoke_keys`.
 
@@ -3599,7 +3617,7 @@ When the server writes an audit record that `keys-and-oauth/audit-limited-sign-i
 
 ### `keys-and-oauth/audit-register`
 
-When `POST /auth/oauth2/register` answers `201`, and the audit log held fewer than ten `auth.client.created` records of registrations written in the fifteen minutes before the registration was stored, the server MUST already hold an `auth.client.created` audit record of the registration with `details.source` `registration`, readable at `GET /audit`.
+When `POST /oauth/register` answers `201`, and the audit log held fewer than ten `auth.client.created` records of registrations written in the fifteen minutes before the registration was stored, the server MUST already hold an `auth.client.created` audit record of the registration with `details.source` `registration`, readable at `GET /audit`.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› measures the fifteen minutes from when a registration's record is written`.
 
@@ -3613,7 +3631,7 @@ While the audit log holds ten `auth.client.created` records of registrations wri
 
 ### `keys-and-oauth/audit-device-code`
 
-When `POST /auth/device/code` answers `200`, and the audit log held fewer than ten `auth.device_code.issued` records written in the fifteen minutes before the code was stored, the server MUST already hold an `auth.device_code.issued` audit record of the code, readable at `GET /audit`.
+When `POST /oauth/device-authorization` answers `200`, and the audit log held fewer than ten `auth.device_code.issued` records written in the fifteen minutes before the code was stored, the server MUST already hold an `auth.device_code.issued` audit record of the code, readable at `GET /audit`.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`.
 

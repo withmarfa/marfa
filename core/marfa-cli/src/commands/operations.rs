@@ -154,6 +154,9 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getFolderStatus", "folders health"),
     reached("reportFolderStatus", "folders push"),
     reached("registerOAuthClient", "login"),
+    reached("requestDeviceCode", "login"),
+    reached("exchangeToken", "login"),
+    reached("revokeToken", "logout"),
     reached("getOwner", "owner show"),
     reached("listOwnerPasskeys", "owner passkeys list"),
     reached("renameOwnerPasskey", "owner passkeys rename"),
@@ -172,6 +175,13 @@ pub const OPERATIONS: &[Operation] = &[
     reached("endSignIn", "sign-ins end"),
     reached("createOwner", "setup claim"),
 ];
+
+/// Published operations no command sends, each with why.
+#[cfg(test)]
+pub const NO_COMMAND: &[(&str, &str)] = &[(
+    "authorizeApp",
+    "an app opens it in a person's browser; `login` signs in with a device code",
+)];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {
     let rows: Vec<serde_json::Value> = OPERATIONS

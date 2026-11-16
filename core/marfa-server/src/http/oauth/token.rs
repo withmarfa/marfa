@@ -3,12 +3,12 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::problem_answer;
 use crate::app::App;
 use crate::app::auth::Visit;
-use crate::app::oauth::client::ErrorCode;
+use crate::app::oauth::client::{ErrorCode, RegistrationError};
 use crate::app::oauth::token::Form;
 use crate::app::oauth::{register as registration, revoke as revocation, token};
 use crate::http::answer::{Answer, json_answer};
@@ -61,11 +61,8 @@ pub async fn register(
 ) -> Answer {
     query::only(&uri, &[])?;
     if !body.declares_plain_json() {
-        let refused = json!({
-            "message": "Send the registration as application/json.",
-            "code": "UNSUPPORTED_MEDIA_TYPE",
-        });
-        return Ok(json_answer(StatusCode::UNSUPPORTED_MEDIA_TYPE, &refused));
+        let refused = RegistrationError::metadata("Send the registration as application/json.");
+        return Ok(json_answer(StatusCode::BAD_REQUEST, &refused.to_json()));
     }
     let sent = body.read().await?;
     let bearer = bears_token(&headers);

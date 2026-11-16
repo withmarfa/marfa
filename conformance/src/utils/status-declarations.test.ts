@@ -578,14 +578,14 @@ describe("the status checker", () => {
       parseRequestLines(
         logLine({
           method: "POST",
-          path: "/auth/oauth2/register",
+          path: "/oauth/register",
           route: "/auth/*",
           status: 400,
         }),
       ),
       {
         paths: {
-          "/auth/oauth2/register": {
+          "/oauth/register": {
             post: { responses: { "201": { description: "" } } },
           },
         },
@@ -594,7 +594,7 @@ describe("the status checker", () => {
 
     expect(report.undeclared).toEqual([
       {
-        operation: "POST /auth/oauth2/register",
+        operation: "POST /oauth/register",
         status: 400,
         codes: [],
         declared: [201],
@@ -873,17 +873,17 @@ describe("the status checker", () => {
 });
 
 describe("the sign-in routes", () => {
-  const tokenLine = (status: number, path = "/auth/oauth2/token") =>
+  const consentLine = (status: number, path = "/auth/consent") =>
     logLine({ method: "POST", path, route: "/auth/*", status });
 
-  it("declare the refusal of an owner-only email-write authorization scope", () => {
+  it("hold the consent screen to the statuses declared for it", () => {
     const report = reportStatuses(
       parseRequestLines(
         [200, 302, 400, 418]
           .map((status) =>
             logLine({
               method: "GET",
-              path: "/auth/oauth2/authorize",
+              path: "/auth/consent",
               route: "/auth/*",
               status,
             }),
@@ -893,22 +893,22 @@ describe("the sign-in routes", () => {
       documentDeclaring([200]),
     );
     expect(report.undeclared.map(({ status }) => status)).toEqual([418]);
-    expect([...report.unpublished.get("GET /auth/oauth2/authorize")!]).toEqual([
+    expect([...report.unpublished.get("GET /auth/consent")!]).toEqual([
       200, 302, 400, 418,
     ]);
   });
 
-  it("hold a route the sign-in library serves under its pattern to the statuses declared for it", () => {
+  it("hold a sign-in route served under its pattern to the statuses declared for it", () => {
     const caught = reportStatuses(
-      parseRequestLines([tokenLine(400), tokenLine(418)].join("\n")),
+      parseRequestLines([consentLine(400), consentLine(418)].join("\n")),
       documentDeclaring([200]),
     );
     expect(caught.undeclared).toEqual([
       {
-        operation: "POST /auth/oauth2/token",
+        operation: "POST /auth/consent",
         status: 418,
         codes: [],
-        declared: [...SIGN_IN_ROUTE_STATUSES["POST /auth/oauth2/token"]!],
+        declared: [...SIGN_IN_ROUTE_STATUSES["POST /auth/consent"]!],
       },
     ]);
 
@@ -916,7 +916,7 @@ describe("the sign-in routes", () => {
     // write lock's, which no route answers on its own account.
     const passed = reportStatuses(
       parseRequestLines(
-        [tokenLine(400), tokenLine(429), tokenLine(503)].join("\n"),
+        [consentLine(400), consentLine(429), consentLine(503)].join("\n"),
       ),
       documentDeclaring([200]),
     );
@@ -940,14 +940,14 @@ describe("the sign-in routes", () => {
           // A served route spelled with a percent-escape, logged decoded.
           refused("/auth/change-password"),
           // The witness: a served route under the pattern is still held.
-          tokenLine(418),
+          consentLine(418),
         ].join("\n"),
       ),
       documentDeclaring([200]),
     );
-    expect([...report.unpublished.keys()]).toEqual(["POST /auth/oauth2/token"]);
+    expect([...report.unpublished.keys()]).toEqual(["POST /auth/consent"]);
     expect(report.undeclared.map((u) => u.operation)).toEqual([
-      "POST /auth/oauth2/token",
+      "POST /auth/consent",
     ]);
   });
 
@@ -972,8 +972,8 @@ describe("the sign-in routes", () => {
     const report = reportStatuses(
       parseRequestLines(
         [
-          tokenLine(200, "/auth/not-a-route"),
-          tokenLine(404, "/auth/bare"),
+          consentLine(200, "/auth/not-a-route"),
+          consentLine(404, "/auth/bare"),
         ].join("\n"),
       ),
       documentDeclaring([200]),
@@ -986,18 +986,16 @@ describe("the sign-in routes", () => {
 
   it("resolve the published registration operation under the pattern by its path", () => {
     const report = reportStatuses(
-      parseRequestLines(tokenLine(201, "/auth/oauth2/register")),
+      parseRequestLines(consentLine(201, "/oauth/register")),
       {
         paths: {
-          "/auth/oauth2/register": {
+          "/oauth/register": {
             post: { responses: { "201": { description: "Registered" } } },
           },
         },
       },
     );
-    expect(report.observed.get("POST /auth/oauth2/register")?.has(201)).toBe(
-      true,
-    );
+    expect(report.observed.get("POST /oauth/register")?.has(201)).toBe(true);
     expect(report.unpublished.size).toBe(0);
   });
 
@@ -1007,7 +1005,7 @@ describe("the sign-in routes", () => {
     ["POST", "/auth/passkeys/registration", 409],
     ["POST", "/auth/passkeys/sign-in", 500],
     ["GET", "/auth/owner/passkeys", 403],
-    ["POST", "/auth/device/code", 429],
+    ["POST", "/auth/device", 403],
   ])("recognises %s %s and its %i response", (method, path, status) => {
     const line = { method, transport: "http", route: "/auth/*", path };
     const report = reportStatuses(

@@ -1143,7 +1143,7 @@ mod tests {
                 expires_at: Some(crate::auth::now_seconds() + 3600),
                 client_id: "client".into(),
                 scope: None,
-                token_endpoint: format!("{}/auth/oauth2/token", door.url),
+                token_endpoint: format!("{}/oauth/token", door.url),
                 revocation_endpoint: None,
             };
             let origin = marfa_core::http::origin_of(&door.url).unwrap();
@@ -1340,7 +1340,7 @@ mod tests {
             .json(&Request::post(&["items", "lookup"]).reading())
             .unwrap();
         remote
-            .json(&Request::post(&["auth", "token"]).public().reading())
+            .json(&Request::post(&["oauth", "token"]).public().reading())
             .unwrap();
         assert_eq!(crate::writing::announced(), Vec::<String>::new());
         remote
@@ -1397,7 +1397,7 @@ mod tests {
             expires_at: Some(crate::auth::now_seconds() + 3600),
             client_id: "client".into(),
             scope: None,
-            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            token_endpoint: format!("{}/oauth/token", door.url),
             revocation_endpoint: None,
         };
         let origin = marfa_core::http::origin_of(&door.url).unwrap();
@@ -1414,7 +1414,7 @@ mod tests {
             matches!(credentials::read(&origin).unwrap(), Some(Kept::Token { access_token, .. }) if access_token == "marfa_at_new"),
             "the rotated set is the kept one, and the refused refresh left it"
         );
-        let token = format!("{}/auth/oauth2/token", door.url);
+        let token = format!("{}/oauth/token", door.url);
         assert_eq!(
             cleartext::guarded()
                 .iter()
@@ -1432,11 +1432,11 @@ mod tests {
             vec![
                 "/items",
                 "/",
-                "/auth/oauth2/token",
+                "/oauth/token",
                 "/items",
                 "/items",
                 "/",
-                "/auth/oauth2/token"
+                "/oauth/token"
             ]
         );
         assert_eq!(
@@ -1484,7 +1484,7 @@ mod tests {
             expires_at: Some(crate::auth::now_seconds() + 3600),
             client_id: "client".into(),
             scope: None,
-            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            token_endpoint: format!("{}/oauth/token", door.url),
             revocation_endpoint: None,
         };
         let origin = marfa_core::http::origin_of(&door.url).unwrap();
@@ -1514,10 +1514,7 @@ mod tests {
         let received = door.received();
         let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
         let link = format!("/blobs/{HASH}/url");
-        assert_eq!(
-            paths,
-            vec![&link, "/", "/auth/oauth2/token", &link, "/bytes"]
-        );
+        assert_eq!(paths, vec![&link, "/", "/oauth/token", &link, "/bytes"]);
         assert_eq!(
             received[0].header("authorization"),
             Some("Bearer marfa_at_old")
@@ -1554,7 +1551,7 @@ mod tests {
             expires_at: Some(crate::auth::now_seconds() + 3600),
             client_id: "client".into(),
             scope: None,
-            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            token_endpoint: format!("{}/oauth/token", door.url),
             revocation_endpoint: None,
         };
         let origin = marfa_core::http::origin_of(&door.url).unwrap();
@@ -2145,7 +2142,7 @@ mod tests {
             expires_at: None,
             client_id: "c".into(),
             scope: Some("core.note:read".into()),
-            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            token_endpoint: format!("{}/oauth/token", door.url),
             revocation_endpoint: None,
         };
         let remote = Remote::holding(&door.url, kept).unwrap();

@@ -19,7 +19,7 @@ use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::registry::{
-    DCR_CLIENT_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS,
+    GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, UNAPPROVED_APP_RETENTION_HOURS,
 };
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
@@ -194,7 +194,7 @@ impl Instance {
     }
 
     async fn register_with(&self, body: Value) -> String {
-        let reply = self.send(post_json("/auth/oauth2/register", &body)).await;
+        let reply = self.send(post_json("/oauth/register", &body)).await;
         assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.text);
         reply.json()["client_id"].as_str().unwrap().to_string()
     }
@@ -236,7 +236,7 @@ impl Instance {
             ("code_challenge_method", "S256"),
         ]);
         self.send(get(
-            &format!("/auth/oauth2/authorize?{query}"),
+            &format!("/oauth/authorize?{query}"),
             Some(&self.cookie),
         ))
         .await
@@ -250,19 +250,15 @@ impl Instance {
         let reply = self.authorize(client, scope, redirect_uri).await;
         assert_eq!(reply.status, StatusCode::FOUND, "{}", reply.text);
         let landed = reply.location().unwrap();
-        assert_eq!(landed.path(), "/auth/authorize", "{landed}");
+        assert_eq!(landed.path(), "/auth/consent", "{landed}");
         landed.query().unwrap().to_string()
     }
 
     async fn decide(&self, link: &str, scopes: &[&str]) -> Reply {
-        let mut fields = vec![("accept", "true"), ("oauth_query", link)];
+        let mut fields = vec![("decision", "approve"), ("authorization_request", link)];
         fields.extend(scopes.iter().map(|scope| ("scopes", *scope)));
-        self.send(post_form(
-            "/auth/authorize/decision",
-            Some(&self.cookie),
-            &fields,
-        ))
-        .await
+        self.send(post_form("/auth/consent", Some(&self.cookie), &fields))
+            .await
     }
 
     async fn code(&self, client: &str, scope: &str) -> String {
@@ -293,8 +289,7 @@ impl Instance {
             ("code_verifier", VERIFIER),
             ("redirect_uri", redirect_uri),
         ];
-        self.send(post_form("/auth/oauth2/token", None, &fields))
-            .await
+        self.send(post_form("/oauth/token", None, &fields)).await
     }
 
     async fn refresh(&self, client: &str, token: &str) -> Reply {
@@ -303,15 +298,12 @@ impl Instance {
             ("client_id", client),
             ("refresh_token", token),
         ];
-        self.send(post_form("/auth/oauth2/token", None, &fields))
-            .await
+        self.send(post_form("/oauth/token", None, &fields)).await
     }
 
     async fn revoke(&self, client: &str, token: &str) {
         let fields = [("client_id", client), ("token", token)];
-        let reply = self
-            .send(post_form("/auth/oauth2/revoke", None, &fields))
-            .await;
+        let reply = self.send(post_form("/oauth/revoke", None, &fields)).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
     }
 
@@ -354,7 +346,7 @@ impl Instance {
     async fn device_asked(&self, client: &str, scope: &str) -> Value {
         let fields = [("client_id", client), ("scope", scope)];
         let asked = self
-            .send(post_form("/auth/device/code", None, &fields))
+            .send(post_form("/oauth/device-authorization", None, &fields))
             .await;
         assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
         asked.json()
@@ -389,8 +381,7 @@ impl Instance {
             ("client_id", client),
             ("device_code", device_code),
         ];
-        self.send(post_form("/auth/oauth2/token", None, &fields))
-            .await
+        self.send(post_form("/oauth/token", None, &fields)).await
     }
 
     async fn stage(&self, statement: &'static str) {
@@ -560,7 +551,7 @@ async fn an_exchange_that_failed_burns_the_code_and_names_no_replay() {
         ("redirect_uri", CALLBACK),
     ];
     let wrong = instance
-        .send(post_form("/auth/oauth2/token", None, &fields))
+        .send(post_form("/oauth/token", None, &fields))
         .await;
     refused_as(&wrong, "invalid_grant");
 
@@ -700,7 +691,7 @@ async fn a_failed_audit_leaves_a_withdrawal_undone() {
         ("token", text_at(&issued, "refresh_token")),
     ];
     let reply = instance
-        .send(post_form("/auth/oauth2/revoke", None, &fields))
+        .send(post_form("/oauth/revoke", None, &fields))
         .await;
     instance.app.faults.clear(None);
     assert!(reply.status.is_server_error(), "{}", reply.text);
@@ -786,7 +777,7 @@ async fn a_stored_set_whose_literals_do_not_cover_each_other_still_stands() {
     let held = instance.decide(&first, &["*:read"]).await;
     assert!(code_in(&held).is_some(), "{}", held.text);
     let more = instance.authorize(&wider, "*:write", CALLBACK).await;
-    assert_eq!(more.location().unwrap().path(), "/auth/authorize");
+    assert_eq!(more.location().unwrap().path(), "/auth/consent");
 }
 
 #[tokio::test]
@@ -900,7 +891,7 @@ async fn the_consent_page_never_loads_a_logo() {
     let link = instance.consent_link(&client, NOTES).await;
     let page = instance
         .send(get(
-            &format!("/auth/authorize?{link}"),
+            &format!("/auth/consent?{link}"),
             Some(&instance.cookie),
         ))
         .await;
@@ -914,7 +905,7 @@ async fn a_return_to_beside_a_link_never_leaves_this_server() {
     let instance = Instance::signed_in().await;
     let client = instance.register(NOTES).await;
     let link = instance.consent_link(&client, NOTES).await;
-    let forged = format!("/auth/authorize?{link}&return_to=https%3A%2F%2Felsewhere.example%2F");
+    let forged = format!("/auth/consent?{link}&return_to=https%3A%2F%2Felsewhere.example%2F");
     let reply = instance.send(get(&forged, None)).await;
     assert_eq!(reply.status, StatusCode::FOUND, "{}", reply.text);
     let landed = reply.location().unwrap();
@@ -924,7 +915,7 @@ async fn a_return_to_beside_a_link_never_leaves_this_server() {
         .find(|(name, _)| name == "return_to")
         .map(|(_, back)| back.into_owned())
         .unwrap();
-    assert!(back.starts_with("/auth/authorize?"), "{back}");
+    assert!(back.starts_with("/auth/consent?"), "{back}");
 
     for elsewhere in ["https://elsewhere.example/", "//elsewhere.example/"] {
         let way = sign_in_then(&instance.app, elsewhere);
@@ -1209,7 +1200,7 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
     let link = instance.consent_link(&offered, NOTES).await;
     let page = instance
         .send(get(
-            &format!("/auth/authorize?{link}"),
+            &format!("/auth/consent?{link}"),
             Some(&instance.cookie),
         ))
         .await;
@@ -1224,7 +1215,7 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
             ("refresh_token", "x"),
         ];
         let reply = instance
-            .send(post_form("/auth/oauth2/token", None, &fields))
+            .send(post_form("/oauth/token", None, &fields))
             .await;
         reply.json()["error"].as_str().unwrap().to_string()
     };
@@ -1437,7 +1428,7 @@ async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() 
     for (key, next) in [
         ("grant_inactivity_days", Some("auth.grants.purged")),
         ("revoked_grant_retention_days", Some("auth.clients.purged")),
-        ("dcr_client_retention_hours", None),
+        ("unapproved_app_retention_hours", None),
     ] {
         instance.when_held().await;
         commit_unpublished(app, key, "0").await;
@@ -1450,7 +1441,7 @@ async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() 
     let live = app.settings.live();
     assert_eq!(live.get(GRANT_INACTIVITY_DAYS), 365);
     assert_eq!(live.get(REVOKED_GRANT_RETENTION_DAYS), 90);
-    assert_eq!(live.get(DCR_CLIENT_RETENTION_HOURS), 1);
+    assert_eq!(live.get(UNAPPROVED_APP_RETENTION_HOURS), 1);
     assert_eq!(instance.count(STANDING).await, 1);
     assert_eq!(instance.count(WITHDRAWN).await, 1);
     assert_eq!(instance.count(CLIENTS).await, 3);
@@ -1469,7 +1460,7 @@ async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_no
     let keys = [
         "grant_inactivity_days",
         "revoked_grant_retention_days",
-        "dcr_client_retention_hours",
+        "unapproved_app_retention_hours",
     ];
     for key in keys {
         commit_unpublished(app, key, "soon").await;
@@ -1692,14 +1683,10 @@ async fn an_approved_page_is_answered_for_as_long_as_it_is_approved() {
 async fn registration_answers_a_page_only_for_the_post_it_serves() {
     let instance = Instance::signed_in().await;
     let preflight = |asked: &str| {
-        from_page(
-            Method::OPTIONS,
-            "/auth/oauth2/register",
-            "https://any.example",
-        )
-        .header(header::ACCESS_CONTROL_REQUEST_METHOD, asked)
-        .body(Body::empty())
-        .unwrap()
+        from_page(Method::OPTIONS, "/oauth/register", "https://any.example")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, asked)
+            .body(Body::empty())
+            .unwrap()
     };
     let posting = instance.send(preflight("POST")).await;
     assert_eq!(posting.status, StatusCode::NO_CONTENT, "{}", posting.text);
@@ -1752,9 +1739,7 @@ impl Instance {
     }
 
     async fn grant_of(&self, client: &str) -> Value {
-        let listed = self
-            .local(from_local(Method::GET, "/auth/grants", None))
-            .await;
+        let listed = self.local(from_local(Method::GET, "/grants", None)).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
         let rows = listed.json()["data"].as_array().unwrap().clone();
         rows.into_iter()
@@ -1763,14 +1748,14 @@ impl Instance {
     }
 
     async fn narrow(&self, grant: &Value, scopes: &[&str], expected: &[&str]) -> Reply {
-        let path = format!("/auth/grants/{}", text_at(grant, "id"));
+        let path = format!("/grants/{}", text_at(grant, "id"));
         let body = json!({ "scopes": scopes, "expected_scopes": expected });
         self.local(from_local(Method::PATCH, &path, Some(&body)))
             .await
     }
 
     async fn end_grant(&self, grant: &Value) -> Reply {
-        let path = format!("/auth/grants/{}", text_at(grant, "id"));
+        let path = format!("/grants/{}", text_at(grant, "id"));
         self.local(from_local(Method::DELETE, &path, None)).await
     }
 
@@ -1835,7 +1820,7 @@ impl Instance {
             ("code_challenge_method", "S256"),
             ("prompt", prompt),
         ]);
-        self.send(get(&format!("/auth/oauth2/authorize?{query}"), cookie))
+        self.send(get(&format!("/oauth/authorize?{query}"), cookie))
             .await
     }
 }
@@ -1930,7 +1915,7 @@ async fn a_consent_link_and_a_new_sign_in_name_the_app_on_the_way_to_sign_in() {
     let client = instance.register(NOTES).await;
     let link = instance.consent_link(&client, NOTES).await;
     let opened = instance
-        .send(get(&format!("/auth/authorize?{link}"), None))
+        .send(get(&format!("/auth/consent?{link}"), None))
         .await;
     assert_eq!(opened.status, StatusCode::FOUND, "{}", opened.text);
     let sent = target_of(&opened.location().unwrap());
@@ -2004,7 +1989,7 @@ async fn a_new_sign_in_signs_only_what_the_server_read_of_the_request() {
     ]);
     let reply = instance
         .send(get(
-            &format!("/auth/oauth2/authorize?{query}"),
+            &format!("/oauth/authorize?{query}"),
             Some(&instance.cookie),
         ))
         .await;
@@ -2033,7 +2018,7 @@ async fn a_request_nothing_can_be_granted_for_goes_to_no_sign_in() {
             ("code_challenge_method", "S256"),
             ("prompt", prompt),
         ]);
-        format!("/auth/oauth2/authorize?{query}")
+        format!("/oauth/authorize?{query}")
     };
     for prompt in ["login", "consent"] {
         let refused = instance
@@ -2064,7 +2049,7 @@ async fn a_shipped_edge_type_can_be_asked_for_and_is_published() {
     let issued = instance.tokens(&client, scope).await;
     assert_eq!(text_at(&issued, "scope"), scope);
     let discovery = instance
-        .send(get("/.well-known/oauth-authorization-server/auth", None))
+        .send(get("/.well-known/oauth-authorization-server", None))
         .await;
     let published = discovery.json()["scopes_supported"].clone();
     assert!(published.as_array().unwrap().contains(&json!(scope)));
@@ -2139,7 +2124,7 @@ async fn only_a_live_grant_can_be_narrowed_or_ended() {
 
     let not_found = |reply: &Reply| {
         assert_eq!(reply.status, StatusCode::NOT_FOUND, "{}", reply.text);
-        assert_eq!(reply.headers["x-error-code"], "oauth_grant_not_found");
+        assert_eq!(reply.headers["x-error-code"], "grant_not_found");
     };
     let scopes = ["core.note:read"];
     for id in [&nothing, &note] {
@@ -2207,7 +2192,7 @@ async fn a_chain_reaching_past_its_grant_refreshes_to_nothing() {
         ("scope", "core.note:read offline_access"),
     ];
     let reply = instance
-        .send(post_form("/auth/oauth2/token", None, &fields))
+        .send(post_form("/oauth/token", None, &fields))
         .await;
     refused_as(&reply, "invalid_grant");
 
@@ -2236,7 +2221,7 @@ async fn a_request_naming_no_scope_asks_for_what_the_client_registered() {
             ("code_challenge_method", "S256"),
         ];
         fields.extend(scope.map(|scope| ("scope", scope)));
-        let path = format!("/auth/oauth2/authorize?{}", encoded(&fields));
+        let path = format!("/oauth/authorize?{}", encoded(&fields));
 
         let signed_out = instance.send(get(&path, None)).await;
         let sign_in = signed_out.location().unwrap();
@@ -2245,7 +2230,7 @@ async fn a_request_naming_no_scope_asks_for_what_the_client_registered() {
 
         let back = instance.send(get(&path, Some(&instance.cookie))).await;
         let screen = back.location().unwrap();
-        assert_eq!(screen.path(), "/auth/authorize", "{screen}");
+        assert_eq!(screen.path(), "/auth/consent", "{screen}");
         assert_eq!(named_scope(&screen).as_deref(), Some(NOTES), "{screen}");
     }
 }
@@ -2352,7 +2337,7 @@ async fn a_narrowing_landing_before_an_approval_stands_and_the_approval_adds_to_
         .authorize(&client, "core.task:read", CALLBACK)
         .await;
     assert!(code_in(&asked).is_none(), "{:?}", asked.location());
-    assert_eq!(asked.location().unwrap().path(), "/auth/authorize");
+    assert_eq!(asked.location().unwrap().path(), "/auth/consent");
 }
 
 #[tokio::test]
@@ -2465,7 +2450,7 @@ async fn a_dead_key_is_no_sign_in_and_its_ending_names_nothing() {
 
     let secret = text_at(&key, "key");
     let refused = instance
-        .send(from_token(Method::GET, "/auth/grants", secret))
+        .send(from_token(Method::GET, "/grants", secret))
         .await;
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{}", refused.text);
     let rows = instance.sign_ins().await;
@@ -2489,7 +2474,7 @@ async fn a_key_holding_only_grants_manage_ends_an_app_and_the_audit_names_it() {
     let grant = instance.grant_of(&client).await;
     let key = instance.key_holding(&["grants.manage"]).await;
 
-    let path = format!("/auth/grants/{}", text_at(&grant, "id"));
+    let path = format!("/grants/{}", text_at(&grant, "id"));
     let revoked = instance
         .send(from_token(Method::DELETE, &path, text_at(&key, "key")))
         .await;
@@ -2605,18 +2590,14 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let last_use = "SELECT last_used_at FROM sign_ins";
     let before = instance.text_of(last_use).await;
 
-    for door in [
-        "/auth/authorize/decision",
-        "/auth/device",
-        "/auth/device/consent",
-    ] {
+    for door in ["/auth/consent", "/auth/device", "/auth/device/consent"] {
         let form = Request::builder()
             .method(Method::POST)
             .uri(door)
             .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .header(header::ORIGIN, "https://foreign.example")
             .header(header::COOKIE, &instance.cookie)
-            .body(Body::from("accept=true"))
+            .body(Body::from("decision=approve"))
             .unwrap();
         let reply = instance.send(form).await;
         assert_eq!(
@@ -2649,18 +2630,18 @@ async fn the_doors_of_a_sign_in_hold_a_session_to_a_safe_address() {
     let asked = instance.authorize(&client, NOTES, CALLBACK).await;
     assert_eq!(asked.status, StatusCode::FORBIDDEN, "{}", asked.text);
     assert!(asked.text.contains("HTTPS"), "{}", asked.text);
-    let screen = format!("/auth/authorize?{link}");
+    let screen = format!("/auth/consent?{link}");
     let shown = instance.send(get(&screen, Some(&instance.cookie))).await;
     assert_eq!(shown.status, StatusCode::FORBIDDEN, "{}", shown.text);
     let form = Request::builder()
         .method(Method::POST)
-        .uri("/auth/authorize/decision")
+        .uri("/auth/consent")
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .header(header::ORIGIN, address)
         .header(header::COOKIE, &instance.cookie)
         .body(Body::from(encoded(&[
-            ("accept", "true"),
-            ("oauth_query", &link),
+            ("decision", "approve"),
+            ("authorization_request", &link),
             ("scopes", NOTES),
         ])))
         .unwrap();
@@ -2685,9 +2666,9 @@ async fn no_page_may_read_the_doors_of_an_authorization() {
     assert!(allowed(&instance.send(witness).await));
 
     for (method, door) in [
-        (Method::GET, "/auth/oauth2/authorize"),
-        (Method::GET, "/auth/authorize"),
-        (Method::POST, "/auth/authorize/decision"),
+        (Method::GET, "/oauth/authorize"),
+        (Method::GET, "/auth/consent"),
+        (Method::POST, "/auth/consent"),
         (Method::GET, "/auth/device/consent"),
         (Method::POST, "/auth/device/consent"),
     ] {
@@ -2710,16 +2691,14 @@ async fn registrations_from_one_address_stop_at_their_limit() {
     for _ in 0..9 {
         instance.register(NOTES).await;
     }
-    let unreadable = post_json("/auth/oauth2/register", &json!({ "redirect_uris": 1 }));
+    let unreadable = post_json("/oauth/register", &json!({ "redirect_uris": 1 }));
     assert_eq!(
         instance.send(unreadable).await.status,
         StatusCode::BAD_REQUEST
     );
 
     let body = json!({ "redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none" });
-    let held = instance
-        .send(post_json("/auth/oauth2/register", &body))
-        .await;
+    let held = instance.send(post_json("/oauth/register", &body)).await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS, "{}", held.text);
     assert!(held.headers.contains_key(header::RETRY_AFTER));
     let clients = "SELECT count(*) FROM oauth_clients";
@@ -2733,7 +2712,7 @@ async fn registrations_from_one_address_stop_at_their_limit() {
 async fn an_expired_device_code_answers_its_poll_then_goes() {
     let instance = Instance::signed_in().await;
     let app = &instance.app;
-    commit_unpublished(app, "dcr_client_retention_hours", "0").await;
+    commit_unpublished(app, "unapproved_app_retention_hours", "0").await;
     let client = instance.register_device(NOTES).await;
     let device_code = instance.device_requested(&client, NOTES).await;
     let left_alone = instance.device_requested(&client, NOTES).await;
@@ -2875,7 +2854,7 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
         })
     };
     let refused = instance
-        .send(post_json("/auth/oauth2/register", &registration(asked)))
+        .send(post_json("/oauth/register", &registration(asked)))
         .await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
     refused_as(&refused, "invalid_scope");
@@ -2894,7 +2873,7 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
     let device = instance.register_device(NOTES).await;
     let fields = [("client_id", device.as_str()), ("scope", asked)];
     let refused = instance
-        .send(post_form("/auth/device/code", None, &fields))
+        .send(post_form("/oauth/device-authorization", None, &fields))
         .await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
     refused_as(&refused, "invalid_scope");
@@ -2919,16 +2898,12 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
     };
     let form = exchange(&code, Some(asked));
     let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let refused = instance
-        .send(post_form("/auth/oauth2/token", None, &form))
-        .await;
+    let refused = instance.send(post_form("/oauth/token", None, &form)).await;
     refused_as(&refused, "invalid_scope");
 
     let form = exchange(&code, None);
     let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let issued = instance
-        .send(post_form("/auth/oauth2/token", None, &form))
-        .await;
+    let issued = instance.send(post_form("/oauth/token", None, &form)).await;
     assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
     let issued = issued.json();
     let fields = [
@@ -2938,7 +2913,7 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
         ("scope", asked),
     ];
     let refused = instance
-        .send(post_form("/auth/oauth2/token", None, &fields))
+        .send(post_form("/oauth/token", None, &fields))
         .await;
     refused_as(&refused, "invalid_scope");
     let refreshed = instance
@@ -2950,7 +2925,7 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
 fn registering(content_type: Option<&str>, bearer: Option<&str>, body: &Value) -> Request<Body> {
     let mut request = Request::builder()
         .method(Method::POST)
-        .uri("/auth/oauth2/register");
+        .uri("/oauth/register");
     if let Some(content_type) = content_type {
         request = request.header(header::CONTENT_TYPE, content_type);
     }
@@ -2969,7 +2944,7 @@ fn fixture_registration() -> Value {
 }
 
 #[tokio::test]
-async fn a_registration_not_sent_as_json_gets_the_answer_of_its_own_shape() {
+async fn a_registration_not_sent_as_json_is_invalid_client_metadata() {
     let instance = Instance::signed_in().await;
     let body = fixture_registration();
     for content_type in [
@@ -2982,14 +2957,14 @@ async fn a_registration_not_sent_as_json_gets_the_answer_of_its_own_shape() {
         let reply = instance.send(registering(content_type, None, &body)).await;
         assert_eq!(
             reply.status,
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            StatusCode::BAD_REQUEST,
             "{content_type:?}: {}",
             reply.text
         );
         let answer = reply.json();
-        assert_eq!(answer["code"], "UNSUPPORTED_MEDIA_TYPE");
-        assert!(answer["message"].is_string());
-        assert!(answer.get("error").is_none());
+        assert_eq!(answer["error"], "invalid_client_metadata");
+        assert!(answer["error_description"].is_string());
+        assert_eq!(answer.as_object().map(|object| object.len()), Some(2));
         assert!(!reply.headers.contains_key("x-error-code"));
     }
     let clients = "SELECT count(*) FROM oauth_clients";
@@ -3063,7 +3038,7 @@ async fn the_source_an_app_writes_under_shows_its_sign_in_name() {
     assert_eq!(own["name"], "a fixture app", "{}", listed.text);
     assert_eq!(own["name_from"], "app", "{}", listed.text);
     let code = text_at(own, "source").to_string();
-    assert!(code.starts_with("oauth:"), "{code}");
+    assert_eq!(code, format!("oauth:{client}"), "{code}");
 
     let path = format!("/source?{}", encoded(&[("source", &code)]));
     let read = instance.local(from_local(Method::GET, &path, None)).await;
@@ -3113,13 +3088,13 @@ async fn device_codes_for_one_address_stop_at_their_limit() {
     let fields = [("client_id", client.as_str()), ("scope", NOTES)];
     for _ in 0..30 {
         let asked = instance
-            .send(post_form("/auth/device/code", None, &fields))
+            .send(post_form("/oauth/device-authorization", None, &fields))
             .await;
         assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
     }
 
     let held = instance
-        .send(post_form("/auth/device/code", None, &fields))
+        .send(post_form("/oauth/device-authorization", None, &fields))
         .await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS, "{}", held.text);
     assert!(held.headers.contains_key(header::RETRY_AFTER));
@@ -3138,7 +3113,7 @@ async fn a_server_with_limits_off_holds_no_registration_or_device_code() {
     let fields = [("client_id", client.as_str()), ("scope", NOTES)];
     for _ in 0..31 {
         let asked = instance
-            .send(post_form("/auth/device/code", None, &fields))
+            .send(post_form("/oauth/device-authorization", None, &fields))
             .await;
         assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
     }
@@ -3179,7 +3154,7 @@ async fn a_destination_nobody_approved_gets_no_silent_code_and_no_page() {
     let screen = instance.authorize(&client, OFFLINE_NOTES, &added).await;
     assert!(code_in(&screen).is_none(), "{:?}", screen.location());
     let landed = screen.location().unwrap();
-    assert_eq!(landed.path(), "/auth/authorize", "{landed}");
+    assert_eq!(landed.path(), "/auth/consent", "{landed}");
     let silent = encoded(&[
         ("response_type", "code"),
         ("client_id", &client),
@@ -3191,13 +3166,13 @@ async fn a_destination_nobody_approved_gets_no_silent_code_and_no_page() {
     ]);
     let refused = instance
         .send(get(
-            &format!("/auth/oauth2/authorize?{silent}"),
+            &format!("/oauth/authorize?{silent}"),
             Some(&instance.cookie),
         ))
         .await;
     let sent = refused.location().unwrap();
     assert!(code_in(&refused).is_none(), "{sent}");
-    assert_ne!(sent.path(), "/auth/authorize", "{sent}");
+    assert_ne!(sent.path(), "/auth/consent", "{sent}");
     assert!(sent.as_str().contains("consent_required"), "{sent}");
     let stranger = instance.send(asks(AN_ADDED_PAGE)).await;
     assert!(!answers_page(&stranger, AN_ADDED_PAGE));
@@ -3236,9 +3211,9 @@ async fn an_approval_stands_only_for_the_destinations_its_screen_showed() {
 
     let declined = instance
         .send(post_form(
-            "/auth/authorize/decision",
+            "/auth/consent",
             Some(&instance.cookie),
-            &[("accept", "false"), ("oauth_query", &link)],
+            &[("decision", "deny"), ("authorization_request", &link)],
         ))
         .await;
     assert!(
@@ -3322,7 +3297,7 @@ async fn a_new_sign_in_keeps_what_else_the_prompt_asked() {
     let fresh = instance.sign_in_again().await;
     let returned = instance.send(get(&back, Some(&fresh))).await;
     assert!(code_in(&returned).is_none(), "{:?}", returned.location());
-    assert_eq!(returned.location().unwrap().path(), "/auth/authorize");
+    assert_eq!(returned.location().unwrap().path(), "/auth/consent");
 }
 
 #[tokio::test]
@@ -3366,7 +3341,7 @@ async fn a_device_approval_stands_only_for_the_destinations_asked_about() {
     let client = instance.register_device(NOTES).await;
     let fields = [("client_id", client.as_str()), ("scope", NOTES)];
     let asked = instance
-        .send(post_form("/auth/device/code", None, &fields))
+        .send(post_form("/oauth/device-authorization", None, &fields))
         .await
         .json();
     instance
@@ -3414,7 +3389,7 @@ fn request_with(client: &str, changes: Changes<'_>) -> String {
             .iter()
             .filter_map(|(name, value)| value.map(|value| (*name, value))),
     );
-    format!("/auth/oauth2/authorize?{}", encoded(&fields))
+    format!("/oauth/authorize?{}", encoded(&fields))
 }
 
 const REFUSED: [(Changes<'_>, &str); 4] = [
@@ -3555,12 +3530,56 @@ async fn a_person_who_declines_is_sent_back_to_the_app() {
     let link = instance.consent_link(&client, NOTES).await;
     let declined = instance
         .send(post_form(
-            "/auth/authorize/decision",
+            "/auth/consent",
             Some(&instance.cookie),
-            &[("accept", "false"), ("oauth_query", &link)],
+            &[("decision", "deny"), ("authorization_request", &link)],
         ))
         .await;
     sent_to_the_app(&declined, "access_denied");
+}
+
+#[tokio::test]
+async fn the_consent_form_refuses_anything_but_an_approval_or_a_denial() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    let link = instance.consent_link(&client, NOTES).await;
+    let refusals: [&[(&str, &str)]; 6] = [
+        &[("decision", "accept"), ("authorization_request", &link)],
+        &[("decision", "APPROVE"), ("authorization_request", &link)],
+        &[("decision", ""), ("authorization_request", &link)],
+        &[("accept", "true"), ("authorization_request", &link)],
+        &[("authorization_request", &link)],
+        &[("decision", "approve")],
+    ];
+    for fields in refusals {
+        let refused = instance
+            .send(post_form("/auth/consent", Some(&instance.cookie), fields))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{fields:?}");
+        assert_eq!(
+            refused.json()["error"]["code"],
+            "validation_error",
+            "{fields:?}"
+        );
+        assert!(code_in(&refused).is_none(), "{fields:?}");
+        assert_eq!(
+            instance.count("SELECT count(*) FROM oauth_consents").await,
+            0,
+            "{fields:?}"
+        );
+        assert_eq!(
+            instance.count("SELECT count(*) FROM oauth_codes").await,
+            0,
+            "{fields:?}"
+        );
+    }
+
+    let approved = instance.decide(&link, &[NOTES]).await;
+    assert!(code_in(&approved).is_some(), "{:?}", approved.location());
+    assert_eq!(
+        instance.count("SELECT count(*) FROM oauth_consents").await,
+        1
+    );
 }
 
 #[tokio::test]

@@ -65,14 +65,7 @@ function openRefusals(document: Record<string, unknown>): string[] {
               .allOf ?? [properties.error]
           ).find((branch) => branch.properties !== undefined) ??
           properties.error);
-    if (error === undefined) {
-      // The registration's `415` is the sign-in library's own shape, which
-      // names its code beside the message rather than under `error`.
-      if (properties.code !== undefined) {
-        return closedCode(properties.code) ? undefined : "open";
-      }
-      return "no code";
-    }
+    if (error === undefined) return "no code";
     return closedCode(error.properties?.code ?? error) ? undefined : "open";
   };
   for (const [key, operation] of operationKeys(document)) {
@@ -111,8 +104,7 @@ describe("the committed OpenAPI document", () => {
   it("declares 500 internal_error on every operation the error handler answers for", () => {
     // The handler answers a fault nothing named alike on every door, so a
     // door that left the status out would send a client branching on the
-    // document to a status it never declared. Registration answers in the
-    // sign-in library's own envelope, so it declares none.
+    // document to a status it never declared.
     const ref = "#/components/schemas/InternalErrorRefusal";
     const declares = (operation: Operation): boolean => {
       const responses = (operation.responses ?? {}) as Record<
@@ -126,7 +118,7 @@ describe("the committed OpenAPI document", () => {
     const without = [...published.entries()]
       .filter(([, operation]) => !declares(operation))
       .map(([key]) => key);
-    expect(without).toEqual(["POST /auth/oauth2/register"]);
+    expect(without).toEqual([]);
     // The witness: the check is about an operation that declares it.
     expect(declares(published.get("GET /items/{id}")!)).toBe(true);
     expect(declares({ responses: {} })).toBe(false);
@@ -429,7 +421,11 @@ describe("the committed OpenAPI document", () => {
       "GET /",
       "GET /health",
       "POST /owner",
-      "POST /auth/oauth2/register",
+      "POST /oauth/register",
+      "GET /oauth/authorize",
+      "POST /oauth/device-authorization",
+      "POST /oauth/token",
+      "POST /oauth/revoke",
     ]);
     const open = [...published]
       .filter(

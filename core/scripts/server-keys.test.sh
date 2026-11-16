@@ -22,7 +22,7 @@ assert "instance.read" in key["permissions"], "missing explicit management permi
 # names and which need not be the address the server was booted on.
 check_owner() {
   local body origin
-  origin="$(curl -fsS --max-time 10 "${MARFA_TEST_URL}/auth/.well-known/oauth-authorization-server" |
+  origin="$(curl -fsS --max-time 10 "${MARFA_TEST_URL}/.well-known/oauth-authorization-server" |
     python3 -c 'import json,sys; from urllib.parse import urlparse
 issuer = urlparse(json.load(sys.stdin)["issuer"])
 print(f"{issuer.scheme}://{issuer.netloc}")')"

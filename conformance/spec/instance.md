@@ -214,7 +214,7 @@ When the server answers `PUT /config`, the server MUST go on answering at the ro
 
 ## A write that names an instance
 
-A client that keeps a copy of one instance names that instance in `X-Marfa-Instance-Id` on what it sends, so a write that reaches another instance at the same address is refused where it lands. In this section a write is a `POST`, `PUT`, `PATCH` or `DELETE` to an operation outside `/auth`, `POST /items/bulk-get` and `POST /items/lookup` among them. An inbound webhook address is served ahead of any credential and is not one.
+A client that keeps a copy of one instance names that instance in `X-Marfa-Instance-Id` on what it sends, so a write that reaches another instance at the same address is refused where it lands. In this section a write is a `POST`, `PUT`, `PATCH` or `DELETE` to an operation outside `/auth`, `/oauth` and `/grants`, `POST /items/bulk-get` and `POST /items/lookup` among them. An inbound webhook address is served ahead of any credential and is not one.
 
 ### `instance/write-names-own`
 
@@ -228,7 +228,7 @@ If a write names in `X-Marfa-Instance-Id` a UUIDv7 other than the instance's own
 
 **Reason:** another instance at the address the client knew holds none of the items its copy was built from, so a write sent there would land on items the client never read.
 
-**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› refuses another instance on every write operation the document publishes outside /auth`.
+**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› refuses another instance on every write operation the document publishes outside /auth, /oauth and /grants`.
 
 ### `instance/write-names-other-unwritten`
 
@@ -276,15 +276,15 @@ When a write repeats an `Idempotency-Key` and its body, naming the instance's ow
 
 The server MUST judge `X-Marfa-Instance-Id` on every write.
 
-**Tests:** `compliance/instance-header.test.ts › refuses another instance on every write operation the document publishes outside /auth`, `› refuses another instance on POST /items/bulk-get and POST /items/lookup`.
+**Tests:** `compliance/instance-header.test.ts › refuses another instance on every write operation the document publishes outside /auth, /oauth and /grants`, `› refuses another instance on POST /items/bulk-get and POST /items/lookup`.
 
 ### `instance/write-instance-ignored`
 
-When a `GET`, a request to an operation under `/auth` or a delivery to an inbound webhook address names `X-Marfa-Instance-Id`, the server MUST answer it as it answers the same request without the header.
+When a `GET`, a request to an operation under `/auth`, `/oauth` or `/grants`, or a delivery to an inbound webhook address names `X-Marfa-Instance-Id`, the server MUST answer it as it answers the same request without the header.
 
-**Reason:** a read of a copy is held to the instance by its reach (`reach/conditional-certified`), and the sign-in operations and inbound senders hold no copy.
+**Reason:** a read of a copy is held to the instance by its reach (`reach/conditional-certified`), and the sign-in operations, the OAuth operations, the app grants and inbound senders hold no copy.
 
-**Tests:** `compliance/instance-header.test.ts › answers a GET, a request under /auth and an inbound delivery as it answers one without the header`.
+**Tests:** `compliance/instance-header.test.ts › answers a GET, a request under /auth, /oauth or /grants and an inbound delivery as it answers one without the header`.
 
 ## What it advertises
 
@@ -1652,7 +1652,7 @@ If the public listener reads a request body whole, other than one sent to `POST 
 
 ### `instance/public-body-declared`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, `POST /oauth/device-authorization`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
 
 **Reason:** these operations judge no credential before they read the body, so any caller can send them, and the general cap, which an owner can set up to a terabyte, would let such a caller make the server hold a body for the whole of the deadline in `instance/body-deadline`. The largest real body at these operations is about half a kilobyte, a consent decision that carries an authorization's signed query, so 32768 bytes leaves room for any. Registration, the other operation of this kind, has a smaller cap of its own (`keys-and-oauth/register-body-cap`).
 
@@ -1660,7 +1660,7 @@ If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POS
 
 ### `instance/public-body-streamed`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/consent`, `POST /oauth/token`, `POST /oauth/revoke`, `POST /oauth/device-authorization`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
 
 **Reason:** a body with no declared length cannot be refused at the head, so the server stops reading at the cap.
 
@@ -2505,7 +2505,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `version_max_versions`           | `500`              | Whole number, 1 to 1000000                                | The most versions the version policy keeps for one item.                                                                                                                                                                                                                                                                               |
 | `trash_retention_days`           | `60` days          | Whole number of days, 0 to 36500                          | How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age.                                                                                                                                                                                                                            |
 | `row_log_retention_days`         | `30` days          | Whole number of days, 0 to 36500                          | How long a table keeps a batch in its change log, which bounds how far back a batch can be undone. At 0 no batch leaves the log by age.                                                                                                                                                                                                |
-| `dcr_client_retention_hours`     | `1` hour           | Whole number of hours, 0 to 876000                        | How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 none is removed by age.                                                                                                                                                              |
+| `unapproved_app_retention_hours` | `1` hour           | Whole number of hours, 0 to 876000                        | How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 none is removed by age.                                                                                                                                                              |
 | `sse_max_viewers`                | `0`                | Whole number, 0 to 1000000                                | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                                                                                              |
 | `mcp_fetch_enabled`              | `true`             | `true` or `false`                                         | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                              |
 | `mcp_fetch_max_bytes`            | `52428800` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                       |

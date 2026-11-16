@@ -21,7 +21,7 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 function register(metadata: Record<string, unknown>) {
-  return fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  return fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -53,9 +53,9 @@ function assertion(clientId: string, audience: string) {
 }
 
 const doors = [
-  "/auth/device/code",
-  "/auth/oauth2/token",
-  "/auth/oauth2/revoke",
+  "/oauth/device-authorization",
+  "/oauth/token",
+  "/oauth/revoke",
 ] as const;
 
 async function registered() {
@@ -99,7 +99,7 @@ describe("OAuth client authentication methods", () => {
       const client = (await response.json()) as Record<string, string>;
       expect(client.token_endpoint_auth_method).toBe("none");
       expect(client.client_id).toEqual(expect.any(String));
-      const code = await fetch(`${server!.apiUrl}/auth/device/code`, {
+      const code = await fetch(`${server!.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -118,31 +118,28 @@ describe("OAuth client authentication methods", () => {
     const clientId = await registered();
     const fields = (path: string): [string, string][] => [
       ["client_id", clientId],
-      ...(path === "/auth/oauth2/token"
+      ...(path === "/oauth/token"
         ? ([
             ["grant_type", "refresh_token"],
             ["refresh_token", "unknown"],
           ] as [string, string][])
-        : path === "/auth/oauth2/revoke"
+        : path === "/oauth/revoke"
           ? ([["token", "unknown"]] as [string, string][])
           : ([["scope", "core.note:read"]] as [string, string][])),
     ];
     // The witness: the same request with no credential is answered on its merits.
-    const code = await asked("/auth/device/code", fields("/auth/device/code"));
+    const code = await asked(
+      "/oauth/device-authorization",
+      fields("/oauth/device-authorization"),
+    );
     expect(code.status).toBe(200);
     await code.body?.cancel();
-    const refresh = await asked(
-      "/auth/oauth2/token",
-      fields("/auth/oauth2/token"),
-    );
+    const refresh = await asked("/oauth/token", fields("/oauth/token"));
     expect(refresh.status).toBe(400);
     expect(((await refresh.json()) as { error: string }).error).toBe(
       "invalid_grant",
     );
-    const revoke = await asked(
-      "/auth/oauth2/revoke",
-      fields("/auth/oauth2/revoke"),
-    );
+    const revoke = await asked("/oauth/revoke", fields("/oauth/revoke"));
     expect(revoke.status).toBe(200);
     await revoke.body?.cancel();
     for (const path of doors) {
@@ -178,12 +175,12 @@ describe("OAuth client authentication methods", () => {
   it("refuses a client credential before it judges what the request lacks, at the device code, token and revocation doors", async () => {
     const clientId = await registered();
     const lacking: Record<(typeof doors)[number], [string, string][]> = {
-      "/auth/device/code": [["scope", "core.note:read"]],
-      "/auth/oauth2/token": [
+      "/oauth/device-authorization": [["scope", "core.note:read"]],
+      "/oauth/token": [
         ["client_id", clientId],
         ["grant_type", "refresh_token"],
       ],
-      "/auth/oauth2/revoke": [["client_id", clientId]],
+      "/oauth/revoke": [["client_id", clientId]],
     };
     for (const path of doors) {
       // The witness: with no credential, what the request lacks is refused.
@@ -226,10 +223,7 @@ describe("OAuth client authentication methods", () => {
   });
 
   it("advertises only the client authentication methods it accepts", async () => {
-    for (const path of [
-      "/.well-known/oauth-authorization-server/auth",
-      "/auth/.well-known/oauth-authorization-server",
-    ]) {
+    for (const path of ["/.well-known/oauth-authorization-server"]) {
       const response = await fetch(`${server!.apiUrl}${path}`);
       expect(response.status).toBe(200);
       const body = (await response.json()) as Record<string, unknown>;

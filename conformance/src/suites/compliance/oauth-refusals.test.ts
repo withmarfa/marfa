@@ -36,12 +36,12 @@ afterAll(async () => {
   await Promise.allSettled([grants?.stop(), clients?.stop()]);
 }, 4 * FRESH_SERVER_TIMEOUT_MS);
 
-describe("DELETE /auth/grants/{id}", () => {
-  it("answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is", async () => {
+describe("DELETE /grants/{id}", () => {
+  it("answers 404 grant_not_found for an id that is no app's grant, and revokes one that is", async () => {
     const server = grants!;
     await approvedAppToken(server, ["core.note:read"]);
     const authorization = { Authorization: `Bearer ${server.workingKey}` };
-    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+    const listed = await fetch(`${server.apiUrl}/grants`, {
       headers: authorization,
     });
     expect(listed.status).toBe(200);
@@ -60,20 +60,20 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(note.status).toBe(201);
     const noteId = ((await note.json()) as { item: { id: string } }).item.id;
     for (const id of ["019537a0-7b80-7000-8000-000000000000", noteId]) {
-      const refused = await fetch(`${server.apiUrl}/auth/grants/${id}`, {
+      const refused = await fetch(`${server.apiUrl}/grants/${id}`, {
         method: "DELETE",
         headers: authorization,
       });
       expect(refused.status).toBe(404);
-      expect(refused.headers.get("X-Error-Code")).toBe("oauth_grant_not_found");
+      expect(refused.headers.get("X-Error-Code")).toBe("grant_not_found");
       expect(
         ((await refused.json()) as { error: { code: string } }).error.code,
-      ).toBe("oauth_grant_not_found");
+      ).toBe("grant_not_found");
     }
 
     // The witness: the same door and credential revoke the grant that exists,
     // so the refusals above were about the ids.
-    const revoked = await fetch(`${server.apiUrl}/auth/grants/${held[0]!.id}`, {
+    const revoked = await fetch(`${server.apiUrl}/grants/${held[0]!.id}`, {
       method: "DELETE",
       headers: authorization,
     });
@@ -104,9 +104,7 @@ describe("GET /auth/device/consent", () => {
     const server = clients!;
     await quiet(server, ["credential-cleanup"]);
     const discovery = (await (
-      await fetch(
-        `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
-      )
+      await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
     ).json()) as {
       registration_endpoint: string;
       device_authorization_endpoint: string;

@@ -642,7 +642,7 @@ mod tests {
             expires_at: Some(1),
             client_id: "client-1".into(),
             scope: None,
-            token_endpoint: "https://marfa.example/auth/oauth2/token".into(),
+            token_endpoint: "https://marfa.example/oauth/token".into(),
             revocation_endpoint: None,
         };
         let shown = format!("{key:?} {token:?} {token:#?} {:?}", Some(&token));

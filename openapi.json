@@ -3,7 +3,7 @@
   "info": {
     "title": "Marfa API",
     "version": "0",
-    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Local command\n\nAn operation marked `x-marfa-local-command` also answers the private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential, and no security scheme here describes it. The `marfa` command line reaches it with `--socket`. A marked operation with no `security` answers only there.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nEvery operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`. Repeating a request after Marfa moves to another contract version returns `422 idempotency_contract_changed`, with the first response's status in `details.original_status`, and doesn't write again.\n\n## Request bodies\n\nA body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /auth/oauth2/register` takes JSON too, but answers a request that isn't JSON with its own error, not this one.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Event stream\n\n`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.\n\n## Web pages\n\nA web page can connect from a browser with no setup. `POST /auth/oauth2/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response also carries `X-Request-ID`, which identifies the request if you report a problem. Send `X-Marfa-Contract` on every request but a read of `/` and of `/health`, naming the contract version your client was built for. A request that names another version, or a value that is not a whole number, returns `412 contract_mismatch` and changes nothing. A request that names none is served."
+    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Local command\n\nAn operation marked `x-marfa-local-command` also answers the private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential, and no security scheme here describes it. The `marfa` command line reaches it with `--socket`. A marked operation with no `security` answers only there.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`.\n\n## Query parameters\n\nEvery operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster. The OAuth operations `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke` and `POST /oauth/device-authorization` ignore a parameter they don't recognize, as RFC 6749 requires.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\nThe OAuth operations under `/oauth/` answer their own errors in the shape their RFCs define, `{ \"error\": \"...\", \"error_description\": \"...\" }`, with no `X-Error-Code`. A refusal every operation shares, such as `412` or `429`, keeps the shape above.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`. Repeating a request after Marfa moves to another contract version returns `422 idempotency_contract_changed`, with the first response's status in `details.original_status`, and doesn't write again.\n\n## Request bodies\n\nA body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /oauth/token`, `POST /oauth/revoke` and `POST /oauth/device-authorization` take a form (`application/x-www-form-urlencoded`), as their RFCs define. `POST /oauth/register` takes JSON, and answers a request that isn't JSON with `400 invalid_client_metadata`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Event stream\n\n`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.\n\n## Web pages\n\nA web page can connect from a browser with no setup. `POST /oauth/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response also carries `X-Request-ID`, which identifies the request if you report a problem. Send `X-Marfa-Contract` on every request but a read of `/` and of `/health`, naming the contract version your client was built for. A request that names another version, or a value that is not a whole number, returns `412 contract_mismatch` and changes nothing. A request that names none is served."
   },
   "components": {
     "securitySchemes": {
@@ -9560,7 +9560,7 @@
         ],
         "description": "An error response."
       },
-      "AppGrantList": {
+      "AppGrantPage": {
         "type": "object",
         "properties": {
           "data": {
@@ -9706,7 +9706,7 @@
           ]
         }
       },
-      "OauthGrantNotFoundRefusal": {
+      "GrantNotFoundRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -9715,7 +9715,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "oauth_grant_not_found"
+                  "grant_not_found"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -12165,6 +12165,26 @@
           "message"
         ],
         "description": "The instance that wrote an archive, and what it keeps in this instance's backup destination. Present when the archive was written by another instance than this one."
+      },
+      "InvalidClientError": {
+        "type": "object",
+        "description": "An OAuth error in the shape RFC 6749 defines, for a client Marfa does not accept.",
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "invalid_client"
+            ],
+            "description": "The OAuth error code."
+          },
+          "error_description": {
+            "type": "string",
+            "description": "A description of the error for a person to read."
+          }
+        },
+        "required": [
+          "error"
+        ]
       }
     },
     "parameters": {},
@@ -50331,14 +50351,14 @@
         "x-marfa-local-command": true
       }
     },
-    "/auth/oauth2/register": {
+    "/oauth/register": {
       "post": {
         "operationId": "registerOAuthClient",
         "tags": [
           "Apps"
         ],
-        "summary": "Register an OAuth client",
-        "description": "Registers an OAuth client for an app and returns it with its `client_id`. Send no credential; a web page can call it from a browser on any origin. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
+        "summary": "Register an app",
+        "description": "Registers an app as an OAuth client and returns it with its `client_id`. Send no credential; a web page can call it from a browser on any origin. The `client_credentials` grant isn't available: a program that acts for no person uses an API key.",
         "requestBody": {
           "required": true,
           "content": {
@@ -50440,10 +50460,6 @@
                       "type": "string",
                       "description": "Unique identifier for the client."
                     },
-                    "user_id": {
-                      "type": "string",
-                      "description": "The ID of the user who registered the client. Absent for anonymous registration."
-                    },
                     "client_id_issued_at": {
                       "type": "number",
                       "description": "When the client was registered, in seconds since the Unix epoch."
@@ -50469,7 +50485,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_client_metadata`: client metadata is invalid, or a value is past its `maxLength` or `maxItems`.\n- `invalid_redirect_uri`: a redirect URI is invalid or too long, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
+            "description": "- `invalid_client_metadata`: the body isn't sent as `application/json`, or client metadata is invalid or too long.\n- `invalid_redirect_uri`: a redirect URI is invalid or too long, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50612,41 +50628,6 @@
               }
             }
           },
-          "415": {
-            "description": "An error with `message` and `code`, rather than Marfa's own shape:\n- `UNSUPPORTED_MEDIA_TYPE`: the request doesn't send its body as `application/json`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "UNSUPPORTED_MEDIA_TYPE"
-                      ],
-                      "description": "A machine-readable code for the error. Use it in your logic."
-                    },
-                    "message": {
-                      "type": "string",
-                      "description": "A description of the error for a person to read. It can change, so don't match on it."
-                    }
-                  },
-                  "required": [
-                    "code",
-                    "message"
-                  ]
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              }
-            }
-          },
           "429": {
             "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
             "content": {
@@ -50668,6 +50649,27 @@
               },
               "Retry-After": {
                 "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },
@@ -50698,7 +50700,7 @@
         }
       }
     },
-    "/auth/grants": {
+    "/grants": {
       "get": {
         "operationId": "listAppGrants",
         "tags": [
@@ -50717,7 +50719,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AppGrantList"
+                  "$ref": "#/components/schemas/AppGrantPage"
                 }
               }
             },
@@ -50908,7 +50910,7 @@
         "x-marfa-local-command": true
       }
     },
-    "/auth/grants/{id}": {
+    "/grants/{id}": {
       "patch": {
         "operationId": "narrowAppGrant",
         "tags": [
@@ -51045,11 +51047,11 @@
             }
           },
           "404": {
-            "description": "- `oauth_grant_not_found`: the ID does not name a live app grant.",
+            "description": "- `grant_not_found`: the ID does not name a live app grant.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OauthGrantNotFoundRefusal"
+                  "$ref": "#/components/schemas/GrantNotFoundRefusal"
                 }
               }
             },
@@ -51267,11 +51269,7 @@
           },
           {
             "schema": {
-              "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ],
+              "type": "boolean",
               "description": "Also revoke every key the app minted, and every key those keys minted. Omitting it, or `false`, leaves them working."
             },
             "required": false,
@@ -51363,11 +51361,11 @@
             }
           },
           "404": {
-            "description": "- `oauth_grant_not_found`: the ID does not name an app grant.",
+            "description": "- `grant_not_found`: the ID does not name an app grant.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OauthGrantNotFoundRefusal"
+                  "$ref": "#/components/schemas/GrantNotFoundRefusal"
                 }
               }
             },
@@ -51517,6 +51515,1144 @@
           }
         },
         "x-marfa-local-command": true
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "operationId": "authorizeApp",
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Authorize an app",
+        "description": "Starts an authorization with PKCE (RFC 6749 and RFC 7636) and redirects the browser: to sign in, to the consent screen, or to the app's redirect URI with a `code` or an `error`, and the `iss` of the issuer.",
+        "parameters": [
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": true,
+            "description": "The response type. Only `code`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": true,
+            "description": "The client ID from `POST /oauth/register`, or the URL of the app's client ID metadata document.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": false,
+            "description": "One of the app's registered redirect URIs. Required when the app registered more than one.",
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          {
+            "name": "code_challenge",
+            "in": "query",
+            "required": true,
+            "description": "The PKCE challenge: the base64url SHA-256 of your code verifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code_challenge_method",
+            "in": "query",
+            "required": true,
+            "description": "The PKCE method. Only `S256`.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "S256"
+              ]
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "Space-separated scopes to ask for. Defaults to the scopes the app registered for.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "A value Marfa returns unchanged on the redirect, so you can match it to your request.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "resource",
+            "in": "query",
+            "required": false,
+            "description": "The resource the token is for (RFC 8707), such as the MCP endpoint's URL.",
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          {
+            "name": "prompt",
+            "in": "query",
+            "required": false,
+            "description": "`login` asks the person to sign in again; `none` returns `login_required` or `consent_required` instead of showing a page.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "login",
+                "none",
+                "consent"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirects the browser. `Location` is the sign-in page, the consent screen, or the app's redirect URI with `code`, `state` and `iss`, or with `error` and `error_description`.",
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "description": "Where the browser goes next."
+              }
+            }
+          },
+          "400": {
+            "description": "An RFC 6749 error, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.\n- `invalid_scope`: a scope writes the owner's email.\n- `invalid_target`: a resource isn't served here.\n\n`X-Marfa-Reach` gets `validation_error`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ValidationErrorRefusal"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "invalid_request",
+                            "invalid_client",
+                            "invalid_client_metadata",
+                            "invalid_scope",
+                            "invalid_target"
+                          ],
+                          "description": "The OAuth error code."
+                        },
+                        "error_description": {
+                          "type": "string",
+                          "description": "A description of the error for a person to read."
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the request carries the owner's browser session, and the sign-in address isn't HTTPS or on this machine.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/device-authorization": {
+      "post": {
+        "operationId": "requestDeviceCode",
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Request a device code",
+        "description": "Returns a device code and a user code (RFC 8628). Show the person `verification_uri` and `user_code`, then poll `POST /oauth/token` with the device code until they approve or deny it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client_id": {
+                    "type": "string",
+                    "description": "The client ID from `POST /oauth/register`."
+                  },
+                  "scope": {
+                    "type": "string",
+                    "description": "Space-separated scopes to ask for. Defaults to the scopes the app registered for."
+                  }
+                },
+                "required": [
+                  "client_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the device code, the user code and where the person approves it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "device_code": {
+                      "type": "string",
+                      "description": "The code you poll `POST /oauth/token` with. Keep it secret."
+                    },
+                    "user_code": {
+                      "type": "string",
+                      "description": "The code the person types on the approval page.",
+                      "example": "BCDF-GHJK"
+                    },
+                    "verification_uri": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "The page where the person types the user code."
+                    },
+                    "verification_uri_complete": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "The same page with the user code filled in."
+                    },
+                    "expires_in": {
+                      "type": "integer",
+                      "description": "Seconds until the device code expires."
+                    },
+                    "interval": {
+                      "type": "integer",
+                      "description": "Seconds to wait between polls."
+                    }
+                  },
+                  "required": [
+                    "device_code",
+                    "user_code",
+                    "verification_uri",
+                    "verification_uri_complete",
+                    "expires_in",
+                    "interval"
+                  ]
+                },
+                "example": {
+                  "device_code": "GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS",
+                  "user_code": "BCDF-GHJK",
+                  "verification_uri": "https://marfa.example/auth/device",
+                  "verification_uri_complete": "https://marfa.example/auth/device?user_code=BCDFGHJK",
+                  "expires_in": 600,
+                  "interval": 5
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "An error in the shape RFC 8628 defines:\n- `invalid_request`: `client_id` is missing.\n- `invalid_scope`: no scope asked for can be granted.\n- `unauthorized_client`: the client isn't registered for the device grant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_request",
+                        "invalid_scope",
+                        "unauthorized_client"
+                      ],
+                      "description": "The OAuth error code."
+                    },
+                    "error_description": {
+                      "type": "string",
+                      "description": "A description of the error for a person to read."
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "401": {
+            "description": "An error in the shape RFC 6749 defines:\n- `invalid_client`: the `client_id` names no client, or the request authenticates the client, which a public client doesn't.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidClientError"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "408": {
+            "description": "`request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTimeoutRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "operationId": "exchangeToken",
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Exchange a code for a token",
+        "description": "Returns an access token for an authorization code, a refresh token or an approved device code (RFC 6749 and RFC 8628). A refresh token can be spent once: the answer carries the next one.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "grant_type": {
+                    "type": "string",
+                    "description": "`authorization_code`, `refresh_token`, or `urn:ietf:params:oauth:grant-type:device_code`.",
+                    "enum": [
+                      "authorization_code",
+                      "refresh_token",
+                      "urn:ietf:params:oauth:grant-type:device_code"
+                    ]
+                  },
+                  "client_id": {
+                    "type": "string",
+                    "description": "The client ID the code or token was issued to."
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "The authorization code. Required for `authorization_code`."
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The redirect URI the authorization named. Required for `authorization_code` when it named one."
+                  },
+                  "code_verifier": {
+                    "type": "string",
+                    "description": "The PKCE code verifier. Required for `authorization_code`."
+                  },
+                  "refresh_token": {
+                    "type": "string",
+                    "description": "The refresh token. Required for `refresh_token`."
+                  },
+                  "device_code": {
+                    "type": "string",
+                    "description": "The device code from `POST /oauth/device-authorization`. Required for the device grant."
+                  },
+                  "scope": {
+                    "type": "string",
+                    "description": "Space-separated scopes, no wider than the grant, to narrow a refreshed token."
+                  },
+                  "resource": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The resource the token is for (RFC 8707)."
+                  }
+                },
+                "required": [
+                  "grant_type",
+                  "client_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the access token, and a refresh token when the app asked for `offline_access`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "access_token": {
+                      "type": "string",
+                      "description": "The access token. Send it as `Authorization: Bearer <token>`."
+                    },
+                    "token_type": {
+                      "type": "string",
+                      "enum": [
+                        "Bearer"
+                      ],
+                      "description": "Always `Bearer`."
+                    },
+                    "expires_in": {
+                      "type": "integer",
+                      "description": "Seconds until the access token expires."
+                    },
+                    "scope": {
+                      "type": "string",
+                      "description": "Space-separated scopes the token holds."
+                    },
+                    "refresh_token": {
+                      "type": "string",
+                      "description": "The refresh token to spend for the next access token. Present when the grant holds `offline_access`."
+                    }
+                  },
+                  "required": [
+                    "access_token",
+                    "token_type",
+                    "expires_in",
+                    "scope"
+                  ]
+                },
+                "example": {
+                  "access_token": "marfa_at_2YotnFZFEjr1zCsicMWpAA",
+                  "token_type": "Bearer",
+                  "expires_in": 3600,
+                  "scope": "core.note:read offline_access",
+                  "refresh_token": "marfa_rt_tGzv3JOkF0XG5Qx2TlKWIA"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "An error in the shape RFC 6749 and RFC 8628 define. For example:\n- `invalid_request`: a required parameter is missing or repeated.\n- `invalid_grant`: the code or token isn't valid or has expired.\n- `authorization_pending`: the person hasn't approved the device code yet.\n- `slow_down`: you polled too soon.\n- `access_denied` or `expired_token`: the device code was denied or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_request",
+                        "invalid_grant",
+                        "unsupported_grant_type",
+                        "unauthorized_client",
+                        "invalid_scope",
+                        "invalid_target",
+                        "authorization_pending",
+                        "slow_down",
+                        "access_denied",
+                        "expired_token"
+                      ],
+                      "description": "The OAuth error code."
+                    },
+                    "error_description": {
+                      "type": "string",
+                      "description": "A description of the error for a person to read."
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "401": {
+            "description": "An error in the shape RFC 6749 defines:\n- `invalid_client`: the `client_id` names no client, or the request authenticates the client, which a public client doesn't.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidClientError"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "408": {
+            "description": "`request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTimeoutRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/revoke": {
+      "post": {
+        "operationId": "revokeToken",
+        "tags": [
+          "Apps"
+        ],
+        "summary": "Revoke a token",
+        "description": "Revokes an access token or a refresh token (RFC 7009). Revoking a refresh token ends the app's grant. A token Marfa doesn't know returns `200` too.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "The access token or refresh token to revoke."
+                  },
+                  "token_type_hint": {
+                    "type": "string",
+                    "enum": [
+                      "access_token",
+                      "refresh_token"
+                    ],
+                    "description": "Which kind of token `token` is. Marfa reads the token either way."
+                  },
+                  "client_id": {
+                    "type": "string",
+                    "description": "The client ID the token was issued to."
+                  }
+                },
+                "required": [
+                  "token",
+                  "client_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns an empty object. The token no longer works.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                "example": {}
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "An error in the shape RFC 7009 defines:\n- `invalid_request`: `token` or `client_id` is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_request"
+                      ],
+                      "description": "The OAuth error code."
+                    },
+                    "error_description": {
+                      "type": "string",
+                      "description": "A description of the error for a person to read."
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "401": {
+            "description": "An error in the shape RFC 6749 defines:\n- `invalid_client`: the `client_id` names no client, or the request authenticates the client, which a public client doesn't.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidClientError"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "408": {
+            "description": "`request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTimeoutRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          }
+        }
       }
     },
     "/owner": {
@@ -61445,12 +62581,16 @@
     },
     {
       "name": "Apps",
-      "description": "Apps that register as OAuth clients, and the access the owner grants them.",
+      "description": "Apps that register as OAuth clients, how they sign in, and the access the owner grants them.",
       "x-operation-order": [
         "registerOAuthClient",
         "listAppGrants",
         "narrowAppGrant",
-        "revokeAppGrant"
+        "revokeAppGrant",
+        "authorizeApp",
+        "requestDeviceCode",
+        "exchangeToken",
+        "revokeToken"
       ]
     },
     {

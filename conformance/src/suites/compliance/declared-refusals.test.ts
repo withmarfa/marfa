@@ -26,6 +26,14 @@ import {
   validatorFor,
 } from "../../utils/openapi.js";
 
+/** The OAuth protocol endpoints, which ignore a parameter they do not know, as RFC 6749 requires. */
+const OAUTH_PROTOCOL = new Set([
+  "GET /oauth/authorize",
+  "POST /oauth/token",
+  "POST /oauth/revoke",
+  "POST /oauth/device-authorization",
+]);
+
 /**
  * Refusals a door declares that no chapter's fixture otherwise draws.
  *
@@ -633,7 +641,7 @@ describe("client registration given a key", () => {
       redirect_uris: ["https://example.com/callback"],
       client_name: `${ctx.source}-registration`,
     };
-    const refused = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const refused = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -644,15 +652,10 @@ describe("client registration given a key", () => {
     const refusedBody = (await refused.json()) as { error?: string };
     expect(refused.status, JSON.stringify(refusedBody)).toBe(401);
     expect(refusedBody.error).toBe("invalid_token");
-    await expectMatchesSchema(
-      "POST",
-      "/auth/oauth2/register",
-      401,
-      refusedBody,
-    );
+    await expectMatchesSchema("POST", "/oauth/register", 401, refusedBody);
 
     // The witness: the same body with no credential registers.
-    const accepted = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const accepted = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(registration),
@@ -660,8 +663,8 @@ describe("client registration given a key", () => {
     expect(accepted.status).toBe(201);
   });
 
-  it("is refused 415 in the shape the document declares for a body that is not JSON", async () => {
-    const refused = await fetch(`${apiUrl}/auth/oauth2/register`, {
+  it("is refused 400 in the shape the document declares for a body that is not JSON", async () => {
+    const refused = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -669,15 +672,10 @@ describe("client registration given a key", () => {
         client_name: `${ctx.source}-form-registration`,
       }).toString(),
     });
-    const refusedBody = (await refused.json()) as { code?: string };
-    expect(refused.status, JSON.stringify(refusedBody)).toBe(415);
-    expect(refusedBody.code).toBe("UNSUPPORTED_MEDIA_TYPE");
-    await expectMatchesSchema(
-      "POST",
-      "/auth/oauth2/register",
-      415,
-      refusedBody,
-    );
+    const refusedBody = (await refused.json()) as { error?: string };
+    expect(refused.status, JSON.stringify(refusedBody)).toBe(400);
+    expect(refusedBody.error).toBe("invalid_client_metadata");
+    await expectMatchesSchema("POST", "/oauth/register", 400, refusedBody);
   });
 });
 
@@ -773,8 +771,8 @@ describe("a query key no door declares", () => {
     if (
       template === "/items/summaries" ||
       (method === "GET" && template === "/folders") ||
-      template === "/auth/grants" ||
-      template.startsWith("/auth/grants/") ||
+      template === "/grants" ||
+      template.startsWith("/grants/") ||
       template === "/attention" ||
       template === "/owner" ||
       template.startsWith("/owner/") ||
@@ -821,7 +819,7 @@ describe("a query key no door declares", () => {
     return { status: response.status, unknown };
   }
 
-  it("is refused 400 and named on every published door, the event stream included", async () => {
+  it("is refused 400 and named on every published door but the OAuth protocol endpoints, the event stream included", async () => {
     const managementKey = process.env.MARFA_MANAGEMENT_KEY;
     expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
@@ -859,6 +857,7 @@ describe("a query key no door declares", () => {
 
     const unrefused: string[] = [];
     for (const door of doors) {
+      if (OAUTH_PROTOCOL.has(`${door.method} ${door.path}`)) continue;
       // The owner-only doors use the owner session above. For the others, the
       // per-test key holds every content permission and the management key
       // holds the instance permissions it does not.
@@ -1039,7 +1038,7 @@ describe("a query key no door declares", () => {
     for (const path of [
       "/.well-known/oauth-protected-resource",
       "/.well-known/oauth-protected-resource/mcp",
-      "/auth/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server",
       "/auth/sign-in",
       "/auth/device",
       "/auth/error",
@@ -1050,6 +1049,27 @@ describe("a query key no door declares", () => {
       const taken = await fetch(`${apiUrl}${path}?${STRAY}=1`);
       expect(taken.status, `${path} with the key`).toBe(200);
       await taken.body?.cancel();
+    }
+
+    // The OAuth protocol endpoints answer a stray parameter as they answer
+    // the same request without it.
+    for (const door of OAUTH_PROTOCOL) {
+      const [method, path] = door.split(" ") as [string, string];
+      const ask = (query: string) =>
+        fetch(`${apiUrl}${path}${query}`, {
+          method,
+          redirect: "manual",
+          headers:
+            method === "POST"
+              ? { "content-type": "application/x-www-form-urlencoded" }
+              : {},
+          body: method === "POST" ? "client_id=none" : undefined,
+        });
+      const bare = await ask("");
+      const taken = await ask(`?${STRAY}=1`);
+      expect(taken.status, door).toBe(bare.status);
+      expect(await taken.text(), door).not.toContain(STRAY);
+      await bare.body?.cancel();
     }
 
     // A sender's query string belongs to the sender: it is recorded, not read.
@@ -1067,17 +1087,14 @@ describe("a query key no door declares", () => {
     expect(sent.status).toBe(202);
     await sent.body?.cancel();
 
-    const registration = await fetch(
-      `${apiUrl}/auth/oauth2/register?${STRAY}=1`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: "{}",
+    const registration = await fetch(`${apiUrl}/oauth/register?${STRAY}=1`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: "{}",
+    });
     expect(registration.status).toBe(400);
     const body = (await registration.json()) as {
       error?: { details?: { unknown_parameters?: string[] } };
@@ -1160,7 +1177,7 @@ describe("the write contention a door can meet", () => {
           continue;
         }
         const door = `${method.toUpperCase()} ${path}`;
-        if (!takesAuthority(operation) && path !== "/auth/oauth2/register") {
+        if (!takesAuthority(operation) && path !== "/oauth/register") {
           continue;
         }
         takingACredential.push(door);
@@ -1177,7 +1194,7 @@ describe("the write contention a door can meet", () => {
       }
     }
     expect(takingACredential.length).toBeGreaterThan(90);
-    expect(takingACredential).toContain("POST /auth/oauth2/register");
+    expect(takingACredential).toContain("POST /oauth/register");
     expect(missing).toEqual([]);
     expect(wrongShape).toEqual([]);
   });

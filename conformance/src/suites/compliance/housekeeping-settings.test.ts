@@ -33,7 +33,7 @@ const DAYS = [
 /** Counted in hours, 0 through 876000. */
 const HOURS = [
   "MARFA_EVENT_LOG_RETENTION_HOURS",
-  "MARFA_DCR_CLIENT_RETENTION_HOURS",
+  "MARFA_UNAPPROVED_APP_RETENTION_HOURS",
 ] as const;
 
 const MAX_DAYS = 36_500;

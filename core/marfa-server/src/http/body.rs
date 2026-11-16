@@ -34,7 +34,7 @@ const BULK_PATHS: [&str; 2] = ["/items/bulk", "/items/bulk-actions"];
 const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
 const CONNECTORS_PATH: &str = "/connectors";
 const PLAIN_JSON: &str = "application/json";
-const REGISTER_PATH: &str = "/auth/oauth2/register";
+const REGISTER_PATH: &str = "/oauth/register";
 /// What a door that asks no credential reads. The largest real bodies there
 /// are a few kilobytes: a password of 128 characters, a passkey assertion, a
 /// consent form carrying an authorization's signed query.

@@ -11,6 +11,7 @@ import {
 import { createNote } from "../../generators/items.js";
 import { editLineFile, readEntry, readLineFile } from "../../utils/archive.js";
 import {
+  approvedApp,
   approvedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -234,6 +235,29 @@ describe("a source's name", () => {
         expect(
           (await readSource(ownerClient, own[0]?.source ?? "")).data,
         ).toEqual(own[0]);
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("the source an app writes under", () => {
+  it(
+    "is oauth: followed by the app's client_id, on what the app writes and in the sources it lists",
+    async () => {
+      const server = await bootFreshServer("source-names-app-code");
+      try {
+        const { token, clientId } = await approvedApp(server);
+        const app = new MarfaClient({ baseUrl: server.apiUrl, apiKey: token });
+        const made = await app.createItem(createNote());
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        expect(made.data.item.source).toBe(`oauth:${clientId}`);
+        const own = (await listSources(app)).filter((s) =>
+          s.source.startsWith("oauth:"),
+        );
+        expect(own.map((s) => s.source)).toEqual([`oauth:${clientId}`]);
       } finally {
         await server.stop();
       }

@@ -1841,7 +1841,11 @@ fn every_published_operation_has_a_command() {
         "the document publishes {} operations, which is too few to be the whole of it",
         published.len()
     );
-    let known: Vec<&str> = operations::OPERATIONS.iter().map(|op| op.id).collect();
+    let known: Vec<&str> = operations::OPERATIONS
+        .iter()
+        .map(|op| op.id)
+        .chain(operations::NO_COMMAND.iter().map(|(id, _)| *id))
+        .collect();
     let unknown: Vec<&&str> = published.iter().filter(|id| !known.contains(id)).collect();
     assert!(
         unknown.is_empty(),

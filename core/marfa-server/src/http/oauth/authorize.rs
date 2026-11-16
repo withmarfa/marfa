@@ -76,10 +76,14 @@ pub async fn decide(
 ) -> Answer {
     let fields = Fields(body.form_pairs().await?);
     let link = fields
-        .get("oauth_query")
-        .ok_or_else(|| Refusal::validation("Provide `oauth_query` as text."))?;
-    let accept = fields.get("accept") == Some("true");
-    match authorize::decide(&app, owner.as_ref(), link, accept, fields.post()).await? {
+        .get("authorization_request")
+        .ok_or_else(|| Refusal::validation("Provide `authorization_request` as text."))?;
+    let approve = match fields.get("decision") {
+        Some("approve") => true,
+        Some("deny") => false,
+        _ => return Err(Refusal::validation("Provide `decision` as approve or deny.").into()),
+    };
+    match authorize::decide(&app, owner.as_ref(), link, approve, fields.post()).await? {
         Decided::Unverified => refused_link(&app, false).await,
         Decided::Expired => refused_link(&app, true).await,
         Decided::SignIn(location) => redirect(StatusCode::FOUND, &location),

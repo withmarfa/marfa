@@ -695,7 +695,7 @@ describe("the instance from the terminal", () => {
     ).toBeTruthy();
     const local = c.cli.viaSocket(socket!);
     const forged = "  key      trusted  never used";
-    const registration = await fetch(`${c.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${c.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -712,7 +712,7 @@ describe("the instance from the terminal", () => {
     expect(registration.status).toBe(201);
     const clientId = ((await registration.json()) as { client_id: string })
       .client_id;
-    const asked = await fetch(`${c.apiUrl}/auth/device/code`, {
+    const asked = await fetch(`${c.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

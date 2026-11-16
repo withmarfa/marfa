@@ -249,11 +249,11 @@ mod tests {
 
     fn discovery(origin: &str) -> String {
         json!({
-            "issuer": format!("{origin}/auth"),
-            "token_endpoint": format!("{origin}/auth/oauth2/token"),
-            "device_authorization_endpoint": format!("{origin}/auth/device/code"),
-            "registration_endpoint": format!("{origin}/auth/oauth2/register"),
-            "revocation_endpoint": format!("{origin}/auth/oauth2/revoke"),
+            "issuer": origin,
+            "token_endpoint": format!("{origin}/oauth/token"),
+            "device_authorization_endpoint": format!("{origin}/oauth/device-authorization"),
+            "registration_endpoint": format!("{origin}/oauth/register"),
+            "revocation_endpoint": format!("{origin}/oauth/revoke"),
             "scopes_supported": ["offline_access", "*:read", "keys.mint"]
         })
         .to_string()
@@ -311,7 +311,7 @@ mod tests {
         };
         run(given, &named, &Printer { json: true }, &|_| {}).unwrap();
         let sent = door.received();
-        assert_eq!(sent[1].path(), "/auth/oauth2/register");
+        assert_eq!(sent[1].path(), "/oauth/register");
         let body: serde_json::Value = serde_json::from_str(&sent[1].body).unwrap();
         assert_eq!(body["client_name"], "Marfa app on the studio laptop");
         assert!(sent[2].body.contains("client_id=fresh"), "{}", sent[2].body);
@@ -381,11 +381,8 @@ mod tests {
         run(args(true), &named, &Printer { json: true }, &|_| {}).unwrap();
         let sent = door.received();
         assert_eq!(sent.len(), 3);
-        assert_eq!(
-            sent[0].path(),
-            "/auth/.well-known/oauth-authorization-server"
-        );
-        assert_eq!(sent[1].path(), "/auth/device/code");
+        assert_eq!(sent[0].path(), "/.well-known/oauth-authorization-server");
+        assert_eq!(sent[1].path(), "/oauth/device-authorization");
         assert!(
             sent[1].body.contains("client_id=client"),
             "{}",
@@ -398,7 +395,7 @@ mod tests {
             "{}",
             sent[1].body
         );
-        assert_eq!(sent[2].path(), "/auth/oauth2/token");
+        assert_eq!(sent[2].path(), "/oauth/token");
         assert!(sent[2].body.contains("device_code=dc"), "{}", sent[2].body);
     }
 
@@ -494,7 +491,7 @@ mod tests {
         // sign-in reaching its end is the proof; this checks what was left,
         // with the registration kept by the test below as its witness.
         let sent = door.received();
-        assert_eq!(sent[1].path(), "/auth/oauth2/register");
+        assert_eq!(sent[1].path(), "/oauth/register");
         credentials::turn_on();
         assert!(matches!(
             credentials::read(&origin).unwrap(),

@@ -105,7 +105,7 @@ async function browsers(): Promise<string[]> {
 
 describe("the owner device lookup lane", () => {
   it("admits owner entry and consent and exchanges the grant after anonymous address and aggregate exhaustion", async () => {
-    const registration = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -118,7 +118,7 @@ describe("the owner device lookup lane", () => {
     });
     expect(registration.status).toBe(201);
     const { client_id } = (await registration.json()) as { client_id: string };
-    const issued = await post("/auth/device/code", {
+    const issued = await post("/oauth/device-authorization", {
       client_id,
       scope: "core.note:read",
     });
@@ -163,7 +163,7 @@ describe("the owner device lookup lane", () => {
     );
     expect(approved.status).toBe(200);
     await approved.body?.cancel();
-    const exchanged = await post("/auth/oauth2/token", {
+    const exchanged = await post("/oauth/token", {
       client_id,
       device_code,
       grant_type: "urn:ietf:params:oauth:grant-type:device_code",

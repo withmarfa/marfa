@@ -173,8 +173,8 @@ describe("a body that is open by design", () => {
     expect(read.data.metadata.extensions["closed-body"]).toEqual(document);
   });
 
-  it("POST /auth/oauth2/register ignores client metadata it does not understand", async () => {
-    const registered = await fetch(`${apiUrl}/auth/oauth2/register`, {
+  it("POST /oauth/register ignores client metadata it does not understand", async () => {
+    const registered = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

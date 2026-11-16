@@ -183,7 +183,7 @@ pub struct RegistrationError {
 }
 
 impl RegistrationError {
-    pub(super) fn metadata(description: impl Into<String>) -> RegistrationError {
+    pub fn metadata(description: impl Into<String>) -> RegistrationError {
         RegistrationError {
             error: ErrorCode::InvalidClientMetadata,
             description: description.into(),

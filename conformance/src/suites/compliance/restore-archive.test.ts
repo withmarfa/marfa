@@ -157,10 +157,10 @@ describe("restore", () => {
 
   it("rewrites app sources exactly and accepts previously restored sources", async () => {
     for (const source of [
-      "oauth:client:person",
+      "oauth:client",
       " OAuth:client:person ",
-      "restored:oauth:client:person",
-      " Restored:oauth:client:person ",
+      "restored:oauth:client",
+      " Restored:oauth:client ",
     ]) {
       const id = uuidv7();
       const restored = await owner.restoreArchive(

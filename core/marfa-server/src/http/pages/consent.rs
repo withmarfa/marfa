@@ -215,9 +215,6 @@ struct ConsentBody<'a> {
     action: &'static str,
     link_field: &'static str,
     link_value: &'a str,
-    answer_field: &'static str,
-    yes: &'static str,
-    no: &'static str,
     device_code: Option<String>,
     page_addresses: String,
     full_access: &'static str,
@@ -252,24 +249,17 @@ fn page_addresses(origins: &[String]) -> String {
 }
 
 pub fn consent(view: &Consent) -> Result<Page> {
-    let (action, link_field, link_value, answer_field, yes, no, device_code) = match &view.answering
-    {
+    let (action, link_field, link_value, device_code) = match &view.answering {
         Answering::Authorization(query) => (
-            "/auth/authorize/decision",
-            "oauth_query",
+            "/auth/consent",
+            "authorization_request",
             query.as_str(),
-            "accept",
-            "true",
-            "false",
             None,
         ),
         Answering::Device(code) => (
             "/auth/device/consent",
             "user_code",
             code.as_str(),
-            "decision",
-            "approve",
-            "deny",
             Some(shown_code(code)),
         ),
     };
@@ -323,9 +313,6 @@ pub fn consent(view: &Consent) -> Result<Page> {
         action,
         link_field,
         link_value,
-        answer_field,
-        yes,
-        no,
         device_code,
         page_addresses: page_addresses(&offer.app.web_origins),
         full_access: FULL_ACCESS,

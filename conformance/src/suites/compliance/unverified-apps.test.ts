@@ -30,7 +30,7 @@ const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 beforeAll(async () => {
   server = await bootFreshServer("unverified-apps");
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   const { issuer } = (await discovery.json()) as { issuer: string };
   origin = new URL(issuer).origin;
@@ -60,7 +60,7 @@ async function register(
   name: string,
   grantTypes: string[],
 ): Promise<Registered> {
-  const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -78,7 +78,7 @@ async function register(
 }
 
 function authorizeUrl(clientId: string, scope = "core.note:read"): string {
-  return `${server!.apiUrl}/auth/oauth2/authorize?${new URLSearchParams({
+  return `${server!.apiUrl}/oauth/authorize?${new URLSearchParams({
     response_type: "code",
     client_id: clientId,
     redirect_uri: CALLBACK,
@@ -106,7 +106,7 @@ async function consentPage(clientId: string, scope?: string): Promise<string> {
     headers: { cookie },
   });
   const consent = await sentTo(authorize);
-  expect(consent.pathname).toBe("/auth/authorize");
+  expect(consent.pathname).toBe("/auth/consent");
   const page = await fetch(consent, { headers: { cookie } });
   expect(page.status).toBe(200);
   return page.text();
@@ -127,7 +127,7 @@ async function deviceApprovalPage(
   app: Registered,
   scope = "core.note:read",
 ): Promise<string> {
-  const code = await fetch(`${server!.apiUrl}/auth/device/code`, {
+  const code = await fetch(`${server!.apiUrl}/oauth/device-authorization`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ scope, client_id: app.clientId }),

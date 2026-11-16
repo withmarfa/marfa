@@ -276,8 +276,8 @@ describe("every refusal's code", () => {
       label: string;
     }[] = [];
     for (const [template, item] of Object.entries(document.paths)) {
-      // The sign-in library answers these in its own shapes.
-      if (template.startsWith("/auth/")) continue;
+      // The OAuth protocol endpoints answer in the shapes of their RFCs.
+      if (template.startsWith("/oauth/")) continue;
       for (const [method, operation] of Object.entries(item)) {
         if (!["get", "post", "put", "patch", "delete"].includes(method)) {
           continue;

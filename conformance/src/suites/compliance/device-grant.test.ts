@@ -7,6 +7,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * A device asking for a code and polling for its token, with a person
@@ -42,6 +43,7 @@ describe("the device authorization grant", () => {
     expect(pending.status).toBe(400);
     expect(pending.body.error).toBe("authorization_pending");
     expect(pending.body.access_token).toBeUndefined();
+    await expectMatchesSchema("POST", "/oauth/token", 400, pending.body);
   });
 
   it("answers the first poll after the approval, an interval after the last, with an access token for the approved scopes", async () => {
@@ -52,6 +54,7 @@ describe("the device authorization grant", () => {
     expect(approved.body.access_token).toBeTruthy();
     expect(approved.body.token_type?.toLowerCase()).toBe("bearer");
     expect(approved.body.scope).toBe("core.note:read");
+    await expectMatchesSchema("POST", "/oauth/token", 200, approved.body);
   });
 
   it("answers invalid_grant to a poll of a code a token was already issued for", async () => {
@@ -67,7 +70,7 @@ describe("the device authorization grant", () => {
 
 describe("a device code", () => {
   async function ask(scope?: string): Promise<Response> {
-    const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registered = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -80,7 +83,7 @@ describe("a device code", () => {
     });
     expect(registered.status).toBe(201);
     const { client_id } = (await registered.json()) as { client_id: string };
-    return fetch(`${server!.apiUrl}/auth/device/code`, {
+    return fetch(`${server!.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -103,6 +106,7 @@ describe("a device code", () => {
     expect(complete.searchParams.get("user_code")).toBe(body.user_code);
     expect(body.expires_in).toBe(600);
     expect(body.interval).toBe(5);
+    await expectMatchesSchema("POST", "/oauth/device-authorization", 200, body);
   });
 
   it("is refused 400 invalid_scope when no scopes are named", async () => {
@@ -126,7 +130,7 @@ describe("a device code", () => {
   });
 
   it("is refused 400 invalid_scope for a scope under a permission root that is not one of the twelve permissions, and issued for each of the twelve", async () => {
-    const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registered = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -140,7 +144,7 @@ describe("a device code", () => {
     expect(registered.status).toBe(201);
     const { client_id } = (await registered.json()) as { client_id: string };
     const code = (scope: string): Promise<Response> =>
-      fetch(`${server!.apiUrl}/auth/device/code`, {
+      fetch(`${server!.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ client_id, scope }),
@@ -245,7 +249,7 @@ describe("a device code whose grant is revoked", () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     await flow.approve();
     const authorization = { authorization: `Bearer ${server!.workingKey}` };
-    const listed = await fetch(`${server!.apiUrl}/auth/grants`, {
+    const listed = await fetch(`${server!.apiUrl}/grants`, {
       headers: authorization,
     });
     const grant = (
@@ -253,7 +257,7 @@ describe("a device code whose grant is revoked", () => {
     ).data.find((g) => g.client_id === flow.clientId);
     // The witness: the approval made a grant to revoke.
     expect(grant, "the approval made no grant").toBeDefined();
-    const revoked = await fetch(`${server!.apiUrl}/auth/grants/${grant!.id}`, {
+    const revoked = await fetch(`${server!.apiUrl}/grants/${grant!.id}`, {
       method: "DELETE",
       headers: authorization,
     });

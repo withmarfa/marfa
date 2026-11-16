@@ -213,7 +213,7 @@ describe("one envelope for every list and search", () => {
         "/occurrences?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z",
       siblings: ["window", "scan"],
     },
-    { template: "/auth/grants", path: () => "/auth/grants", owner: true },
+    { template: "/grants", path: () => "/grants", owner: true },
     { template: "/folders", path: () => "/folders", owner: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
@@ -255,8 +255,8 @@ describe("one envelope for every list and search", () => {
     }
   });
 
-  it("answers GET /auth/grants to a key with grants.manage in the same envelope", async () => {
-    expect((await servedDocument()).paths["/auth/grants"]).toBeDefined();
+  it("answers GET /grants to a key with grants.manage in the same envelope", async () => {
+    expect((await servedDocument()).paths["/grants"]).toBeDefined();
     const minted = await client.createKey({
       label: "envelope-grants",
       source: `${ctx.source}-grants`,
@@ -265,7 +265,7 @@ describe("one envelope for every list and search", () => {
     });
     expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
     trackKey(ctx, minted.data.id);
-    const body = (await read("/auth/grants", minted.data.key)) as Record<
+    const body = (await read("/grants", minted.data.key)) as Record<
       string,
       unknown
     >;
