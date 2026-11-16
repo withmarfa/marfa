@@ -282,7 +282,7 @@ mod tests {
                 finished_at: &at(NOW + 10),
                 interval_ms: 60_000,
                 again: false,
-                outcome: "ok",
+                outcome: "succeeded",
                 error: None,
                 result: None,
             };

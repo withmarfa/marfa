@@ -354,12 +354,12 @@ describe("a credential revoked while an upload streams in", () => {
     const headers = bearer(key);
     const file = png(10, 10, 0x40);
     const stored = () =>
-      localFetch(server.controlSocket, `${server.apiUrl}/owner/picture`);
+      localFetch(server.controlSocket, `${server.apiUrl}/owner/avatar`);
 
     const held = heldRequest(
       server.apiUrl,
       "PUT",
-      "/profile/picture",
+      "/profile/avatar",
       headers,
       file,
     );
@@ -379,7 +379,7 @@ describe("a credential revoked while an upload streams in", () => {
     const live = await sentWhole(
       server,
       "PUT",
-      "/profile/picture",
+      "/profile/avatar",
       bearer(server.workingKey),
       file,
     );

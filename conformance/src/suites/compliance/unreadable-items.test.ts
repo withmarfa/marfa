@@ -253,16 +253,9 @@ describe("an item the key cannot read answers as a missing one", () => {
       served: 200,
     },
     {
-      name: "GET /items/{id}/metadata",
-      method: "GET",
-      path: (id) => `/items/${id}/metadata`,
-      witness: live,
-      served: 200,
-    },
-    {
-      name: "PUT /items/{id}/metadata",
+      name: "PUT /items/{id}/tags",
       method: "PUT",
-      path: (id) => `/items/${id}/metadata`,
+      path: (id) => `/items/${id}/tags`,
       body: () => ({ tags: ["unreadable"] }),
       witness: live,
       served: 200,
@@ -491,7 +484,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       id: hidden,
     });
     expect(refused.status).toBe(409);
-    expect(refused.body).toMatchObject({ error: { code: "conflict" } });
+    expect(refused.body).toMatchObject({ error: { code: "id_reused" } });
     expect(JSON.stringify(refused.body)).not.toContain("core.bookmark");
 
     // The witness: an id held by a type the key may read is named, with it.
@@ -519,7 +512,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     expect(live.status).toBe(binned.status);
     expect(live.body).toEqual(binned.body);
     expect(live.body).toMatchObject({
-      error: { code: "bulk_atomic_rollback", details: { code: "conflict" } },
+      error: { code: "bulk_atomic_rollback", details: { code: "id_reused" } },
     });
     expect(JSON.stringify(live.body)).not.toContain("core.bookmark");
 
@@ -623,7 +616,6 @@ describe("an item the key cannot read answers as a missing one", () => {
         "edges",
         "backrefs",
         "versions",
-        "metadata",
         "extensions",
         "extensions/unreadable",
       ].map((door): Reached => [

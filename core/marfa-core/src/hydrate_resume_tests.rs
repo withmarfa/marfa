@@ -42,7 +42,7 @@ fn bulk(ids: &[&str]) -> Answer {
 fn bulk_under(ids: &[&str], fence: &str) -> Answer {
     let rows: Vec<Value> = ids.iter().map(|id| row(id, 1)).collect();
     let body = json!({
-        "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
+        "data": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
         "metadata": ids
             .iter()
             .map(|id| json!({"item_id": id, "tags": [], "extensions": {}}))
@@ -249,17 +249,17 @@ fn a_resumed_hydration_replays_what_changed_on_the_server_while_it_was_stopped()
         let mut payload: Value =
             serde_json::from_str(&scripted::item_payload(event, id, "core.note", 2)).unwrap();
         payload["listed"] = true.into();
-        if event == "item.deleted" {
+        if event == "item.trashed" {
             payload["item"]["state"] = "trashed".into();
         }
         payload.to_string()
     };
-    let (updated, deleted) = (listed("item.updated", "a"), listed("item.deleted", "b"));
+    let (updated, deleted) = (listed("item.updated", "a"), listed("item.trashed", "b"));
     the_rest(
         &server,
         vec![
             scripted::event("11", "item.updated", &updated),
-            scripted::event("12", "item.deleted", &deleted),
+            scripted::event("12", "item.trashed", &deleted),
         ],
         "12",
     );

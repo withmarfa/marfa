@@ -62,7 +62,7 @@ describe("a vendor entry whose key a purge left a tombstone for", () => {
           ...byLink,
           settled_at: to,
         });
-        expect(settled.data.tombstones.map((t) => t.settled_at)).toEqual([to]);
+        expect(settled.data.data.map((t) => t.settled_at)).toEqual([to]);
       }
 
       const again = await client.createItem({

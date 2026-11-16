@@ -317,7 +317,7 @@ describe("webhook host-name lookups", () => {
         },
         30_000,
       );
-      expect(rows).toEqual(ids.map(() => ["success", 1, null]));
+      expect(rows).toEqual(ids.map(() => ["succeeded", 1, null]));
     } finally {
       for (const id of ids) await healthy.deleteWebhook(id);
       await dropAll(busy);

@@ -41,7 +41,7 @@ export function marker(type, cursor) {
  * @param {import("node:http").ServerResponse} res
  */
 export function streamHead(req, res) {
-  assert.equal(new URL(req.url ?? "", "http://fixture").searchParams.get("copy"), "1");
+  assert.equal(new URL(req.url ?? "", "http://fixture").searchParams.get("copy"), "true");
   const cursor = req.headers["last-event-id"];
   assert.ok(cursor === undefined || typeof cursor === "string");
   assert.equal(req.headers["x-marfa-reach"], cursor === undefined ? undefined : FENCE);

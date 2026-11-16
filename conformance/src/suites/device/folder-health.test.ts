@@ -140,7 +140,7 @@ it("counts the removals a large removal holds on disk or from a pull as paused r
           .map((row, n) =>
             copyItemEvent(
               String(n + 2),
-              "item.deleted",
+              "item.trashed",
               wireItem({ ...row.item, state: "trashed" }),
             ),
           ),
@@ -226,7 +226,7 @@ it("counts no problem for a file whose item is already in the bin", async () => 
       copyReplay("2", [
         copyItemEvent(
           "2",
-          "item.deleted",
+          "item.trashed",
           wireItem({ ...row.item, state: "trashed" }),
         ),
       ]),
@@ -1046,14 +1046,16 @@ it.each(["replacement", "tag addition"] as const)(
               },
             },
           };
-        if (request.pathname.endsWith("/metadata")) {
+        if (request.pathname.endsWith("/tags")) {
           const row = rows.get(id)!;
           const tags = (JSON.parse(request.body) as { tags: string[] }).tags;
           row.tags =
             request.method === "PUT"
               ? tags
               : [...new Set([...(row.tags ?? []), ...tags])];
-          return writeAnswers.metadata(id, row.tags);
+          return request.method === "PUT"
+            ? writeAnswers.tags(row.tags)
+            : writeAnswers.tags(row.tags);
         }
         return undefined;
       },
@@ -1063,7 +1065,7 @@ it.each(["replacement", "tag addition"] as const)(
     const queued =
       operation === "replacement"
         ? await device.addTag(id, "stale")
-        : await device.replaceMetadata(id, ["old"]);
+        : await device.replaceTags(id, ["old"]);
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     broken = true;
@@ -1079,7 +1081,7 @@ it.each(["replacement", "tag addition"] as const)(
     broken = false;
     const newer =
       operation === "replacement"
-        ? await device.replaceMetadata(id, [])
+        ? await device.replaceTags(id, [])
         : await device.addTag(id, "new");
     expect(newer.ok).toBe(true);
     expect((await harness.folder.push()).ok).toBe(true);

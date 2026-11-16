@@ -74,8 +74,8 @@ describe("a credential's allowance across every operation", () => {
     expect(Number(retryAfter)).toBeGreaterThanOrEqual(1);
     expect(Number(retryAfter)).toBeLessThanOrEqual(60);
     expect(
-      (refused.error?.error as { details?: { retry_after?: number } }).details
-        ?.retry_after,
+      (refused.error?.error as { details?: { retry_after_seconds?: number } })
+        .details?.retry_after_seconds,
     ).toBe(Number(retryAfter));
 
     // The witness: another key is answered, so the refusal is this key's.

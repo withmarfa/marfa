@@ -72,7 +72,7 @@ async function idsFor(
 ): Promise<string[]> {
   const res = await as.findItemsByTitle([name]);
   expect(res.status, JSON.stringify(res.error)).toBe(200);
-  return (res.data.results[0]?.items ?? []).map((item) => item.id).sort();
+  return (res.data.data[0]?.items ?? []).map((item) => item.id).sort();
 }
 
 describe("POST /items/titles", () => {
@@ -84,24 +84,22 @@ describe("POST /items/titles", () => {
     const res = await client.findItemsByTitle([two, one, two, unique("none")]);
     expect(res.status).toBe(200);
     await expectMatchesSchema("POST", "/items/titles", 200, res.data);
-    expect(res.data.results.map((result) => result.name)).toEqual([
+    expect(res.data.data.map((result) => result.name)).toEqual([
       two,
       one,
       two,
-      res.data.results[3]?.name,
+      res.data.data[3]?.name,
     ]);
     expect(
-      res.data.results.map((result) => result.items.map((item) => item.id)),
+      res.data.data.map((result) => result.items.map((item) => item.id)),
     ).toEqual([[idTwo], [idOne], [idTwo], []]);
-    expect(res.data.results[0]?.items[0]).toEqual({
+    expect(res.data.data[0]?.items[0]).toEqual({
       id: idTwo,
       type: "core.note",
       title: two,
       has_blob: false,
     });
-    expect(res.data.results.every((result) => result.more === false)).toBe(
-      true,
-    );
+    expect(res.data.data.every((result) => result.more === false)).toBe(true);
   });
 
   it("finds a title by its folded form and by the name as typed, for every case of the shared fold", async () => {
@@ -167,10 +165,10 @@ describe("POST /items/titles", () => {
     }
     const found = await client.findItemsByTitle([heading, other]);
     expect(found.status).toBe(200);
-    expect(
-      found.data.results[0]?.items.map((item) => item.type).sort(),
-    ).toEqual([child, parent].sort());
-    expect(found.data.results[1]?.items).toEqual([]);
+    expect(found.data.data[0]?.items.map((item) => item.type).sort()).toEqual(
+      [child, parent].sort(),
+    );
+    expect(found.data.data[1]?.items).toEqual([]);
   });
 
   it("lists at most 20 items for a name and says when there are more", async () => {
@@ -179,8 +177,8 @@ describe("POST /items/titles", () => {
     for (let at = 0; at < 21; at += 1) ids.push(await note(name));
     const res = await client.findItemsByTitle([name]);
     expect(res.status).toBe(200);
-    expect(res.data.results[0]?.items).toHaveLength(20);
-    expect(res.data.results[0]?.more).toBe(true);
+    expect(res.data.data[0]?.items).toHaveLength(20);
+    expect(res.data.data[0]?.more).toBe(true);
   });
 
   it("leaves out an item whose type the key may not read, and refuses a key that reads no type", async () => {
@@ -221,7 +219,7 @@ describe("POST /items/titles", () => {
       Array.from({ length: 200 }, (_, at) => `absent ${String(at)}`),
     );
     expect(most.status, JSON.stringify(most.error)).toBe(200);
-    expect(most.data.results).toHaveLength(200);
+    expect(most.data.data).toHaveLength(200);
 
     const tooMany = await client.findItemsByTitle(
       Array.from({ length: 201 }, (_, at) => `absent ${String(at)}`),

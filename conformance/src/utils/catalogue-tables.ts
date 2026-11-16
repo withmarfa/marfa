@@ -93,7 +93,7 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
   "item.created": "A write creates an item (`events/create-announced`).",
   "item.updated":
     "A write changes an item (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).",
-  "item.deleted":
+  "item.trashed":
     "An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).",
   "item.restored":
     "An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).",

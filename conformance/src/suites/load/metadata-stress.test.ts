@@ -205,8 +205,8 @@ describe("metadata operations at scale", () => {
       );
       expect(result.ok).toBe(true);
       durations.push(durationMs);
-      expect(result.data.metadata.tags).not.toContain(runTag);
-      expect(result.data.metadata.tags).toContain(LOAD_TAG);
+      expect(result.data.tags).not.toContain(runTag);
+      expect(result.data.tags).toContain(LOAD_TAG);
     }
 
     await record({

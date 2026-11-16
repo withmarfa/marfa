@@ -453,7 +453,7 @@ describe("a create with mode create_only meeting an item the key may not read", 
       createNote({ id, mode: "create_only" }),
     );
     expect(hidden.status).toBe(409);
-    expect((hidden.data as unknown as Refusal).error.code).toBe("conflict");
+    expect((hidden.data as unknown as Refusal).error.code).toBe("id_reused");
     expect(
       disclosed(hidden.data, ["core.bookmark", secret.url, secret.title]),
     ).toEqual([]);

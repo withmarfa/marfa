@@ -101,12 +101,14 @@ describe("the change log's retention", () => {
       const recent = await batchOf(writer, item, 2);
 
       // The witness: before the clock passes the retention, the run keeps both.
-      expect((await runJob(server, "table-row-cleanup")).outcome).toBe("ok");
+      expect((await runJob(server, "table-row-cleanup")).outcome).toBe(
+        "succeeded",
+      );
       expect(await held(writer, item)).toEqual([recent, old]);
 
       await clock.advance(11 * DAY_MS);
       const run = await runJob(server, "table-row-cleanup");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       expect(await held(writer, item)).toEqual([recent]);
       const gone = await writer.undoBatch(item, "lines", old);
       expect(gone.status).toBe(404);
@@ -144,7 +146,7 @@ describe("the change log's retention", () => {
       storeAt("0");
 
       const run = await runJob(server, "table-row-cleanup");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       const gone = await writer.undoBatch(item, "lines", first);
       expect(gone.status).toBe(404);
       expect(gone.error?.error.code).toBe("batch_not_found");
@@ -166,7 +168,7 @@ describe("the change log's retention", () => {
       storeAt("2000-01-01T00:00:00.000Z");
       expect(await held(writer, item)).toEqual([after, unread]);
       const next = await runJob(server, "table-row-cleanup");
-      expect(next.outcome, String(next.error)).toBe("ok");
+      expect(next.outcome, String(next.error)).toBe("succeeded");
       expect(await held(writer, item)).toEqual([]);
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
@@ -197,7 +199,7 @@ describe("the change log's retention", () => {
       storeAt("0");
 
       const run = await runJob(server, "table-row-cleanup");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       expect(await held(writer, item)).toEqual([after]);
       expect(await held(writer, item, "notes")).toEqual([unread]);
 
@@ -205,7 +207,7 @@ describe("the change log's retention", () => {
       // after it go, so the later batch was kept by the unread one and not by its age.
       storeAt("2000-01-01T00:00:00.000Z");
       const next = await runJob(server, "table-row-cleanup");
-      expect(next.outcome, String(next.error)).toBe("ok");
+      expect(next.outcome, String(next.error)).toBe("succeeded");
       expect(await held(writer, item)).toEqual([]);
       expect(await held(writer, item, "notes")).toEqual([]);
     },
@@ -228,7 +230,7 @@ describe("the change log's retention", () => {
 
       await clock.advance(3650 * DAY_MS);
       const run = await runJob(server, "table-row-cleanup");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       expect(await held(writer, item)).toEqual([second, first]);
       const undone = await writer.undoBatch(item, "lines", first);
       expect(undone.status, JSON.stringify(undone.error)).toBe(200);

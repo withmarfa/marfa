@@ -478,11 +478,16 @@ fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>,
     Ok(None)
 }
 
-/// A string whose `format` is a kind of its own is that kind; an array of strings whose `format` is `url`, `email`, `datetime` or `date` is an array of that kind; each member of a list's entries is folded the same way. Every other format annotates the string and stays, as does a `thumbnail` format on an array, which is refused.
+/// A string whose `format` is a kind of its own is that kind; an array of strings whose `format` is `url`, `email` or `date` is an array of that kind; each member of a list's entries is folded the same way. Every other format annotates the string and stays, as does a `thumbnail` format on an array, which is refused.
 fn normalized(definition: &Value) -> Result<Value, RuleError> {
     let Some(row) = definition.as_object() else {
         return Ok(definition.clone());
     };
+    if row.get("format").and_then(Value::as_str) == Some("datetime") {
+        return Err(RuleError::invalid(
+            "datetime is a field type, not a format: declare the field as {\"type\": \"datetime\"}",
+        ));
+    }
     let mut row = row.clone();
     let kind = row
         .get("format")
@@ -1812,6 +1817,19 @@ mod tests {
             }
         );
         assert_eq!(catalog.indexing("acme.unknown"), Indexing::default());
+    }
+
+    #[test]
+    fn datetime_is_a_type_and_never_a_format() {
+        let taken = serde_json::json!({"type": "datetime"});
+        assert_eq!(normalized(&taken).unwrap(), taken);
+        for old in [
+            serde_json::json!({"type": "string", "format": "datetime"}),
+            serde_json::json!({"type": "array", "items_type": "string", "format": "datetime"}),
+        ] {
+            let refused = normalized(&old).unwrap_err();
+            assert!(refused.message.contains("datetime"), "{}", refused.message);
+        }
     }
 
     #[test]

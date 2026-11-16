@@ -204,10 +204,9 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items/{id}/edges", get(edges::outbound))
         .route("/items/{id}/backrefs", get(edges::backrefs))
         .route(
-            "/items/{id}/metadata",
-            get(items::metadata).put(items::set_metadata),
+            "/items/{id}/tags",
+            post(items::add_tags).put(items::set_tags),
         )
-        .route("/items/{id}/tags", post(items::add_tags))
         .route("/items/{id}/tags/{tag}", delete(items::remove_tag))
         .route("/items/{id}/extensions", get(items::extensions))
         .route(
@@ -216,7 +215,7 @@ fn item_doors(app: Arc<App>) -> Routes {
                 .put(items::set_extension)
                 .delete(items::clear_extension),
         )
-        .route("/metadata/tags", get(items::tags))
+        .route("/tags", get(items::tags))
         .route("/edges", post(edges::create).get(edges::list))
         .route("/edges/bulk", post(edges::write_page))
         .route(
@@ -274,9 +273,9 @@ fn owner_item_doors() -> Routes {
 
 fn profile_doors() -> Routes {
     Doors::new()
-        .route("/owner/picture", get(profile::read).put(profile::put_owner))
+        .route("/owner/avatar", get(profile::read).put(profile::put_owner))
         .route("/profile", get(profile::read_own).patch(profile::update))
-        .route("/profile/picture", put(profile::put_profile))
+        .route("/profile/avatar", put(profile::put_profile))
 }
 
 fn config_doors() -> Routes {
@@ -299,9 +298,11 @@ fn connector_doors(app: Arc<App>) -> Routes {
             "/connectors/{id}",
             get(connectors::read).delete(connectors::remove),
         )
-        .route("/connectors/heartbeat", post(connectors::heartbeat))
-        .route("/connectors/runs", post(connectors::report_run))
-        .route("/connectors/{id}/runs", get(connectors::runs))
+        .route("/connectors/{id}/heartbeat", post(connectors::heartbeat))
+        .route(
+            "/connectors/{id}/runs",
+            post(connectors::report_run).get(connectors::runs),
+        )
         .route(
             "/connectors/{id}/hold",
             post(connectors::take_hold).delete(connectors::release_hold),
@@ -357,7 +358,10 @@ fn shared(app: Arc<App>) -> Routes {
             post(backups::restore),
         )
         .route("/sources", get(sources::list))
-        .route("/source", get(sources::read).patch(sources::update))
+        .route(
+            "/sources/{source}",
+            get(sources::read).patch(sources::update),
+        )
         .merge(schema_doors())
         .merge(type_move_doors(app.clone()))
         .merge(key_doors(app.clone()))

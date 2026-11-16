@@ -35,7 +35,7 @@ pub async fn register(
     } else {
         StatusCode::OK
     };
-    Ok(json_answer(status, &json!({ "edge_type": edge_type })))
+    Ok(json_answer(status, &edge_type))
 }
 
 pub async fn delete(

@@ -48,7 +48,7 @@ pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) 
                 Code::RateLimited,
                 "Too many requests to the key operations; try again later.",
             )
-            .with_detail("retry_after", seconds),
+            .with_detail("retry_after_seconds", seconds),
         ),
         None => next.run(Request::from_parts(parts, body)).await,
     }

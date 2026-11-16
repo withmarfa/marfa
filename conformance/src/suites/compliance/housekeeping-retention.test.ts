@@ -90,13 +90,12 @@ async function eventsFrom(
 }
 
 /**
- * A server of its own, every retention set to `days` (and the event log's to
- * `hours`), and one record of each kind written under it.
+ * A server of its own, every retention set to `days`, and one record of each
+ * kind written under it.
  */
 async function written(
   label: string,
   days: number,
-  hours: number,
   signal: AbortSignal,
 ): Promise<Records> {
   const server = await bootFreshServer(label, QUIET_SCHEDULE);
@@ -109,7 +108,7 @@ async function written(
     trash_retention_days: days,
     inbound_handled_retention_days: days,
     inbound_pending_retention_days: days,
-    event_log_retention_hours: hours,
+    event_log_retention_days: days,
   });
   expect(set.status, JSON.stringify(set.error)).toBe(200);
 
@@ -229,7 +228,7 @@ describe("a retention of 0", () => {
   it(
     "keeps every record of each kind, however far the clock moves",
     async ({ signal }) => {
-      const records = await written("retention-zero", 0, 0, signal);
+      const records = await written("retention-zero", 0, signal);
       const clock = movedClock(records.server);
       const both = [
         records.deliveries.handled,
@@ -248,7 +247,7 @@ describe("a retention of 0", () => {
       await clock.advance(3650 * DAY_MS);
       for (const name of SWEEPS) {
         const run = await runJob(records.server, name);
-        expect(run.outcome, `${name}: ${String(run.error)}`).toBe("ok");
+        expect(run.outcome, `${name}: ${String(run.error)}`).toBe("succeeded");
       }
 
       expect(await kept(records, signal)).toEqual({
@@ -259,7 +258,7 @@ describe("a retention of 0", () => {
       });
       const listed = await jobs(records.server);
       for (const name of SWEEPS) {
-        expect(listed[name]?.last_outcome, name).toBe("ok");
+        expect(listed[name]?.last_outcome, name).toBe("succeeded");
       }
     },
     4 * FRESH_SERVER_TIMEOUT_MS,
@@ -270,7 +269,7 @@ describe("a positive retention", () => {
   it(
     "expires the records of each kind older than it, and keeps the newer",
     async ({ signal }) => {
-      const records = await written("retention-positive", 1, 24, signal);
+      const records = await written("retention-positive", 1, signal);
       const clock = movedClock(records.server);
       const both = [
         records.deliveries.handled,
@@ -285,7 +284,7 @@ describe("a positive retention", () => {
         deliveries: both,
       });
 
-      // Two days on, past a retention of a day and of twenty-four hours.
+      // Two days on, past a retention of a day.
       await clock.advance(2 * DAY_MS);
       // Newer than the retention: written after the clock moved.
       const writer = writerOf(records.server);
@@ -308,7 +307,7 @@ describe("a positive retention", () => {
 
       for (const name of SWEEPS) {
         const run = await runJob(records.server, name);
-        expect(run.outcome, `${name}: ${String(run.error)}`).toBe("ok");
+        expect(run.outcome, `${name}: ${String(run.error)}`).toBe("succeeded");
       }
 
       expect(await kept(records, signal)).toEqual({
@@ -399,7 +398,7 @@ describe("a bin holding more than one run of trash-purge removes", () => {
 
       await movedClock(server).advance(2 * DAY_MS);
       const first = await runJob(server, "trash-purge");
-      expect(first.outcome, String(first.error)).toBe("ok");
+      expect(first.outcome, String(first.error)).toBe("succeeded");
       const removed = (first.result as { deleted: number }).deleted;
       expect(removed).toBeGreaterThan(0);
 
@@ -484,7 +483,7 @@ describe("trash-purge and the parts a host's trash took", () => {
       expect(await binned()).toEqual([host, taken, reply, alone, late].sort());
 
       const run = await runJob(server, "trash-purge");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       expect(run.result).toEqual({ deleted: 4 });
       expect(await binned()).toEqual([alone]);
     },

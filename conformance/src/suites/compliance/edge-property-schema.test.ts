@@ -589,7 +589,6 @@ describe("null and format", () => {
     ["email", "not an address", "a@example.com"],
     ["url", "not a url", "https://example.com/a"],
     ["date", "2026-02-30", "2026-02-28"],
-    ["datetime", "2026-02-28 10:00", "2026-02-28T10:00:00Z"],
   ];
 
   it("registers a string property with a format as the type of that format, and judges its values on every edge write", async () => {
@@ -646,6 +645,38 @@ describe("null and format", () => {
       outcome: "errored",
       error: { code: "invalid_properties" },
     });
+  });
+
+  it("judges a datetime property on every edge write, and refuses datetime as a format", async () => {
+    const refused = await client.registerEdgeType({
+      label: "Test edge type",
+      id: `mock.propschema.datetime.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { when: { type: "string", format: "datetime" } },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+
+    const edgeType = await register({ when: { type: "datetime" } });
+    const source = await note();
+    const target = await note();
+    const bad = await client.createEdge({
+      from_id: source,
+      to_id: target,
+      edge_type: edgeType,
+      properties: { when: "2026-02-28 10:00" },
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.error?.error.code).toBe("invalid_properties");
+    expect(named(bad.error?.error)).toEqual(["when"]);
+    const ok = await client.createEdge({
+      from_id: source,
+      to_id: target,
+      edge_type: edgeType,
+      properties: { when: "2026-02-28T10:00:00Z" },
+    });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+    trackEdge(ctx, ok.data.edge.id);
   });
 
   it("keeps a currency property a string with its format, and judges its values on every edge write", async () => {

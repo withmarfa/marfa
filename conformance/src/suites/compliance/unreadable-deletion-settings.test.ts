@@ -49,13 +49,13 @@ describe("a stored setting that decides what a job deletes and does not read", (
 
       storeRow(server, "trash_retention_days", "soon");
       const refused = await runJob(server, "trash-purge");
-      expect(refused.outcome).toBe("error");
+      expect(refused.outcome).toBe("failed");
       expect(refused.error).toEqual(expect.any(String));
       expect(await inBin()).toEqual([id]);
 
       storeRow(server, "trash_retention_days", null);
       const purged = await runJob(server, "trash-purge");
-      expect(purged.outcome, String(purged.error)).toBe("ok");
+      expect(purged.outcome, String(purged.error)).toBe("succeeded");
       expect(purged.result).toEqual({ deleted: 1 });
       expect(await inBin()).toEqual([]);
     },
@@ -94,13 +94,13 @@ describe("a stored setting that decides what a job deletes and does not read", (
 
       storeRow(server, "version_max_versions", "many");
       const refused = await runJob(server, "version-thinning");
-      expect(refused.outcome).toBe("error");
+      expect(refused.outcome).toBe("failed");
       expect(refused.error).toEqual(expect.any(String));
       expect(await snapshots()).toBe(written);
 
       storeRow(server, "version_max_versions", null);
       const thinned = await runJob(server, "version-thinning");
-      expect(thinned.outcome, String(thinned.error)).toBe("ok");
+      expect(thinned.outcome, String(thinned.error)).toBe("succeeded");
       expect(await snapshots()).toBeLessThan(written);
     },
     4 * FRESH_SERVER_TIMEOUT_MS,

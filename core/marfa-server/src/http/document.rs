@@ -124,10 +124,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "the owner recovery form, proved by a code from the server's log",
     ),
     (
-        "HEAD /blobs/{hash}",
-        "the headers of the published read, without its bytes",
-    ),
-    (
         "GET /blobs/{hash}/fetch",
         "the signed link GET /blobs/{hash}/url answers",
     ),
@@ -203,10 +199,13 @@ const REFUSES_LOCAL: &[(&str, &str)] = &[
     ),
     ("POST /connectors", "a connector registers under a key"),
     (
-        "POST /connectors/heartbeat",
+        "POST /connectors/{id}/heartbeat",
         "the connector's own key alone",
     ),
-    ("POST /connectors/runs", "the connector's own key alone"),
+    (
+        "POST /connectors/{id}/runs",
+        "the connector's own key alone",
+    ),
     (
         "POST /connectors/{id}/hold",
         "the connector's own key alone",

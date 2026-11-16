@@ -197,7 +197,7 @@ describe(`query performance (scale: ${scale})`, () => {
       "POST /items/bulk-get (20 ids)",
       async () => {
         const res = await client.bulkGet(ids);
-        return res.ok && res.data.items.length === ids.length;
+        return res.ok && res.data.data.length === ids.length;
       },
       { runs: config.runs },
     );

@@ -167,7 +167,7 @@ describe("a write the server confirmed survives a power cut", () => {
       for (let from = 0; from < ids.length; from += 100) {
         const found = await client.bulkGet(ids.slice(from, from + 100));
         expect(found.status).toBe(200);
-        for (const item of found.data.items) present.add(item.id);
+        for (const item of found.data.data) present.add(item.id);
       }
       const missing = ids.filter((id) => !present.has(id));
       expect(missing, `round ${String(round)} lost confirmed writes`).toEqual(

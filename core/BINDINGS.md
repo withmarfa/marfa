@@ -4,7 +4,7 @@ This page is the reference for an app developer who embeds the Rust core through
 
 ## Identify an instance
 
-`marfa_core::instance_description(url)` reads the server's public JSON description without a working copy or a credential. The Swift binding exports the same call and an `InstanceDescription` record with `name`, `version`, optional `release`, `instance_id`, `contract` and `features`.
+`marfa_core::instance_description(url)` reads the server's public JSON description without a working copy or a credential. The Swift binding exports the same call and an `InstanceDescription` record with `name`, `version`, `instance_id`, `contract` and `features`.
 
 The read keeps the address's path prefix, asks for JSON and sends no credential, including one embedded in the URL. It returns the configured display name, or the server's default `Marfa`, and does not invent a name when the answer is malformed. A connection failure, an HTTP refusal, a redirect or a malformed description returns an error. A description can be read from a server on another contract, so a client can identify it before opening a working copy; reading it does not establish contract compatibility or access to any data.
 

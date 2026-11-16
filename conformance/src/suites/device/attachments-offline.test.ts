@@ -311,7 +311,7 @@ describe("an attachment of an item the copy holds", () => {
           edgeEvent("11", "edge.deleted", attachedEdge("first", "one")),
           copyItemEvent(
             "12",
-            "item.deleted",
+            "item.trashed",
             wireItem({ id: "two", type: "core.note", state: "trashed" }),
           ),
         ]),

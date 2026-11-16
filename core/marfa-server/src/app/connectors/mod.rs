@@ -241,28 +241,22 @@ pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
     .await
 }
 
-/// The registration the calling key made.
-fn own(unit: &super::unit::Unit<'_, '_>) -> Result<Registration> {
-    unit.caller.require_connector_key()?;
-    let key = unit
-        .caller
-        .key()
-        .ok_or_else(|| Refusal::internal("a connector's caller holds no key"))?;
-    store::by_key(unit.tx(), &key.id)?.ok_or_else(not_found)
-}
-
-pub async fn heartbeat(app: &App, caller: &Caller) -> Result<Value> {
+pub async fn heartbeat(app: &App, caller: &Caller, id: String) -> Result<Value> {
     app.write(caller, "connector.heartbeat", move |unit| {
-        let id = own(unit)?.id;
+        let registration = find(unit.tx(), &id)?;
+        unit.caller
+            .require_own_connector_key(&registration.key_id)?;
         store::heartbeat(unit.tx(), &id, &unit.at)?;
         Ok(json!({ "last_heartbeat_at": unit.at }))
     })
     .await
 }
 
-pub async fn report_run(app: &App, caller: &Caller, run: Run) -> Result<Value> {
+pub async fn report_run(app: &App, caller: &Caller, id: String, run: Run) -> Result<Value> {
     app.write(caller, "connector.run", move |unit| {
-        let id = own(unit)?.id;
+        let registration = find(unit.tx(), &id)?;
+        unit.caller
+            .require_own_connector_key(&registration.key_id)?;
         let (started_at, finished_at) = run.checked()?;
         let report = store::Run {
             seq: 0,
@@ -449,7 +443,7 @@ pub async fn take_hold(app: &App, caller: &Caller, id: String, request: Take) ->
         store::put_hold(tx, &id, &request.process, &expires_at)?;
         Ok(json!({
             "expires_at": expires_at,
-            "ttl_ms": window.as_millis() as u64,
+            "ttl_seconds": window.as_millis().div_ceil(1000) as u64,
             "renewed": live.is_some(),
         }))
     })

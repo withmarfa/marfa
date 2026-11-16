@@ -792,7 +792,7 @@ describe("the view's items door", () => {
     );
     const r = await blind.listViewItems(id);
     expect(r.status).toBe(403);
-    expect(r.error?.error.code).toBe("edge_permission_denied");
+    expect(r.error?.error.code).toBe("edge_type_not_permitted");
     await expectMatchesSchema("GET", "/views/{id}/items", 403, r.error);
   });
 

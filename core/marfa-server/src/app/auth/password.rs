@@ -213,7 +213,7 @@ mod tests {
                 .await
                 .unwrap_err();
             assert_eq!(refused.code, Code::RateLimited);
-            assert_eq!(refused.details.unwrap()["retry_after"], 1);
+            assert_eq!(refused.details.unwrap()["retry_after_seconds"], 1);
         }
         let owner = passwords.check(Some(&hash), "a good long password".into(), Queue::Owner);
         let checked = tokio::time::timeout(Duration::from_secs(20), owner).await;

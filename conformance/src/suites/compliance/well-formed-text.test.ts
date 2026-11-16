@@ -247,7 +247,7 @@ const doors: Door[] = [
   {
     name: "a tag in an item's metadata",
     method: "PUT",
-    path: (p) => `/items/${p.itemId}/metadata`,
+    path: (p) => `/items/${p.itemId}/tags`,
     ok: 200,
     at: "/tags/1",
     prepare: async () => ({ itemId: (await note()).id }),
@@ -343,7 +343,7 @@ const doors: Door[] = [
       label: `Label ${text}`,
       fields: {},
     }),
-    track: (data) => trackType(ctx, (data.type as { id: string }).id, client),
+    track: (data) => trackType(ctx, (data as { id: string }).id, client),
   },
   {
     name: "a type registration's field name",
@@ -355,7 +355,7 @@ const doors: Door[] = [
       id: `user.wellformed${p.suffix}`,
       fields: { [`title${text}`]: { type: "string" } },
     }),
-    track: (data) => trackType(ctx, (data.type as { id: string }).id, client),
+    track: (data) => trackType(ctx, (data as { id: string }).id, client),
   },
   {
     name: "an edge type registration",
@@ -369,7 +369,7 @@ const doors: Door[] = [
       cardinality: "many-to-many",
       description: `Links ${text}`,
     }),
-    track: (data) => trackEdgeType(ctx, (data.edge_type as { id: string }).id),
+    track: (data) => trackEdgeType(ctx, (data as { id: string }).id),
   },
 ];
 

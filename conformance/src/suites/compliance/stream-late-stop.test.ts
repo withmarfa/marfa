@@ -73,7 +73,7 @@ describe("an event stream opened after the stop has begun", () => {
     () =>
       answerAfterStop(copy, [
         ["edges", "all"],
-        ["copy", "1"],
+        ["copy", "true"],
       ]),
     FRESH_SERVER_TIMEOUT_MS,
   );

@@ -59,15 +59,19 @@ describe("every published door but the open ones refuses a request with no crede
         {
           method: op.method,
           headers: { "Content-Type": "application/json" },
-          body: op.method === "GET" ? undefined : UNPARSEABLE_BODY,
+          body:
+            op.method === "GET" || op.method === "HEAD"
+              ? undefined
+              : UNPARSEABLE_BODY,
         },
       );
       const text = await response.text();
-      let code: unknown;
+      // A HEAD answer has no body, so its refusal is the code in the header.
+      let code: unknown = response.headers.get("x-error-code") ?? undefined;
       try {
         code = (JSON.parse(text) as { error?: { code?: unknown } }).error?.code;
       } catch {
-        code = undefined;
+        // The header stands.
       }
       if (response.status !== 401 || code !== "unauthorized") {
         wrong.push(
@@ -90,7 +94,8 @@ describe("the open doors", () => {
       const response = await fetch(`${apiUrl}${path}`, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: method === "GET" ? undefined : UNPARSEABLE_BODY,
+        body:
+          method === "GET" || method === "HEAD" ? undefined : UNPARSEABLE_BODY,
       });
       await response.body?.cancel();
       expect(response.status, door).not.toBe(401);

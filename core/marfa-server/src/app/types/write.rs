@@ -103,7 +103,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             }
             if catalog.holds(&id) {
                 return Err(Refusal::new(
-                    Code::TypeAlreadyExists,
+                    Code::TypeExists,
                     format!("Type \"{id}\" already exists"),
                 ));
             }

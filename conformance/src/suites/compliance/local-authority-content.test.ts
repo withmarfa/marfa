@@ -27,7 +27,7 @@ beforeAll(async () => {
   annotated = await create("annotated");
   const tagged = await keyed({
     method: "PUT",
-    path: `/items/${annotated}/metadata`,
+    path: `/items/${annotated}/tags`,
     body: { tags: ["annotated-tag"] },
   });
   expect(tagged.status).toBe(200);
@@ -131,7 +131,7 @@ it("refuses every item, edge, tag, search and occurrence door through the privat
     { method: "GET", path: "/items" },
     { method: "GET", path: `/items/${kept}` },
     { method: "GET", path: `/items/${kept}/versions` },
-    { method: "GET", path: `/items/${kept}/metadata` },
+    { method: "GET", path: `/items/${kept}?include=metadata` },
     { method: "GET", path: `/items/${kept}/extensions` },
     { method: "GET", path: `/items/${kept}/edges` },
     { method: "GET", path: `/items/${kept}/backrefs` },
@@ -142,7 +142,7 @@ it("refuses every item, edge, tag, search and occurrence door through the privat
       body: { type: "core.note", ids: [kept] },
     },
     { method: "GET", path: "/edges" },
-    { method: "GET", path: "/metadata/tags" },
+    { method: "GET", path: "/tags" },
     { method: "GET", path: `/items/${annotated}/extensions/${EXTENSION}` },
     { method: "GET", path: "/search?q=kept" },
     {
@@ -367,7 +367,7 @@ it("refuses every edge door through the private socket with 401 and changes noth
 it("refuses metadata and extension writes through the private socket with 401 and changes nothing, where the working key writes", async () => {
   const state = async (): Promise<unknown> => {
     const [metadata, extension] = await Promise.all([
-      keyed({ method: "GET", path: `/items/${annotated}/metadata` }),
+      keyed({ method: "GET", path: `/items/${annotated}?include=metadata` }),
       keyed({
         method: "GET",
         path: `/items/${annotated}/extensions/${EXTENSION}`,
@@ -380,7 +380,7 @@ it("refuses metadata and extension writes through the private socket with 401 an
   const before = await state();
   const replace: Door = {
     method: "PUT",
-    path: `/items/${annotated}/metadata`,
+    path: `/items/${annotated}/tags`,
     body: { tags: ["socket-tag"] },
   };
   const extend: Door = {
@@ -414,7 +414,7 @@ it("refuses metadata and extension writes through the private socket with 401 an
     path: `/items/${annotated}/extensions/${EXTENSION}`,
   });
   expect(gone.status).toBe(200);
-  expect(((await gone.json()) as { data: unknown }).data).toBeNull();
+  expect(((await gone.json()) as { document: unknown }).document).toBeNull();
 });
 
 it("refuses settling a tombstone through the private socket with 401 and changes nothing, where the working key moves it", async () => {

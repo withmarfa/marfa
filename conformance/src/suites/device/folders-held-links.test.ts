@@ -98,7 +98,7 @@ async function seed(
   const elsewhere = (
     item: WireItemOptions,
     event:
-      "item.created" | "item.updated" | "item.state_changed" | "item.deleted",
+      "item.created" | "item.updated" | "item.state_changed" | "item.trashed",
   ) => {
     if (event === "item.created") rows["core.note"]!.push({ item });
     frames.push(
@@ -294,7 +294,7 @@ describe("links held until their target exists", () => {
     expect((await fileAt("Ticket.md")).reason).toContain("more than one item");
 
     one.state = "trashed";
-    elsewhere({ ...one, version: 2 }, "item.deleted");
+    elsewhere({ ...one, version: 2 }, "item.trashed");
     await push();
     await push();
     expect(edges()).toEqual([

@@ -332,7 +332,7 @@ describe("PATCH /keys/{id}", () => {
       { label: "x" },
     );
     expect(unknown.status).toBe(404);
-    expect(unknown.error?.error.code).toBe("api_key_not_found");
+    expect(unknown.error?.error.code).toBe("key_not_found");
 
     const malformed = await client.updateKey("not-an-id", { label: "x" });
     expect(malformed.status).toBe(400);

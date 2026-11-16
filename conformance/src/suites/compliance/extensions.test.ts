@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
+import { MarfaClient, extensionsOf } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
@@ -50,7 +50,7 @@ describe("metadata extensions", () => {
       200,
       r.data,
     );
-    expect(r.data.extensions["test-app"]).toEqual({
+    expect(extensionsOf(r.data)["test-app"]).toEqual({
       score: 42,
       label: "important",
     });
@@ -60,7 +60,7 @@ describe("metadata extensions", () => {
     const r = await client.listItemExtensions(itemId);
     expect(r.ok).toBe(true);
     await expectMatchesSchema("GET", "/items/{id}/extensions", 200, r.data);
-    expect(r.data.extensions["test-app"]).toEqual({
+    expect(extensionsOf(r.data)["test-app"]).toEqual({
       score: 42,
       label: "important",
     });
@@ -78,7 +78,7 @@ describe("metadata extensions", () => {
     expect((r.data as unknown as { namespace: string }).namespace).toBe(
       "test-app",
     );
-    expect(r.data.data).toEqual({ score: 42, label: "important" });
+    expect(r.data.document).toEqual({ score: 42, label: "important" });
   });
 
   it("overwrites extension on second PUT", async () => {
@@ -88,8 +88,8 @@ describe("metadata extensions", () => {
     expect(put.ok).toBe(true);
     const r = await client.getItemExtension(itemId, "test-app");
     expect(r.ok).toBe(true);
-    expect(r.data.data).toEqual({ score: 99 });
-    expect(r.data.data).not.toHaveProperty("label");
+    expect(r.data.document).toEqual({ score: 99 });
+    expect(r.data.document).not.toHaveProperty("label");
   });
 
   it("writes multiple namespaces independently", async () => {
@@ -101,8 +101,8 @@ describe("metadata extensions", () => {
     );
     const r = await client.listItemExtensions(itemId);
     expect(r.ok).toBe(true);
-    expect(r.data.extensions["app-a"]).toEqual({ a: 1 });
-    expect(r.data.extensions["app-b"]).toEqual({ b: 2 });
+    expect(extensionsOf(r.data)["app-a"]).toEqual({ a: 1 });
+    expect(extensionsOf(r.data)["app-b"]).toEqual({ b: 2 });
   });
 
   it("takes extension data of 102400 Unicode characters of compact JSON and refuses one more with 400 validation_error, leaving the namespace as it stood", async () => {
@@ -126,14 +126,14 @@ describe("metadata extensions", () => {
       expect(over.status, label).toBe(400);
       expect(over.error?.error.code, label).toBe("validation_error");
       const unchanged = await client.getItemExtension(itemId, namespace);
-      expect(unchanged.data.data, label).toEqual({ v: "kept" });
+      expect(unchanged.data.document, label).toEqual({ v: "kept" });
 
       const at = await client.setItemExtension(itemId, namespace, {
         v: unit.repeat(limit - overhead),
       });
       expect(at.status, label).toBe(200);
       const read = await client.getItemExtension(itemId, namespace);
-      expect([...(read.data.data as { v: string }).v], label).toHaveLength(
+      expect([...(read.data.document as { v: string }).v], label).toHaveLength(
         limit - overhead,
       );
     }
@@ -152,11 +152,11 @@ describe("metadata extensions", () => {
       200,
       removed.data,
     );
-    expect(removed.data.extensions).not.toHaveProperty("to-delete");
+    expect(extensionsOf(removed.data)).not.toHaveProperty("to-delete");
 
     const r = await client.getItemExtension(itemId, "to-delete");
     expect(r.status).toBe(200);
-    expect(r.data.data).toBeNull();
+    expect(r.data.document).toBeNull();
   });
 
   it("extensions persist on the item's metadata read", async () => {
@@ -164,7 +164,7 @@ describe("metadata extensions", () => {
       persisted: true,
     });
     expect(put.ok).toBe(true);
-    const r = await client.getMetadata(itemId);
+    const r = await client.getItem(itemId);
     expect(r.ok).toBe(true);
     expect(r.data.metadata.extensions?.["persist-test"]).toEqual({
       persisted: true,
@@ -198,7 +198,7 @@ describe("metadata extensions", () => {
     // item, and a key that may read it is answered it.
     const full = await client.setItemExtension(id, unseen, { secret: 2 });
     expect(full.ok).toBe(true);
-    expect(full.data.extensions[unseen]).toEqual({ secret: 2 });
+    expect(extensionsOf(full.data)[unseen]).toEqual({ secret: 2 });
 
     const keyResp = await client.createKey({
       label: "extensions-one-namespace",
@@ -216,9 +216,9 @@ describe("metadata extensions", () => {
 
     const replaced = await narrow.setItemExtension(id, seen, { a: 3 });
     expect(replaced.status).toBe(200);
-    expect(replaced.data.extensions).toEqual({ [seen]: { a: 3 } });
+    expect(extensionsOf(replaced.data)).toEqual({ [seen]: { a: 3 } });
     const listed = await narrow.listItemExtensions(id);
-    expect(listed.data.extensions).toEqual({ [seen]: { a: 3 } });
+    expect(extensionsOf(listed.data)).toEqual({ [seen]: { a: 3 } });
     const item = await narrow.getItem(id);
     expect(item.data.metadata.extensions).toEqual({ [seen]: { a: 3 } });
     const bulk = await narrow.bulkGet([id], ["metadata", "extensions"]);
@@ -227,11 +227,11 @@ describe("metadata extensions", () => {
     expect(JSON.stringify(bulk.data)).not.toContain(unseen);
     const removed = await narrow.deleteItemExtension(id, seen);
     expect(removed.status).toBe(200);
-    expect(removed.data.extensions).toEqual({});
+    expect(extensionsOf(removed.data)).toEqual({});
 
     // Left out of the answers, and left alone on the item.
     const kept = await client.getItemExtension(id, unseen);
-    expect(kept.data.data).toEqual({ secret: 2 });
+    expect(kept.data.document).toEqual({ secret: 2 });
   });
 
   it("refuses a key without reach on the namespace", async () => {
@@ -282,11 +282,11 @@ describe("metadata extensions", () => {
       }
       const listed = await holder.listItemExtensions(itemId);
       expect(listed.status).toBe(200);
-      expect(listed.data.extensions).not.toHaveProperty(namespace);
+      expect(extensionsOf(listed.data)).not.toHaveProperty(namespace);
       const item = await holder.getItem(itemId);
       expect(item.data.metadata.extensions).not.toHaveProperty(namespace);
       const kept = await client.getItemExtension(itemId, namespace);
-      expect(kept.data.data).toEqual({ held: "by the map" });
+      expect(kept.data.document).toEqual({ held: "by the map" });
     }
 
     beforeAll(async () => {
@@ -297,7 +297,7 @@ describe("metadata extensions", () => {
         held: "by the map",
       });
       expect(written.ok, JSON.stringify(written.error)).toBe(true);
-      expect(written.data.extensions[namespace]).toEqual({
+      expect(extensionsOf(written.data)[namespace]).toEqual({
         held: "by the map",
       });
 
@@ -384,7 +384,7 @@ describe("metadata extensions", () => {
         ).toBe(false);
         const listed = await unnamed.listItemExtensions(itemId);
         expect(listed.status).toBe(200);
-        expect(Object.hasOwn(listed.data.extensions, namespace)).toBe(false);
+        expect(Object.hasOwn(extensionsOf(listed.data), namespace)).toBe(false);
         const read = await unnamed.getItemExtension(itemId, namespace);
         expect(read.status).toBe(403);
       });
@@ -463,10 +463,10 @@ describe("metadata extensions", () => {
     );
     const ownRead = await writer.getItemExtension(noteId, ns);
     expect(ownRead.status).toBe(200);
-    expect(ownRead.data.data).toEqual({ a: 1 });
+    expect(ownRead.data.document).toEqual({ a: 1 });
     const ownList = await writer.listItemExtensions(noteId);
     expect(ownList.status).toBe(200);
-    expect(ownList.data.extensions[ns]).toEqual({ a: 1 });
+    expect(extensionsOf(ownList.data)[ns]).toEqual({ a: 1 });
     expect((await writer.deleteItemExtension(noteId, ns)).status).toBe(200);
 
     for (const target of [bookmark.data.item, folder.data.item]) {
@@ -503,7 +503,7 @@ describe("metadata extensions", () => {
       const after = await client.getItem(target.id);
       expect(after.data.item.updated_at).toBe(before.data.item.updated_at);
       const held = await client.listItemExtensions(target.id);
-      expect(held.data.extensions).not.toHaveProperty(ns);
+      expect(extensionsOf(held.data)).not.toHaveProperty(ns);
     }
 
     // The read doors admit a key that may read the folder's type.
@@ -522,7 +522,7 @@ describe("metadata extensions", () => {
     });
     const folderRead = await reader.getItemExtension(folder.data.item.id, ns);
     expect(folderRead.status).toBe(200);
-    expect(folderRead.data.data).toBeNull();
+    expect(folderRead.data.document).toBeNull();
     expect((await reader.listItemExtensions(folder.data.item.id)).status).toBe(
       200,
     );
@@ -556,7 +556,7 @@ describe("metadata extensions", () => {
     // The witness: the read doors admit the key on this item.
     const read = await reader.getItemExtension(noteId, ns);
     expect(read.status).toBe(200);
-    expect(read.data.data).toEqual({ kept: 1 });
+    expect(read.data.document).toEqual({ kept: 1 });
     expect((await reader.listItemExtensions(noteId)).status).toBe(200);
 
     for (const r of [
@@ -567,7 +567,7 @@ describe("metadata extensions", () => {
       expect(r.error?.error.code).toBe("type_not_permitted");
     }
     const after = await client.getItemExtension(noteId, ns);
-    expect(after.data.data).toEqual({ kept: 1 });
+    expect(after.data.document).toEqual({ kept: 1 });
   });
 
   it("refuses a folder's extensions to a key holding write on system.folder, as the item doors refuse the folder", async () => {
@@ -607,6 +607,6 @@ describe("metadata extensions", () => {
     const after = await client.getItem(folderId);
     expect(after.data.item.updated_at).toBe(folder.data.item.updated_at);
     const held = await client.listItemExtensions(folderId);
-    expect(held.data.extensions).not.toHaveProperty(ns);
+    expect(extensionsOf(held.data)).not.toHaveProperty(ns);
   });
 });

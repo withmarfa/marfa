@@ -89,7 +89,7 @@ struct Slice {
 const ITEM_CHANGES: [&str; 6] = [
     "item.created",
     "item.updated",
-    "item.deleted",
+    "item.trashed",
     "item.restored",
     "item.state_changed",
     "metadata.changed",
@@ -2056,7 +2056,7 @@ fn entering_row(
                 return Ok(Entering::outside());
             }
             None => {
-                let read = if kind == "item.deleted" {
+                let read = if kind == "item.trashed" {
                     http.trashed_item(&item.id)?
                 } else {
                     http.item(&item.id)?
@@ -2978,7 +2978,7 @@ mod tests {
         crate::scripted::certified(crate::scripted::json(
             200,
             &serde_json::json!({
-                "items": [{ "id": "a", "type": NOTE, "source": "test", "read_only": read_only }],
+                "data": [{ "id": "a", "type": NOTE, "source": "test", "read_only": read_only }],
                 "metadata": [],
             })
             .to_string(),
@@ -3053,7 +3053,7 @@ mod tests {
         let answer = crate::scripted::certified(crate::scripted::json(
             200,
             &serde_json::json!({
-                "items": [{ "id": "a", "type": NOTE, "source": "told-late", "read_only": true }],
+                "data": [{ "id": "a", "type": NOTE, "source": "told-late", "read_only": true }],
             })
             .to_string(),
         ));

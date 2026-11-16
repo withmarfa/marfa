@@ -692,11 +692,15 @@ async fn a_link_is_minted_fetched_and_refused_when_altered_expired_or_over_the_c
 
     let minted = send(
         &instance.control,
-        get(Method::GET, &format!("/blobs/{hash}/url?ttl=60"), None),
+        get(
+            Method::GET,
+            &format!("/blobs/{hash}/url?ttl_seconds=60"),
+            None,
+        ),
     )
     .await;
     assert_eq!(minted.status, StatusCode::OK);
-    assert_eq!(minted.json()["expires_in"], 60);
+    assert_eq!(minted.json()["ttl_seconds"], 60);
     let url = minted.json()["url"].as_str().unwrap().to_string();
     let mut path = url[url.find("/blobs/").unwrap()..].to_string();
 
@@ -718,12 +722,12 @@ async fn a_link_is_minted_fetched_and_refused_when_altered_expired_or_over_the_c
         &instance.control,
         get(
             Method::GET,
-            &format!("/blobs/{hash}/url?ttl=99999999"),
+            &format!("/blobs/{hash}/url?ttl_seconds=99999999"),
             None,
         ),
     )
     .await;
-    assert_eq!(capped.json()["expires_in"], 604_800);
+    assert_eq!(capped.json()["ttl_seconds"], 604_800);
 
     instance.app.clock.advance(61_000).unwrap();
     let expired = send(&instance.control, get(Method::GET, &path, None)).await;

@@ -1981,7 +1981,7 @@ async fn the_keys_tool_lists_only_the_keys_the_credential_reaches() {
             json!({ "id": beyond_id }),
         )
         .await;
-    assert_eq!(refused.code(), "api_key_not_found", "{}", refused.value);
+    assert_eq!(refused.code(), "key_not_found", "{}", refused.value);
     let wider = instance
         .tool_at(
             ADMIN,

@@ -39,7 +39,7 @@ fn to_entry_with_code(error: &str, typed: &str) -> Answer {
 
 fn too_many(wait_ms: i64) -> Answer {
     let seconds = (wait_ms + 999) / 1_000;
-    to_entry(&format!("too_many_attempts&retry_after={seconds}"))
+    to_entry(&format!("too_many_attempts&retry_after_seconds={seconds}"))
 }
 
 fn blocked(lookup: Lookup, typed: &str) -> Answer {

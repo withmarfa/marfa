@@ -211,13 +211,13 @@ impl Instance {
     /// Sent as the private local command.
     async fn put_local(&self, bytes: &[u8]) -> Reply {
         let body = Body::from(bytes.to_vec());
-        send(&self.control, request(Method::PUT, "/owner/picture", body)).await
+        send(&self.control, request(Method::PUT, "/owner/avatar", body)).await
     }
 
     async fn served(&self) -> Reply {
         send(
             &self.control,
-            request(Method::GET, "/owner/picture", Body::empty()),
+            request(Method::GET, "/owner/avatar", Body::empty()),
         )
         .await
     }
@@ -248,7 +248,7 @@ impl Instance {
     }
 
     async fn put_with_key(&self, key: &str, bytes: &[u8]) -> Reply {
-        let mut built = request(Method::PUT, "/profile/picture", Body::from(bytes.to_vec()));
+        let mut built = request(Method::PUT, "/profile/avatar", Body::from(bytes.to_vec()));
         built.headers_mut().insert(
             header::AUTHORIZATION,
             format!("Bearer {key}").parse().unwrap(),
@@ -276,7 +276,7 @@ async fn a_picture_is_kept_served_replaced_and_removed() {
     let first = png(1);
     let stored = instance.put_local(&first).await;
     assert_eq!(stored.status, StatusCode::OK);
-    let address = format!("{ORIGIN}/owner/picture");
+    let address = format!("{ORIGIN}/owner/avatar");
     assert_eq!(stored.json()["avatar"], address.as_str());
     assert_eq!(instance.owner().await["avatar"], address.as_str());
 
@@ -372,7 +372,7 @@ async fn a_body_that_stops_before_its_end_changes_nothing() {
     ]));
     let reply = send(
         &instance.control,
-        request(Method::PUT, "/owner/picture", Body::new(dropped)),
+        request(Method::PUT, "/owner/avatar", Body::new(dropped)),
     )
     .await;
     assert!(!reply.status.is_success(), "{}", reply.status);
@@ -391,12 +391,12 @@ async fn a_body_past_the_limit_is_refused_before_its_end_arrives() {
     let endless = Frames((0..64).map(|_| Ok(vec![0u8; 64 * 1024])).collect());
     let reply = send(
         &instance.control,
-        request(Method::PUT, "/owner/picture", Body::new(endless)),
+        request(Method::PUT, "/owner/avatar", Body::new(endless)),
     )
     .await;
     assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
 
-    let mut declared = request(Method::PUT, "/owner/picture", Body::empty());
+    let mut declared = request(Method::PUT, "/owner/avatar", Body::empty());
     declared.headers_mut().insert(
         header::CONTENT_LENGTH,
         (LIMIT + 1).to_string().parse().unwrap(),
@@ -445,7 +445,7 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
     let cookie = instance.cookie().await;
     let kept = png(9);
     let signed_in = |bytes: &[u8]| {
-        let mut built = request(Method::PUT, "/owner/picture", Body::from(bytes.to_vec()));
+        let mut built = request(Method::PUT, "/owner/avatar", Body::from(bytes.to_vec()));
         built
             .headers_mut()
             .insert(header::COOKIE, cookie.parse().unwrap());
@@ -463,7 +463,7 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
 
     let writer = instance.key(json!({ "avatar": "write" })).await;
     let over_http = send(&instance.public, {
-        let mut built = request(Method::GET, "/owner/picture", Body::empty());
+        let mut built = request(Method::GET, "/owner/avatar", Body::empty());
         built.headers_mut().insert(
             header::AUTHORIZATION,
             format!("Bearer {writer}").parse().unwrap(),
@@ -495,7 +495,10 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
     assert_eq!(instance.served().await.bytes, kept);
     let reply = instance.put_with_key(&writer, &next).await;
     assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.json(), json!({ "ok": true }));
+    assert_eq!(
+        reply.json(),
+        json!({ "avatar": format!("{ORIGIN}/owner/avatar") })
+    );
     assert_eq!(instance.served().await.bytes, next);
 
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
@@ -545,7 +548,10 @@ async fn the_profile_door_removes_the_picture_and_changes_the_name_in_one_step()
     )
     .await;
     assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.json(), json!({ "ok": true }));
+    let answered = reply.json();
+    assert_eq!(answered["name"], "Changed");
+    assert!(answered["avatar"].is_null());
+    assert!(answered.get("ok").is_none());
     let after = instance.owner().await;
     assert_eq!(after["name"], "Changed");
     assert!(after["avatar"].is_null());
@@ -558,7 +564,7 @@ async fn a_validator_that_still_matches_gets_304_and_a_stale_one_gets_the_pictur
     let file = png(11);
     assert_eq!(instance.put_local(&file).await.status, StatusCode::OK);
     let conditional = |tag: &str| {
-        let mut built = request(Method::GET, "/owner/picture", Body::empty());
+        let mut built = request(Method::GET, "/owner/avatar", Body::empty());
         built
             .headers_mut()
             .insert(header::IF_NONE_MATCH, tag.parse().unwrap());

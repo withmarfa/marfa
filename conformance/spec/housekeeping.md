@@ -32,7 +32,7 @@ The server registers the following jobs, each run at the interval in the table. 
 
 ### `housekeeping/list-jobs`
 
-When a caller authorized by `instance.read` or local authority sends `GET /housekeeping`, the server MUST answer with every housekeeping job it runs, each with its `name`, `interval_ms`, `next_run_at`, `running_since`, `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.
+When a caller authorized by `instance.read` or local authority sends `GET /housekeeping`, the server MUST answer with every housekeeping job it runs, each with its `name`, `interval_seconds`, `next_run_at`, `running_since`, `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.
 
 **Reason:** what runs, when it is next due and what its last run did are answered in one place.
 
@@ -82,7 +82,7 @@ Where the condition that `housekeeping/switched-heartbeat`, `housekeeping/switch
 
 ### `housekeeping/last-outcome`
 
-The server MUST answer a job's `last_outcome` as `null` until a run of it has finished, and as `ok`, `error` or `held` after.
+The server MUST answer a job's `last_outcome` as `null` until a run of it has finished, and as `succeeded`, `failed` or `held` after.
 
 **Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
 
@@ -116,7 +116,7 @@ When a run finishes, the server MUST answer the job's `running_since` as `null`.
 
 ### `housekeeping/next-run-after-run`
 
-When a run finishes, the server MUST hold the job's `next_run_at` later than the run's start and no later than one `interval_ms` after its finish.
+When a run finishes, the server MUST hold the job's `next_run_at` later than the run's start and no later than one `interval_seconds` after its finish.
 
 **Reason:** a run ahead of schedule leaves the schedule where it was, and a run on schedule sets the next one.
 
@@ -298,13 +298,7 @@ How long the server keeps a kind of record is a stored setting, so `PUT /config`
 
 ### `housekeeping/retention-days-range`
 
-When `PUT /config` names `audit_retention_days`, `trash_retention_days`, `inbound_handled_retention_days` or `inbound_pending_retention_days` as anything but an integer from 0 through 36500, the server MUST answer `400 validation_error`.
-
-**Tests:** `compliance/housekeeping.test.ts › refuses a retention beyond its range and keeps the stored one`.
-
-### `housekeeping/retention-hours-range`
-
-When `PUT /config` names `event_log_retention_hours` as anything but an integer from 0 through 876000, the server MUST answer `400 validation_error`.
+When `PUT /config` names `audit_retention_days`, `trash_retention_days`, `event_log_retention_days`, `inbound_handled_retention_days` or `inbound_pending_retention_days` as anything but an integer from 0 through 36500, the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/housekeeping.test.ts › refuses a retention beyond its range and keeps the stored one`.
 
@@ -344,7 +338,7 @@ When a run of `trash-purge` cannot purge some of the items it selected, the serv
 
 ### `housekeeping/retention-maximum-runs`
 
-Where a retention `PUT /config` sets is at the largest value it accepts, the server MUST finish each cleanup job that reads that retention with `last_outcome` `ok`.
+Where a retention `PUT /config` sets is at the largest value it accepts, the server MUST finish each cleanup job that reads that retention with `last_outcome` `succeeded`.
 
 **Reason:** the largest window must still give a valid cutoff date.
 
@@ -352,13 +346,13 @@ Where a retention `PUT /config` sets is at the largest value it accepts, the ser
 
 ### `housekeeping/retention-setting-maximum-runs`
 
-Where a retention setting is at the largest value it accepts, the server MUST finish each cleanup job that reads that setting with `last_outcome` `ok`.
+Where a retention setting is at the largest value it accepts, the server MUST finish each cleanup job that reads that setting with `last_outcome` `succeeded`.
 
-**Tests:** `compliance/housekeeping-settings.test.ts › finishes each cleanup job that reads a retention setting at the largest value with last_outcome ok`, `compliance/credential-cleanup.test.ts › finishes the credential clean-up with the retention settings at the largest value`.
+**Tests:** `compliance/housekeeping-settings.test.ts › finishes each cleanup job that reads a retention setting at the largest value with last_outcome succeeded`, `compliance/credential-cleanup.test.ts › finishes the credential clean-up with the retention settings at the largest value`.
 
 ### `housekeeping/retention-setting-days-range`
 
-While `MARFA_TEST_HOOKS` is true, if `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS` or `MARFA_GRANT_INACTIVITY_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
+While `MARFA_TEST_HOOKS` is true, if `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_EVENT_LOG_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS` or `MARFA_GRANT_INACTIVITY_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Reason:** the variables seed the stored settings of a server with test hooks (`instance/settings-seed`). A server without test hooks ignores them and logs a warning that names the stored setting (`instance/unknown-setting-no-ignored-name`), so it neither refuses nor applies a value.
 
@@ -366,7 +360,7 @@ While `MARFA_TEST_HOOKS` is true, if `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_
 
 ### `housekeeping/retention-setting-hours-range`
 
-While `MARFA_TEST_HOOKS` is true, if `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA_UNAPPROVED_APP_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
+While `MARFA_TEST_HOOKS` is true, if `MARFA_UNAPPROVED_APP_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Reason:** as for `housekeeping/retention-setting-days-range`.
 
@@ -374,7 +368,7 @@ While `MARFA_TEST_HOOKS` is true, if `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA
 
 ### `housekeeping/unreadable-setting-deletes-nothing`
 
-If the stored value of a setting that decides what a housekeeping job deletes is outside the values that setting accepts, then the server MUST end that job's run with `outcome` `error` without deleting anything the setting decides.
+If the stored value of a setting that decides what a housekeeping job deletes is outside the values that setting accepts, then the server MUST end that job's run with `outcome` `failed` without deleting anything the setting decides.
 
 **Reason:** a hand edit or a release that narrows a setting's bounds can leave a value the server cannot read, and a run that fell back to the default could delete what the stored value keeps, such as items in the bin under a longer `trash_retention_days`. A setting with no stored value still takes its default.
 
@@ -614,9 +608,9 @@ When the `feed-expiry` job moves an item to the bin, the server MUST keep it the
 
 ### `housekeeping/feed-expiry-announced`
 
-When the `feed-expiry` job moves an item to the bin, the server MUST announce it as `item.deleted` on the event stream.
+When the `feed-expiry` job moves an item to the bin, the server MUST announce it as `item.trashed` on the event stream.
 
-**Tests:** `compliance/housekeeping-feed-expiry.test.ts › announces item.deleted for an expired item`.
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › announces item.trashed for an expired item`.
 
 ### `housekeeping/feed-expiry-audited`
 
@@ -660,7 +654,7 @@ When a run of the `feed-expiry` job finishes, the server MUST report in its `res
 
 The server MUST NOT shorten how long the event log keeps an event because of a type's `retention_policy`.
 
-**Reason:** the event log keeps its own retention (`event_log_retention_hours`), which a device that catches up depends on.
+**Reason:** the event log keeps its own retention (`event_log_retention_days`), which a device that catches up depends on.
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › is the event log's own, whatever window a type names`.
 
@@ -682,9 +676,9 @@ When the server starts, the server MUST clear `running_since` from every run the
 
 ### `housekeeping/deadline-recorded`
 
-If a run outlives its deadline, then the server MUST record the run with `last_outcome` `error` and a `last_error` saying it did not finish in time.
+If a run outlives its deadline, then the server MUST record the run with `last_outcome` `failed` and a `last_error` saying it did not finish in time.
 
-**Tests:** `compliance/housekeeping-restart.test.ts › is recorded with last_outcome error and a last_error saying it did not finish in time`.
+**Tests:** `compliance/housekeeping-restart.test.ts › is recorded with last_outcome failed and a last_error saying it did not finish in time`.
 
 ### `housekeeping/deadline-frees-job`
 

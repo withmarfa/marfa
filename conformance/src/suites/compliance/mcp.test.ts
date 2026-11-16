@@ -1704,7 +1704,7 @@ describe("a tool call keeps the rules of the API operation it makes", () => {
         await callTool(tools, "marfa_revoke_key", { id: target!.id }),
       );
       expect(refused.code).toBe(direct.error.code);
-      expect(refused.code).toBe("api_key_not_found");
+      expect(refused.code).toBe("key_not_found");
       expect(refused.message).toBe(direct.error.message);
       // The witness: the key is there, and the management credential may revoke it.
       expect((await client.revokeKey(target!.id)).ok).toBe(true);

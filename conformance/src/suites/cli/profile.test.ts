@@ -47,7 +47,7 @@ it("changes owner through the private socket and profile through its credential"
   expect(refused.envelope.error.message).toContain("--socket PATH");
   expect(
     await delegated.json(["profile", "update", "--name", "CLI profile"]),
-  ).toEqual({ ok: true });
+  ).toMatchObject({ name: "CLI profile" });
   expect((await local.json<{ name: string }>(["owner", "show"])).name).toBe(
     "CLI profile",
   );
@@ -70,7 +70,7 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
       "--avatar",
       file,
     ]);
-    expect(pictured.avatar).toMatch(/\/owner\/picture$/);
+    expect(pictured.avatar).toMatch(/\/owner\/avatar$/);
     expect((await owner()).avatar).toBe(pictured.avatar);
     const fetched = join(dir, "fetched.png");
     await local.json(["owner", "picture", "--output", fetched]);
@@ -113,14 +113,14 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
     await writeFile(second, replaced);
     expect(
       await delegated.json(["profile", "update", "--avatar", second]),
-    ).toEqual({ ok: true });
+    ).toMatchObject({ avatar: expect.any(String) });
     const swapped = join(dir, "swapped.png");
     await local.json(["owner", "picture", "--output", swapped]);
     expect((await readFile(swapped)).equals(replaced)).toBe(true);
 
     expect(
       await delegated.json(["profile", "update", "--clear-avatar"]),
-    ).toEqual({ ok: true });
+    ).toMatchObject({ avatar: null });
     expect((await owner()).avatar).toBeNull();
     const gone = await local.refused([
       "owner",

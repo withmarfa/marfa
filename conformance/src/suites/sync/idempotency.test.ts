@@ -284,7 +284,7 @@ describe("idempotency keys", () => {
     // repeat announced.
     expect(
       frames(run.events, run.itemId).filter((name) => name.startsWith("item.")),
-    ).toEqual(["item.created", "item.updated", "item.deleted"]);
+    ).toEqual(["item.created", "item.updated", "item.trashed"]);
     expect(frames(run.events, run.edgeId)).toEqual(["edge.created"]);
   });
 

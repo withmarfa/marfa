@@ -79,7 +79,7 @@ async function departing(
           .map((r, n) =>
             copyItemEvent(
               String(n + 2),
-              state === "trashed" ? "item.deleted" : "item.state_changed",
+              state === "trashed" ? "item.trashed" : "item.state_changed",
               wireItem({ ...r.item, state }),
             ),
           ),
@@ -88,7 +88,7 @@ async function departing(
   });
   scriptWrites(made.server, {
     edges: [
-      refusal(403, "edge_permission_denied", "the key cannot place this item"),
+      refusal(403, "edge_type_not_permitted", "the key cannot place this item"),
     ],
   });
   made.server.copyAnswer(
@@ -707,7 +707,7 @@ it.each(["create", "edit"] as const)(
           ? answers.updated(wireItem(row(0).item))
           : refusal(404, "item_not_found", "no item"),
       ],
-      edges: [refusal(403, "edge_permission_denied", "no placement")],
+      edges: [refusal(403, "edge_type_not_permitted", "no placement")],
     });
     harness.server.copyAnswer(
       "GET",

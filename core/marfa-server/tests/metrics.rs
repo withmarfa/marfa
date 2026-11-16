@@ -131,7 +131,7 @@ async fn a_reader_is_told_what_the_instance_holds_as_it_stands() {
             "cpu_user_seconds",
             "memory_rss_bytes",
             "memory_rss_peak_bytes",
-            "release"
+            "version"
         ]
     );
     assert_eq!(

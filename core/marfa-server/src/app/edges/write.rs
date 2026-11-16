@@ -143,6 +143,11 @@ fn at_path(path: &str, message: String) -> Refusal {
         .with_detail("errors", json!([{ "path": path, "message": message }]))
 }
 
+fn invalid_property(path: &str, message: String) -> Refusal {
+    Refusal::new(Code::InvalidProperties, message.clone())
+        .with_detail("errors", json!([{ "path": path, "message": message }]))
+}
+
 /// An unregistered type's parent and roles are not known, so only a list open to every type takes it.
 fn admitted(catalog: &Catalog, constraints: &[String], type_id: &str) -> bool {
     match lineage_of(catalog.types.rows(), type_id) {
@@ -418,9 +423,10 @@ impl<'c> Writing<'_, '_, 'c> {
         let parts =
             |held: &str| marfa_rules::edges::Graph::on_delete(&store, held) == OnDelete::WithHosts;
         if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
-            return Err(constraint(edges::refused_parts_cycle(
-                &kind.id, &from.id, to_id,
-            )));
+            return Err(refused(
+                edges::refused_parts_cycle(&kind.id, &from.id, to_id),
+                Code::EdgeCycle,
+            ));
         }
         Ok(())
     }
@@ -664,9 +670,9 @@ impl<'c> Writing<'_, '_, 'c> {
         let parts =
             |held: &str| marfa_rules::edges::Graph::on_delete(&store, held) == OnDelete::WithHosts;
         if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
-            return Err(Refusal::new(
-                Code::EdgeConstraintViolation,
-                edges::refused_parts_cycle(&kind.id, &from.id, &to.id).message,
+            return Err(refused(
+                edges::refused_parts_cycle(&kind.id, &from.id, &to.id),
+                Code::EdgeCycle,
             ));
         }
         Ok(())
@@ -886,7 +892,7 @@ pub(super) fn repeat(held: &Edge, from: &str, to: &str, edge_type: &str) -> Resu
 
 fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
     if let Some(other) = properties.keys().find(|name| *name != FOLDER_PATH) {
-        return Err(at_path(
+        return Err(invalid_property(
             &format!("properties.{other}"),
             format!("Edge \"{FOLDER_EDGE}\" declares no property \"{other}\""),
         ));
@@ -895,7 +901,7 @@ fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
     let text = properties.get(FOLDER_PATH).and_then(Value::as_str);
     let Some(text) = text.filter(|text| (1..=MAX_FOLDER_PATH).contains(&text.chars().count()))
     else {
-        return Err(at_path(
+        return Err(invalid_property(
             &path,
             format!(
                 "Edge \"{FOLDER_EDGE}\" takes a \"{FOLDER_PATH}\" of 1 to {MAX_FOLDER_PATH} characters"
@@ -903,7 +909,7 @@ fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
         ));
     };
     if edges::depth_inside_folder(text).is_none_or(|depth| depth == 0) {
-        return Err(at_path(
+        return Err(invalid_property(
             &path,
             format!(
                 "\"{text}\" is not a file inside the folder: write a path relative to its root, with \"/\" between names and no \"..\" name"

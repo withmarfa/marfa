@@ -58,10 +58,14 @@ describe("the credential clean-up", () => {
       const removed = await startDeviceFlow(server, ["core.note:read"]);
       // Past the ten minutes a code lives, by less than ten more.
       await server.advanceClock(19 * MINUTE_MS);
-      expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+      expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+        "succeeded",
+      );
       expect((await kept.poll()).body.error).toBe("expired_token");
       await server.advanceClock(2 * MINUTE_MS);
-      expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+      expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+        "succeeded",
+      );
       expect((await removed.poll()).body.error).toBe("invalid_grant");
     },
     4 * FRESH_SERVER_TIMEOUT_MS,
@@ -80,7 +84,7 @@ describe("the credential clean-up", () => {
       for (const name of ALWAYS_LISTED) expect(listed, name).toContain(name);
 
       const run = await runJob(server, "credential-cleanup");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       expect(run.result).toMatchObject({
         deleted: expect.any(Number),
         retired: expect.any(Number),
@@ -110,9 +114,9 @@ describe("the credential clean-up", () => {
         MARFA_UNAPPROVED_APP_RETENTION_HOURS: "876000",
       });
       const run = await runJob(server, "credential-cleanup");
-      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(run.outcome, String(run.error)).toBe("succeeded");
       expect((await jobs(server))["credential-cleanup"]?.last_outcome).toBe(
-        "ok",
+        "succeeded",
       );
     },
     4 * FRESH_SERVER_TIMEOUT_MS,

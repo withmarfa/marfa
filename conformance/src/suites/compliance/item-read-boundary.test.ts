@@ -101,7 +101,7 @@ async function makePrivate(
     ).status,
   ).toBe(200);
   expect(
-    (await call("PUT", `/items/${item.id}/metadata`, { tags: ["private-tag"] }))
+    (await call("PUT", `/items/${item.id}/tags`, { tags: ["private-tag"] }))
       .status,
   ).toBe(200);
 }
@@ -113,7 +113,7 @@ it("keeps item and metadata reads in the state that authorized them during a ret
       surface === "item"
         ? `/items/${item.id}`
         : surface === "metadata"
-          ? `/items/${item.id}/metadata`
+          ? `/items/${item.id}?include=metadata`
           : surface === "bulk"
             ? "/items/bulk-get"
             : `/items?include=metadata,edges,extensions${surface === "feed" ? "&tier=feed" : ""}`;

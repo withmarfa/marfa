@@ -276,7 +276,7 @@ If a `source` line of an archive names a `mark` that `types/icon-name` refuses, 
 
 ### `archive/restore-sources-refused`
 
-If a `source` line of an archive is not an object, holds a `source` code that `keys-and-oauth/source-code-length` refuses, as it stands or once `archive/restore-sources-app` has mapped it, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /source` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
+If a `source` line of an archive is not an object, holds a `source` code that `keys-and-oauth/source-code-length` refuses, as it stands or once `archive/restore-sources-app` has mapped it, holds neither a `name` nor a `mark`, holds a `name` that `PATCH /sources/{source}` could not store as it stands, or holds a `mark` that is not a string, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
 
 **Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
 
@@ -1400,7 +1400,7 @@ While a restore runs, from when it begins to place the archive's files until it 
 
 ### `archive/restore-writers-retry-after`
 
-While a restore runs, when the server answers a write `503 write_contention` with `details.reason` `restore_running`, the server MUST carry a `Retry-After` of 5 seconds, and the same number in `details.retry_after`.
+While a restore runs, when the server answers a write `503 write_contention` with `details.reason` `restore_running`, the server MUST carry a `Retry-After` of 5 seconds, and the same number in `details.retry_after_seconds`.
 
 **Reason:** the server cannot tell how long a restore will run, so it states no estimate. Each refusal is answered at once, so five seconds costs a client about ten of them across a restore of 250,000 items, and a restore of a few thousand items ends within one.
 

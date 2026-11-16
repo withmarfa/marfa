@@ -294,7 +294,7 @@ describe("the source filter on the event stream", () => {
       {
         query: [
           ["edges", "all"],
-          ["copy", "1"],
+          ["copy", "true"],
         ],
       },
       async (stream) => {

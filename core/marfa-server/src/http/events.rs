@@ -26,9 +26,9 @@ use crate::app::access::reach::Judge;
 use crate::app::events::{self, Filter, Opening};
 use crate::app::faults::HOLD_STREAM_OPEN;
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::settings::registry::SSE_MAX_VIEWERS;
+use crate::settings::registry::EVENT_STREAM_MAX_VIEWERS;
 
-const DECLARED: [&str; 2] = ["type", "edges"];
+const DECLARED: [&str; 3] = ["type", "edges", "copy"];
 const COPY_DECLARED: [&str; 2] = ["edges", "copy"];
 
 struct Feed(mpsc::Receiver<Bytes>);
@@ -125,9 +125,6 @@ fn copy_resume(uri: &Uri, headers: &HeaderMap) -> Result<Option<(i64, String)>> 
     if once(&pairs, "edges") != Some("all") {
         return Err(invalid_field("edges", "A copy stream takes edges=all."));
     }
-    if once(&pairs, "copy") != Some("1") {
-        return Err(invalid_field("copy", "copy is 1."));
-    }
     let cursor = match headers.contains_key("last-event-id") {
         false => None,
         true => Some(cursor_of(headers)?.ok_or_else(malformed)?),
@@ -184,7 +181,7 @@ async fn copy(
     app.faults.hold(HOLD_STREAM_OPEN, None).await;
     let viewer = app
         .viewers
-        .admit(app.settings.live().get(SSE_MAX_VIEWERS))
+        .admit(app.settings.live().get(EVENT_STREAM_MAX_VIEWERS))
         .ok_or_else(at_capacity)?;
     let (resume, reach) = match resume {
         Some((cursor, reach)) => (Some(cursor), Some(reach)),
@@ -240,14 +237,14 @@ pub async fn open(
     uri: Uri,
     headers: HeaderMap,
 ) -> Answer {
-    if query::pairs(&uri).is_ok_and(|pairs| pairs.iter().any(|(name, _)| name == "copy")) {
+    if query::flag(&uri, "copy")? == Some(true) {
         return copy(app, caller, hangup, uri, headers).await;
     }
     caller.require_reach()?;
     app.faults.hold(HOLD_STREAM_OPEN, None).await;
     if headers.contains_key(conditional::REACH_HEADER) {
         return Err(Refusal::validation(
-            "X-Marfa-Reach belongs to the copy stream, GET /events?edges=all&copy=1.",
+            "X-Marfa-Reach belongs to the copy stream, GET /events?edges=all&copy=true.",
         )
         .into());
     }
@@ -262,7 +259,7 @@ pub async fn open(
     let resume = cursor_of(&headers)?;
     let viewer = app
         .viewers
-        .admit(app.settings.live().get(SSE_MAX_VIEWERS))
+        .admit(app.settings.live().get(EVENT_STREAM_MAX_VIEWERS))
         .ok_or_else(at_capacity)?;
     let feed = events::open(
         app,

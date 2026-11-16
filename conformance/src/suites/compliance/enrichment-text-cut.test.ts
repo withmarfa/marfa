@@ -62,7 +62,7 @@ describe("the enrichment sweep", () => {
 
     const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
-    expect(run.data.outcome).toBe("ok");
+    expect(run.data.outcome).toBe("succeeded");
 
     const first = await client.getItem(kept);
     expect(first.data.item.properties.extracted_text).toBe(

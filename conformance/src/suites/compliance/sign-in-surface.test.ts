@@ -310,7 +310,7 @@ describe("the sign-in surface", () => {
     expect(form.headers.get("set-cookie")).toBeNull();
     // The wait is the one the address limit's own refusal carries, and no
     // longer than its fifteen minutes.
-    const wait = Number(refusal.searchParams.get("retry_after"));
+    const wait = Number(refusal.searchParams.get("retry_after_seconds"));
     expect(Number.isInteger(wait)).toBe(true);
     expect(wait).toBeGreaterThan(0);
     expect(wait).toBeLessThanOrEqual(15 * 60);
@@ -340,7 +340,9 @@ describe("the sign-in surface", () => {
     }
     const sweepRefusal = new URL(await enter("ZZ999999", sweeper), origin);
     expect(sweepRefusal.searchParams.get("error")).toBe("too_many_attempts");
-    const deviceWait = Number(sweepRefusal.searchParams.get("retry_after"));
+    const deviceWait = Number(
+      sweepRefusal.searchParams.get("retry_after_seconds"),
+    );
     expect(deviceWait).toBeGreaterThan(0);
     expect(deviceWait).toBeLessThanOrEqual(15 * 60);
     expect(await enter("ZZ999998", "198.51.100.30")).toContain(
@@ -495,7 +497,7 @@ describe("the pages a person reads at sign-in", () => {
     );
     const location = refused.headers.get("location") ?? "";
     const seconds = Number(
-      new URL(location, origin).searchParams.get("retry_after"),
+      new URL(location, origin).searchParams.get("retry_after_seconds"),
     );
     const minutes = Math.ceil(seconds / 60);
     const real = visibleText(
@@ -521,7 +523,7 @@ describe("the pages a person reads at sign-in", () => {
       const text = visibleText(
         await (
           await fetch(
-            `${server!.apiUrl}/auth/sign-in?error=too_many_attempts&retry_after=${retryAfter}`,
+            `${server!.apiUrl}/auth/sign-in?error=too_many_attempts&retry_after_seconds=${retryAfter}`,
           )
         ).text(),
       );
@@ -548,7 +550,7 @@ describe("the pages a person reads at sign-in", () => {
       const text = visibleText(
         await (
           await fetch(
-            `${server!.apiUrl}/auth/device?error=too_many_attempts&retry_after=${retryAfter}`,
+            `${server!.apiUrl}/auth/device?error=too_many_attempts&retry_after_seconds=${retryAfter}`,
           )
         ).text(),
       );

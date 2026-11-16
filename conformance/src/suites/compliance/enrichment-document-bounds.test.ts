@@ -76,7 +76,7 @@ async function documentItem(bytes: Buffer, title: string): Promise<string> {
 async function sweep() {
   const run = await operator.runHousekeeping("enrichment-sweep");
   expect(run.status).toBe(200);
-  expect(run.data.outcome).toBe("ok");
+  expect(run.data.outcome).toBe("succeeded");
   return run.data.result;
 }
 

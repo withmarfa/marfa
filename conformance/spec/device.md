@@ -1182,7 +1182,7 @@ Where a slice's query has a filter, when an item event that carries no metadata 
 
 ### `device/catch-up-unknown-tags-unread`
 
-Where a slice's query has a filter, when an `item.deleted`, `item.restored` or `item.state_changed` event that carries no metadata names an item the copy does not hold, and the event leaves the item in a state the copy does not hold, or the query's member states are `active` and `archived` and its filter reads none of `state`, `updated_at` and `version`, a device MUST NOT read the item.
+Where a slice's query has a filter, when an `item.trashed`, `item.restored` or `item.state_changed` event that carries no metadata names an item the copy does not hold, and the event leaves the item in a state the copy does not hold, or the query's member states are `active` and `archived` and its filter reads none of `state`, `updated_at` and `version`, a device MUST NOT read the item.
 
 **Reason:** the copy held every item its query took before the event, and a move between states changes only those three fields of what a filter reads, so an item the copy did not hold in any state it could have moved from cannot enter. A read for each would cost one request per item, thousands when a bin fills elsewhere.
 
@@ -4864,7 +4864,7 @@ If an app declares a field, or a member of a list's entries (`items_fields`), th
 
 ### `device/declared-format-kind`
 
-Where an app declares a `string` field, or a member of a list's entries, whose `format` is `url`, `email`, `datetime`, `date` or `thumbnail`, or an `array` field of `string` elements whose `format` is `url`, `email`, `datetime` or `date`, a device MUST hold the field as one of that type, as the server does (`types/format-collapses`).
+Where an app declares a `string` field, or a member of a list's entries, whose `format` is `url`, `email`, `date` or `thumbnail`, or an `array` field of `string` elements whose `format` is `url`, `email` or `date`, a device MUST hold the field as one of that type, as the server does (`types/format-collapses`).
 
 **Reason:** a device that read the declared `type` alone would take a member the server refuses, and keep a `url` untrimmed that the server trims (`types/url-stored`).
 
@@ -6278,7 +6278,7 @@ If a caller pins an item the server holds in the bin, of a type the key may not 
 
 When the read of an item after the server answers or refuses a write to it is answered `404` and the server's bin holds the item, a device MUST hold the item in the bin, as the bin answers it, where the copy's slice or a pin takes it.
 
-**Reason:** a read by id answers an item in the bin as one that is gone (`items/get-missing`), so the device asks the bin which it is. A slice holds its items in the bin as in any other state, and a copy that has already taken the item's `item.deleted` event, or that trashed the item itself, gets no later event that brings the item back.
+**Reason:** a read by id answers an item in the bin as one that is gone (`items/get-missing`), so the device asks the bin which it is. A slice holds its items in the bin as in any other state, and a copy that has already taken the item's `item.trashed` event, or that trashed the item itself, gets no later event that brings the item back.
 
 **Tests:** `device/bin-live.test.ts › keeps an item another client trashed when the read after its refused edit finds it gone by id`, `› keeps an item it trashed itself, held only by its pin, at the server's version once the delete is answered`.
 

@@ -61,6 +61,9 @@ function send(
 }
 
 async function codeOf(res: Response): Promise<string | undefined> {
+  // A HEAD answer has no body, so its refusal is the code in the header.
+  if (res.headers.get("x-error-code") !== null)
+    return res.headers.get("x-error-code") ?? undefined;
   return ((await res.clone().json()) as { error?: { code?: string } }).error
     ?.code;
 }
@@ -233,7 +236,10 @@ describe("a request that names a contract", () => {
       for (const credential of [true, false]) {
         const res = await send(path, {
           method: operation.method,
-          body: operation.method === "GET" ? undefined : {},
+          body:
+            operation.method === "GET" || operation.method === "HEAD"
+              ? undefined
+              : {},
           headers: { [HEADER]: other },
           credential,
         });

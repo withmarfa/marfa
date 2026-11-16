@@ -66,7 +66,7 @@ function hydrations(started: Harness): number {
     (request) =>
       request.method === "GET" &&
       request.pathname === "/events" &&
-      request.query.get("copy") === "1" &&
+      request.query.get("copy") === "true" &&
       request.headers["last-event-id"] === undefined,
   ).length;
 }

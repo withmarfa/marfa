@@ -412,7 +412,7 @@ describe("a redelivery whose audit entry cannot be recorded", () => {
         waitFor("the delivery's dead letter", async () => {
           const listed = await working.listWebhookDeliveries(webhook.data.id);
           return listed.data.data.find(
-            (row) => row.id === deliveryId && row.status === "dead_letter",
+            (row) => row.id === deliveryId && row.status === "failed",
           );
         });
       const failed = await delivery();

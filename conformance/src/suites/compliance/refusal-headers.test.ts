@@ -48,7 +48,7 @@ beforeAll(async () => {
   limited = await bootFreshServer("refusal-headers", {
     MARFA_RATE_LIMIT_ENABLED: "true",
     MARFA_RATE_LIMIT_KEYS_REQUESTS: String(KEYS_LIMIT),
-    MARFA_SSE_MAX_VIEWERS: "1",
+    MARFA_EVENT_STREAM_MAX_VIEWERS: "1",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -149,7 +149,7 @@ describe("X-Error-Code", () => {
         }),
       }),
       409,
-      "type_already_exists",
+      "type_exists",
     );
 
     const big = await declareOversizeBody(`${apiUrl}/items`, {

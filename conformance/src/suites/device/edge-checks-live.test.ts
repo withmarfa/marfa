@@ -422,13 +422,13 @@ it("refuses locally an edge that would make an item a part of its own part, acro
   await refusedAlike(
     device,
     { source: third, target: first, type: "attached-to" },
-    CONSTRAINT,
+    ["validation", "edge_cycle"],
     "an attached-to edge that closes first, second, third through two part types",
   );
   await refusedAlike(
     device,
     { source: third, target: first, type: "comments-on" },
-    CONSTRAINT,
+    ["validation", "edge_cycle"],
     "the same edge as a comments-on edge",
   );
   // Both witnesses remove the part cycle while preserving the proposed source.

@@ -14,7 +14,7 @@ type Json = Record<string, unknown>;
 
 const document = JSON.parse(readFileSync(COMMITTED, "utf8")) as Json;
 
-const METHODS = new Set(["get", "put", "post", "patch", "delete"]);
+const METHODS = new Set(["get", "put", "post", "patch", "delete", "head"]);
 
 interface Operation {
   key: string;
@@ -117,7 +117,14 @@ const RULES = {
   fieldUndescribed:
     "every field of a named schema, nested fields included, has a description",
   fieldLength: "every field description is at most 250 characters",
+  deleteStatus: "no DELETE answers 204",
+  listSchemaName:
+    "no schema is named for a list, and every schema named for a page holds a data array",
+  booleanSpelling:
+    "a boolean query parameter is declared type boolean, never a string enum of true, false, 1 or yes",
 } as const;
+
+const BOOLEAN_WORDS = new Set(["true", "false", "1", "0", "yes", "no"]);
 
 /** What breaks each rule, named so a failure says where to look. */
 function violations(doc: Json): Record<keyof typeof RULES, string[]> {
@@ -130,6 +137,9 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
     schemaUndescribed: [],
     fieldUndescribed: [],
     fieldLength: [],
+    deleteStatus: [],
+    listSchemaName: [],
+    booleanSpelling: [],
   };
   for (const { key, operation } of operations(doc)) {
     const summary = text(operation.summary) ?? "";
@@ -157,6 +167,19 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
       if ((text(response.description) ?? "").length > 400) {
         found.responseLength.push(`${key} ${status}`);
       }
+      if (key.startsWith("DELETE ") && status === "204") {
+        found.deleteStatus.push(key);
+      }
+    }
+    for (const parameter of (operation.parameters ?? []) as Json[]) {
+      const choices = (parameter.schema as Json | undefined)?.enum;
+      if (
+        parameter.in === "query" &&
+        Array.isArray(choices) &&
+        choices.every((choice) => BOOLEAN_WORDS.has(String(choice)))
+      ) {
+        found.booleanSpelling.push(`${key} ${String(parameter.name)}`);
+      }
     }
   }
   const schemas = ((doc.components as Json | undefined)?.schemas ??
@@ -164,6 +187,18 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
   for (const [name, schema] of Object.entries(schemas)) {
     if (text(schema.description) === undefined)
       found.schemaUndescribed.push(name);
+    const named = (schema.properties ?? {}) as Record<string, Json>;
+    if (
+      name.endsWith("List") ||
+      (name.endsWith("Page") &&
+        named.data?.type !== "array" &&
+        !((schema.allOf ?? []) as Json[]).some(
+          (branch) =>
+            typeof branch.$ref === "string" && branch.$ref.endsWith("Page"),
+        ))
+    ) {
+      found.listSchemaName.push(name);
+    }
   }
   for (const { name, field } of namedFields(doc)) {
     const description = fieldDescription(field);
@@ -193,8 +228,23 @@ describe("the API description follows API-STYLE.md", () => {
           get: {
             summary: "list things.",
             description: long,
-            parameters: [{ name: "q" }, { name: "limit", description: long }],
+            parameters: [
+              { name: "q" },
+              { name: "limit", description: long },
+              {
+                name: "all",
+                in: "query",
+                description: "Every thing.",
+                schema: { type: "string", enum: ["true", "false"] },
+              },
+            ],
             responses: { "200": { description: "x".repeat(401) } },
+          },
+        },
+        "/things/{id}": {
+          delete: {
+            summary: "Delete a thing",
+            responses: { "204": { description: "Gone." } },
           },
         },
       },
@@ -217,6 +267,8 @@ describe("the API description follows API-STYLE.md", () => {
               owner: { allOf: [{ $ref: "#/components/schemas/Owner" }] },
             },
           },
+          ThingList: { description: "Things." },
+          ThingPage: { description: "A page of things.", properties: {} },
           Owner: {
             description: "Who owns a thing.",
             properties: {
@@ -245,6 +297,9 @@ describe("the API description follows API-STYLE.md", () => {
         "Thing.owner",
       ],
       fieldLength: ["Thing.note", "Thing.place.label"],
+      deleteStatus: ["DELETE /things/{id}"],
+      listSchemaName: ["ThingList", "ThingPage"],
+      booleanSpelling: ["GET /things all"],
     });
   });
 

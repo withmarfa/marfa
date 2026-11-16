@@ -56,7 +56,7 @@ afterAll(async () => {
 });
 
 function sourcePath(source: string): string {
-  return `/source?source=${encodeURIComponent(source)}`;
+  return `/sources/${encodeURIComponent(source)}`;
 }
 
 function readSource(as: MarfaClient, source: string) {
@@ -134,7 +134,7 @@ describe("a source's name", () => {
     const key = await mintKey("named");
     const labelled = await readSource(key.client, key.source);
     expect(labelled.status, JSON.stringify(labelled.error)).toBe(200);
-    await expectMatchesSchema("GET", "/source", 200, labelled.data);
+    await expectMatchesSchema("GET", "/sources/{source}", 200, labelled.data);
     expect(labelled.data).toEqual({
       source: key.source,
       name: "Label named",
@@ -143,7 +143,7 @@ describe("a source's name", () => {
 
     const set = await nameSource(owner, key.source, { name: "Set name" });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
-    await expectMatchesSchema("PATCH", "/source", 200, set.data);
+    await expectMatchesSchema("PATCH", "/sources/{source}", 200, set.data);
     expect(set.data).toEqual({
       source: key.source,
       name: "Set name",
@@ -289,7 +289,7 @@ describe("setting a source's name and mark", () => {
 
     const refused = await nameSource(key.client, other, { name: "Nope" });
     expect(refused.status).toBe(403);
-    await expectMatchesSchema("PATCH", "/source", 403, refused.error);
+    await expectMatchesSchema("PATCH", "/sources/{source}", 403, refused.error);
     expect(refused.error?.error.code).toBe("forbidden");
     expect(refused.error?.error.details?.required_scope).toBe("keys.manage");
     expect((await readSource(owner, other)).data.name_from).toBe("code");
@@ -305,7 +305,12 @@ describe("setting a source's name and mark", () => {
     for (const mark of ["lucide:not-an-icon", "star", "nosuchset:github"]) {
       const refused = await nameSource(key.client, key.source, { mark });
       expect(refused.status, mark).toBe(400);
-      await expectMatchesSchema("PATCH", "/source", 400, refused.error);
+      await expectMatchesSchema(
+        "PATCH",
+        "/sources/{source}",
+        400,
+        refused.error,
+      );
       expect(refused.error?.error.code).toBe("invalid_schema");
     }
     expect(
@@ -335,7 +340,7 @@ describe("setting a source's name and mark", () => {
 });
 
 describe("a source's code", () => {
-  it("travels in the query, so a code a path would rewrite reaches its source", async () => {
+  it("travels as one path segment, so a code holding a slash, a question mark or a hash reaches its source", async () => {
     for (const source of [`${ctx.source}/..`, `${ctx.source}/a b?c#d`]) {
       const set = await nameSource(owner, source, { name: "Odd code" });
       expect(set.status, JSON.stringify(set.error)).toBe(200);
@@ -355,6 +360,32 @@ describe("a source's code", () => {
     expect((await readSource(owner, longest)).data.name).toBe("Longest");
     const longer = await nameSource(owner, `${longest}x`, { name: "Longer" });
     expect(longer.status).toBe(400);
+  });
+
+  it("refuses . and .. as a source, as a key's own and as a claim, which a client folds out of a path", async () => {
+    for (const code of [".", "..", " .. "]) {
+      const own = await owner.createKey({
+        label: "dot own",
+        source: code,
+      });
+      expect(own.status, `own ${JSON.stringify(code)}`).toBe(400);
+      expect(own.error?.error.code).toBe("validation_error");
+      const claim = await owner.createKey({
+        label: "dot claim",
+        source: `${ctx.source}-dot-claim`,
+        sources: [code],
+      });
+      expect(claim.status, `claim ${JSON.stringify(code)}`).toBe(400);
+      expect(claim.error?.error.code).toBe("validation_error");
+    }
+    // The witness: a code that only starts with dots is a source.
+    const fine = await owner.createKey({
+      label: "dots",
+      source: `${ctx.source}-dots`,
+      sources: ["..."],
+    });
+    expect(fine.status, JSON.stringify(fine.error)).toBe(201);
+    trackKey(ctx, fine.data.id);
   });
 
   it("refuses a name an archive could not carry, and keeps what was set", async () => {
@@ -396,7 +427,7 @@ describe("reading a source", () => {
     });
     const refused = await readSource(blind.client, writer.source);
     expect(refused.status).toBe(404);
-    await expectMatchesSchema("GET", "/source", 404, refused.error);
+    await expectMatchesSchema("GET", "/sources/{source}", 404, refused.error);
     expect(refused.error?.error.code).toBe("source_not_found");
     const blindList = (await listSources(blind.client)).map((s) => s.source);
     expect(blindList).toContain(blind.source);

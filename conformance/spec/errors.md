@@ -488,7 +488,7 @@ When a credential holding no grant on an identifier sends `POST /items` naming i
 
 ### `errors/grant-edge-type`
 
-When the server answers `403 edge_permission_denied`, the server MUST carry `details.grant` with a `kind` of `edge_type` and a `name` that is the edge type's identifier.
+When the server answers `403 edge_type_not_permitted`, the server MUST carry `details.grant` with a `kind` of `edge_type` and a `name` that is the edge type's identifier.
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the edge type and the level the key lacks beside the grant, on every door that writes an edge`.
 
@@ -514,7 +514,7 @@ When the server carries `details.grant`, the server MUST give its `level` as the
 
 ### `errors/edge-denied-details`
 
-When the server answers `403 edge_permission_denied`, the server MUST carry `details.edge_type`, naming the edge type, and `details.required`, naming the level the key lacks.
+When the server answers `403 edge_type_not_permitted`, the server MUST carry `details.edge_type`, naming the edge type, and `details.required`, naming the level the key lacks.
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the edge type and the level the key lacks beside the grant, on every door that writes an edge`.
 
@@ -542,7 +542,7 @@ If a `403` is not caused by a grant that the key could be given, such as the res
 
 ### `errors/bin-trashed`
 
-When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/metadata`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
+When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/tags`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, or `PUT` or `DELETE /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
 
 **Reason:** a client holding a write to the item can tell an item someone deleted from one that never existed. `items/write-in-bin` states the refusal itself.
 
@@ -558,7 +558,7 @@ If a key may not read the type of an item in the bin, then the server MUST answe
 
 ### `errors/bin-read`
 
-When `GET /items/{id}` with no `state` or a `state` that leaves out `trashed`, `GET /items/{id}/metadata`, `GET /items/{id}/versions`, `GET /items/{id}/extensions` or `GET /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
+When `GET /items/{id}` with no `state` or a `state` that leaves out `trashed`, `GET /items/{id}/versions`, `GET /items/{id}/extensions` or `GET /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
 
 **Reason:** a client holding the id of an item someone deleted can tell it from one that never existed, and read it with `items/get-state`, as a write to it already can under `errors/bin-trashed`.
 
@@ -776,6 +776,16 @@ When a database statement fails for an item that a `POST /items/bulk-actions` jo
 
 **Tests:** `compliance/failed-statement-reports.test.ts › names a database failure with its SQLite code in each entry's error, and none of the statement, the driver's message or the values its write was bound to`.
 
+## A boolean in the query
+
+### `errors/query-boolean`
+
+If a request names a boolean query parameter with a value other than `true` or `false`, or names it more than once, then the server MUST answer `400 validation_error`.
+
+**Reason:** one spelling for every door, so a client never learns that `1` works on one and not on another.
+
+**Tests:** `compliance/query-booleans.test.ts › takes true, and refuses every other spelling, for force on DELETE /types/{id}`, `› takes true, and refuses every other spelling, for force on PUT /types/{id}`, `› takes true, and refuses every other spelling, for force on DELETE /edge-types/{id}`, `› takes true, and refuses every other spelling, for files on GET /export`, `› takes true, and refuses every other spelling, for copy on GET /events`.
+
 ## Codes
 
 Every code the server answers over HTTP is a row of the table below, and a server answers no code the table does not hold. The codes of a tool error on the MCP endpoint, such as `confirmation_stale` and `file_not_fetched`, are in `mcp.md`, not in this table.
@@ -784,15 +794,14 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 
 | Code                                 | Status              | Meaning                                                                                                                                                                                                   |
 | ------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bulk_atomic_rollback`               | The inner refusal's | An atomic bulk page failed on one entry, so nothing was written. `details` names the entry and the refusal.                                                                                               |
 | `bulk_cap_exceeded`                  | 400                 | A bulk action matched more items than its `max_items` allows.                                                                                                                                             |
 | `bulk_confirmation_required`         | 400                 | A destructive bulk action was sent without its confirmation literal.                                                                                                                                      |
 | `edge_constraint_violation`          | 400                 | An edge write breaks a constraint of its edge type or of the link graph, such as cardinality, endpoint types or a duplicate.                                                                              |
-| `edge_cycle`                         | 400                 | An edge would close a cycle: a self-loop on any edge type, or a loop on an edge type that must stay acyclic.                                                                                              |
+| `edge_cycle`                         | 400                 | An edge would close a cycle: a self-loop on any edge type, a loop on an edge type that must stay acyclic, or a chain of `with-hosts` edges that would make an item a part of its own part.                |
 | `inheritance_violation`              | 400                 | A type changes the shape of a field it inherits, or a change to a parent clashes with a field a child declares.                                                                                           |
 | `invalid_client`                     | 400                 | The device sign-in page names a client that is not registered.                                                                                                                                            |
 | `invalid_id`                         | 400                 | An item, edge or folder id is not a well-formed identifier.                                                                                                                                               |
-| `invalid_properties`                 | 400                 | An item's properties break the schema of its type, or an edge's break the property schema of its edge type.                                                                                               |
+| `invalid_properties`                 | 400                 | An item's properties break the schema of its type, or an edge's break the property schema of its edge type, including the `path` of an `in-folder` edge.                                                  |
 | `invalid_schema`                     | 400                 | A type or edge type carries a schema the server cannot accept.                                                                                                                                            |
 | `invalid_transition`                 | 400                 | The move is not one the current state of the item or folder allows.                                                                                                                                       |
 | `missing_required_field`             | 400                 | A field the operation requires is absent. `details.field` names it.                                                                                                                                       |
@@ -802,10 +811,9 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `setup_proof_invalid`                | 401                 | The setup code, handoff link or setup session is wrong, spent, expired or replaced. Ask for a new setup code or link.                                                                                     |
 | `unauthorized`                       | 401                 | The request carries no credential the server accepts: none, an unknown or revoked one, or an expired or altered link.                                                                                     |
 | `core_type_immutable`                | 403                 | The type ships with the platform, so it cannot be replaced, deleted or moved out of.                                                                                                                      |
-| `edge_permission_denied`             | 403                 | The credential lacks the edge-type permission the operation needs.                                                                                                                                        |
+| `edge_type_not_permitted`            | 403                 | The credential lacks the edge-type permission the operation needs.                                                                                                                                        |
 | `forbidden`                          | 403                 | The credential is valid but lacks a standing permission, reach or origin the operation needs.                                                                                                             |
 | `type_not_permitted`                 | 403                 | The credential holds no grant on the type at the level the operation asks for.                                                                                                                            |
-| `api_key_not_found`                  | 404                 | No key the caller can reach has this id, or the key was already revoked.                                                                                                                                  |
 | `backup_not_found`                   | 404                 | The object store holds no backup by this name from this instance id.                                                                                                                                      |
 | `batch_not_found`                    | 404                 | The change log of the item's table holds no batch with this id: it belongs to another table, never existed or is older than `row_log_retention_days`.                                                     |
 | `blob_copy_not_found`                | 404                 | The named store holds no copy of the blob, or is not attached.                                                                                                                                            |
@@ -819,6 +827,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `grant_not_found`                    | 404                 | No app grant has this id.                                                                                                                                                                                 |
 | `housekeeping_job_not_found`         | 404                 | The instance runs no housekeeping job of this name, or has switched it off.                                                                                                                               |
 | `item_not_found`                     | 404                 | No item the caller may read has this id: it does not exist, is in the bin, or is of a type the caller may not read.                                                                                       |
+| `key_not_found`                      | 404                 | No key the caller can reach has this id, or the key was already revoked.                                                                                                                                  |
 | `not_found`                          | 404                 | The request names a path or address the server does not serve.                                                                                                                                            |
 | `owner_not_found`                    | 404                 | The instance has no owner yet.                                                                                                                                                                            |
 | `passkey_not_found`                  | 404                 | No passkey of the owner has this id.                                                                                                                                                                      |
@@ -839,7 +848,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `enforcement_unreadable`             | 409                 | An archive export was asked for while the instance's stored enforcement settings do not read. No archive bytes were sent. Set the settings again, then export again.                                      |
 | `export_entry_unrestorable`          | 409                 | An archive export selected an item or edge that a restore would refuse or skip, or whose line is longer than a restore reads. No archive bytes were sent. `details.entry` names it.                       |
 | `housekeeping_job_running`           | 409                 | The housekeeping job is in the middle of a run.                                                                                                                                                           |
-| `id_reused`                          | 409                 | A caller-minted id already names a different item or edge.                                                                                                                                                |
+| `id_reused`                          | 409                 | A caller-minted id already names a different item or edge, or an item the caller cannot read.                                                                                                             |
 | `idempotency_key_in_flight`          | 409                 | An `Idempotency-Key` is held by another request, or kept changing hands. Retry.                                                                                                                           |
 | `instance_changed`                   | 409                 | A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.                                                                |
 | `item_exists`                        | 409                 | A create that asked not to overwrite names a source and source id, or an id, that an item already holds. Nothing is written. `details.existing_id` names the item.                                        |
@@ -850,8 +859,8 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `sign_in_address_change_unconfirmed` | 409                 | A write moves the sign-in address without `confirm_sign_in_address_change`. Nothing is changed; `details.consequences` names what the move would do.                                                      |
 | `source_id_conflict`                 | 409                 | A change to `source_id` names a natural key that another item already holds under the same source.                                                                                                        |
 | `trash_plan_changed`                 | 409                 | A trash names a `digest` that no longer matches what it would move to the trash. Nothing is trashed; preview it again.                                                                                    |
-| `type_already_exists`                | 409                 | A type is already registered under this identifier.                                                                                                                                                       |
 | `type_chain_unresolvable`            | 409                 | The stored definition of a type does not read. `PUT /types/{id}` still accepts a corrected schema.                                                                                                        |
+| `type_exists`                        | 409                 | A type is already registered under this identifier.                                                                                                                                                       |
 | `type_has_subtypes`                  | 409                 | Another type declares this type as its parent. Forcing the delete does not override this.                                                                                                                 |
 | `type_in_use`                        | 409                 | Items of the type still exist, the bin included, or a folder, view, webhook setting or table column names it, or rows hold a table or column a replacement removes, and the request did not ask to force. |
 | `type_mismatch`                      | 409                 | The request declares a type other than the type of the item it resolved.                                                                                                                                  |
@@ -873,5 +882,6 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `too_many_connections`               | 503                 | The public listener holds as many open connections as it allows, or the caller's address does. Answered before any request is read; retry later.                                                          |
 | `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget, or a restore is running (`details.reason` `restore_running`). Retry it unchanged.                                                    |
 | `insufficient_storage`               | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`.            |
+| `bulk_atomic_rollback`               | The inner refusal's | An atomic bulk page failed on one entry, so nothing was written. `details` names the entry and the refusal.                                                                                               |
 
 <!-- errors-table:end -->

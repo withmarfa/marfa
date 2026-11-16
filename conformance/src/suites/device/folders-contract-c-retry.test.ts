@@ -176,7 +176,7 @@ describe("completed effects of a restarted folder pull", () => {
     frames.push(
       copyItemEvent(
         "2",
-        "item.deleted",
+        "item.trashed",
         wireItem({ ...trashed, state: "trashed", version: 2 }),
       ),
       copyItemEvent(
@@ -252,7 +252,7 @@ describe("completed effects of a restarted folder pull", () => {
     frames.push(
       copyItemEvent(
         "2",
-        "item.deleted",
+        "item.trashed",
         wireItem({ ...row, state: "trashed", version: 2 }),
       ),
     );

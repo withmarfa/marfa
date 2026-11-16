@@ -33,7 +33,7 @@ Field definitions:
 - **`type`**: one of `FIELD_TYPES` (`src/schema-validation.ts`), namely `string`, `number`, `integer`, `boolean`, `url`, `email`, `datetime`, `date`, `enum`, `status`, `array`, `object`, `thumbnail`. A `thumbnail` is a small image the writer supplies as a `data:` URI of a PNG, JPEG or WebP, at most 16 KiB decoded; a type carries at most one, never named `title`, `body`, `description` or `name`.
 - **`description`**: what the field is
 - **`label`**: optional, the name people see for the field, at most 100 characters. `GET /types/{id}` answers the nearest label in the type's chain, else one made from the field's name (`due_at` reads as `Due At`); a member of `items_fields` takes one the same way
-- **`format`**: optional, one of `FIELD_FORMATS`. The formats `url`, `email`, `datetime`, `date` and `thumbnail` normalize into `type`; `bcp47`, `iso3166`, `currency` and `phone` annotate a `string` and survive as `format`; a write is checked only against `currency`, which takes three capital letters such as `GBP`
+- **`format`**: optional, one of `FIELD_FORMATS`. The formats `url`, `email`, `date` and `thumbnail` normalize into `type`; `bcp47`, `iso3166`, `currency` and `phone` annotate a `string` and survive as `format`; a write is checked only against `currency`, which takes three capital letters such as `GBP`
 - **`enum_values`**: required for `enum` type
 - **`status_values`**: required for `status` type, except on a subtype that declares its inherited `status` field again: the words the field takes, each `{ "value": "in_review", "group": "in_progress" }`, in one of the four groups `not_started`, `in_progress`, `completed` and `canceled`. A type carries at most one `status` field
 - **`items_type`**: required for `array` type

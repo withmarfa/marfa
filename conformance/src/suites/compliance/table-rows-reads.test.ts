@@ -1282,7 +1282,7 @@ describe("sorting by a table's order", () => {
         job.last_finished_at >= job.last_started_at &&
         !job.running_since
       ) {
-        expect(job.last_outcome).toBe("ok");
+        expect(job.last_outcome).toBe("succeeded");
         break;
       }
       if (!asked && !job?.running_since) {
@@ -1421,7 +1421,7 @@ describe("sorting by a table's order", () => {
         job.last_finished_at >= job.last_started_at &&
         !job.running_since
       ) {
-        expect(job.last_outcome).toBe("ok");
+        expect(job.last_outcome).toBe("succeeded");
         break;
       }
       if (!asked && !job?.running_since) {

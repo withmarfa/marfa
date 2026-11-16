@@ -37,10 +37,9 @@
       "description": "Who created the original content"
     },
     "published_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Published",
-      "description": "When the original content was published",
-      "format": "datetime"
+      "description": "When the original content was published"
     },
     "image_url": {
       "type": "string",

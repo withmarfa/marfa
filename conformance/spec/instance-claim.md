@@ -464,7 +464,7 @@ When a credential with `instance.read` requests `GET /metrics`, the server MUST 
 
 ### `instance-claim/management-metrics-resources`
 
-When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `process` block holding its `release` and the memory and CPU its process uses, each figure but the release a number, or `null` where the server cannot read it.
+When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `process` block holding its `version` and the memory and CPU its process uses, each figure but the version a number, or `null` where the server cannot read it.
 
 **Tests:** `compliance/metrics.test.ts › reports documented instance-wide counters with instance.read`.
 
@@ -492,7 +492,7 @@ Where control-only mode is enabled, when another process holds the configured pu
 
 ### `instance-claim/profile-owner-unavailable`
 
-While the instance is unclaimed, the server MUST answer the private local command's `PATCH /owner` and `PUT /owner/picture` with `404 owner_not_found` without creating an owner or storing a picture.
+While the instance is unclaimed, the server MUST answer the private local command's `PATCH /owner` and `PUT /owner/avatar` with `404 owner_not_found` without creating an owner or storing a picture.
 
 **Reason:** An update or an upload cannot stand in for the claim that creates the owner.
 
@@ -542,7 +542,7 @@ If an owner or delegated profile update contains no field, an unknown field, an 
 
 ### `instance-claim/delegated-profile-update`
 
-When a key or app submits a valid nonempty `PATCH /profile` containing only `name`, `avatar` set to `null`, or both and holds current profile write permission for every submitted field, the server MUST return only `{ "ok": true }` after changing those fields.
+When a key or app submits a valid nonempty `PATCH /profile` containing only `name`, `avatar` set to `null`, or both and holds current profile write permission for every submitted field, the server MUST change those fields and return the profile fields the credential may read, as `GET /profile` answers them.
 
 **Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
 
@@ -554,25 +554,25 @@ If any submitted profile field lacks current write permission when the transacti
 
 ### `instance-claim/owner-picture-upload`
 
-When the private local command sends `PUT /owner/picture` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the updated owner.
+When the private local command sends `PUT /owner/avatar` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the updated owner.
 
 **Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the owner door and returns the owner`, `› stores a picture sent through the private local command`.
 
 ### `instance-claim/profile-picture-upload`
 
-When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/picture` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return only `{ "ok": true }`.
+When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the profile fields the credential may read, as `GET /profile` answers them.
 
 **Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the profile door by a credential that may write the avatar`.
 
 ### `instance-claim/owner-picture-authority`
 
-If `PUT /owner/picture` lacks private local authority, then the server MUST refuse the request and keep the previous picture.
+If `PUT /owner/avatar` lacks private local authority, then the server MUST refuse the request and keep the previous picture.
 
 **Tests:** `compliance/owner-picture.test.ts › refuses a picture from a caller the door does not admit, and keeps the previous one`.
 
 ### `instance-claim/profile-picture-authority`
 
-If a credential sending `PUT /profile/picture` lacks current profile write permission for `avatar`, then the server MUST refuse the request with `403 forbidden` and keep the previous picture.
+If a credential sending `PUT /profile/avatar` lacks current profile write permission for `avatar`, then the server MUST refuse the request with `403 forbidden` and keep the previous picture.
 
 **Tests:** `compliance/owner-picture.test.ts › refuses a picture from a caller the door does not admit, and keeps the previous one`.
 
@@ -636,7 +636,7 @@ If a picture upload ends before its body is whole, then the server MUST store no
 
 ### `instance-claim/picture-replace`
 
-When the server stores a new picture, the server MUST serve only that picture at `/owner/picture`, and no earlier one after the new picture is removed.
+When the server stores a new picture, the server MUST serve only that picture at `/owner/avatar`, and no earlier one after the new picture is removed.
 
 **Reason:** The owner has one picture, and a replaced one is never served again.
 
@@ -644,7 +644,7 @@ When the server stores a new picture, the server MUST serve only that picture at
 
 ### `instance-claim/owner-avatar-address`
 
-While the owner has a picture, the server MUST answer `avatar` in the owner as the instance's own address followed by `/owner/picture`, and while the owner has none as `null`.
+While the owner has a picture, the server MUST answer `avatar` in the owner as the instance's own address followed by `/owner/avatar`, and while the owner has none as `null`.
 
 **Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the owner door and returns the owner`, `› removes the picture through either PATCH door and leaves the other fields as they were`.
 
@@ -658,7 +658,7 @@ When a credential sends `GET /profile`, the server MUST answer `200` with the ow
 
 ### `instance-claim/picture-served`
 
-When a caller admitted by `instance-claim/picture-read-authority` sends `GET /owner/picture`, the server MUST return the stored bytes with the `Content-Type` decided when they were stored.
+When a caller admitted by `instance-claim/picture-read-authority` sends `GET /owner/avatar`, the server MUST return the stored bytes with the `Content-Type` decided when they were stored.
 
 **Tests:** `compliance/owner-picture.test.ts › serves the stored bytes under the kind decided from them`.
 
@@ -672,7 +672,7 @@ The server MUST send with every answer over HTTP that carries the picture's byte
 
 ### `instance-claim/picture-validators`
 
-When a caller sends `GET /owner/picture` with an `If-None-Match` that names the picture's `ETag`, the server MUST answer `304` with no body.
+When a caller sends `GET /owner/avatar` with an `If-None-Match` that names the picture's `ETag`, the server MUST answer `304` with no body.
 
 **Tests:** `compliance/owner-picture.test.ts › answers 304 to a validator that still matches, and sends the picture when it does not`.
 
@@ -684,7 +684,7 @@ The server MUST send with the picture, as its `ETag`, the quoted SHA-256 of the 
 
 ### `instance-claim/picture-read-authority`
 
-If an authenticated caller of `GET /owner/picture` is neither the private local command nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
+If an authenticated caller of `GET /owner/avatar` is neither the private local command nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
 
 **Reason:** An app sees the owner's picture only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
 
@@ -692,7 +692,7 @@ If an authenticated caller of `GET /owner/picture` is neither the private local 
 
 ### `instance-claim/picture-none`
 
-If the owner has no picture, then the server MUST answer `GET /owner/picture` from an admitted caller with `404 not_found`.
+If the owner has no picture, then the server MUST answer `GET /owner/avatar` from an admitted caller with `404 not_found`.
 
 **Tests:** `compliance/owner-picture.test.ts › answers 404 when there is no picture, and again after it is removed`.
 

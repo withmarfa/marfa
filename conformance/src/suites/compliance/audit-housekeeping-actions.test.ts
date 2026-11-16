@@ -76,7 +76,9 @@ describe("the names of the audit actions that housekeeping jobs write", () => {
     const id = created.data.item.id;
     expect(await entries("item.enrich", id)).toEqual([]);
 
-    expect((await runJob(server, "enrichment-sweep")).outcome).toBe("ok");
+    expect((await runJob(server, "enrichment-sweep")).outcome).toBe(
+      "succeeded",
+    );
     // The witness: the sweep did write the item, so the entry is the job's.
     const read = await writer.getItem(id);
     expect(read.data.item.properties.extracted_text).toBe(
@@ -112,7 +114,9 @@ describe("the names of the audit actions that housekeeping jobs write", () => {
     expect(before.data.data.length).toBeGreaterThan(1);
 
     await clock.advance(1.5 * DAY_MS);
-    expect((await runJob(server, "version-thinning")).outcome).toBe("ok");
+    expect((await runJob(server, "version-thinning")).outcome).toBe(
+      "succeeded",
+    );
     // The witness: the job did remove versions.
     const after = await writer.getVersions(id);
     expect(after.data.data.map((v) => v.version)).toEqual([4]);

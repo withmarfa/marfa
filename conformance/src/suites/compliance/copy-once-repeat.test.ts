@@ -41,7 +41,7 @@ describe("a conflicted copy written once", () => {
     const config = (await writer.getConfig()).data as Record<string, unknown>;
     const set = await writer.updateConfig({
       ...config,
-      event_log_retention_hours: 1,
+      event_log_retention_days: 1,
     });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
 
@@ -87,9 +87,9 @@ describe("a conflicted copy written once", () => {
     const answered = await send();
     expect(answered.headers.get("Idempotency-Replayed")).toBe("true");
 
-    await movedClock(server).advance(2 * HOUR_MS);
+    await movedClock(server).advance(2 * 24 * HOUR_MS);
     const swept = await runJob(server, "event-log-cleanup");
-    expect(swept.outcome).toBe("ok");
+    expect(swept.outcome).toBe("succeeded");
     expect(
       (swept.result as { purged_records: number }).purged_records,
     ).toBeGreaterThanOrEqual(1);

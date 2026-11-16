@@ -190,7 +190,7 @@ describe("an item's name and preview on a device", () => {
       copyReplay("12", [
         copyItemEvent(
           "12",
-          "item.deleted",
+          "item.trashed",
           wireItem({
             id: "issue",
             version: 3,

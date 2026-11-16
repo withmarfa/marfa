@@ -103,7 +103,7 @@ describe("outbound webhooks", () => {
           (JSON.parse(first.body) as { delivery_id: string }).delivery_id,
       );
       const deadline = Date.now() + 10000;
-      while (failed?.status !== "dead_letter" && Date.now() < deadline) {
+      while (failed?.status !== "failed" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 25));
         failed = (
           await client.listWebhookDeliveries(created.data.id)
@@ -114,7 +114,7 @@ describe("outbound webhooks", () => {
         );
       }
       expect(failed).toMatchObject({
-        status: "dead_letter",
+        status: "failed",
         status_code: 400,
         attempt: 1,
       });
@@ -137,7 +137,7 @@ describe("outbound webhooks", () => {
       const retained = await client.listWebhookDeliveries(created.data.id);
       expect(retained.data.data.find((d) => d.id === failed!.id)).toMatchObject(
         {
-          status: "dead_letter",
+          status: "failed",
           attempt: 1,
           status_code: 400,
         },
@@ -272,7 +272,7 @@ describe("outbound webhooks", () => {
           expect(
             listed.data.data.find((d) => d.event_type === "item.created")
               ?.status,
-          ).toBe("success");
+          ).toBe("succeeded");
           return listed;
         },
         { timeout: 20_000, interval: 100 },
@@ -288,7 +288,7 @@ describe("outbound webhooks", () => {
       );
       expect(row).toBeDefined();
       expect(row?.id).toBe(payload.delivery_id);
-      expect(row?.status).toBe("success");
+      expect(row?.status).toBe("succeeded");
       expect(row?.error).toBeNull();
       expect(row?.succeeded).toBe(true);
       expect(row?.status_code).toBe(200);
@@ -437,7 +437,7 @@ describe("outbound webhooks", () => {
       async () => {
         const listed = await client.listWebhookDeliveries(named.data.id);
         expect(listed.ok).toBe(true);
-        expect(listed.data.data.map((d) => d.status)).toEqual(["success"]);
+        expect(listed.data.data.map((d) => d.status)).toEqual(["succeeded"]);
         return listed;
       },
       { timeout: 20_000, interval: 100 },
@@ -696,7 +696,7 @@ describe("outbound webhooks", () => {
   it("does not deliver an event outside the subscription", async () => {
     const created = await client.createWebhook({
       url: receiver.hookUrl("deleted-only"),
-      events: ["item.deleted"],
+      events: ["item.trashed"],
     });
     expect(created.status).toBe(201);
     trackWebhook(ctx, created.data.id, client);
@@ -714,7 +714,7 @@ describe("outbound webhooks", () => {
     const sentinel = await receiver.waitFor(
       (r) =>
         r.path === "/hook/deleted-only" &&
-        r.headers["x-marfa-event-type"] === "item.deleted" &&
+        r.headers["x-marfa-event-type"] === "item.trashed" &&
         r.body.includes(item.data.item.id),
     );
     expect(sentinel).toBeDefined();
@@ -722,11 +722,11 @@ describe("outbound webhooks", () => {
       (r) => r.path === "/hook/deleted-only",
     );
     expect(toThisHook.map((r) => r.headers["x-marfa-event-type"])).toEqual([
-      "item.deleted",
+      "item.trashed",
     ]);
     const rows = await client.listWebhookDeliveries(created.data.id);
     expect(rows.ok).toBe(true);
-    expect(rows.data.data.map((d) => d.event_type)).toEqual(["item.deleted"]);
+    expect(rows.data.data.map((d) => d.event_type)).toEqual(["item.trashed"]);
   });
 
   it("updates the url, events, type filter and active flag in place", async () => {

@@ -48,7 +48,6 @@ export interface StatusValue {
 export type FieldFormat =
   | "url"
   | "email"
-  | "datetime"
   | "date"
   | "thumbnail"
   | "bcp47"

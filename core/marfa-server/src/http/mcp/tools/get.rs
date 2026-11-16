@@ -462,7 +462,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     }
     let mut shown: Vec<Value> = Vec::new();
     for item in got
-        .get("items")
+        .get("data")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()
@@ -488,7 +488,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         {
             object.insert(
                 "file_link".into(),
-                json!({ "url": link.url, "expires_in": link.expires_in }),
+                json!({ "url": link.url, "ttl_seconds": link.ttl_seconds }),
             );
         }
         shown.push(compacted);

@@ -17,7 +17,7 @@ pub struct Owner {
     pub email: String,
     pub name: String,
     pub created_at: Stamp,
-    /// Whether the owner holds a picture, which `GET /owner/picture` serves.
+    /// Whether the owner holds a picture, which `GET /owner/avatar` serves.
     pub avatar: bool,
 }
 
@@ -28,7 +28,7 @@ impl Owner {
             "id": self.id,
             "email": self.email,
             "name": self.name,
-            "avatar": self.avatar.then(|| format!("{origin}/owner/picture")),
+            "avatar": self.avatar.then(|| format!("{origin}/owner/avatar")),
             "created_at": self.created_at,
         })
     }
@@ -287,15 +287,23 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
 /// The owner's profile as far as `caller` may read it: a field it may not read is left out.
 pub async fn read_profile(app: &App, caller: &Caller) -> Result<Value> {
     let owner = find(app).await?.ok_or_else(not_found)?;
-    let origin = app.addresses().sign_in().origin().to_string();
-    let whole = owner.to_json(&origin);
+    Ok(profile_of(
+        &owner,
+        app.addresses().sign_in().origin(),
+        caller,
+    ))
+}
+
+/// The owner's profile fields that `caller` may read.
+pub fn profile_of(owner: &Owner, origin: &str, caller: &Caller) -> Value {
+    let whole = owner.to_json(origin);
     let mut shown = Map::new();
     for field in ["name", "email", "avatar"] {
         if caller.reads_profile(field) {
             shown.insert(field.to_string(), whole[field].clone());
         }
     }
-    Ok(Value::Object(shown))
+    Value::Object(shown)
 }
 
 #[derive(Debug)]
@@ -341,7 +349,8 @@ pub async fn update_profile(
     caller: &Caller,
     update: ProfileUpdate,
     visit: Visit,
-) -> Result<()> {
+) -> Result<Value> {
+    let origin = app.addresses().sign_in().origin().to_string();
     app.write(caller, "profile.update", move |unit| {
         let fields = update.fields();
         for field in &fields {
@@ -368,7 +377,9 @@ pub async fn update_profile(
                 resource_id: &owner.id,
                 details: Some(json!({ "fields": fields })),
             },
-        )
+        )?;
+        let changed = read(unit.tx())?.ok_or_else(not_found)?;
+        Ok(profile_of(&changed, &origin, &unit.caller))
     })
     .await
 }

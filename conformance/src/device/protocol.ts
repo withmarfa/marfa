@@ -867,7 +867,7 @@ export interface DeviceUnderTest {
   addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
   removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
   /** The item's tags, written whole. */
-  replaceMetadata(item: string, tags: string[]): Promise<Outcome<QueuedWrite>>;
+  replaceTags(item: string, tags: string[]): Promise<Outcome<QueuedWrite>>;
   /** One extension namespace, as its own write. */
   writeExtension(
     item: string,

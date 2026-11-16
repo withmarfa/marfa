@@ -17,7 +17,7 @@ pub const KEYED_WRITES: &[(&str, &str)] = &[
     ("POST", "/items/{id}/purge"),
     ("POST", "/items/{id}/transition"),
     ("POST", "/items/bulk-actions"),
-    ("PUT", "/items/{id}/metadata"),
+    ("PUT", "/items/{id}/tags"),
     ("POST", "/items/{id}/tags"),
     ("DELETE", "/items/{id}/tags/{tag}"),
     ("PUT", "/items/{id}/extensions/{namespace}"),

@@ -247,8 +247,7 @@ pub fn run(
 }
 
 fn type_line(verb: &str, answer: &Value) -> String {
-    let definition = answer.get("type").unwrap_or(answer);
-    let text = |name: &str| definition.get(name).and_then(Value::as_str).unwrap_or("");
+    let text = |name: &str| answer.get(name).and_then(Value::as_str).unwrap_or("");
     let label = match text("label") {
         "" => String::new(),
         label => format!(" \"{}\"", crate::output::printable(label)),
@@ -256,10 +255,7 @@ fn type_line(verb: &str, answer: &Value) -> String {
     format!(
         "{verb} type {}{label} (version {})",
         crate::output::printable(text("id")),
-        definition
-            .get("version")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
+        answer.get("version").and_then(Value::as_u64).unwrap_or(0)
     )
 }
 

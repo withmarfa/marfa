@@ -138,7 +138,7 @@ fn changed(id: &str, tags: &[&str]) -> String {
 /// A delete, which carries no metadata.
 fn binned(id: &str) -> String {
     json!({
-        "event_type": "item.deleted",
+        "event_type": "item.trashed",
         "item": row(id, 2, "trashed", json!({"title": id})),
         "listed": true,
     })
@@ -343,9 +343,9 @@ fn catch_up_reads_the_tags_a_delete_does_not_carry() {
     server.on(
         "/events",
         vec![replay(&[
-            ("11", "item.deleted", binned("member")),
-            ("12", "item.deleted", binned("tagged")),
-            ("13", "item.deleted", binned("bare")),
+            ("11", "item.trashed", binned("member")),
+            ("12", "item.trashed", binned("tagged")),
+            ("13", "item.trashed", binned("bare")),
         ])],
     );
 
@@ -380,7 +380,7 @@ fn catch_up_leaves_out_a_row_whose_tags_it_cannot_read() {
     );
     server.on(
         "/events",
-        vec![replay(&[("11", "item.deleted", binned("unread"))])],
+        vec![replay(&[("11", "item.trashed", binned("unread"))])],
     );
 
     core.catch_up().unwrap();
@@ -402,7 +402,7 @@ fn catch_up_reads_nothing_for_a_delete_of_a_row_the_copy_could_not_have_left_out
     catalog_answers(&server, &[]);
     server.on(
         "/events",
-        vec![replay(&[("11", "item.deleted", binned("bare"))])],
+        vec![replay(&[("11", "item.trashed", binned("bare"))])],
     );
 
     core.catch_up().unwrap();
@@ -581,7 +581,7 @@ fn hydration_lists_the_query_and_its_conflicted_copies_apart() {
     );
     let bulk = |ids: &[&str]| {
         let body = json!({
-            "items": ids.iter().map(|id| row(id, 1, "active", json!({"title": id}))).collect::<Vec<_>>(),
+            "data": ids.iter().map(|id| row(id, 1, "active", json!({"title": id}))).collect::<Vec<_>>(),
             "metadata": ids.iter().map(|id| json!({"item_id": id, "tags": [], "extensions": {}})).collect::<Vec<_>>(),
             "listed": ids.iter().map(|_| true).collect::<Vec<_>>(),
         });
@@ -901,7 +901,7 @@ fn read_drawing(rows: &[(&str, &[(&str, &str)])]) -> Answer {
     let listed: Vec<bool> = rows.iter().map(|_| true).collect();
     certified(scripted::json(
         200,
-        &json!({"items": items, "metadata": metadata, "listed": listed}).to_string(),
+        &json!({"data": items, "metadata": metadata, "listed": listed}).to_string(),
     ))
 }
 
@@ -1016,9 +1016,9 @@ fn the_root_trashed_keeps_the_branch_and_the_root_purged_lets_it_go() {
         "/events",
         vec![
             replay(&[
-                ("11", "item.deleted", binned("root")),
-                ("12", "item.deleted", binned("branch")),
-                ("13", "item.deleted", binned("plain")),
+                ("11", "item.trashed", binned("root")),
+                ("12", "item.trashed", binned("branch")),
+                ("13", "item.trashed", binned("plain")),
             ]),
             replay(&[("14", "item.purged", purged("root"))]),
         ],
@@ -1205,7 +1205,7 @@ fn read_by_id(ids: &[String]) -> Answer {
     let listed: Vec<bool> = ids.iter().map(|_| true).collect();
     certified(scripted::json(
         200,
-        &json!({"items": items, "metadata": metadata, "listed": listed}).to_string(),
+        &json!({"data": items, "metadata": metadata, "listed": listed}).to_string(),
     ))
 }
 

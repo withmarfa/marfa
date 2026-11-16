@@ -1082,31 +1082,31 @@ If `POST /edges` names an `in-folder` edge to an item that is not a `system.fold
 
 ### `edges/folder-path`
 
-If `POST /edges` names an `in-folder` edge with no `path`, or a `path` that is empty, over 1024 characters, absolute, drive-absolute, holds a backslash or a NUL, holds a `..` name or names its root, then the server MUST answer `400 validation_error` with `details.errors[0].path` `properties.path`.
+If `POST /edges` names an `in-folder` edge with no `path`, or a `path` that is empty, over 1024 characters, absolute, drive-absolute, holds a backslash or a NUL, holds a `..` name or names its root, then the server MUST answer `400 invalid_properties` with `details.errors[0].path` `properties.path`.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an in-folder path that is missing or leaves the folder, and any other property, on every door that writes one`.
 
 ### `edges/folder-other-property`
 
-If `POST /edges` names an `in-folder` edge with a property other than `path`, then the server MUST answer `400 validation_error` with `details.errors[0].path` naming `properties.` and that property.
+If `POST /edges` names an `in-folder` edge with a property other than `path`, then the server MUST answer `400 invalid_properties` with `details.errors[0].path` naming `properties.` and that property.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an in-folder path that is missing or leaves the folder, and any other property, on every door that writes one`.
 
 ### `edges/folder-update`
 
-If `PATCH /edges/{id}` would leave an `in-folder` edge, judged on the properties as they would stand after the merge, with no valid `path` or with a property other than `path`, then the server MUST answer `400 validation_error` with `details.errors[0].path` naming the property.
+If `PATCH /edges/{id}` would leave an `in-folder` edge, judged on the properties as they would stand after the merge, with no valid `path` or with a property other than `path`, then the server MUST answer `400 invalid_properties` with `details.errors[0].path` naming the property.
 
 **Tests:** `compliance/edge-types.test.ts › names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge`.
 
 ### `edges/folder-bulk`
 
-If an entry of `POST /edges/bulk` would leave an `in-folder` edge, created or merged, with no valid `path` or with a property other than `path`, then the server MUST refuse the entry `validation_error` with `details.errors[0].path` naming the property, as `error` on the entry under `atomic: false` and as `details.details` of the rollback under `atomic: true`.
+If an entry of `POST /edges/bulk` would leave an `in-folder` edge, created or merged, with no valid `path` or with a property other than `path`, then the server MUST refuse the entry `invalid_properties` with `details.errors[0].path` naming the property, as `error` on the entry under `atomic: false` and as `details.details` of the rollback under `atomic: true`.
 
 **Tests:** `compliance/edge-types.test.ts › names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge`.
 
 ### `edges/folder-inline`
 
-If `POST /items` or `PATCH /items/{id}` names an inline `in-folder` edge to a to item the item has no `in-folder` edge to, then the server MUST answer `400 validation_error` with `details.errors[0].path` `properties.path`.
+If `POST /items` or `PATCH /items/{id}` names an inline `in-folder` edge to a to item the item has no `in-folder` edge to, then the server MUST answer `400 invalid_properties` with `details.errors[0].path` `properties.path`.
 
 **Reason:** an inline edge carries no properties, so the `path` an `in-folder` edge requires is what it lacks.
 
@@ -1328,11 +1328,11 @@ When `POST /items/trash` names a part with a `with-hosts` to item that the trash
 
 ### `edges/parts-trash-binned-left`
 
-When a trash, a late part or a restore reaches an item that is already where it would move it, the server MUST NOT announce `item.deleted` or `item.restored` for that item or change its trash record.
+When a trash, a late part or a restore reaches an item that is already where it would move it, the server MUST NOT announce `item.trashed` or `item.restored` for that item or change its trash record.
 
 **Reason:** a child put in the bin on its own before its parent became a part keeps the record of its own trash, so a restore of the host leaves it where the person put it.
 
-**Tests:** `compliance/cascade-marks.test.ts › announces item.deleted and item.restored for a late part and its child, and nothing for a child already in the bin, on the late edge, the restore or a delete, whose mark stays its own`.
+**Tests:** `compliance/cascade-marks.test.ts › announces item.trashed and item.restored for a late part and its child, and nothing for a child already in the bin, on the late edge, the restore or a delete, whose mark stays its own`.
 
 ### `edges/parts-trash-kept`
 
@@ -1342,9 +1342,9 @@ While an item is the from item of a `with-hosts` edge whose to item is out of th
 
 ### `edges/parts-trash-marked`
 
-When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on the item and on its `item.deleted` frame.
+When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on the item and on its `item.trashed` frame.
 
-**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
+**Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `compliance/cascade-marks.test.ts › marks a part's item.trashed, item.restored and item.purged with its host, and the edge the host's purge took`.
 
 ### `edges/parts-restore`
 
@@ -1358,7 +1358,7 @@ When `POST /items/{id}/restore`, a transition out of the bin or a bulk transitio
 
 When the server brings a part back with a host, the server MUST name that host in `restored_with` on the part's `item.restored` frame.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
+**Tests:** `compliance/cascade-marks.test.ts › marks a part's item.trashed, item.restored and item.purged with its host, and the edge the host's purge took`.
 
 ### `edges/parts-restore-own`
 
@@ -1420,11 +1420,11 @@ When the server purges a host, the server MUST NOT purge a part that still holds
 
 When the server purges a part with its host, the server MUST name the host in `purged_with` on the `edge.deleted` frame of each edge the host's purge took, and in `trashed_with` on the part's `item.purged` frame.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
+**Tests:** `compliance/cascade-marks.test.ts › marks a part's item.trashed, item.restored and item.purged with its host, and the edge the host's purge took`.
 
 ### `edges/parts-cycle`
 
-If `POST /edges` names an edge of a `with-hosts` type that would close a cycle through `with-hosts` edges of any type, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cycle`.
+If `POST /edges` names an edge of a `with-hosts` type that would close a cycle through `with-hosts` edges of any type, then the server MUST answer `400 edge_cycle`.
 
 **Reason:** a part that is its own host, through any chain, could never go to the bin with its hosts or come back with them.
 
@@ -1564,7 +1564,7 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-register`
 
-When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
+When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the edge type, bare, as `GET /edge-types` lists it.
 
 **Tests:** `compliance/edge-types.test.ts › registers a custom edge type and answers 201`.
 
@@ -1604,7 +1604,7 @@ If a key without `metadata.edge_types:write` sends `POST /edge-types`, then the 
 
 ### `edges/types-register-map`
 
-If `POST /edge-types` names an `id` or a `reverse_name` that the key's own edge map leaves short of `write`, then the server MUST answer `403 edge_permission_denied` with `details.edge_type` naming it.
+If `POST /edge-types` names an `id` or a `reverse_name` that the key's own edge map leaves short of `write`, then the server MUST answer `403 edge_type_not_permitted` with `details.edge_type` naming it.
 
 **Reason:** a registration claims both names, and one key cannot take a name another key was meant to register.
 
@@ -1802,7 +1802,7 @@ If a key without `schema.write` sends `DELETE /edge-types/{id}`, then the server
 
 ### `edges/types-delete-map`
 
-If `DELETE /edge-types/{id}` comes from a key whose edge map leaves the `id` or a `reverse_name` of the type short of `write`, then the server MUST answer `403 edge_permission_denied` with `details.edge_type` naming it, `force=true` included.
+If `DELETE /edge-types/{id}` comes from a key whose edge map leaves the `id` or a `reverse_name` of the type short of `write`, then the server MUST answer `403 edge_type_not_permitted` with `details.edge_type` naming it, `force=true` included.
 
 **Tests:** `compliance/edge-types.test.ts › deletes only the edge types whose id and reverse name the key's own edge map grants write on`.
 
@@ -1980,13 +1980,13 @@ If a write names `null` for a property its edge type's `property_schema` declare
 
 ### `edges/properties-format`
 
-Where an edge type's `property_schema` declares a property as `url`, `email`, `date` or `datetime`, or as a `string` with that `format`, or as a `string` with the `format` `currency`, if a write names a value that is not of that format, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
+Where an edge type's `property_schema` declares a property as `url`, `email`, `date` or `datetime`, or as a `string` with the `format` `url`, `email` or `date`, or as a `string` with the `format` `currency`, if a write names a value that is not of that format, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
 
-**Tests:** `compliance/edge-property-schema.test.ts › registers a string property with a format as the type of that format, and judges its values on every edge write`, `› keeps a currency property a string with its format, and judges its values on every edge write`.
+**Tests:** `compliance/edge-property-schema.test.ts › registers a string property with a format as the type of that format, and judges its values on every edge write`, `› judges a datetime property on every edge write, and refuses datetime as a format`, `› keeps a currency property a string with its format, and judges its values on every edge write`.
 
 ### `edges/types-register-format`
 
-When `POST /edge-types` declares a `string` property with the `format` `url`, `email`, `date` or `datetime`, the server MUST list the property with that format as its `type` and no `format`.
+When `POST /edge-types` declares a `string` property with the `format` `url`, `email` or `date`, the server MUST list the property with that format as its `type` and no `format`.
 
 **Reason:** a type's fields store the same declaration the same way (`types/format-collapses`).
 
@@ -2022,7 +2022,7 @@ When `POST /restore` restores an archived edge whose properties break its edge t
 
 ### `edges/types-restore-format`
 
-When `POST /restore` carries an edge type that declares a `string` property with the `format` `url`, `email`, `date` or `datetime`, the server MUST register the property with that format as its `type` and no `format`.
+When `POST /restore` carries an edge type that declares a `string` property with the `format` `url`, `email` or `date`, the server MUST register the property with that format as its `type` and no `format`.
 
 **Reason:** a registration through `POST /edge-types` stores the same declaration the same way (`edges/types-register-format`).
 
@@ -2136,7 +2136,7 @@ If `GET /edges/{id}`, `PATCH /edges/{id}` or `DELETE /edges/{id}` names an edge 
 
 ### `edges/filter-term-hidden`
 
-If a filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists names an edge type the credential may not read, then the server MUST answer `403 edge_permission_denied`.
+If a filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists names an edge type the credential may not read, then the server MUST answer `403 edge_type_not_permitted`.
 
 **Reason:** a dropped term would answer a different question under the same status, which is the unfiltered page an unknown parameter is refused to prevent. This holds for `edge[<type>]=`, `backref[<type>]=` and the full `filter=` form, and `POST /items/bulk-actions` refuses it before it matches an item.
 
@@ -2182,7 +2182,7 @@ If a key that may read an edge's from item type but not write it sends `POST /ed
 
 ### `edges/write-edge-type`
 
-If a key that may read an edge type but not write it sends `POST /edges`, `PATCH /edges/{id}` or `DELETE /edges/{id}` for an edge of the type, then the server MUST answer `403 edge_permission_denied` with `details.edge_type`, `details.required` and `details.grant`.
+If a key that may read an edge type but not write it sends `POST /edges`, `PATCH /edges/{id}` or `DELETE /edges/{id}` for an edge of the type, then the server MUST answer `403 edge_type_not_permitted` with `details.edge_type`, `details.required` and `details.grant`.
 
 **Tests:** `compliance/edge-permissions.test.ts › dual-gate: from item type write + edge-type write required`, `› narrow scope: key with edge.about:write cannot create parent-of edges`, `› edge read scope: key with edge.about:read can list but not write`, `compliance/edge-refusals.test.ts › refuses an update and a delete from a key that reads the edge but may not write its type`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
 
@@ -2202,7 +2202,7 @@ When a key holds `edge.*:write`, the server MUST accept `POST /edges` for any ed
 
 ### `edges/write-bulk`
 
-If a key sends `POST /edges/bulk` with an entry whose from item it may read and whose from item type or edge type it may not write, then the server MUST refuse the entry with `type_not_permitted` or `edge_permission_denied`, naming the grant in `details.grant`, as `error` on the entry under `atomic: false` and as `details.details` of a `403` rollback under `atomic: true`.
+If a key sends `POST /edges/bulk` with an entry whose from item it may read and whose from item type or edge type it may not write, then the server MUST refuse the entry with `type_not_permitted` or `edge_type_not_permitted`, naming the grant in `details.grant`, as `error` on the entry under `atomic: false` and as `details.details` of a `403` rollback under `atomic: true`.
 
 **Tests:** `compliance/edges-bulk.test.ts › gates bulk edges per type and edge permission`, `compliance/write-refusal-details.test.ts › names the grant on a bulk page, inside the rollback or on the entry`.
 

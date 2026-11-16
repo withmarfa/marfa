@@ -636,7 +636,7 @@ pub enum WriteKind {
     CreateEdge,
     UpdateEdge,
     DeleteEdge,
-    ReplaceMetadata,
+    ReplaceTags,
     AddTag,
     RemoveTag,
     WriteExtension,
@@ -1173,7 +1173,7 @@ impl From<marfa_core::WriteKind> for WriteKind {
             K::CreateEdge => WriteKind::CreateEdge,
             K::UpdateEdge => WriteKind::UpdateEdge,
             K::DeleteEdge => WriteKind::DeleteEdge,
-            K::ReplaceMetadata => WriteKind::ReplaceMetadata,
+            K::ReplaceTags => WriteKind::ReplaceTags,
             K::AddTag => WriteKind::AddTag,
             K::RemoveTag => WriteKind::RemoveTag,
             K::WriteExtension => WriteKind::WriteExtension,
@@ -3204,12 +3204,12 @@ impl MarfaCore {
 
     /// Writes the item's tags whole, dropping any not named.
     #[napi]
-    pub fn replace_metadata(&self, env: Env, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
-        let write = marfa_core::MetadataWrite { tags };
+    pub fn replace_tags(&self, env: Env, id: String, tags: Vec<String>) -> Result<QueuedWrite> {
+        let write = marfa_core::TagsWrite { tags };
         queued(
             env,
             self.inner
-                .replace_metadata(&id, &write)
+                .replace_tags(&id, &write)
                 .map_err(|error| failure(env, error))?,
         )
     }

@@ -98,7 +98,7 @@ pub fn refusal_answer(refusal: &Refusal) -> Response {
     let wait = refusal
         .details
         .as_ref()
-        .and_then(|details| details.get("retry_after").and_then(Value::as_i64));
+        .and_then(|details| details.get("retry_after_seconds").and_then(Value::as_i64));
     if let Some(seconds) = wait {
         headers.insert(header::RETRY_AFTER, HeaderValue::from(seconds));
     }

@@ -2426,7 +2426,7 @@ describe("edges in frontmatter", () => {
       "the file whose line was refused was not flagged",
     ).toEqual([["Child.md", "refused"]]);
     expect(refused.value.pull?.flagged[0]?.reason).toContain(
-      "edge_permission_denied",
+      "edge_type_not_permitted",
     );
     expect(read(harness, "Child.md")).toContain('child-of: "[[Two]]"');
     const local = await harness.folder.device().text(["edges", "to", child]);
@@ -4304,7 +4304,7 @@ describe("embedded files", () => {
           copyReplay("2", [
             copyItemEvent(
               "2",
-              "item.deleted",
+              "item.trashed",
               wireItem({ ...picRow, state: "trashed" }),
             ),
           ]),
@@ -5244,7 +5244,7 @@ describe("embedded files", () => {
               copyReplay("2", [
                 copyItemEvent(
                   "2",
-                  "item.deleted",
+                  "item.trashed",
                   wireItem({
                     id: host,
                     properties: { title: "Host", body: "no picture\n" },
@@ -5438,7 +5438,7 @@ describe("embedded files", () => {
                   .map((note, at) =>
                     copyItemEvent(
                       String(at + 2),
-                      "item.deleted",
+                      "item.trashed",
                       wireItem({ ...note, state: "trashed" }),
                     ),
                   ),

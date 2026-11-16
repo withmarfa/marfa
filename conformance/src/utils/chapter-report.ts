@@ -278,7 +278,7 @@ export interface Operation {
 export function operationsOf(document: {
   paths: Record<string, Record<string, unknown>>;
 }): Operation[] {
-  const verbs = ["get", "put", "post", "delete", "patch"];
+  const verbs = ["get", "put", "post", "delete", "patch", "head"];
   return Object.entries(document.paths).flatMap(([path, item]) => {
     const pattern = path
       .split("/")

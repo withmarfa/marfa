@@ -2924,7 +2924,7 @@ mod tests {
             .map(|id| serde_json::json!({"item_id": id, "tags": [], "extensions": {}}))
             .collect();
         let body = serde_json::json!({
-            "items": rows, "metadata": metadata, "listed": vec![true; second.len()]
+            "data": rows, "metadata": metadata, "listed": vec![true; second.len()]
         });
         server.on(
             "/items/bulk-get",

@@ -310,7 +310,7 @@ pub fn start(app: &Arc<App>) {
 fn listed(app: &App, job: &Job, row: &schedule::Row) -> Value {
     json!({
         "name": job.name,
-        "interval_ms": job.interval.ms(job.name, app),
+        "interval_seconds": job.interval.ms(job.name, app).div_ceil(1000),
         "next_run_at": schedule::readable(&row.next_run_at).then_some(&row.next_run_at),
         "running_since": row.running_since,
         "last_started_at": row.last_started_at,
@@ -402,7 +402,7 @@ pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
 /// Jobs this instance runs whose last run failed.
 fn failed_in(app: &App, rows: Vec<schedule::Row>) -> Vec<schedule::Row> {
     rows.into_iter()
-        .filter(|row| row.last_outcome.as_deref() == Some("error"))
+        .filter(|row| row.last_outcome.as_deref() == Some("failed"))
         .filter(|row| {
             JOBS.iter()
                 .any(|job| job.name == row.name && job.runs_here(app))
@@ -423,7 +423,7 @@ pub fn last_run(tx: &rusqlite::Transaction<'_>, name: &str) -> Result<Option<Las
         .into_iter()
         .find(|row| row.name == name && row.last_outcome.is_some())
         .map(|row| LastRun {
-            failure: (row.last_outcome.as_deref() == Some("error"))
+            failure: (row.last_outcome.as_deref() == Some("failed"))
                 .then(|| row.last_error.unwrap_or_default()),
             result: row
                 .last_result

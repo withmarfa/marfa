@@ -323,7 +323,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
         type: "string",
         description: "A short description of the event.",
       },
-      starts_at: { type: "string", format: "datetime", label: "Starts" },
+      starts_at: { type: "datetime", label: "Starts" },
     },
     mergePolicy: {
       fields: { notes: "keep_both_copies" },
@@ -911,7 +911,7 @@ export function certifiedRead(
  * item, which it leaves out unless `include` names `system`
  * (`items/bulk-get-system`). Any other answer is the whole request's. Under a
  * reach the answer is certified only where every read was, and then
- * carries `listed` beside `items` (`reach/listed-bulk-get`).
+ * carries `listed` beside `data` (`reach/listed-bulk-get`).
  */
 export function bulkGetOf(
   reads: Answer[],
@@ -961,7 +961,7 @@ export function bulkGetOf(
   return {
     kind: "json",
     status: 200,
-    body: { items, metadata, ...(certified ? { listed } : {}) },
+    body: { data: items, metadata, ...(certified ? { listed } : {}) },
     ...(contract === undefined ? {} : { contract }),
     ...(certified
       ? {
@@ -1203,7 +1203,7 @@ export const answers = {
   edgePermissionDenied: (edgeType: string): Answer =>
     refusal(
       403,
-      "edge_permission_denied",
+      "edge_type_not_permitted",
       `Missing edge.${edgeType}:write permission`,
       { edge_type: edgeType, required: "write" },
     ),
@@ -1310,7 +1310,7 @@ export const answers = {
       }>;
       more: boolean;
     }>,
-  ): Answer => ({ kind: "json", status: 200, body: { results } }),
+  ): Answer => ({ kind: "json", status: 200, body: { data: results } }),
   unauthorized: (): Answer =>
     refusal(401, "unauthorized", "Invalid or missing credential"),
   forbidden: (code: string): Answer =>
@@ -1337,26 +1337,29 @@ export const answers = {
 /**
  * The answers the write doors that are not about an item's fields give.
  *
- * Four different shapes, and none of them carries an `item`. A device that
- * read every `2xx` against the item shape would take a tag, an edge, a
- * tag-list replacement, an extension and a delete — every one of which the server
+ * None of them carries an `item`. A device that read every `2xx` against the
+ * item shape would take a tag write, an edge, an extension and a delete — every one of which the server
  * had already done — as an answer it could not read, count a refusal, and
  * kill the write on the fifth pass. Scripting them as items is what hid
  * exactly that, so these exist to be scripted instead.
  */
 export const writeAnswers = {
-  /** `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}` and
-   *  `PUT /items/{id}/metadata`: the sidecar, whole. */
-  metadata: (itemId: string, tags: string[] = []): Answer => ({
+  /** Every tag door: the item's tags, whole. */
+  tags: (tags: string[] = []): Answer => ({
     kind: "json",
     status: 200,
-    body: { metadata: { item_id: itemId, tags, extensions: {} } },
+    body: { tags },
   }),
   /** Both extension doors: the namespaces, whole. */
   extensions: (namespaces: Record<string, unknown> = {}): Answer => ({
     kind: "json",
     status: 200,
-    body: { extensions: namespaces },
+    body: {
+      data: Object.entries(namespaces).map(([namespace, document]) => ({
+        namespace,
+        document,
+      })),
+    },
   }),
   /** `DELETE /items/{id}` and `DELETE /edges/{id}`. */
   ok: (): Answer => ({ kind: "json", status: 200, body: { ok: true } }),
@@ -1370,7 +1373,7 @@ export const writeAnswers = {
   link: (url: string): Answer => ({
     kind: "json",
     status: 200,
-    body: { url, expires_in: 3600 },
+    body: { url, ttl_seconds: 3600 },
   }),
   /** `POST /edges`, which answers `201`, and `PATCH /edges/{id}`, which
    *  answers `200`. */

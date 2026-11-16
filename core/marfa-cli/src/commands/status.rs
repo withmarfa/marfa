@@ -103,23 +103,18 @@ pub fn items_line(stats: &Value) -> String {
     }
 }
 
-/// The instance as a line: its id, its name and the release it runs, or the
-/// build when it is not a release.
+/// The instance as a line: its id, its name and the release it runs.
 pub fn instance_line(instance: &Value) -> String {
     let text = |name: &str| match instance.get(name) {
         Some(Value::String(text)) => printable(text),
         Some(other) => printable(&other.to_string()),
         None => String::new(),
     };
-    let running = match instance.get("release").and_then(Value::as_str) {
-        Some(release) => format!("{}, build {}", printable(release), text("version")),
-        None => text("version"),
-    };
     format!(
         "instance {} ({} {})",
         text("instance_id"),
         text("name"),
-        running
+        text("version")
     )
 }
 
@@ -161,23 +156,11 @@ mod tests {
     }
 
     #[test]
-    fn names_the_release_beside_the_build() {
+    fn names_the_release_the_instance_runs() {
         let instance = json!({
-            "name": "Marfa", "version": "abc123", "release": "0.0.14",
+            "name": "Marfa", "version": "0.0.14",
             "instance_id": "id-1", "contract": 0, "features": []
         });
-        assert_eq!(
-            instance_line(&instance),
-            "instance id-1 (Marfa 0.0.14, build abc123)"
-        );
-    }
-
-    #[test]
-    fn names_only_the_build_when_the_server_is_not_a_release() {
-        let instance = json!({
-            "name": "Marfa", "version": "dev", "instance_id": "id-1",
-            "contract": 0, "features": []
-        });
-        assert_eq!(instance_line(&instance), "instance id-1 (Marfa dev)");
+        assert_eq!(instance_line(&instance), "instance id-1 (Marfa 0.0.14)");
     }
 }

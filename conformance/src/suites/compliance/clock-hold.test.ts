@@ -238,13 +238,15 @@ describe("the clean-up jobs while the clock is far ahead", () => {
         for (const name of HELD_JOBS) {
           const run = await runJob(server, name);
           expect(run.outcome, `${name} at ${String(days)} days`).toBe(
-            held ? "held" : "ok",
+            held ? "held" : "succeeded",
           );
           if (held) expect(run.result).toEqual({ held: "clock_ahead" });
         }
         if (held) {
           for (const name of RUNNING_JOBS) {
-            expect((await runJob(server, name)).outcome, name).toBe("ok");
+            expect((await runJob(server, name)).outcome, name).toBe(
+              "succeeded",
+            );
           }
           const listed = (await operator.listHousekeeping()).data.data;
           for (const name of HELD_JOBS) {
@@ -285,7 +287,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
       expect((await health(server)).housekeeping.held).toBeNull();
       expect(await clockConcerns(server)).toEqual([]);
       for (const name of HELD_JOBS) {
-        expect((await runJob(server, name)).outcome, name).toBe("ok");
+        expect((await runJob(server, name)).outcome, name).toBe("succeeded");
       }
       expect(await read()).toEqual({
         binned: 0,
@@ -326,7 +328,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
       expect(await binned()).toBe(1);
 
       await server.advanceClock(HOUR_MS);
-      expect((await runJob(server, "trash-purge")).outcome).toBe("ok");
+      expect((await runJob(server, "trash-purge")).outcome).toBe("succeeded");
       expect((await health(server)).housekeeping.held).toBeNull();
       expect(await binned()).toBe(0);
     },
@@ -360,7 +362,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
       expect(await binnedOn(server)).toBe(1);
 
       await server.advanceClock(12 * HOUR_MS);
-      expect((await runJob(server, "trash-purge")).outcome).toBe("ok");
+      expect((await runJob(server, "trash-purge")).outcome).toBe("succeeded");
       expect((await health(server)).housekeeping.held).toBeNull();
       expect(await binnedOn(server)).toBe(0);
     },
@@ -503,7 +505,7 @@ describe("the times the server stamps", () => {
         HOUR_MS,
       );
       // A held job is not held by a clock behind.
-      expect((await runJob(server, "trash-purge")).outcome).toBe("ok");
+      expect((await runJob(server, "trash-purge")).outcome).toBe("succeeded");
 
       // Once the owner confirms the clock, it is no longer behind.
       await confirm(server);

@@ -252,7 +252,7 @@ describe("a part goes to the bin with its hosts", () => {
     expect(hosts.status).toBe(200);
     const hostsOnly = createHash("sha256")
       .update(
-        hosts.data.items
+        hosts.data.data
           .map((item) => `${item.id}:${String(item.version)}`)
           .sort()
           .join("\n"),
@@ -447,7 +447,7 @@ describe("a part goes to the bin with its hosts", () => {
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     trackEdgeType(ctx, id);
-    expect(registered.data.edge_type.cascade_on_delete).toBe("with-hosts");
+    expect(registered.data.cascade_on_delete).toBe("with-hosts");
 
     const host = await note(tag);
     const part = await note(tag);
@@ -648,12 +648,11 @@ describe("a cycle of parts", () => {
       edge_type: "attached-to",
     });
     expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("edge_constraint_violation");
+    expect(refused.error?.error.code).toBe("edge_cycle");
     expect(refused.error?.error.details).toEqual({
       edge_type: "attached-to",
       from_id: c,
       to_id: a,
-      constraint: "cycle",
     });
 
     // The witness: the same edge to an item outside the chain lands.

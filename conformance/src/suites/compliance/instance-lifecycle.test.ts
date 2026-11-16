@@ -472,10 +472,10 @@ describe("starting with a setting outside its rule", () => {
       'MARFA_AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
     ],
     [
-      "MARFA_EVENT_LOG_RETENTION_HOURS",
+      "MARFA_EVENT_LOG_RETENTION_DAYS",
       "not a number",
       "soon",
-      'MARFA_EVENT_LOG_RETENTION_HOURS must be a whole number, from 0 to 876000 (got "soon")',
+      'MARFA_EVENT_LOG_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "soon")',
     ],
     [
       "MARFA_ENRICHMENT_ENABLED",
@@ -505,7 +505,7 @@ describe("starting with a setting outside its rule", () => {
     async () => {
       const server = await bootFreshServer("lifecycle-settings-edge", {
         MARFA_AUDIT_RETENTION_DAYS: "36500",
-        MARFA_EVENT_LOG_RETENTION_HOURS: "0",
+        MARFA_EVENT_LOG_RETENTION_DAYS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
         S3_ENDPOINT: "https://objects.example.test",
         OTEL_RESOURCE_ATTRIBUTES: "team=a%20b",

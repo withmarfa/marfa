@@ -370,7 +370,7 @@ When a request to a blob operation carries a query key that starts with an under
 
 ### `blobs/link-minted`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/url`, the server MUST answer `200` with a `url` and an `expires_in`, whether or not an object store holds the blob.
+When a credential that may read a blob sends `GET /blobs/{hash}/url`, the server MUST answer `200` with a `url` and a `ttl_seconds`, whether or not an object store holds the blob.
 
 **Tests:** `correctness/blob-correctness.test.ts › mints a link that fetches the bytes without a credential`, `compliance/blob-served.test.ts › refuses an instance link after its one second lifetime with 401`.
 
@@ -388,27 +388,27 @@ When a credential that may read a blob sends `GET /blobs/{hash}/url`, the server
 
 ### `blobs/link-ttl`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl` that is a whole number of seconds from 1 through 604800, the server MUST answer `expires_in` as that number.
+When a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl_seconds` that is a whole number of seconds from 1 through 604800, the server MUST answer `ttl_seconds` as that number.
 
-**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`, `› mints a link that fetches the bytes without a credential`.
+**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl_seconds is asked for, takes every whole number of seconds up to the cap and refuses any other`, `› mints a link that fetches the bytes without a credential`.
 
 ### `blobs/link-ttl-default`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/url` with no `ttl`, the server MUST answer `expires_in` as 3600.
+When a credential that may read a blob sends `GET /blobs/{hash}/url` with no `ttl_seconds`, the server MUST answer `ttl_seconds` as 3600.
 
-**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`.
+**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl_seconds is asked for, takes every whole number of seconds up to the cap and refuses any other`.
 
 ### `blobs/link-ttl-cap`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl` above 604800, the server MUST answer `expires_in` as 604800, the seven days that cap a lifetime, rather than the lifetime asked for.
+When a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl_seconds` above 604800, the server MUST answer `ttl_seconds` as 604800, the seven days that cap a lifetime, rather than the lifetime asked for.
 
-**Tests:** `correctness/blob-correctness.test.ts › caps a link's lifetime at seven days`, `› gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`.
+**Tests:** `correctness/blob-correctness.test.ts › caps a link's lifetime at seven days`, `› gives a link an hour when no ttl_seconds is asked for, takes every whole number of seconds up to the cap and refuses any other`.
 
 ### `blobs/link-ttl-invalid`
 
-If a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl` that is not a whole number of at least 1, then the server MUST answer `400 validation_error`.
+If a credential that may read a blob sends `GET /blobs/{hash}/url` with a `ttl_seconds` that is not a whole number of at least 1, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl is asked for, takes every whole number of seconds up to the cap and refuses any other`.
+**Tests:** `correctness/blob-correctness.test.ts › gives a link an hour when no ttl_seconds is asked for, takes every whole number of seconds up to the cap and refuses any other`.
 
 ### `blobs/link-expired`
 
@@ -444,11 +444,11 @@ Where an object store holds a blob, the server MUST give a link that the store a
 
 ### `blobs/link-instance-lifetime`
 
-Where the instance serves a link, the server MUST keep it working for at least its `expires_in` seconds, except at the cap.
+Where the instance serves a link, the server MUST keep it working for at least its `ttl_seconds` seconds, except at the cap.
 
 **Reason:** a signer counts a lifetime in whole seconds, so a store's own link, counted from the second it was signed in, may stop up to a second sooner.
 
-**Tests:** `compliance/blob-link-clock.test.ts › works until its expires_in seconds have passed on the server's clock, and not after`.
+**Tests:** `compliance/blob-link-clock.test.ts › works until its ttl_seconds seconds have passed on the server's clock, and not after`.
 
 ### `blobs/link-cap-from-answer`
 
@@ -720,7 +720,7 @@ When the enrichment sweep writes onto a file item, the server MUST NOT make a di
 
 ### `blobs/read-order`
 
-If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token lacking `blobs.manage` whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
+If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token lacking `blobs.manage` whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl_seconds` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
 
 **Reason:** a blob the credential may not read and an unknown one answer alike, so their order cannot be told.
 

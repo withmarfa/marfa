@@ -75,9 +75,9 @@ it("connectors.manage grants administration to keys and apps without connector i
   expect(registered.status).toBe(201);
   let id = registered.data.id;
   expect((await working.sendConnectorHeartbeat()).status).toBe(200);
-  // A key is no registered connector, so its heartbeat finds none; an app's
-  // token is no key, so its heartbeat is refused.
-  for (const [at, manager] of (await callers("connectors.manage")).entries()) {
+  // A key is not this connector's own key, and an app's token is no key, so
+  // each is refused its heartbeat.
+  for (const manager of await callers("connectors.manage")) {
     expect((await manager.getConnector(id)).status).toBe(200);
     expect((await manager.listConnectorRuns(id)).status).toBe(200);
     const endpoint = await manager.createInboundEndpoint(id);
@@ -86,9 +86,7 @@ it("connectors.manage grants administration to keys and apps without connector i
       (await manager.retireInboundEndpoint(id, endpoint.data.id)).status,
     ).toBe(200);
     expect((await manager.deleteConnectorState(id)).status).toBe(200);
-    expect((await manager.sendConnectorHeartbeat()).status).toBe(
-      at === 0 ? 404 : 403,
-    );
+    expect((await manager.sendConnectorHeartbeat(id)).status).toBe(403);
     expect(
       (await manager.rawRequest(`/connectors/${id}/deliveries`)).status,
     ).toBe(403);

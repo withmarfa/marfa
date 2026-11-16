@@ -377,12 +377,12 @@ export interface BlobOrphanRow {
 
 export interface HousekeepingJobRow {
   name: string;
-  interval_ms: number;
+  interval_seconds: number;
   next_run_at: string;
   running_since: string | null;
   last_started_at: string | null;
   last_finished_at: string | null;
-  last_outcome: "ok" | "error" | "held" | null;
+  last_outcome: "succeeded" | "failed" | "held" | null;
   last_error: string | null;
   last_result: unknown;
 }
@@ -391,7 +391,7 @@ export interface HousekeepingRun {
   name: string;
   started_at: string;
   finished_at: string;
-  outcome: "ok" | "error" | "held";
+  outcome: "succeeded" | "failed" | "held";
   result: unknown;
   error: string | null;
 }
@@ -458,7 +458,7 @@ export interface ConnectorRow {
 
 export interface ConnectorHoldTaken {
   expires_at: string;
-  ttl_ms: number;
+  ttl_seconds: number;
   renewed: boolean;
 }
 
@@ -925,7 +925,7 @@ export interface Webhook {
 
 export interface WebhookDelivery {
   id: string;
-  status: "pending" | "success" | "dead_letter" | "canceled";
+  status: "pending" | "succeeded" | "failed" | "canceled";
   webhook_id: string;
   event_type: string;
   status_code: number | null;

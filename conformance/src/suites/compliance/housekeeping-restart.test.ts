@@ -48,7 +48,7 @@ describe("the schedule across a restart", () => {
       try {
         // One job has run, so its schedule is an interval from its finish; the
         // rest have not, so theirs is a delay from the first boot.
-        expect((await runJob(server, OTHER_PROBE)).outcome).toBe("ok");
+        expect((await runJob(server, OTHER_PROBE)).outcome).toBe("succeeded");
         for (const signal of ["SIGTERM", "SIGKILL"] as const) {
           const before = await jobs(server);
           await server.restart({ signal });
@@ -117,7 +117,7 @@ describe("a run the last process left unfinished", () => {
         }
         expect(await server.faults()).toEqual([]);
         for (const name of held) {
-          expect((await runJob(server, name)).outcome, name).toBe("ok");
+          expect((await runJob(server, name)).outcome, name).toBe("succeeded");
         }
       } finally {
         await server.stop();
@@ -131,7 +131,7 @@ describe("a run that outlives its deadline", () => {
   const SHORT = "deadline:" + PROBE + "=300";
 
   it(
-    "is recorded with last_outcome error and a last_error saying it did not finish in time",
+    "is recorded with last_outcome failed and a last_error saying it did not finish in time",
     async () => {
       const server = await bootFreshServer(
         "housekeeping-deadline",
@@ -141,13 +141,13 @@ describe("a run that outlives its deadline", () => {
         // The witness: with the deadline shortened and nothing holding the
         // run, the job finishes inside it.
         await server.setFault(SHORT);
-        expect((await runJob(server, PROBE)).outcome).toBe("ok");
+        expect((await runJob(server, PROBE)).outcome).toBe("succeeded");
 
         await server.setFault(HELD(PROBE));
         const run = await runJob(server, PROBE);
         expect(run).toMatchObject({
           name: PROBE,
-          outcome: "error",
+          outcome: "failed",
           result: null,
         });
         expect(run.error).toMatch(/did not finish/);
@@ -155,7 +155,7 @@ describe("a run that outlives its deadline", () => {
         const row = (await jobs(server))[PROBE];
         expect(row).toMatchObject({
           running_since: null,
-          last_outcome: "error",
+          last_outcome: "failed",
           last_result: null,
         });
         expect(row?.last_error).toMatch(/did not finish/);
@@ -185,12 +185,12 @@ describe("a run that outlives its deadline", () => {
         const ended = await first;
         expect(ended.status).toBe(200);
         expect(((await ended.json()) as { outcome: string }).outcome).toBe(
-          "error",
+          "failed",
         );
         await server.setFault(`deadline:${PROBE}=300`);
         const again = await operatorOf(server).runHousekeeping(PROBE);
         expect(again.status, JSON.stringify(again.error)).toBe(200);
-        expect(again.data.outcome).toBe("error");
+        expect(again.data.outcome).toBe("failed");
         expect((await jobs(server))[PROBE]?.running_since).toBeNull();
         expect(
           (await server.faults()).find((f) => f.name === HELD(PROBE))?.waiting,
@@ -244,10 +244,10 @@ describe("a run that outlives its deadline", () => {
         await server.setFault(HELD("trash-purge"));
         await server.setFault("deadline:trash-purge=300");
         const run = await runJob(server, "trash-purge");
-        expect(run.outcome).toBe("error");
+        expect(run.outcome).toBe("failed");
         const recorded = (await jobs(server))["trash-purge"];
         expect(recorded).toMatchObject({
-          last_outcome: "error",
+          last_outcome: "failed",
           last_result: null,
         });
         // Held at its start: the sweep has not run.
@@ -269,10 +269,13 @@ describe("a run that outlives its deadline", () => {
         const next = await bin("in time");
         await clock.advance(2 * DAY_MS);
         const ok = await runJob(server, "trash-purge");
-        expect(ok).toMatchObject({ outcome: "ok", result: { deleted: 1 } });
+        expect(ok).toMatchObject({
+          outcome: "succeeded",
+          result: { deleted: 1 },
+        });
         expect(await binned(next)).toBe(false);
         expect((await jobs(server))["trash-purge"]).toMatchObject({
-          last_outcome: "ok",
+          last_outcome: "succeeded",
           last_result: { deleted: 1 },
         });
       } finally {

@@ -127,17 +127,23 @@ describe("connectors from the terminal", () => {
     const beat = await connector.json<{ last_heartbeat_at: string }>([
       "connectors",
       "heartbeat",
+      registered.id,
     ]);
     expect(beat.last_heartbeat_at).toMatch(/^\d{4}-/);
-    // The operator's key is no registered connector, so it has none to beat for.
-    const notItsOwn = await c.operator.refused(["connectors", "heartbeat"]);
+    // The operator's key is not the key this connector is registered under.
+    const notItsOwn = await c.operator.refused([
+      "connectors",
+      "heartbeat",
+      registered.id,
+    ]);
     expect(notItsOwn.code).toBe(1);
-    expect(notItsOwn.envelope.error.server?.status).toBe(404);
-    expect(notItsOwn.envelope.error.server?.code).toBe("connector_not_found");
+    expect(notItsOwn.envelope.error.server?.status).toBe(403);
+    expect(notItsOwn.envelope.error.server?.code).toBe("forbidden");
 
     const run = await connector.json<{ id: string; outcome: string }>([
       "connectors",
       "report",
+      registered.id,
       "--outcome",
       "failed",
       "--started-at",
@@ -151,6 +157,7 @@ describe("connectors from the terminal", () => {
     const second = await connector.json<{ id: string; outcome: string }>([
       "connectors",
       "report",
+      registered.id,
       "--outcome",
       "succeeded",
       "--started-at",

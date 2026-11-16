@@ -51,7 +51,7 @@ describe("stopping the server with runs in flight", () => {
     const clock = movedClock(server);
     await quiet(server, [THINNING]);
     const before = (await jobs(server))[THINNING]!;
-    expect(before.last_outcome).toBe("ok");
+    expect(before.last_outcome).toBe("succeeded");
 
     // An item with three snapshots from one day, a day and a half old when
     // the job runs: the job thins them to the latest.
@@ -114,7 +114,7 @@ describe("stopping the server with runs in flight", () => {
     expect(await snapshots()).toEqual([3]);
     const after = (await jobs(server))[THINNING]!;
     expect(after.running_since).toBeNull();
-    expect(after.last_outcome).toBe("ok");
+    expect(after.last_outcome).toBe("succeeded");
     expect(Date.parse(after.last_finished_at ?? "")).toBeGreaterThan(
       Date.parse(before.last_finished_at ?? ""),
     );

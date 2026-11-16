@@ -1370,7 +1370,7 @@ impl Http {
     pub(crate) fn item_titles(&self, names: &[String]) -> Result<Vec<TitledName>, CoreError> {
         #[derive(serde::Deserialize)]
         struct Answer {
-            results: Vec<TitledName>,
+            data: Vec<TitledName>,
         }
         if names.len() > TITLE_LOOKUP_NAMES {
             return Err(CoreError::Invalid(format!(
@@ -1384,14 +1384,14 @@ impl Http {
             ..self.clone()
         };
         let answer: Answer = plain.read_json(&["items", "titles"], &[], Some(&body))?;
-        if answer.results.len() != names.len() {
+        if answer.data.len() != names.len() {
             return Err(CoreError::Decoding(format!(
                 "/items/titles: {} results for {} names",
-                answer.results.len(),
+                answer.data.len(),
                 names.len()
             )));
         }
-        Ok(answer.results)
+        Ok(answer.data)
     }
 
     /// `None` for a credential that is not a key, which that door refuses
@@ -1460,7 +1460,7 @@ impl Http {
     pub(crate) fn read_only_of(&self, ids: &[String]) -> Result<Vec<WireReadOnly>, CoreError> {
         #[derive(serde::Deserialize)]
         struct Answer {
-            items: Vec<WireReadOnly>,
+            data: Vec<WireReadOnly>,
         }
         let body = serde_json::json!({
             "ids": ids,
@@ -1468,7 +1468,7 @@ impl Http {
         })
         .to_string();
         let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
-        Ok(answer.items)
+        Ok(answer.data)
     }
 
     /// `items_by_id`, with each item as the server wrote it beside it.
@@ -1484,7 +1484,7 @@ impl Http {
         }
         #[derive(serde::Deserialize)]
         struct Answer {
-            items: Vec<serde_json::Value>,
+            data: Vec<serde_json::Value>,
             metadata: Vec<Metadata>,
             #[serde(default)]
             listed: Option<Vec<bool>>,
@@ -1508,7 +1508,7 @@ impl Http {
                 CoreError::Decoding(format!("/items/bulk-get: {why}"))
             }
         };
-        let answered = answer.items.len();
+        let answered = answer.data.len();
         if answer.metadata.len() != answered {
             return Err(unreadable("the metadata does not pair with the items"));
         }
@@ -1520,7 +1520,7 @@ impl Http {
         };
         let mut seen = std::collections::HashSet::new();
         let mut rows = Vec::with_capacity(answered);
-        for ((whole, metadata), listed) in answer.items.into_iter().zip(answer.metadata).zip(listed)
+        for ((whole, metadata), listed) in answer.data.into_iter().zip(answer.metadata).zip(listed)
         {
             let item = serde_json::from_value::<WireItem>(whole.clone())
                 .map_err(|error| unreadable(&error.to_string()))?;
@@ -1714,7 +1714,7 @@ impl Http {
         );
         if matches!(
             &refused,
-            CoreError::Server { status: 409, code, .. } if code == "type_already_exists"
+            CoreError::Server { status: 409, code, .. } if code == "type_exists"
         ) {
             return Ok(Registration::Held);
         }
@@ -1780,7 +1780,7 @@ impl Http {
         last_event_id: Option<&str>,
         body_timeout: Duration,
     ) -> Result<Box<dyn Read + Send>, CoreError> {
-        let url = self.url(&["events"], &[("edges", "all"), ("copy", "1")]);
+        let url = self.url(&["events"], &[("edges", "all"), ("copy", "true")]);
         let response = self.authorized(|authorization| {
             let global = global_budget(None).map_err(|error| self.unreached(error))?;
             let mut request = self
@@ -2523,7 +2523,7 @@ mod tests {
             (Method::Delete, "edges/e1"),
             (Method::Post, "items/n1/tags"),
             (Method::Delete, "items/n1/tags/x"),
-            (Method::Put, "items/n1/metadata"),
+            (Method::Put, "items/n1/tags"),
             (Method::Put, "items/n1/extensions/app.cursor"),
             (Method::Delete, "items/n1/extensions/app.cursor"),
         ] {
@@ -3460,7 +3460,7 @@ mod tests {
         })
         .to_string();
         let bulk = serde_json::json!({
-            "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
+            "data": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
             "metadata": ids.iter().map(|id| serde_json::json!({"item_id": id, "tags": []})).collect::<Vec<_>>(),
         })
         .to_string();
@@ -3831,7 +3831,7 @@ mod tests {
             "/items/titles",
             vec![crate::scripted::json(
                 200,
-                r#"{"results":[
+                r#"{"data":[
                     {"name":"Ada","items":[{"id":"a1","type":"core.note","title":"ADA","has_blob":false}],"more":false},
                     {"name":"Many","items":[],"more":true}
                 ]}"#,
@@ -3867,7 +3867,7 @@ mod tests {
         let server = crate::scripted::Scripted::start();
         server.on(
             "/items/titles",
-            vec![crate::scripted::json(200, r#"{"results":[]}"#)],
+            vec![crate::scripted::json(200, r#"{"data":[]}"#)],
         );
         let http = Http::new(&server.url(), "k").unwrap();
         assert!(matches!(

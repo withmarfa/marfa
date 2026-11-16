@@ -78,7 +78,7 @@ async function found(query: string, state?: string): Promise<string[]> {
 async function sweep(): Promise<void> {
   const run = await operator.runHousekeeping("enrichment-sweep");
   expect(run.status).toBe(200);
-  expect(run.data.outcome).toBe("ok");
+  expect(run.data.outcome).toBe("succeeded");
 }
 
 describe("search over extracted file text", () => {

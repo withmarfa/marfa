@@ -625,7 +625,7 @@ describe("outbound webhook delivery", () => {
       expect(b.delivered_at).not.toBe(a.delivered_at);
       expect(signedAt(second!)).toBeGreaterThan(signedAt(first!));
 
-      const settled = await deliveryOf(sub.id, (r) => r.status === "success");
+      const settled = await deliveryOf(sub.id, (r) => r.status === "succeeded");
       expect(settled).toMatchObject({
         id: failed.id,
         succeeded: true,
@@ -665,7 +665,7 @@ describe("outbound webhook delivery", () => {
         third.at - second.at,
         "a hint below the ordinary wait",
       ).toBeGreaterThanOrEqual(5000);
-      const settled = await deliveryOf(sub.id, (r) => r.status === "success");
+      const settled = await deliveryOf(sub.id, (r) => r.status === "succeeded");
       expect(settled.attempt).toBe(3);
     } finally {
       await hook.close();
@@ -691,7 +691,7 @@ describe("outbound webhook delivery", () => {
         const row = await deliveryOf(sub.id, (r) => r.attempt === 1);
         const retried = label === "408" || label === "429";
         expect(row, label).toMatchObject({
-          status: retried ? "pending" : "dead_letter",
+          status: retried ? "pending" : "failed",
           succeeded: false,
           status_code: Number(label),
           error: `HTTP ${label}`,
@@ -709,7 +709,7 @@ describe("outbound webhook delivery", () => {
       for (const label of ["408", "429"]) {
         const row = await deliveryOf(
           subs.get(label)!.id,
-          (r) => r.status === "success",
+          (r) => r.status === "succeeded",
         );
         expect(row, label).toMatchObject({ status_code: 200, attempt: 2 });
       }
@@ -740,7 +740,7 @@ describe("outbound webhook delivery", () => {
       for (const [status, sub] of subs) {
         const row = await deliveryOf(sub.id, (r) => r.attempt === 1);
         expect(row, String(status)).toMatchObject({
-          status: "dead_letter",
+          status: "failed",
           status_code: status,
           error:
             "The receiver answered with a redirect, which is not followed.",
@@ -855,7 +855,7 @@ describe("outbound webhook delivery", () => {
         hook.webhooks.push({ id: created.data.id, owner: client });
         return created.data;
       };
-      const both = ["item.created", "item.deleted"];
+      const both = ["item.created", "item.trashed"];
       subs.set("events-narrowed", await create("events-narrowed", both));
       subs.set(
         "type-narrowed",
@@ -891,10 +891,10 @@ describe("outbound webhook delivery", () => {
           true,
         );
       };
-      await patch("events-narrowed", { events: ["item.deleted"] });
+      await patch("events-narrowed", { events: ["item.trashed"] });
       await patch("type-narrowed", { type_filter: "core.task" });
       await patch("unrelated", { active: true });
-      await patch("events-widened-again", { events: ["item.deleted"] });
+      await patch("events-widened-again", { events: ["item.trashed"] });
       await patch("events-widened-again", { events: both });
       await patch("type-widened-again", { type_filter: "core.task" });
       await patch("type-widened-again", { type_filter: "core.note" });
@@ -953,7 +953,10 @@ describe("outbound webhook delivery", () => {
       }
       for (const label of ["unrelated", "control"]) {
         expect(
-          await deliveryOf(subs.get(label)!.id, (r) => r.status === "success"),
+          await deliveryOf(
+            subs.get(label)!.id,
+            (r) => r.status === "succeeded",
+          ),
           label,
         ).toMatchObject({ attempt: 2, error: null });
         expect(hook.attempts(label), label).toHaveLength(2);
@@ -981,7 +984,7 @@ describe("outbound webhook delivery", () => {
         expect(rows.data.data, label).toHaveLength(2);
         expect(rows.data.data.map((r) => r.status).sort(), label).toEqual([
           "canceled",
-          "success",
+          "succeeded",
         ]);
         const bodies = hook
           .attempts(label)
@@ -1008,8 +1011,8 @@ describe("outbound webhook delivery", () => {
         rows.set(label, await deliveryOf(sub.id, (r) => r.attempt === 1));
       }
       expect(rows.get("pending")?.status).toBe("pending");
-      expect(rows.get("delivered")?.status).toBe("success");
-      expect(rows.get("failed")?.status).toBe("dead_letter");
+      expect(rows.get("delivered")?.status).toBe("succeeded");
+      expect(rows.get("failed")?.status).toBe("failed");
       const repoint = await client.updateWebhook(subs.get("canceled")!.id, {
         url: hook.hookUrl("canceled-elsewhere"),
       });
@@ -1076,7 +1079,7 @@ describe("outbound webhook delivery", () => {
         () => hook.attempts("cleared").length >= 2,
         "the retry",
       );
-      const settled = await deliveryOf(sub.id, (r) => r.status === "success");
+      const settled = await deliveryOf(sub.id, (r) => r.status === "succeeded");
       expect(settled).toMatchObject({
         id: failed.id,
         status_code: 200,
@@ -1140,7 +1143,7 @@ describe("outbound webhook delivery", () => {
       expect(ids[1]).toBe(ids[0]);
       const settled = await deliveryOf(
         sub.id,
-        (r) => r.status === "success",
+        (r) => r.status === "succeeded",
         owner.client,
       );
       expect(settled.id).toBe(ids[0]);
@@ -1203,7 +1206,7 @@ describe("outbound webhook delivery", () => {
     const owner = await keyWith("marks-notes-owner", {
       type_permissions: { "core.note": "read" },
     });
-    const events = ["item.deleted", "item.restored", "item.purged"];
+    const events = ["item.trashed", "item.restored", "item.purged"];
     const full = await client.createWebhook({
       url: receiver.hookUrl("marks-full"),
       events,
@@ -1256,8 +1259,8 @@ describe("outbound webhook delivery", () => {
     // the earlier ones have; each is waited for by what it must carry.
     for (const label of ["marks-full", "marks-notes"]) {
       await waitFor(`the deliveries to ${label}`, async () =>
-        framesAt(label, "item.deleted", child).length >= 2 &&
-        framesAt(label, "item.deleted", alone).length >= 1 &&
+        framesAt(label, "item.trashed", child).length >= 2 &&
+        framesAt(label, "item.trashed", alone).length >= 1 &&
         framesAt(label, "item.purged", child).length >= 1 &&
         restoredWith(label, child).length >= 1
           ? true
@@ -1266,7 +1269,7 @@ describe("outbound webhook delivery", () => {
     }
 
     // An owner that reads every type is told which item each mark names.
-    for (const eventType of ["item.deleted", "item.purged"]) {
+    for (const eventType of ["item.trashed", "item.purged"]) {
       const frames = framesAt("marks-full", eventType, child);
       expect(frames.length, eventType).toBeGreaterThan(0);
       for (const item of frames) {
@@ -1279,7 +1282,7 @@ describe("outbound webhook delivery", () => {
 
     // An owner that may not read tasks is told a cascade took the item, and
     // not which item.
-    for (const eventType of ["item.deleted", "item.purged"]) {
+    for (const eventType of ["item.trashed", "item.purged"]) {
       const frames = framesAt("marks-notes", eventType, child);
       expect(frames.length, eventType).toBeGreaterThan(0);
       for (const item of frames) {
@@ -1300,10 +1303,7 @@ describe("outbound webhook delivery", () => {
     try {
       const sub = await subscribe(hook, "foreign-redeliver");
       await makeNote("foreign-redeliver");
-      const failed = await deliveryOf(
-        sub.id,
-        (r) => r.status === "dead_letter",
-      );
+      const failed = await deliveryOf(sub.id, (r) => r.status === "failed");
       const other = await keyWith("foreign-redeliverer", {});
       const path = `/webhooks/${sub.id}/deliveries/${failed.id}/redeliver`;
 
@@ -1322,7 +1322,7 @@ describe("outbound webhook delivery", () => {
         resource_id: failed.id,
       });
       expect(audit.data.data).toHaveLength(0);
-      expect((await deliveryOf(sub.id, () => true)).status).toBe("dead_letter");
+      expect((await deliveryOf(sub.id, () => true)).status).toBe("failed");
 
       const accepted = await client.rawRequest<WebhookDelivery>(path, {
         method: "POST",
@@ -1338,10 +1338,7 @@ describe("outbound webhook delivery", () => {
     try {
       const sub = await subscribe(hook, "twice");
       await makeNote("twice");
-      const failed = await deliveryOf(
-        sub.id,
-        (r) => r.status === "dead_letter",
-      );
+      const failed = await deliveryOf(sub.id, (r) => r.status === "failed");
       const path = `/webhooks/${sub.id}/deliveries/${failed.id}/redeliver`;
 
       const answers = await Promise.all([
@@ -1766,7 +1763,7 @@ describe("outbound webhook delivery", () => {
       });
       const settled = await deliveryOf(
         sub.id,
-        (r) => r.status === "success",
+        (r) => r.status === "succeeded",
         owner.client,
       );
       expect(settled.attempt).toBe(2);

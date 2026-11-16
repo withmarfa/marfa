@@ -90,9 +90,7 @@ describe("the names of the audit log's actions", () => {
     expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
     expect((await client.addTags(id, ["added"])).ok).toBe(true);
     expect((await client.removeTag(id, "added")).ok).toBe(true);
-    expect((await client.replaceMetadata(id, { tags: ["only"] })).ok).toBe(
-      true,
-    );
+    expect((await client.replaceTags(id, { tags: ["only"] })).ok).toBe(true);
     const namespace = `audit_actions_${ctx.runId.replace(/[^a-z0-9]/gi, "_")}`;
     expect((await client.setItemExtension(id, namespace, { a: 1 })).ok).toBe(
       true,
@@ -110,7 +108,7 @@ describe("the names of the audit log's actions", () => {
       "item.update",
       "item.tag",
       "item.untag",
-      "item.metadata.replace",
+      "item.tags.replace",
       "extension.set",
       "extension.delete",
       "item.delete",

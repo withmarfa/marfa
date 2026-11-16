@@ -153,7 +153,7 @@ describe("a stored setting that decides a deletion and does not read", () => {
       storeSettingRow(server.sqlitePath, "blob_cleanup_grace_seconds", "soon");
       const refused = await operator.runHousekeeping("blob-orphans");
       expect(refused.status, JSON.stringify(refused.error)).toBe(200);
-      expect(refused.data.outcome).toBe("error");
+      expect(refused.data.outcome).toBe("failed");
       expect((await operator.downloadBlob(hash)).status).toBe(200);
 
       storeSettingRow(server.sqlitePath, "blob_cleanup_grace_seconds", null);

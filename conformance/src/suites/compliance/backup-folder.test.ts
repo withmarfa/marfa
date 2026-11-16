@@ -481,7 +481,7 @@ describe("a backup folder that lacks a file or its disk", () => {
         server,
         bytesOf("a file the folder has no room for", 2048),
       );
-      const run = await runJob(operator, "blob-replicate", "error");
+      const run = await runJob(operator, "blob-replicate", "failed");
       expect(run.result).toMatchObject({ copied: 0 });
       expect(existsSync(copyIn(root, id, held.hash))).toBe(false);
       const told = (await healthDetail(server)).backups.store_error;
@@ -556,7 +556,7 @@ describe("a backup folder that lacks a file or its disk", () => {
           );
 
           await fileItem(server, bytesOf("a file waiting for its copy", 2048));
-          const run = await runJob(operator, "blob-replicate", "error");
+          const run = await runJob(operator, "blob-replicate", "failed");
           expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
           const waiting = await healthDetail(server);
           expect(waiting.backups.copies_waiting).toBe(1);

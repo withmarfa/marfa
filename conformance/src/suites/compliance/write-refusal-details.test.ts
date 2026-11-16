@@ -100,7 +100,7 @@ describe("a refusal caused by a missing grant names it", () => {
       edge_type: "references",
     });
     expect(edge.status).toBe(403);
-    expect(edge.error?.error.code).toBe("edge_permission_denied");
+    expect(edge.error?.error.code).toBe("edge_type_not_permitted");
     expect(edge.error?.error.details?.grant).toEqual({
       kind: "edge_type",
       name: "references",
@@ -242,7 +242,7 @@ describe("a refusal caused by a missing grant names it", () => {
     ];
     for (const refused of refusals) {
       expect(refused.status).toBe(403);
-      expect(refused.error?.error.code).toBe("edge_permission_denied");
+      expect(refused.error?.error.code).toBe("edge_type_not_permitted");
       expect(refused.error?.error.details).toEqual({
         edge_type: "references",
         required: "write",
@@ -386,7 +386,6 @@ describe("a write to an item in the bin says so", () => {
     expect(stored.status, JSON.stringify(stored.error)).toBe(200);
     const reads = {
       "GET /items/{id}": () => client.getItem(id),
-      "GET /items/{id}/metadata": () => client.getMetadata(id),
       "GET /items/{id}/versions": () => client.getVersions(id),
       "GET /items/{id}/extensions": () => client.listItemExtensions(id),
       "GET /items/{id}/extensions/{namespace}": () =>
@@ -410,7 +409,7 @@ describe("a write to an item in the bin says so", () => {
     expect(again.error?.error.details).toEqual({ trashed: true });
 
     for (const write of [
-      () => client.replaceMetadata(id, { tags: ["late"] }),
+      () => client.replaceTags(id, { tags: ["late"] }),
       () => client.addTags(id, ["late"]),
       () => client.removeTag(id, "live"),
       () => client.setItemExtension(id, "notes-app", { late: true }),
@@ -439,7 +438,6 @@ describe("a write to an item in the bin says so", () => {
     for (const [door, read] of Object.entries({
       "GET /items/{id}": () => blind.getItem(id),
       "GET /items/{id}?state=any": () => blind.getItem(id, "any"),
-      "GET /items/{id}/metadata": () => blind.getMetadata(id),
       "GET /items/{id}/versions": () => blind.getVersions(id),
       "GET /items/{id}/extensions": () => blind.listItemExtensions(id),
     })) {

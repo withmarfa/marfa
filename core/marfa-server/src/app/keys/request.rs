@@ -143,6 +143,11 @@ fn held_source(text: &str, field: &str) -> Result<String> {
             "{field} must hold 1 to 200 characters once trimmed."
         )));
     }
+    if sources::is_dot_segment(trimmed) {
+        return Err(Refusal::validation(format!(
+            "{field} can't be . or .., which a client folds out of a path."
+        )));
+    }
     if reserved(trimmed) {
         return Err(Refusal::validation(format!(
             "{field} can't start with oauth: or restored:."
@@ -321,12 +326,16 @@ mod tests {
             " OAuth:client",
             "RESTORED:device",
             "oauth:",
+            ".",
+            "..",
+            " .. ",
         ] {
             assert!(held_source(text, "source").is_err(), "{text}");
         }
         assert!(held_source(&"😀".repeat(201), "source").is_err());
         assert!(held_source(&"😀".repeat(200), "source").is_ok());
         assert!(held_source("oauthish:mine", "source").is_ok());
+        assert!(held_source("...", "source").is_ok());
     }
 
     #[test]

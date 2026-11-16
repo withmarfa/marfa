@@ -2,7 +2,7 @@
 
 `GET /events` is a server-sent event stream of the writes to items and edges, resumable by cursor, and outbound webhooks deliver those events to a URL, except the writes `items/bulk-fanout` holds back. The audit log, which records the writes the events announce, closes the chapter.
 
-Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
+Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=true`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
 
 ## Event types
 
@@ -14,7 +14,7 @@ Every event and stream frame the server sends is a row of the table below, which
 | -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `item.created`       | Streams and webhooks | A write creates an item (`events/create-announced`).                                                                                                                                                                                                                                                             |
 | `item.updated`       | Streams and webhooks | A write changes an item (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).                                                                                                             |
-| `item.deleted`       | Streams and webhooks | An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).                                                                          |
+| `item.trashed`       | Streams and webhooks | An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).                                                                          |
 | `item.restored`      | Streams and webhooks | An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).                                                                                                                                                                                                                      |
 | `item.purged`        | Streams and webhooks | An item is destroyed (`items/purge-announced`, `events/owner-trash-announced`, `events/sweep-purge-announced`, `views/delete-announced`).                                                                                                                                                                        |
 | `item.state_changed` | Streams and webhooks | A transition moves the item it names to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`). |
@@ -472,7 +472,7 @@ The cascade marks `trashed_by_cascade`, `trashed_with`, `restored_with` and `pur
 
 ### `events/item-events`
 
-The server MUST send an item event as `item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.purged` or `item.state_changed`, with `event_type` naming it and `item` holding the item.
+The server MUST send an item event as `item.created`, `item.updated`, `item.trashed`, `item.restored`, `item.purged` or `item.state_changed`, with `event_type` naming it and `item` holding the item.
 
 **Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the item and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the item is gone`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
 
@@ -486,7 +486,7 @@ The server MUST carry on every item event `metadata`, holding the item's tags an
 
 ### `events/deleted-trashed-at`
 
-When the server sends `item.deleted`, the server MUST set the `trashed_at` of the frame's `item` to the time the move to the bin recorded on that item, for the item a delete or a transition named and for each item a cascade took with it.
+When the server sends `item.trashed`, the server MUST set the `trashed_at` of the frame's `item` to the time the move to the bin recorded on that item, for the item a delete or a transition named and for each item a cascade took with it.
 
 **Reason:** a working copy keeps the frame's item (`device/bin-held-event`), and orders its bin by that item's `trashed_at` (`device/bin-local-order`). A frame still holding the item as it was before the move says `null`, so a copy that heard another client bin an item could not place it in the bin.
 
@@ -538,7 +538,7 @@ The server MUST NOT carry `purged_with` on an `edge.deleted` for an edge deleted
 
 When a bulk action transitions an item, the server MUST send `item.state_changed` for it, to a live stream and on a replay.
 
-**Tests:** `sync/replay.test.ts › announces what a bulk-action job changes to a live stream and to a replay`, `compliance/events-contract.test.ts › announces a transition as item.state_changed, single or by bulk action, with item.deleted or item.restored when it crosses the bin`.
+**Tests:** `sync/replay.test.ts › announces what a bulk-action job changes to a live stream and to a replay`, `compliance/events-contract.test.ts › announces a transition as item.state_changed, single or by bulk action, with item.trashed or item.restored when it crosses the bin`.
 
 ## Writes and their events
 
@@ -626,23 +626,23 @@ When `PATCH /items/{id}` carries only `edges` that add an edge to the item or re
 
 When `DELETE /items/{id}`, `POST /items/trash` or `POST /items/summaries/{id}/trash` moves an item into the bin, the server MUST NOT announce `item.state_changed` for it.
 
-**Tests:** `compliance/events-contract.test.ts › announces a delete only as item.deleted and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
+**Tests:** `compliance/events-contract.test.ts › announces a delete only as item.trashed and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
 
 ### `events/restore-no-state-change`
 
 When `POST /items/{id}/restore` or `POST /items/summaries/{id}/restore` brings an item back, the server MUST NOT announce `item.state_changed` for it.
 
-**Tests:** `compliance/events-contract.test.ts › announces a delete only as item.deleted and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
+**Tests:** `compliance/events-contract.test.ts › announces a delete only as item.trashed and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
 
 ### `events/owner-trash-announced`
 
-When `POST /items/summaries/{id}/trash`, `POST /items/summaries/{id}/restore`, `POST /items/summaries/{id}/purge` or `POST /trash/empty` moves or purges an item, the server MUST announce `item.deleted`, `item.restored` or `item.purged` for it.
+When `POST /items/summaries/{id}/trash`, `POST /items/summaries/{id}/restore`, `POST /items/summaries/{id}/purge` or `POST /trash/empty` moves or purges an item, the server MUST announce `item.trashed`, `item.restored` or `item.purged` for it.
 
 **Tests:** `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
 
 ### `events/cascade-revoke-announced`
 
-When a cascade moves a `system.*` item to `revoked`, the server MUST announce `item.deleted` for it, with `state` `revoked`.
+When a cascade moves a `system.*` item to `revoked`, the server MUST announce `item.trashed` for it, with `state` `revoked`.
 
 **Tests:** `compliance/cascade-marks.test.ts › marks no item a cascade revokes rather than trashes`.
 
@@ -852,7 +852,7 @@ If the server's read of the log fails when a stream opens or while it replays, o
 
 ## Registering a subscription
 
-An outbound webhook is a subscription: a `url`, the `events` it wants and, optionally, a `type_filter`. The events a subscription may name are `item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.purged`, `item.state_changed`, `metadata.changed`, `rows.changed`, `edge.created`, `edge.updated` and `edge.deleted`.
+An outbound webhook is a subscription: a `url`, the `events` it wants and, optionally, a `type_filter`. The events a subscription may name are `item.created`, `item.updated`, `item.trashed`, `item.restored`, `item.purged`, `item.state_changed`, `metadata.changed`, `rows.changed`, `edge.created`, `edge.updated` and `edge.deleted`.
 
 ### `events/webhook-create`
 
@@ -1214,7 +1214,7 @@ The server MUST give the `t` of `X-Marfa-Signature` as the time of the attempt.
 
 The server MUST carry in a delivery the cascade marks the stream frame carries, `trashed_by_cascade`, `trashed_with`, `restored_with` and `purged_with` among them.
 
-**Tests:** `compliance/cascade-marks.test.ts › delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`, `compliance/webhook-delivery.test.ts › delivers the marks of a stream frame, naming another item only to an owner who may read its type`, `› sends no edge.deleted for an edge a purge took to an owner who may not read the purged item's type, and sends it for a type the owner reads`.
+**Tests:** `compliance/cascade-marks.test.ts › delivers the item.trashed of an item a cascade trashed with its mark, and the item trashed's own without one`, `compliance/webhook-delivery.test.ts › delivers the marks of a stream frame, naming another item only to an owner who may read its type`, `› sends no edge.deleted for an edge a purge took to an owner who may not read the purged item's type, and sends it for a type the owner reads`.
 
 ### `events/delivery-marks-named`
 
@@ -1300,7 +1300,7 @@ When a credential is narrowed away from the type of an event whose delivery is p
 
 ### `events/record-status`
 
-The server MUST answer a delivery's `status` as `pending`, `success`, `dead_letter` or `canceled`.
+The server MUST answer a delivery's `status` as `pending`, `succeeded`, `failed` or `canceled`.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`, `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› retries a 408 and a 429, and gives up at once on any other 4xx answer`, `› settles a pending delivery unsent when its subscription is repointed, turned off or deleted, and keeps its last answer`.
 
@@ -1318,7 +1318,7 @@ The server MUST answer a delivery's `attempt` as the number of attempts whose ou
 
 ### `events/record-succeeded`
 
-The server MUST answer a delivery's `succeeded` as `true` for `success` and `false` for every other `status`.
+The server MUST answer a delivery's `succeeded` as `true` for `succeeded` and `false` for every other `status`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› retries a 408 and a 429, and gives up at once on any other 4xx answer`, `› settles a pending delivery unsent when its subscription is repointed, turned off or deleted, and keeps its last answer`.
 
@@ -1420,13 +1420,13 @@ When a receiver answers an attempt before the last of its cycle with `408` or `4
 
 ### `events/client-error-gives-up`
 
-When a receiver answers a delivery with a `4xx` status other than `408` and `429`, the server MUST give up at once and record the delivery `dead_letter` at that attempt.
+When a receiver answers a delivery with a `4xx` status other than `408` and `429`, the server MUST give up at once and record the delivery `failed` at that attempt.
 
 **Tests:** `compliance/webhook-delivery.test.ts › retries a 408 and a 429, and gives up at once on any other 4xx answer`.
 
 ### `events/retry-redirect`
 
-When a receiver answers a delivery with a `3xx` status, the server MUST give up at once and record the delivery `dead_letter` with the redirect's status and the `error` `The receiver answered with a redirect, which is not followed.`
+When a receiver answers a delivery with a `3xx` status, the server MUST give up at once and record the delivery `failed` with the redirect's status and the `error` `The receiver answered with a redirect, which is not followed.`
 
 **Tests:** `compliance/webhook-delivery.test.ts › gives up on a redirect without following it`.
 
@@ -1456,9 +1456,9 @@ When a receiver's `Retry-After` is longer than five minutes, the server MUST wai
 
 ### `events/retry-schedule`
 
-When a receiver answers every attempt with a retryable failure, the server MUST make eight attempts, with seven waits of 1, 5, 25, 125, 625, 3125 and 15625 seconds between them, and then record the delivery `dead_letter`.
+When a receiver answers every attempt with a retryable failure, the server MUST make eight attempts, with seven waits of 1, 5, 25, 125, 625, 3125 and 15625 seconds between them, and then record the delivery `failed`.
 
-**Tests:** `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
+**Tests:** `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records failed`.
 
 ### `events/retry-when-due`
 
@@ -1466,7 +1466,7 @@ When a pending delivery's wait ends, the server MUST attempt it without a reques
 
 **Reason:** a receiver that comes back is sent what it missed at the time the schedule names, not at the next run of a job.
 
-**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`, `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
+**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`, `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records failed`.
 
 ### `events/retry-restart-once`
 
@@ -1506,7 +1506,7 @@ When the server settles a delivery unsent, the server MUST record it `canceled` 
 
 ### `events/redeliver-accepted`
 
-When the credential that owns a subscription sends `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` for a `dead_letter` delivery, the server MUST answer `202` with that delivery as `pending`, keeping its `id`, `status_code` and `attempt`.
+When the credential that owns a subscription sends `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` for a `failed` delivery, the server MUST answer `202` with that delivery as `pending`, keeping its `id`, `status_code` and `attempt`.
 
 **Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
@@ -1518,7 +1518,7 @@ When the server redelivers a delivery, the server MUST send it to the subscripti
 
 ### `events/redeliver-not-failed`
 
-If a redelivery names a delivery that is `pending`, `success` or `canceled`, then the server MUST answer `409 conflict`.
+If a redelivery names a delivery that is `pending`, `succeeded` or `canceled`, then the server MUST answer `409 conflict`.
 
 **Reason:** a delivered or canceled delivery keeps no frame to send again.
 
@@ -1538,11 +1538,11 @@ If a redelivery names a delivery of a subscription that is not active, then the 
 
 ### `events/redeliver-conflict-reason`
 
-When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `dead_letter`, or `delivery_expired` if the delivery is older than the instance's audit retention.
+When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `failed`, or `delivery_expired` if the delivery is older than the instance's audit retention.
 
-**Reason:** the four refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `dead_letter` delivery keeps the event it was queued with, so no fifth refusal is needed for an event the log has since let go.
+**Reason:** the four refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `failed` delivery keeps the event it was queued with, so no fifth refusal is needed for an event the log has since let go.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a failed delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
 
 ### `events/redeliver-missing`
 
@@ -1558,7 +1558,7 @@ When two redeliveries of one delivery arrive together, the server MUST accept on
 
 ### `events/redeliver-fresh-cycle`
 
-When a receiver answers every attempt of a redelivered delivery with a retryable failure, the server MUST make eight attempts after the redelivery before it records the delivery `dead_letter` again.
+When a receiver answers every attempt of a redelivered delivery with a retryable failure, the server MUST make eight attempts after the redelivery before it records the delivery `failed` again.
 
 **Tests:** `compliance/webhook-history.test.ts › starts a fresh cycle of attempts on redelivery`.
 
@@ -1580,13 +1580,13 @@ If the server cannot record a redelivery's audit entry, then the server MUST lea
 
 **Tests:** `compliance/write-faults.test.ts › leaves the failed delivery unchanged, queues nothing and records nothing, and a retry is accepted`.
 
-### `events/history-dead-letter-kept`
+### `events/history-failed-kept`
 
-While a `dead_letter` delivery is within the effective audit retention, measured from its original `created_at`, the server MUST keep the frame and address it needs to be redelivered.
+While a `failed` delivery is within the effective audit retention, measured from its original `created_at`, the server MUST keep the frame and address it needs to be redelivered.
 
 **Reason:** the effective retention is the `audit_retention_days` setting in `/config` where it is set, and a delivery's history follows it.
 
-**Tests:** `compliance/webhook-history.test.ts › keeps a dead_letter delivery within the audit retention redeliverable`.
+**Tests:** `compliance/webhook-history.test.ts › keeps a failed delivery within the audit retention redeliverable`.
 
 ### `events/history-pending-kept`
 
@@ -1608,9 +1608,9 @@ When the `audit-cleanup` job runs, the server MUST remove from `GET /webhooks/{i
 
 ### `events/redeliver-expired`
 
-If a redelivery names a `dead_letter` delivery older than the effective audit retention, then the server MUST answer `409 conflict`.
+If a redelivery names a `failed` delivery older than the effective audit retention, then the server MUST answer `409 conflict`.
 
-**Tests:** `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`.
+**Tests:** `compliance/webhook-history.test.ts › refuses to redeliver a failed delivery older than the audit retention`.
 
 ## Where a webhook may send
 
@@ -1686,9 +1686,9 @@ Where the instance does not allow private addresses, if a subscription's `url` n
 
 **Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
 
-### `events/address-name-dead-letter`
+### `events/address-name-failed`
 
-Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST record the delivery `dead_letter` at that attempt.
+Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST record the delivery `failed` at that attempt.
 
 **Reason:** the refusal is the instance's own rule, not the receiver's answer, so a later attempt would meet it again and the delivery would show `pending` for hours while it did. A redelivery sends it again once the name or the setting has changed.
 
@@ -1796,7 +1796,7 @@ When a delivery's lookup is given a slot, the server MUST allow that lookup 3 se
 
 If a due delivery has waited 3 seconds for a lookup slot and lookups under way for its maker then hold all 4 slots of that maker's share, then the server MUST leave the delivery due with its count of attempts unchanged.
 
-**Reason:** a maker's share counts its lookups under way, never its deliveries waiting for a slot. The delivery was not tried, so recording the receiver as unreachable would spend one of the eight attempts of a healthy receiver and, after about 5.4 hours, end the delivery as `dead_letter`. The server offers the delivery a lookup again when one of that maker's lookups ends, and `events/lookup-share-ends` ends the wait if none does.
+**Reason:** a maker's share counts its lookups under way, never its deliveries waiting for a slot. The delivery was not tried, so recording the receiver as unreachable would spend one of the eight attempts of a healthy receiver and, after about 5.4 hours, end the delivery as `failed`. The server offers the delivery a lookup again when one of that maker's lookups ends, and `events/lookup-share-ends` ends the wait if none does.
 
 **Tests:** `compliance/webhook-lookup-slots.test.ts › leaves a delivery due, with no attempt spent, when its maker has no lookup slot free`.
 
@@ -1804,7 +1804,7 @@ If a due delivery has waited 3 seconds for a lookup slot and lookups under way f
 
 If a due delivery has been left due under `events/lookup-share-defers` for 10 seconds, and its next attempt has waited 3 seconds for a lookup slot while lookups under way for its maker hold all 4 slots of that maker's share, then the server MUST count that attempt as one that could not reach the receiver, and record `The receiver could not be reached.`
 
-**Reason:** a lookup that never returns would otherwise leave the delivery due for ever, with no attempt spent and no end at `dead_letter`. Four lookups under way for one maker are that maker's own doing, so counting the attempt puts the delivery on its retry schedule, which ends it. Until then the server does not offer the delivery a lookup again unless one of that maker's lookups ends.
+**Reason:** a lookup that never returns would otherwise leave the delivery due for ever, with no attempt spent and no end at `failed`. Four lookups under way for one maker are that maker's own doing, so counting the attempt puts the delivery on its retry schedule, which ends it. Until then the server does not offer the delivery a lookup again unless one of that maker's lookups ends.
 
 **Tests:** `compliance/webhook-lookup-slots.test.ts › counts an attempt for a delivery that has had no lookup slot for 10 seconds, and offers it none meanwhile`.
 
@@ -1836,7 +1836,7 @@ Each entry names what it records in `action`. The first table gives the `action`
 | `item.update`                | A write changes an item.                                                        | `data`         |
 | `item.tag`                   | A tag operation adds tags to an item.                                           | `data`         |
 | `item.untag`                 | A tag operation removes a tag from an item.                                     | `data`         |
-| `item.metadata.replace`      | A tag operation replaces the tags of an item.                                   | `data`         |
+| `item.tags.replace`          | A tag operation replaces the tags of an item.                                   | `data`         |
 | `extension.set`              | A write sets an extension namespace of an item.                                 | `data`         |
 | `extension.delete`           | A write deletes an extension namespace of an item.                              | `data`         |
 | `item.transition`            | A transition moves an item to another state.                                    | `data`         |

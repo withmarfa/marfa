@@ -33,7 +33,7 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-const address = () => `${server.apiUrl}/owner/picture`;
+const address = () => `${server.apiUrl}/owner/avatar`;
 const sha256 = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 
@@ -56,7 +56,7 @@ function putProfile(
   key: string | null = server.workingKey,
   headers: Record<string, string> = {},
 ) {
-  return fetch(`${server.apiUrl}/profile/picture`, {
+  return fetch(`${server.apiUrl}/profile/avatar`, {
     method: "PUT",
     headers: {
       ...(key === null ? {} : { authorization: `Bearer ${key}` }),
@@ -219,14 +219,14 @@ describe("the owner's picture", () => {
       ...before,
       avatar: address(),
     });
-    await expectMatchesSchema("PUT", "/owner/picture", 200, updated);
+    await expectMatchesSchema("PUT", "/owner/avatar", 200, updated);
     expect((await ownerNow()).avatar).toBe(address());
     expect(await served()).toMatchObject({ status: 200, bytes: file });
   });
 
   it("stores a picture sent through the private local command", async () => {
     const file = png(12, 12, 0x20);
-    const res = await controlRequest(server.controlSocket, "/owner/picture", {
+    const res = await controlRequest(server.controlSocket, "/owner/avatar", {
       method: "PUT",
       body: file,
     });
@@ -241,8 +241,9 @@ describe("the owner's picture", () => {
     const res = await putProfile(file);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ok: true });
-    await expectMatchesSchema("PUT", "/profile/picture", 200, body);
+    expect(body).toMatchObject({ avatar: address() });
+    expect(body).not.toHaveProperty("ok");
+    await expectMatchesSchema("PUT", "/profile/avatar", 200, body);
     expect((await served()).bytes).toEqual(file);
 
     const writer = await keyWith({ avatar: "write" });
@@ -305,7 +306,7 @@ describe("the owner's picture", () => {
           status: 400,
           code: "validation_error",
         });
-        await expectMatchesSchema("PUT", "/owner/picture", 400, refused.body);
+        await expectMatchesSchema("PUT", "/owner/avatar", 400, refused.body);
       }
     }
     // The previous picture stands, and the same door took a real one.
@@ -409,7 +410,7 @@ describe("the owner's picture", () => {
         status: 413,
         code: "request_too_large",
       });
-      await expectMatchesSchema("PUT", "/owner/picture", 413, refused.body);
+      await expectMatchesSchema("PUT", "/owner/avatar", 413, refused.body);
     }
     // The refused ones left the stored picture as it was.
     expect((await served()).bytes.length).toBe(MAX_BYTES);
@@ -630,7 +631,7 @@ describe("the owner's picture", () => {
     await clear();
     const none = await refusal(await getAsOwner());
     expect(none).toMatchObject({ status: 404, code: "not_found" });
-    await expectMatchesSchema("GET", "/owner/picture", 404, none.body);
+    await expectMatchesSchema("GET", "/owner/avatar", 404, none.body);
     expect((await getWithKey(server.workingKey)).status).toBe(404);
     // The witness: with a picture the same door answers.
     expect((await putOwner(png(8, 8))).status).toBe(200);

@@ -128,9 +128,12 @@ describe("stopping the instance with an event stream open", () => {
   it(
     "ends an open copy stream with stream_incomplete when the server is stopped, and exits with status 0",
     async () => {
-      const response = await fetch(`${copied.apiUrl}/events?edges=all&copy=1`, {
-        headers: { Authorization: `Bearer ${copied.workingKey}` },
-      });
+      const response = await fetch(
+        `${copied.apiUrl}/events?edges=all&copy=true`,
+        {
+          headers: { Authorization: `Bearer ${copied.workingKey}` },
+        },
+      );
       expect(response.status).toBe(200);
       const reader = (response.body as ReadableStream<Uint8Array>).getReader();
       const decoder = new TextDecoder();

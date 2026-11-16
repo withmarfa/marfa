@@ -402,7 +402,7 @@ export function scriptHydration(
     "/events",
     (request) => {
       if (
-        request.query.toString() !== "edges=all&copy=1" ||
+        request.query.toString() !== "edges=all&copy=true" ||
         request.headers["last-event-id"] !== undefined ||
         request.headers["x-marfa-reach"] !== undefined
       )
@@ -416,7 +416,7 @@ export function scriptHydration(
     (request) => {
       const cursor = request.headers["last-event-id"];
       const fence = request.headers["x-marfa-reach"];
-      if (request.query.toString() !== "edges=all&copy=1")
+      if (request.query.toString() !== "edges=all&copy=true")
         return refusal(400, "validation_error", "invalid copy stream query");
       if (cursor === undefined && fence === undefined)
         return copyInstance(copyHeadRead(head()));
@@ -881,7 +881,7 @@ export interface ScriptedWrites {
   update?: Responder[];
   /** The certified single-item read used to reconcile a settled write. */
   read?: Responder[];
-  /** The tag and metadata doors, which answer the same sidecar. */
+  /** The tag doors, which each answer the item's tags. */
   tags?: Responder[];
   extensions?: Responder[];
   edges?: Responder[];
@@ -908,11 +908,7 @@ export function scriptWrites(
   if (options.tags !== undefined) {
     server.answer("POST", /^\/items\/[^/]+\/tags$/, ...options.tags);
     server.answer("DELETE", /^\/items\/[^/]+\/tags\/[^/]+$/, ...options.tags);
-    // The metadata door answers the same sidecar, so it is scripted with the
-    // tag doors rather than needing a group of its own: leaving it out is how
-    // a drain carrying a metadata write met an unscripted door and read the
-    // 501 as a refusal.
-    server.answer("PUT", /^\/items\/[^/]+\/metadata$/, ...options.tags);
+    server.answer("PUT", /^\/items\/[^/]+\/tags$/, ...options.tags);
   }
   if (options.extensions !== undefined) {
     const door = /^\/items\/[^/]+\/extensions\/[^/]+$/;

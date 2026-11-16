@@ -421,7 +421,7 @@ mod tests {
             ("restore_item", "refused", vec![]),
             ("update_item", "dead", vec![]),
             ("add_tag", "dead", vec![("tag", "kept")]),
-            ("replace_metadata", "refused", vec![]),
+            ("replace_tags", "refused", vec![]),
         ] {
             let row = answered("unrecorded", kind, verdict, &extra);
             let (dir, path) = refused_folder(true, &format!("{RECORD} {row}"));

@@ -791,7 +791,9 @@ describe("the keys an app minted, when its grant ends another way", () => {
     const [key, descendant] = await keysOf(access, "idle-survivor");
 
     await movedClock(server).advance(366 * DAY_MS);
-    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+      "succeeded",
+    );
     // The witness: the retirement ended the app.
     const listed = (await (await grants(server.managementKey)).json()) as {
       data: Grant[];

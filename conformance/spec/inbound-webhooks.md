@@ -926,7 +926,7 @@ If a run of `inbound-delivery-cleanup` fails while it removes deliveries, then t
 
 ### `inbound-webhooks/cleanup-interval`
 
-The server MUST list `inbound-delivery-cleanup` with an `interval_ms` of 60000.
+The server MUST list `inbound-delivery-cleanup` with an `interval_seconds` of 60.
 
 **Tests:** `compliance/inbound-retention.test.ts › lists inbound-delivery-cleanup every 60000 milliseconds`.
 

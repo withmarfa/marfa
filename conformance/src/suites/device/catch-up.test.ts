@@ -337,7 +337,7 @@ describe("catch-up replays from the cursor", () => {
     const steps = [
       ["11", "item.created", "active"],
       ["12", "item.state_changed", "archived"],
-      ["13", "item.deleted", "trashed"],
+      ["13", "item.trashed", "trashed"],
       ["14", "item.restored", "active"],
     ] as const;
     server.copyAnswer(

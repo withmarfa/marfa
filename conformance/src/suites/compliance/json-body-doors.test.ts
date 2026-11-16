@@ -34,8 +34,8 @@ afterAll(async () => {
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob",
   "POST /restore": "a gzip archive",
-  "PUT /owner/picture": "the bytes of a picture",
-  "PUT /profile/picture": "the bytes of a picture",
+  "PUT /owner/avatar": "the bytes of a picture",
+  "PUT /profile/avatar": "the bytes of a picture",
   "POST /oauth/token": "a form, as RFC 6749 defines",
   "POST /oauth/revoke": "a form, as RFC 7009 defines",
   "POST /oauth/device-authorization": "a form, as RFC 8628 defines",
@@ -105,7 +105,7 @@ async function jsonDoors(): Promise<string[]> {
 }
 
 async function itemTags(id: string): Promise<unknown> {
-  const res = await fetch(`${apiUrl}/items/${id}/metadata`, {
+  const res = await fetch(`${apiUrl}/items/${id}`, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   expect(res.status).toBe(200);
@@ -176,7 +176,7 @@ describe("a door that takes a JSON body", () => {
     expect(doors.length).toBeGreaterThan(30);
     expect(doors).toEqual(
       expect.arrayContaining([
-        "PUT /items/{id}/metadata",
+        "PUT /items/{id}/tags",
         "POST /items/{id}/tags",
         "PUT /items/{id}/extensions/{namespace}",
       ]),
@@ -246,8 +246,8 @@ describe("the doors that lost or broke data without a JSON Content-Type", () => 
 
   const DOORS = [
     {
-      door: "PUT /items/{id}/metadata",
-      path: (id: string) => `/items/${id}/metadata`,
+      door: "PUT /items/{id}/tags",
+      path: (id: string) => `/items/${id}/tags`,
       body: { tags: ["replaced"] },
       after: { tags: ["replaced"], extensions: { [NAMESPACE]: STORED } },
     },

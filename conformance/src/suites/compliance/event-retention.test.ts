@@ -154,7 +154,7 @@ describe("the event log's retention job", () => {
 
       const run = await log.operator().runHousekeeping("event-log-cleanup");
       expect(run.status, JSON.stringify(run.error)).toBe(200);
-      expect(run.data.outcome).toBe("ok");
+      expect(run.data.outcome).toBe("succeeded");
       expect(run.data.result).toMatchObject({ deleted: 2 });
 
       // The oldest event the log keeps is the third, so the largest cursor
@@ -191,7 +191,7 @@ describe("the event log's retention job", () => {
       const copy = (options: { lastEventId?: string; reach?: string }) => ({
         query: [
           ["edges", "all"],
-          ["copy", "1"],
+          ["copy", "true"],
         ] as Array<[string, string]>,
         ...options,
       });
@@ -276,7 +276,7 @@ describe("the event log's retention job", () => {
 
       const run = await log.operator().runHousekeeping("event-log-cleanup");
       expect(run.status, JSON.stringify(run.error)).toBe(200);
-      expect(run.data.outcome).toBe("ok");
+      expect(run.data.outcome).toBe("succeeded");
       expect(run.data.result).toMatchObject({ deleted: 2 });
 
       const refused = await read(String(ids[0]), tooOld, signal);
@@ -320,7 +320,7 @@ describe("the event log's retention job", () => {
 
       const run = await log.operator().runHousekeeping("event-log-cleanup");
       expect(run.status, JSON.stringify(run.error)).toBe(200);
-      expect(run.data.outcome).toBe("ok");
+      expect(run.data.outcome).toBe("succeeded");
       expect(run.data.result).toMatchObject({ deleted: 2 });
 
       const refused = await read(String(ids[0]), tooOld, signal);
@@ -405,7 +405,7 @@ describe("the trash retention job", () => {
 
       const run = await bin.operator().runHousekeeping("trash-purge");
       expect(run.status, JSON.stringify(run.error)).toBe(200);
-      expect(run.data.outcome).toBe("ok");
+      expect(run.data.outcome).toBe("succeeded");
       expect(run.data.result).toEqual({ deleted: 1 });
 
       expect(await binned()).toBe(false);

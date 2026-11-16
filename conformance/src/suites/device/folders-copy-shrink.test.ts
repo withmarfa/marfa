@@ -319,7 +319,7 @@ async function unsentWork(
   for (const [index, row] of paused.entries()) {
     row.item.state = "trashed";
     log.push(
-      copyItemEvent(String(2 + index), "item.deleted", wireItem(row.item), {
+      copyItemEvent(String(2 + index), "item.trashed", wireItem(row.item), {
         tags: row.tags,
       }),
     );
@@ -669,13 +669,13 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(held).toContain(id(1));
   });
 
-  /** An `item.deleted` frame, which carries no metadata. */
+  /** An `item.trashed` frame, which carries no metadata. */
   function binned(at: string, row: ReturnType<typeof note>): SseFrame {
     return {
       id: at,
-      event: "item.deleted",
+      event: "item.trashed",
       data: {
-        event_type: "item.deleted",
+        event_type: "item.trashed",
         item: wireItem({ ...row.item, state: "trashed" }),
         listed: true,
       },
@@ -1137,7 +1137,7 @@ describe("a folder's copy narrowed beneath an item", () => {
     const binned = note(1, "root", [], "trashed");
     harness!.items["core.note"]![0] = binned;
     log.push(
-      copyItemEvent("2", "item.deleted", wireItem(binned.item), { tags: [] }),
+      copyItemEvent("2", "item.trashed", wireItem(binned.item), { tags: [] }),
     );
     value(await harness!.folder.device().catchUp());
     expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3)]);

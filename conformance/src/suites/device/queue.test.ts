@@ -1906,10 +1906,7 @@ describe("a refused write's content is kept", () => {
           "two",
         ]),
       ],
-      tags: [
-        writeAnswers.metadata(HELD.id, ["one"]),
-        writeAnswers.metadata(HELD.id, ["one", "two"]),
-      ],
+      tags: [writeAnswers.tags(["one"]), writeAnswers.tags(["one", "two"])],
     });
     const drained = await harness.device.drain();
     expect(drained.ok).toBe(true);
@@ -1959,7 +1956,7 @@ describe("a refused write's content is kept", () => {
     scriptWrites(harness.server, {
       update: [refusal(404, "item_not_found", "Item not found")],
       read: [answers.updated(wireItem({ id: HELD.id, version: HELD.version }))],
-      tags: [writeAnswers.metadata(HELD.id, ["kept"])],
+      tags: [writeAnswers.tags(["kept"])],
     });
     const drained = await harness.device.drain();
     expect(drained.ok).toBe(true);
@@ -2082,7 +2079,7 @@ const WRITE_KINDS = [
   "create_edge",
   "update_edge",
   "delete_edge",
-  "replace_metadata",
+  "replace_tags",
   "add_tag",
   "remove_tag",
   "write_extension",
@@ -2135,7 +2132,7 @@ describe("what a queue holds", () => {
       ],
       ["add_tag", () => device.addTag(HELD.id, "alpha")],
       ["remove_tag", () => device.removeTag(HELD.id, "alpha")],
-      ["replace_metadata", () => device.replaceMetadata(HELD.id, ["gamma"])],
+      ["replace_tags", () => device.replaceTags(HELD.id, ["gamma"])],
       [
         "write_extension",
         () => device.writeExtension(HELD.id, "app.notes", { a: 1 }),
@@ -2254,7 +2251,7 @@ describe("what a queue holds", () => {
     scriptWrites(harness.server, {
       read: [answers.updated(wireItem({ id }), ["alpha", "beta"])],
       create: [answers.created(wireItem({ id }), ["alpha", "beta"])],
-      tags: [writeAnswers.metadata(id, ["alpha", "beta"])],
+      tags: [writeAnswers.tags(["alpha", "beta"])],
       extensions: [writeAnswers.extensions({ "app.notes": { pinned: true } })],
       edges: [
         writeAnswers.edge({
@@ -2322,7 +2319,7 @@ describe("a write that is not about an item's fields", () => {
     const queued: Array<[string, () => Promise<{ ok: boolean }>]> = [
       ["add_tag", () => device.addTag(HELD.id, "alpha")],
       ["remove_tag", () => device.removeTag(HELD.id, "alpha")],
-      ["replace_metadata", () => device.replaceMetadata(HELD.id, ["gamma"])],
+      ["replace_tags", () => device.replaceTags(HELD.id, ["gamma"])],
       [
         "write_extension",
         () => device.writeExtension(HELD.id, "app.notes", { a: 1 }),
@@ -2363,7 +2360,7 @@ describe("a write that is not about an item's fields", () => {
       ],
       create: [answers.created(wireItem({ id: otherId }))],
       update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
-      tags: [writeAnswers.metadata(HELD.id, ["alpha"])],
+      tags: [writeAnswers.tags(["alpha"])],
       extensions: [writeAnswers.extensions({})],
       edges: [
         writeAnswers.edge({
@@ -4148,7 +4145,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         target: local,
         type: "references",
       }),
-      replaced: await device.replaceMetadata(local, ["only"]),
+      replaced: await device.replaceTags(local, ["only"]),
       untagged: await device.removeTag(local, "theirs"),
       extension: await device.writeExtension(local, "app.test", { a: 1 }),
       unextended: await device.deleteExtension(local, "app.test"),
@@ -7295,7 +7292,7 @@ describe("an edit behind an edit of the same item", () => {
           0,
         ),
       ],
-      tags: [writeAnswers.metadata(KEYED.id, ["kept"])],
+      tags: [writeAnswers.tags(["kept"])],
     });
     expect((await device.drain()).ok).toBe(true);
 
@@ -7766,8 +7763,8 @@ describe("an edit behind an edit of the same item", () => {
       items: rows(),
     });
     const { device, server } = harness;
-    const first = await device.replaceMetadata(HELD.id, ["one"]);
-    const second = await device.replaceMetadata(HELD.id, ["two"]);
+    const first = await device.replaceTags(HELD.id, ["one"]);
+    const second = await device.replaceTags(HELD.id, ["two"]);
     const deleted = await device.deleteItem(QUIET.id);
     const restored = await device.restoreItem(QUIET.id);
     for (const queued of [first, second, deleted, restored]) {
@@ -7782,7 +7779,7 @@ describe("an edit behind an edit of the same item", () => {
 
     const queue = await queueOf(device);
     const behind = (kind: string) => queue.find((row) => row.kind === kind);
-    const replaces = queue.filter((row) => row.kind === "replace_metadata");
+    const replaces = queue.filter((row) => row.kind === "replace_tags");
     expect(
       [replaces[1]?.verdict, replaces[1]?.follows],
       "the second replace went out beside the first, which had no answer",
@@ -7794,11 +7791,11 @@ describe("an edit behind an edit of the same item", () => {
     // The witness: the first write went out.
     expect(
       server.requests.map((request) => `${request.method} ${request.pathname}`),
-    ).toEqual(expect.arrayContaining([`PUT /items/${HELD.id}/metadata`]));
+    ).toEqual(expect.arrayContaining([`PUT /items/${HELD.id}/tags`]));
     expect(
       server.requests.filter(
         (request) =>
-          request.pathname === `/items/${HELD.id}/metadata` ||
+          request.pathname === `/items/${HELD.id}/tags` ||
           request.pathname === `/items/${QUIET.id}/restore`,
       ),
     ).toHaveLength(1);

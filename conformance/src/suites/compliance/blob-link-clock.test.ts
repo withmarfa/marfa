@@ -52,7 +52,7 @@ async function linkOf(text: string, ttl: number) {
   const link = await operator.getBlobUrl(upload.data.hash, ttl);
   expect(link.status, JSON.stringify(link.error)).toBe(200);
   expect(new URL(link.data.url).host).toBe(new URL(server.apiUrl).host);
-  return { bytes, url: link.data.url, expiresIn: link.data.expires_in };
+  return { bytes, url: link.data.url, ttlSeconds: link.data.ttl_seconds };
 }
 
 async function fetched(url: string): Promise<number> {
@@ -62,11 +62,11 @@ async function fetched(url: string): Promise<number> {
 }
 
 describe("a link the instance serves", () => {
-  it("works until its expires_in seconds have passed on the server's clock, and not after", async () => {
+  it("works until its ttl_seconds seconds have passed on the server's clock, and not after", async () => {
     const clock = movedClock(server);
     const ttl = 60;
     const link = await linkOf("a link that lives a minute", ttl);
-    expect(link.expiresIn).toBe(ttl);
+    expect(link.ttlSeconds).toBe(ttl);
     // The witness for the refusal below: the link serves the bytes it names.
     const live = await fetch(link.url);
     expect(live.status).toBe(200);
@@ -85,7 +85,7 @@ describe("the longest a link lives", () => {
     const clock = movedClock(server);
     const week = 7 * 24 * 60 * 60;
     const link = await linkOf("a link asked to live a fortnight", 2 * week);
-    expect(link.expiresIn).toBe(week);
+    expect(link.ttlSeconds).toBe(week);
 
     // The witness: just inside the cap the link still serves, so the refusal
     // after it is the cap's and not a link that never worked.

@@ -37,7 +37,7 @@ it("refuses stale exact writes without changing the item or history", async () =
   expect(before.status).toBe(200);
   expect(history.status).toBe(200);
   for (const version of [0, 1, 3, 999]) {
-    for (const query of ["", "?conflict=auto", "?conflict=callback"]) {
+    for (const query of ["", "?conflict=auto"]) {
       const result = await client.rawRequest<unknown>(`/items/${id}${query}`, {
         method: "PATCH",
         body: {

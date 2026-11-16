@@ -580,7 +580,7 @@ describe("the housekeeping object of GET /health", () => {
 
     await own!.setFault("fail:housekeeping:audit-cleanup");
     try {
-      expect(await runJob("audit-cleanup")).toBe("error");
+      expect(await runJob("audit-cleanup")).toBe("failed");
     } finally {
       await own!.clearFault();
     }
@@ -594,7 +594,7 @@ describe("the housekeeping object of GET /health", () => {
     ]);
     expect(failed.body.housekeeping?.unreadable_settings).toEqual([]);
 
-    expect(await runJob("audit-cleanup")).toBe("ok");
+    expect(await runJob("audit-cleanup")).toBe("succeeded");
     expect((await read(own!.managementKey)).body.housekeeping?.failed).toEqual(
       [],
     );
@@ -603,7 +603,7 @@ describe("the housekeeping object of GET /health", () => {
   it("gives no housekeeping object to a request without instance.read, though a job has failed", async () => {
     await own!.setFault("fail:housekeeping:audit-cleanup");
     try {
-      expect(await runJob("audit-cleanup")).toBe("error");
+      expect(await runJob("audit-cleanup")).toBe("failed");
     } finally {
       await own!.clearFault();
     }
@@ -622,7 +622,7 @@ describe("the housekeeping object of GET /health", () => {
       expect(answer.status, who).toBe(200);
       expect(answer.body, who).not.toHaveProperty("housekeeping");
     }
-    expect(await runJob("audit-cleanup")).toBe("ok");
+    expect(await runJob("audit-cleanup")).toBe("succeeded");
   });
 
   it("names a stored setting that no longer reads, and the setting stands at its default", async () => {

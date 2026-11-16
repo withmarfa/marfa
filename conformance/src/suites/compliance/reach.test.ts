@@ -27,7 +27,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
 const FRAME_BUDGET_MS = 15_000;
@@ -115,7 +115,7 @@ function request(path: string, proof?: string, key = server.workingKey) {
 }
 
 interface BulkRead {
-  items: Array<{ id: string }>;
+  data: Array<{ id: string }>;
   metadata?: Array<{ item_id: string }>;
   listed?: boolean[];
 }
@@ -317,11 +317,11 @@ describe("conditional working-copy reaches", () => {
   it("rejects every alternate copy grammar before starting a stream", async () => {
     const proof = await bootstrap();
     const cases: OpenEventStreamOptions[] = [
-      { query: [["copy", "1"]] },
+      { query: [["copy", "true"]] },
       {
         query: [
           ["edges", "none"],
-          ["copy", "1"],
+          ["copy", "true"],
         ],
       },
       {
@@ -330,9 +330,21 @@ describe("conditional working-copy reaches", () => {
           ["copy", "0"],
         ],
       },
+      {
+        query: [
+          ["edges", "all"],
+          ["copy", "1"],
+        ],
+      },
+      {
+        query: [
+          ["edges", "all"],
+          ["copy", "yes"],
+        ],
+      },
       { query: [...COPY_QUERY, ["type", "core.note"]] },
       { query: [...COPY_QUERY, ["unknown", "1"]] },
-      { query: [...COPY_QUERY, ["copy", "1"]] },
+      { query: [...COPY_QUERY, ["copy", "true"]] },
       { query: [...COPY_QUERY, ["edges", "all"]] },
       { query: COPY_QUERY, lastEventId: proof.cursor },
       { query: COPY_QUERY, reach: proof.reach },
@@ -406,6 +418,35 @@ describe("conditional working-copy reaches", () => {
         expect(stream.response.status).toBe(200);
       },
     );
+  });
+
+  it("opens the plain stream for copy=false, with no reach in its markers", async () => {
+    await withStream(
+      server.apiUrl,
+      server.workingKey,
+      {
+        query: [
+          ["edges", "all"],
+          ["copy", "false"],
+        ],
+      },
+      async (stream) => {
+        expect(stream.response.status).toBe(200);
+        const { events } = await collectUntil(
+          stream,
+          (frames) => frames.some((frame) => frame.event === "stream_live"),
+          "the plain stream's live marker",
+          AbortSignal.timeout(FRAME_BUDGET_MS),
+        );
+        expect(events[0]?.event).toBe("stream_cursor");
+        expect(
+          (events[0]!.data as Record<string, unknown>).reach,
+        ).toBeUndefined();
+      },
+    );
+    // The witness: the same request with copy=true carries a reach.
+    const proof = await bootstrap();
+    expect(proof.reach).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("walks conditional metadata pages to explicit null and certifies every supported read door", async () => {
@@ -483,16 +524,16 @@ describe("conditional working-copy reaches", () => {
       proof.reach,
     );
     certified(bulk, proof.reach);
-    const bulkBody = (await bulk.json()) as Omit<BulkRead, "items"> & {
-      items: Array<{
+    const bulkBody = (await bulk.json()) as Omit<BulkRead, "data"> & {
+      data: Array<{
         id: string;
         edges?: Record<string, { data: unknown[] }>;
       }>;
     };
     expect(bulkBody).not.toHaveProperty("reach");
-    expect(bulkBody.items.map((item) => item.id)).toEqual(ids);
+    expect(bulkBody.data.map((item) => item.id)).toEqual(ids);
     expect(bulkBody.listed).toEqual([true, true, true]);
-    const bulkEdges = bulkBody.items.flatMap((item) =>
+    const bulkEdges = bulkBody.data.flatMap((item) =>
       Object.values(item.edges ?? {}).flatMap((block) => block.data),
     );
     expect(bulkEdges).toHaveLength(1);
@@ -702,8 +743,8 @@ describe("conditional working-copy reaches", () => {
       const filtered = await read(proof.reach);
       certified(filtered, proof.reach);
       const body = (await filtered.json()) as BulkRead;
-      expect(Object.keys(body).sort()).toEqual(["items", "listed", "metadata"]);
-      expect(body.items.map((item) => item.id)).toEqual([
+      expect(Object.keys(body).sort()).toEqual(["data", "listed", "metadata"]);
+      expect(body.data.map((item) => item.id)).toEqual([
         excluded.id,
         included.id,
       ]);
@@ -716,7 +757,7 @@ describe("conditional working-copy reaches", () => {
       const lean = await bulkGet({ ids }, proof.reach);
       certified(lean, proof.reach);
       const leanBody = (await lean.json()) as BulkRead;
-      expect(Object.keys(leanBody).sort()).toEqual(["items", "listed"]);
+      expect(Object.keys(leanBody).sort()).toEqual(["data", "listed"]);
       expect(leanBody.listed).toEqual([false, true]);
 
       // The same item, read alone under the same reach, is listed the same.
@@ -729,7 +770,7 @@ describe("conditional working-copy reaches", () => {
       expect(ordinary.headers.get("X-Marfa-Reach")).toBeNull();
       const ordinaryBody = (await ordinary.json()) as BulkRead;
       expect(ordinaryBody).not.toHaveProperty("listed");
-      expect(ordinaryBody.items.map((item) => item.id)).toEqual([
+      expect(ordinaryBody.data.map((item) => item.id)).toEqual([
         excluded.id,
         included.id,
       ]);
@@ -761,7 +802,7 @@ describe("conditional working-copy reaches", () => {
     );
     certified(hidden, proof.reach);
     expect(await hidden.json()).toEqual({
-      items: [],
+      data: [],
       metadata: [],
       listed: [],
     });
@@ -772,7 +813,7 @@ describe("conditional working-copy reaches", () => {
     );
     certified(shown, proof.reach);
     const body = (await shown.json()) as BulkRead;
-    expect(body.items.map((item) => item.id)).toEqual([made.item.id]);
+    expect(body.data.map((item) => item.id)).toEqual([made.item.id]);
     expect(body.listed).toEqual([true]);
     expect(body.metadata?.map((entry) => entry.item_id)).toEqual([
       made.item.id,
@@ -786,7 +827,7 @@ describe("conditional working-copy reaches", () => {
     );
     certified(bare, proof.reach);
     const answered = (await bare.json()) as BulkRead;
-    expect(answered.items.map((item) => item.id)).toEqual([made.item.id]);
+    expect(answered.data.map((item) => item.id)).toEqual([made.item.id]);
     expect(answered.metadata).toBeUndefined();
 
     for (const [include, expected] of [
@@ -800,7 +841,7 @@ describe("conditional working-copy reaches", () => {
       expect(ordinary.status).toBe(200);
       expect(ordinary.headers.get("X-Marfa-Reach")).toBeNull();
       expect(
-        ((await ordinary.json()) as BulkRead).items.map((item) => item.id),
+        ((await ordinary.json()) as BulkRead).data.map((item) => item.id),
       ).toEqual(expected);
     }
   });
@@ -895,7 +936,7 @@ describe("conditional working-copy reaches", () => {
           await receive("metadata.changed", () =>
             writer.addTags(row.id, ["excluded-metadata"]),
           );
-          await receive("item.deleted", () => writer.deleteItem(row.id));
+          await receive("item.trashed", () => writer.deleteItem(row.id));
           await receive("item.restored", () => writer.restoreItem(row.id));
         },
       );
@@ -1504,7 +1545,7 @@ describe("what a reach certifies and what it outranks", () => {
 
     const filtered = `/items?include=metadata&edge[about]=${note.id}`;
     certified(await request(filtered, sees.reach, seeAbout.key), sees.reach);
-    await refusal(filtered, blind, noEdges.key, 403, "edge_permission_denied");
+    await refusal(filtered, blind, noEdges.key, 403, "edge_type_not_permitted");
 
     certified(
       await request(`/items/${bookmark.data.item.id}`, full.reach),
@@ -1562,7 +1603,11 @@ describe("what a reach certifies and what it outranks", () => {
         path: `/items?include=metadata&edge[about]=${target.id}`,
         key: noEdges.key,
         proof: reader,
-        fresh: { status: 403, code: "edge_permission_denied", certified: true },
+        fresh: {
+          status: 403,
+          code: "edge_type_not_permitted",
+          certified: true,
+        },
       },
       {
         path: `/items/${bookmark.data.item.id}`,
@@ -1742,7 +1787,7 @@ describe("a copy stream resumed from a cursor and the frames it carries", () => 
           ).toEqual([
             "item.created",
             "item.state_changed",
-            "item.deleted",
+            "item.trashed",
             "item.purged",
           ]);
           for (const frame of carried) {

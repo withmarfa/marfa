@@ -108,7 +108,7 @@ describe("the server resolves a conflict", () => {
     const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
     expect(copy, "no conflicted copy was written").toBeTruthy();
 
-    const meta = await client.getMetadata(copy!);
+    const meta = await client.getItem(copy!);
     expect(meta.ok).toBe(true);
     expect(meta.data.metadata.tags.sort()).toEqual(
       [tag, "conflicted-copy"].sort(),
@@ -1240,7 +1240,7 @@ describe("the server resolves a conflict", () => {
     expect(after.data.item.version).toBe(2);
   });
 
-  it("takes conflict=manual and conflict=callback as absent, and refuses any other value", async () => {
+  it("refuses a conflict mode other than auto, and resolves the same write under auto", async () => {
     requireRule(caps, "serverSideMerge");
 
     const made = await client.createItem(
@@ -1266,12 +1266,13 @@ describe("the server resolves a conflict", () => {
         body: { properties: { title: "title from the loser" }, version: 1 },
       });
 
-    for (const mode of ["manual", "callback"]) {
-      const refused = await stale(mode);
-      expect(refused.status, mode).toBe(409);
-      expect(refused.error?.error.code, mode).toBe("version_conflict");
-    }
-    for (const mode of ["bogus", "AUTO", "merge", ""]) {
+    const bare = await client.rawRequest(`/items/${id}`, {
+      method: "PATCH",
+      body: { properties: { title: "title from the loser" }, version: 1 },
+    });
+    expect(bare.status).toBe(409);
+    expect(bare.error?.error.code).toBe("version_conflict");
+    for (const mode of ["manual", "callback", "bogus", "AUTO", "merge", ""]) {
       const refused = await stale(mode);
       expect(refused.status, JSON.stringify(mode)).toBe(400);
       expect(refused.error?.error.code, JSON.stringify(mode)).toBe(

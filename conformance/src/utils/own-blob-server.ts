@@ -79,14 +79,14 @@ export function diskPath(server: FreshServer, hash: string): string {
 /**
  * Runs a housekeeping job through its door and answers the whole run. A run
  * the scheduler holds answers 409 and is asked for again once it has
- * finished. A run is expected to end as `ending` says, `ok` unless a case
+ * finished. A run is expected to end as `ending` says, `succeeded` unless a case
  * runs a job against a store that will not answer, where the run ends as
- * `error`, or `either` for a wait on what a run copied.
+ * `failed`, or `either` for a wait on what a run copied.
  */
 export async function runJob<T = Record<string, number>>(
   operator: MarfaClient,
   name: string,
-  ending: "ok" | "error" | "either" = "ok",
+  ending: "succeeded" | "failed" | "either" = "succeeded",
 ): Promise<{
   result: T;
   outcome: string;
@@ -129,7 +129,7 @@ export async function replicateUntilCaughtUp(
       "either",
     );
     if (run.result.remaining !== 0) return undefined;
-    expect(run.outcome).toBe("ok");
+    expect(run.outcome).toBe("succeeded");
     return true;
   });
 }

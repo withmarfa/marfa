@@ -613,7 +613,7 @@ describe("taking the answered writes", () => {
       read: [answers.updated(wireItem({ id: HELD.id, version: HELD.version }))],
       tags: [
         refusal(422, "validation_error", "the tag is refused"),
-        writeAnswers.metadata(HELD.id, ["accepted"]),
+        writeAnswers.tags(["accepted"]),
       ],
     });
     const drained = await device.drain();

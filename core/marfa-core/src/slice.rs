@@ -19,7 +19,7 @@ pub(crate) const CONFLICTED_COPY_LISTING: &str = "tags=conflicted-copy";
 
 /// The events that move a row between states and change nothing else of
 /// it a query reads but its state, `updated_at` and `version`.
-const MOVES: [&str; 3] = ["item.deleted", "item.restored", "item.state_changed"];
+const MOVES: [&str; 3] = ["item.trashed", "item.restored", "item.state_changed"];
 
 /// The member states of a query that names none.
 const DEFAULT_STATES: [ItemState; 2] = [ItemState::Active, ItemState::Archived];
@@ -537,7 +537,7 @@ mod tests {
     fn a_move_takes_a_row_only_where_the_copy_may_not_have_held_it() {
         let every = query(None, Some("tags contains \"x\""));
         assert!(every.move_may_take("item.updated", "active").unwrap());
-        assert!(!every.move_may_take("item.deleted", "trashed").unwrap());
+        assert!(!every.move_may_take("item.trashed", "trashed").unwrap());
         assert!(
             !every
                 .move_may_take("item.state_changed", "archived")

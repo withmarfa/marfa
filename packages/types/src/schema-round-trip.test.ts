@@ -629,7 +629,7 @@ describe("field attributes survive normalization", () => {
       version: 1,
       fields: {
         href: { type: "string", format: "url" },
-        seen_at: { type: "string", format: "datetime" },
+        seen_at: { type: "datetime" },
       },
     });
     expect(result.success).toBe(true);
@@ -637,6 +637,25 @@ describe("field attributes survive normalization", () => {
     expect(result.data.fields.href?.type).toBe("url");
     expect(result.data.fields.href?.format).toBeUndefined();
     expect(result.data.fields.seen_at?.type).toBe("datetime");
+  });
+
+  it("refuses datetime as a format, where it is a type", () => {
+    for (const field of [
+      { type: "string", format: "datetime" },
+      { type: "array", items_type: "string", format: "datetime" },
+    ]) {
+      const result = validate({
+        id: "acme.old_datetime",
+        version: 1,
+        fields: { seen_at: field },
+      });
+      expect(result.success, JSON.stringify(field)).toBe(false);
+      if (result.success) continue;
+      expect(
+        result.errors.some((error) => error.field === "fields.seen_at.format"),
+        JSON.stringify(field),
+      ).toBe(true);
+    }
   });
 
   it("keeps a declared list of strings a list, of the format's type", () => {
@@ -665,7 +684,7 @@ describe("field attributes survive normalization", () => {
       { type: "number", format: "url" },
       { type: "array", items_type: "object", format: "url" },
       { type: "array", items_type: "string", format: "thumbnail" },
-      { type: "date", format: "datetime" },
+      { type: "datetime", format: "date" },
     ]) {
       const result = validate({
         id: "acme.mismatched_format",

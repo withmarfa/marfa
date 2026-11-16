@@ -452,7 +452,7 @@ describe("type inheritance rule", () => {
       fields: { supplemental: { type: "string" } },
     });
     expect(cr.ok).toBe(true);
-    expect(cr.data.type.fields).toEqual({ supplemental: { type: "string" } });
+    expect(cr.data.fields).toEqual({ supplemental: { type: "string" } });
 
     const fetched = await client.getType(childId);
     expect(fetched.ok).toBe(true);

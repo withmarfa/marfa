@@ -169,12 +169,12 @@ impl Instance {
     }
 
     async fn run(&self, job: &str) -> Value {
-        self.run_ending(job, "ok").await
+        self.run_ending(job, "succeeded").await
     }
 
     /// A run of a job that meets a store which will not take a copy, which ends as failed.
     async fn failed_run(&self, job: &str) -> Value {
-        self.run_ending(job, "error").await
+        self.run_ending(job, "failed").await
     }
 
     async fn run_ending(&self, job: &str, outcome: &str) -> Value {
@@ -489,7 +489,7 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         assert!(live.get(BLOB_CLEANUP_ENABLED));
         faults.clear(Some("hold:write"));
         let second = run.await.unwrap().unwrap();
-        assert_eq!(second.outcome, "ok", "{:?}", second.error);
+        assert_eq!(second.outcome, "succeeded", "{:?}", second.error);
         purged.push((
             key,
             second.result.unwrap()["purged"].clone(),
@@ -515,7 +515,7 @@ async fn the_orphan_job_ends_in_error_and_purges_nothing_while_its_settings_do_n
         let ended = housekeeping::run_now(&instance.app, "blob-orphans")
             .await
             .unwrap();
-        assert_eq!(ended.outcome, "error", "{key}");
+        assert_eq!(ended.outcome, "failed", "{key}");
         assert!(ended.error.unwrap().contains(key), "{key}");
         assert!(instance.file(&orphan).is_file(), "{key}");
 
@@ -725,7 +725,7 @@ async fn a_clean_up_waits_for_an_upload_of_the_same_bytes_and_keeps_its_file() {
         settle().await;
         instance.app.faults.clear(Some("hold:write"));
         let run = run.await.unwrap();
-        assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+        assert_eq!(run.body["outcome"], "succeeded", "{}", run.body);
     };
     tokio::join!(landing, cleaning);
 
@@ -970,7 +970,7 @@ async fn a_copy_the_object_store_refuses_ends_the_run_as_failed_naming_the_store
             Some(json!({})),
         )
         .await;
-    assert_eq!(run.body["outcome"], "error", "{}", run.body);
+    assert_eq!(run.body["outcome"], "failed", "{}", run.body);
     assert_eq!(run.body["result"]["copied"], 0, "{}", run.body);
     assert_eq!(run.body["result"]["remaining"], 1, "{}", run.body);
     let error = run.body["error"].as_str().unwrap();
@@ -1609,7 +1609,7 @@ async fn an_upload_whose_client_goes_away_while_its_record_waits_behind_a_purge_
     }
     second.send(()).unwrap();
     let run = purge.await.unwrap();
-    assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+    assert_eq!(run.body["outcome"], "succeeded", "{}", run.body);
 
     assert!(instance.file(&hash).is_file(), "{}", run.body);
     let fetched = instance.fetch(&hash).await;
@@ -1649,7 +1649,7 @@ impl Instance {
     async fn picture(&self, bytes: &[u8]) -> String {
         let request = Request::builder()
             .method(Method::PUT)
-            .uri("/owner/picture")
+            .uri("/owner/avatar")
             .body(Body::from(bytes.to_vec()))
             .unwrap();
         let stored = send(&self.control, request).await;
@@ -1690,7 +1690,7 @@ async fn the_owners_picture_is_replicated_and_purged_only_once_replaced() {
 
     assert_eq!(instance.copies(&second).await.len(), 2);
     std::fs::remove_file(instance.file(&second)).unwrap();
-    let served = instance.call(Method::GET, "/owner/picture", None).await;
+    let served = instance.call(Method::GET, "/owner/avatar", None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.bytes, jpeg(9));
 }
@@ -1714,7 +1714,7 @@ async fn a_picture_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
     assert_eq!(run["purged"], 1, "{run}");
     assert_eq!(instance.blobs_named(&witness), 0);
     assert_eq!(instance.blobs_named(&picture), 1);
-    let served = instance.call(Method::GET, "/owner/picture", None).await;
+    let served = instance.call(Method::GET, "/owner/avatar", None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.bytes, bytes);
 }
@@ -1782,7 +1782,7 @@ async fn a_file_whose_grace_ends_while_a_sweep_waits_to_choose_keeps_its_object_
     instance.app.clock.advance(2).unwrap();
     second.send(()).unwrap();
     let run = sweep.await.unwrap();
-    assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+    assert_eq!(run.body["outcome"], "succeeded", "{}", run.body);
     assert_eq!(run.body["result"]["purged"], 0, "{}", run.body);
     assert_eq!(instance.fetch(&hash).await.status, StatusCode::OK);
     object_key(&s3, "blobs", &hash);

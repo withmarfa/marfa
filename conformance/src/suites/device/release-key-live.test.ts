@@ -217,20 +217,20 @@ it("sends a set-aside write again under its key once a caller releases it, so th
   const other = await note("witness");
   const { url, sent, fate } = await proxy(
     (request) =>
-      request.method === "PUT" && request.url === `/items/${id}/metadata`,
+      request.method === "PUT" && request.url === `/items/${id}/tags`,
   );
   const device = await deviceAt("release-key-aside", url);
-  const write = value(await device.replaceMetadata(id, ["mine"]));
+  const write = value(await device.replaceTags(id, ["mine"]));
 
   fate.next = "lose";
   for (let pass = 0; pass < 3; pass += 1) value(await device.drain());
-  const landed = await client.getMetadata(id);
+  const landed = await client.getItem(id);
   expect(landed.ok, JSON.stringify(landed.error)).toBe(true);
   expect(
     landed.data.metadata.tags,
     "the server did not write the metadata whose answer the proxy lost, so nothing below is about a write applied twice",
   ).toEqual(["mine"]);
-  const since = await client.replaceMetadata(id, { tags: ["theirs"] });
+  const since = await client.replaceTags(id, { tags: ["theirs"] });
   expect(since.ok, JSON.stringify(since.error)).toBe(true);
 
   // A write the server answers, which tells a write failing alone from an
@@ -266,7 +266,7 @@ it("sends a set-aside write again under its key once a caller releases it, so th
     "a send went under another key than the write was queued with",
   ).toEqual(sent.map(() => write.idempotency_key));
 
-  const after = await client.getMetadata(id);
+  const after = await client.getItem(id);
   expect(after.ok, JSON.stringify(after.error)).toBe(true);
   expect(
     after.data.metadata.tags,
@@ -308,7 +308,7 @@ it("sends a dead write again under its key once a caller releases it", async () 
   const read = await client.getItemExtension(id, "notes");
   expect(read.ok, JSON.stringify(read.error)).toBe(true);
   expect(
-    read.data.data,
+    read.data.document,
     "the release wrote the extension a second time, undoing the change made since",
   ).toEqual({ body: "theirs" });
 });
@@ -358,7 +358,7 @@ it(
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     const tags = async (id: string) => {
-      const read = await call("GET", `/items/${id}/metadata`);
+      const read = await call("GET", `/items/${id}`);
       expect(read.status).toBe(200);
       return ((await read.json()) as { metadata: { tags: string[] } }).metadata
         .tags;
@@ -372,7 +372,7 @@ it(
     const { id } = ((await made.json()) as { item: { id: string } }).item;
     const { url, sent, fate } = await proxy(
       (request) =>
-        request.method === "PUT" && request.url === `/items/${id}/metadata`,
+        request.method === "PUT" && request.url === `/items/${id}/tags`,
       () => server.apiUrl,
     );
     const store = newStore("release-key-contract");
@@ -384,7 +384,7 @@ it(
       key: server.workingKey,
     });
     value(await device.hydrate(["core.note"], "library"));
-    const write = value(await device.replaceMetadata(id, ["mine"]));
+    const write = value(await device.replaceTags(id, ["mine"]));
 
     // The write is applied by a server on another contract, from a client
     // that named that contract, and its answer is lost.
@@ -398,7 +398,7 @@ it(
       await tags(id),
       "the server did not write the metadata on the other contract, so nothing below is about a write applied twice",
     ).toEqual(["mine"]);
-    const since = await call("PUT", `/items/${id}/metadata`, {
+    const since = await call("PUT", `/items/${id}/tags`, {
       tags: ["theirs"],
     });
     expect(since.status).toBe(200);

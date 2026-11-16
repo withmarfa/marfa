@@ -497,7 +497,7 @@ impl Folder {
         {
             return Err(CoreError::Forbidden {
                 server: None,
-                code: "edge_permission_denied".into(),
+                code: "edge_type_not_permitted".into(),
                 message: format!(
                     "this key cannot write the {PLACEMENT_EDGE} edges that say where each file sits, so the folder cannot place its files: it needs `edge.{PLACEMENT_EDGE}:write`"
                 ),
@@ -4684,7 +4684,7 @@ mod tests {
                 200,
                 &serde_json::json!({
                     "listed": [true],
-                    "items": [{
+                    "data": [{
                         "id": X, "type": "core.task", "state": "active",
                         "properties": { "title": "xylophone" },
                         "version": 1, "schema_version": 1, "source": "test",
@@ -4735,7 +4735,7 @@ mod tests {
                 200,
                 &serde_json::json!({
                     "listed": [true],
-                    "items": [{
+                    "data": [{
                         "id": X, "type": "core.task", "state": "active",
                         "properties": { "title": "b.md" },
                         "version": 1, "schema_version": 1, "source": "test",
@@ -5373,7 +5373,7 @@ mod tests {
             "/items/bulk-get",
             vec![crate::scripted::certified(crate::scripted::json(
                 200,
-                r#"{"items":[],"metadata":[],"listed":[]}"#,
+                r#"{"data":[],"metadata":[],"listed":[]}"#,
             ))],
         );
         {
@@ -9306,7 +9306,7 @@ mod tests {
                     .into_iter()
                     .map(|answer| match answer {
                         crate::scripted::Answer::Json { status: 404, .. } => {
-                            crate::scripted::json(200, r#"{"items":[],"metadata":[],"listed":[]}"#)
+                            crate::scripted::json(200, r#"{"data":[],"metadata":[],"listed":[]}"#)
                         }
                         other => other,
                     })

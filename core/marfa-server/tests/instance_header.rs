@@ -469,7 +469,7 @@ async fn another_instance_is_refused_before_a_conditional_read_judges_its_reach(
 #[tokio::test]
 async fn a_method_no_door_serves_is_not_found_whatever_instance_it_names() {
     let instance = Instance::start().await;
-    let metadata = format!("/items/{ITEM}/metadata");
+    let metadata = format!("/items/{ITEM}/tags");
     for (method, path) in [
         (Method::POST, "/health"),
         (Method::PATCH, metadata.as_str()),

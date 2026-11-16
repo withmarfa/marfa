@@ -838,7 +838,7 @@ async fn a_folder_on_the_servers_volume_that_would_leave_less_than_the_reserve_s
         .unwrap();
 
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "error", "{replicated}");
+    assert_eq!(replicated["outcome"], "failed", "{replicated}");
     assert_eq!(replicated["result"]["copied"], 0, "{replicated}");
     let health = instance.health().await;
     let told = health["store_error"].as_str().unwrap();
@@ -855,7 +855,7 @@ async fn a_folder_on_the_servers_volume_that_would_leave_less_than_the_reserve_s
         .set("free:backups", Some("1073741824"))
         .unwrap();
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert_eq!(replicated["outcome"], "succeeded", "{replicated}");
     assert!(copy_of(folder.path(), &instance.id(), &file).is_file());
 }
 
@@ -1116,7 +1116,7 @@ async fn a_folder_whose_disk_goes_away_is_said_at_once_with_the_files_that_wait_
     );
 
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "error", "{replicated}");
+    assert_eq!(replicated["outcome"], "failed", "{replicated}");
     assert_eq!(replicated["result"]["copied"], 0, "{replicated}");
     assert_eq!(replicated["result"]["remaining"], 1, "{replicated}");
     let health = instance.health().await;
@@ -1142,7 +1142,7 @@ async fn a_folder_whose_disk_goes_away_is_said_at_once_with_the_files_that_wait_
 
     fs::rename(&away, &folder).unwrap();
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert_eq!(replicated["outcome"], "succeeded", "{replicated}");
     assert_eq!(replicated["result"]["remaining"], 0, "{replicated}");
     assert!(copy_of(&folder, &instance.id(), &file).is_file());
     let health = instance.health().await;
@@ -1170,7 +1170,7 @@ async fn a_files_area_that_comes_back_without_its_staging_folder_takes_the_waiti
     fs::rename(&folder, &away).unwrap();
     let (waiting, _) = instance.file(b"a file made while the disk was away").await;
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "error", "{replicated}");
+    assert_eq!(replicated["outcome"], "failed", "{replicated}");
 
     // The disk returns with its files area intact but its staging folder gone.
     fs::rename(&away, &folder).unwrap();
@@ -1178,7 +1178,7 @@ async fn a_files_area_that_comes_back_without_its_staging_folder_takes_the_waiti
     fs::remove_dir(&staging).unwrap();
 
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert_eq!(replicated["outcome"], "succeeded", "{replicated}");
     assert_eq!(replicated["result"]["remaining"], 0, "{replicated}");
     assert!(copy_of(&folder, &instance.id(), &waiting).is_file());
     let health = instance.health().await;

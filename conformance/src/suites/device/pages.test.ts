@@ -145,7 +145,7 @@ class Door {
       const { tags } = JSON.parse(request.body) as { tags: string[] };
       const held = this.tags.get(id) ?? [];
       this.tags.set(id, [...new Set([...held, ...tags])]);
-      return writeAnswers.metadata(id, this.tags.get(id));
+      return writeAnswers.tags(this.tags.get(id));
     });
     server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
       this.items.delete(request.pathname.split("/").at(-1) ?? "");

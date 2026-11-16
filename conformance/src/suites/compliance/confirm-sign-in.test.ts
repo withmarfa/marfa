@@ -269,7 +269,7 @@ describe("confirming with the password", () => {
     const elapsed = Math.ceil((Date.now() - askedAt) / 1000);
     const formWait = Number(
       new URL(form.headers.get("location") ?? "", origin).searchParams.get(
-        "retry_after",
+        "retry_after_seconds",
       ),
     );
     expect(Number.isInteger(formWait)).toBe(true);

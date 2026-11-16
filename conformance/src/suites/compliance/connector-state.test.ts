@@ -164,7 +164,7 @@ describe("the hold", () => {
     await expectMatchesSchema("POST", "/connectors/{id}/hold", 200, taken.data);
     expect(taken.data.expires_at).toMatch(ISO);
     expect(taken.data.renewed).toBe(false);
-    expect(taken.data.ttl_ms).toBe(180_000);
+    expect(taken.data.ttl_seconds).toBe(180);
     // The server's clock plus the window, three minutes unless named.
     const window = Date.parse(taken.data.expires_at) - before;
     expect(window).toBeGreaterThanOrEqual(179_000);
@@ -186,7 +186,7 @@ describe("the hold", () => {
     const renewed = await mine.client.takeConnectorHold(mine.id, process);
     expect(renewed.status).toBe(200);
     expect(renewed.data.renewed).toBe(true);
-    expect(renewed.data.ttl_ms).toBe(180_000);
+    expect(renewed.data.ttl_seconds).toBe(180);
     expect(Date.parse(renewed.data.expires_at)).toBeGreaterThan(
       Date.parse(taken.data.expires_at),
     );
@@ -208,7 +208,7 @@ describe("the hold", () => {
     const after = Date.now();
     expect(renewed.status).toBe(200);
     expect(renewed.data.renewed).toBe(true);
-    const window = renewed.data.ttl_ms;
+    const window = renewed.data.ttl_seconds * 1000;
     expect(window).toBe(180_000);
     expectStampedBetween(
       new Date(Date.parse(renewed.data.expires_at) - window).toISOString(),
@@ -342,7 +342,7 @@ describe("the hold", () => {
 
 describe("the hold on an instance with a shorter window", () => {
   let server: FreshServer | undefined;
-  const WINDOW_MS = 2_000;
+  const WINDOW_MS = 2_500;
 
   beforeAll(async () => {
     server = await bootFreshServer("connector-hold", {
@@ -521,7 +521,8 @@ describe("the hold on an instance with a shorter window", () => {
     const taken = await own.takeConnectorHold(id, first);
     expect(taken.status).toBe(200);
     expect(taken.data.renewed).toBe(false);
-    expect(taken.data.ttl_ms).toBe(WINDOW_MS);
+    // A window of 2.5 seconds is given as 3, never as less than it is.
+    expect(taken.data.ttl_seconds).toBe(3);
     // The witness: a renewal while the hold is live says so.
     const unbroken = await own.takeConnectorHold(id, first);
     expect(unbroken.status).toBe(200);

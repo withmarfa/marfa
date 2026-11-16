@@ -90,13 +90,13 @@ describe("the tuning of a server with test hooks", () => {
     expect(listed.status).toBe(200);
     const jobs = (
       (await listed.json()) as {
-        data: { name: string; interval_ms: number }[];
+        data: { name: string; interval_seconds: number }[];
       }
     ).data;
     const interval = (name: string) =>
-      jobs.find((job) => job.name === name)?.interval_ms;
-    expect(interval("credential-cleanup")).toBe(61_000);
-    expect(interval("audit-cleanup")).toBe(86_400_000);
+      jobs.find((job) => job.name === name)?.interval_seconds;
+    expect(interval("credential-cleanup")).toBe(61);
+    expect(interval("audit-cleanup")).toBe(86_400);
   });
 
   it("refuses a tuning without MARFA_TEST_HOOKS, naming the setting", async () => {

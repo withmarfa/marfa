@@ -467,7 +467,7 @@ describe("a time the server keeps", () => {
           apiKey: subscriberKey.data.key,
         }).createWebhook({
           url: receiver.hookUrl("subscriber"),
-          events: ["item.created", "item.deleted"],
+          events: ["item.created", "item.trashed"],
         });
         expect(hook.status).toBe(201);
         const note = async (by: MarfaClient, body: string) => {

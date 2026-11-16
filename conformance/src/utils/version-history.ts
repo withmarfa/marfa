@@ -66,5 +66,5 @@ export async function history(
 /** Runs the `version-thinning` job and expects it to end well. */
 export async function thin(server: FreshServer): Promise<void> {
   const run = await runJob(server, "version-thinning");
-  expect(run.outcome, String(run.error)).toBe("ok");
+  expect(run.outcome, String(run.error)).toBe("succeeded");
 }

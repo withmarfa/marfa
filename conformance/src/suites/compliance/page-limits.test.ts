@@ -277,7 +277,7 @@ beforeAll(async () => {
   } as never);
   expect(kept.status, JSON.stringify(kept.error)).toBe(201);
   const holder = await working.createItem({
-    type: kept.data.type.id,
+    type: kept.data.id,
     properties: {},
   } as never);
   expect(holder.status, JSON.stringify(holder.error)).toBe(201);

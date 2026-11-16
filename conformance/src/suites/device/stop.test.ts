@@ -510,7 +510,7 @@ describe("stopping a drain", () => {
     expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
     let release = (): void => {};
     const until = new Promise<void>((resolve) => (release = resolve));
-    const answer = writeAnswers.metadata(id, ["kept"]);
+    const answer = writeAnswers.tags(["kept"]);
     scriptWrites(server, {
       read: [answers.updated(wireItem({ id }))],
       tags: [

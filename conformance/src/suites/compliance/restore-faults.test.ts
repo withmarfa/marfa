@@ -458,7 +458,7 @@ function expectRefusedForTheRestore(
   const details = answer.error?.error.details as
     Record<string, unknown> | undefined;
   expect(details?.reason, where).toBe("restore_running");
-  expect(details?.retry_after, where).toBe(5);
+  expect(details?.retry_after_seconds, where).toBe(5);
   expect(answer.headers.get("retry-after"), where).toBe("5");
   // The write wait is five seconds, so a refusal that waited it out would
   // take longer than this.

@@ -203,7 +203,9 @@ describe("a cursor behind the oldest event the log keeps", () => {
       );
       // The log keeps the fourth note's event and everything after it.
       const oldest = ids[3]!;
-      expect((await runJob(fresh, "event-log-cleanup")).outcome).toBe("ok");
+      expect((await runJob(fresh, "event-log-cleanup")).outcome).toBe(
+        "succeeded",
+      );
 
       interface Answer {
         events: SseEvent[];

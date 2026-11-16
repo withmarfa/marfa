@@ -289,7 +289,8 @@ function operationsOf(doc: OpenApiDocument): PublishedOperation[] {
   const out: PublishedOperation[] = [];
   for (const [path, methods] of Object.entries(doc.paths)) {
     for (const [method, op] of Object.entries(methods)) {
-      if (!["get", "post", "put", "patch", "delete"].includes(method)) continue;
+      if (!["get", "post", "put", "patch", "delete", "head"].includes(method))
+        continue;
       out.push({
         method: method.toUpperCase(),
         path,

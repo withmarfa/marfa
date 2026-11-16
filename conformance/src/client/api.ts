@@ -139,7 +139,7 @@ export interface UpdateItemInput {
   edges?: Record<string, string[]>;
 }
 
-export interface ReplaceMetadataInput {
+export interface ReplaceTagsInput {
   tags?: string[];
 }
 
@@ -157,6 +157,21 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
   return text === "" ? "" : `?${text}`;
 }
 
+/** One extension namespace on an item, with its document. */
+export interface ItemExtension {
+  namespace: string;
+  document: Record<string, unknown> | null;
+}
+
+/** The documents of an extension list, by namespace. */
+export function extensionsOf(page: {
+  data: ItemExtension[];
+}): Record<string, Record<string, unknown> | null> {
+  return Object.fromEntries(
+    page.data.map(({ namespace, document }) => [namespace, document]),
+  );
+}
+
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
@@ -164,6 +179,8 @@ export class MarfaClient {
   /** Sends to the local listener's socket, or over the network. */
   private send: typeof fetch;
   private http: typeof ofetch;
+  /** The connector this client last registered, which its heartbeats and run reports name. */
+  private registered: string | undefined;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -529,12 +546,12 @@ export class MarfaClient {
     id: string,
     tag: string,
     options?: { version?: number },
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
+  ): Promise<ApiResponse<{ tags: string[] }>> {
     const query =
       options?.version === undefined
         ? ""
         : `?version=${String(options.version)}`;
-    return this.request<{ metadata: MarfaMetadata }>(
+    return this.request<{ tags: string[] }>(
       `/items/${id}/tags/${encodeURIComponent(tag)}${query}`,
       { method: "DELETE" },
     );
@@ -580,10 +597,8 @@ export class MarfaClient {
     return this.request<PaginatedResult<SearchResult>>(`/search?${params}`);
   }
 
-  async registerType(
-    schema: TypeSchema,
-  ): Promise<ApiResponse<{ type: TypeSchema }>> {
-    return this.request<{ type: TypeSchema }>("/types", {
+  async registerType(schema: TypeSchema): Promise<ApiResponse<TypeSchema>> {
+    return this.request<TypeSchema>("/types", {
       method: "POST",
       body: schema,
     });
@@ -601,9 +616,9 @@ export class MarfaClient {
     typeId: string,
     schema: object,
     force?: boolean,
-  ): Promise<ApiResponse<{ type: TypeSchema }>> {
+  ): Promise<ApiResponse<TypeSchema>> {
     const query = force ? "?force=true" : "";
-    return this.request<{ type: TypeSchema }>(`/types/${typeId}${query}`, {
+    return this.request<TypeSchema>(`/types/${typeId}${query}`, {
       method: "PUT",
       body: schema,
     });
@@ -719,15 +734,14 @@ export class MarfaClient {
     id: string,
     namespace: string,
     data: Record<string, unknown>,
-  ): Promise<
-    ApiResponse<{ extensions: Record<string, Record<string, unknown>> }>
-  > {
-    return this.request<{
-      extensions: Record<string, Record<string, unknown>>;
-    }>(`/items/${id}/extensions/${namespace}`, {
-      method: "PUT",
-      body: data,
-    });
+  ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
+    return this.request<{ data: ItemExtension[] }>(
+      `/items/${id}/extensions/${namespace}`,
+      {
+        method: "PUT",
+        body: data,
+      },
+    );
   }
 
   /**
@@ -755,14 +769,14 @@ export class MarfaClient {
   /**
    * POST /items/bulk-get — read many items by id in one round-trip. Ids the
    * caller cannot read (type not permitted, trashed, or non-existent) are
-   * omitted from `items` rather than erroring. `metadata` is present only when
+   * omitted from `data` rather than erroring. `metadata` is present only when
    * `include` carries `metadata`.
    */
   async bulkGet(
     ids: string[],
     include?: Array<"edges" | "metadata" | "extensions" | "system">,
-  ): Promise<ApiResponse<{ items: MarfaItem[]; metadata?: MarfaMetadata[] }>> {
-    return this.request<{ items: MarfaItem[]; metadata?: MarfaMetadata[] }>(
+  ): Promise<ApiResponse<{ data: MarfaItem[]; metadata?: MarfaMetadata[] }>> {
+    return this.request<{ data: MarfaItem[]; metadata?: MarfaMetadata[] }>(
       "/items/bulk-get",
       {
         method: "POST",
@@ -784,7 +798,7 @@ export class MarfaClient {
    *  once both are folded, one result for each name in the order named. */
   async findItemsByTitle(names: string[]): Promise<
     ApiResponse<{
-      results: Array<{
+      data: Array<{
         name: string;
         items: Array<{
           id: string;
@@ -806,8 +820,8 @@ export class MarfaClient {
    *  later, never earlier. */
   async settleTombstones(
     input: Omit<LookupInput, "ids" | "include"> & { settled_at: string },
-  ): Promise<ApiResponse<{ tombstones: Tombstone[] }>> {
-    return this.request<{ tombstones: Tombstone[] }>("/items/tombstones", {
+  ): Promise<ApiResponse<{ data: Tombstone[] }>> {
+    return this.request<{ data: Tombstone[] }>("/items/tombstones", {
       method: "POST",
       body: input as unknown as Record<string, unknown>,
     });
@@ -987,8 +1001,8 @@ export class MarfaClient {
 
   async registerEdgeType(
     input: EdgeTypeRegistration,
-  ): Promise<ApiResponse<{ edge_type: EdgeTypeDefinition }>> {
-    return this.request<{ edge_type: EdgeTypeDefinition }>("/edge-types", {
+  ): Promise<ApiResponse<EdgeTypeDefinition>> {
+    return this.request<EdgeTypeDefinition>("/edge-types", {
       method: "POST",
       body: input,
     });
@@ -1136,10 +1150,12 @@ export class MarfaClient {
     description?: string;
     read_only_types?: string[];
   }): Promise<ApiResponse<ConnectorRow>> {
-    return this.request<ConnectorRow>("/connectors", {
+    const answer = await this.request<ConnectorRow>("/connectors", {
       method: "POST",
       body: input,
     });
+    if (answer.ok) this.registered = answer.data.id;
+    return answer;
   }
 
   async listConnectors(): Promise<ApiResponse<PaginatedResult<ConnectorRow>>> {
@@ -1156,24 +1172,35 @@ export class MarfaClient {
     });
   }
 
-  /** `POST /connectors/heartbeat`: the key's own registration is the connector. */
-  async sendConnectorHeartbeat(): Promise<
-    ApiResponse<{ last_heartbeat_at: string }>
-  > {
+  /**
+   * `POST /connectors/{id}/heartbeat`: for the connector this client
+   * registered, or for `id`. With neither, it names a connector nothing holds.
+   */
+  async sendConnectorHeartbeat(
+    id?: string,
+  ): Promise<ApiResponse<{ last_heartbeat_at: string }>> {
     return this.request<{ last_heartbeat_at: string }>(
-      "/connectors/heartbeat",
+      `/connectors/${this.connectorId(id)}/heartbeat`,
       { method: "POST" },
     );
   }
 
-  /** `POST /connectors/runs`: the key's own registration is the connector. */
+  /** `POST /connectors/{id}/runs`: for the connector this client registered, or for `id`. */
   async reportConnectorRun(
     input: ConnectorRunInput,
+    id?: string,
   ): Promise<ApiResponse<ConnectorRun>> {
-    return this.request<ConnectorRun>("/connectors/runs", {
-      method: "POST",
-      body: input as unknown as Record<string, unknown>,
-    });
+    return this.request<ConnectorRun>(
+      `/connectors/${this.connectorId(id)}/runs`,
+      {
+        method: "POST",
+        body: input as unknown as Record<string, unknown>,
+      },
+    );
+  }
+
+  private connectorId(id: string | undefined): string {
+    return id ?? this.registered ?? "01a0c000-0000-7000-8000-000000000000";
   }
 
   async listConnectorRuns(
@@ -1383,30 +1410,24 @@ export class MarfaClient {
     id: string,
     tags: string[],
     options?: { version?: number },
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
+  ): Promise<ApiResponse<{ tags: string[] }>> {
     const query =
       options?.version === undefined
         ? ""
         : `?version=${String(options.version)}`;
-    return this.request<{ metadata: MarfaMetadata }>(
-      `/items/${id}/tags${query}`,
-      { method: "POST", body: { tags } },
-    );
+    return this.request<{ tags: string[] }>(`/items/${id}/tags${query}`, {
+      method: "POST",
+      body: { tags },
+    });
   }
 
-  async getMetadata(
+  async replaceTags(
     id: string,
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/metadata`);
-  }
-
-  async replaceMetadata(
-    id: string,
-    metadata: ReplaceMetadataInput,
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
-    return this.request<{ metadata: MarfaMetadata }>(`/items/${id}/metadata`, {
+    input: ReplaceTagsInput,
+  ): Promise<ApiResponse<{ tags: string[] }>> {
+    return this.request<{ tags: string[] }>(`/items/${id}/tags`, {
       method: "PUT",
-      body: metadata,
+      body: input,
     });
   }
 
@@ -1414,7 +1435,7 @@ export class MarfaClient {
     ApiResponse<PaginatedResult<{ tag: string; count: number }>>
   > {
     return this.request<PaginatedResult<{ tag: string; count: number }>>(
-      "/metadata/tags",
+      "/tags",
     );
   }
 
@@ -1435,12 +1456,8 @@ export class MarfaClient {
 
   async listItemExtensions(
     id: string,
-  ): Promise<
-    ApiResponse<{ extensions: Record<string, Record<string, unknown>> }>
-  > {
-    return this.request<{
-      extensions: Record<string, Record<string, unknown>>;
-    }>(`/items/${id}/extensions`);
+  ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
+    return this.request<{ data: ItemExtension[] }>(`/items/${id}/extensions`);
   }
 
   /**
@@ -1503,21 +1520,18 @@ export class MarfaClient {
   async getItemExtension(
     id: string,
     namespace: string,
-  ): Promise<ApiResponse<{ data: Record<string, unknown> }>> {
-    return this.request<{ data: Record<string, unknown> }>(
-      `/items/${id}/extensions/${namespace}`,
-    );
+  ): Promise<ApiResponse<ItemExtension>> {
+    return this.request<ItemExtension>(`/items/${id}/extensions/${namespace}`);
   }
 
   async deleteItemExtension(
     id: string,
     namespace: string,
-  ): Promise<
-    ApiResponse<{ extensions: Record<string, Record<string, unknown>> }>
-  > {
-    return this.request<{
-      extensions: Record<string, Record<string, unknown>>;
-    }>(`/items/${id}/extensions/${namespace}`, { method: "DELETE" });
+  ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
+    return this.request<{ data: ItemExtension[] }>(
+      `/items/${id}/extensions/${namespace}`,
+      { method: "DELETE" },
+    );
   }
 
   async listEdges(
@@ -1546,10 +1560,11 @@ export class MarfaClient {
   /** `GET /blobs/{hash}/url`: a time-limited link the bytes can be fetched from. */
   async getBlobUrl(
     hash: string,
-    ttl?: number,
-  ): Promise<ApiResponse<{ url: string; expires_in: number }>> {
-    const query = ttl === undefined ? "" : `?ttl=${String(ttl)}`;
-    return this.request<{ url: string; expires_in: number }>(
+    ttlSeconds?: number,
+  ): Promise<ApiResponse<{ url: string; ttl_seconds: number }>> {
+    const query =
+      ttlSeconds === undefined ? "" : `?ttl_seconds=${String(ttlSeconds)}`;
+    return this.request<{ url: string; ttl_seconds: number }>(
       `/blobs/${hash}/url${query}`,
     );
   }

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
-import { MarfaClient } from "../../client/api.js";
+import { MarfaClient, extensionsOf } from "../../client/api.js";
 import type { ApiResponse, TestContext } from "../../client/types.js";
 import {
   createTestContext,
@@ -158,29 +158,26 @@ function expectRefusal(
 }
 
 describe("a write that is not an update leaves the version where it was", () => {
-  it("leaves the item at its version and its history empty after a tag write, a metadata replacement and an extension write", async () => {
+  it("leaves the item at its version and its history empty after a tag write, a tag replacement and an extension write", async () => {
     const id = await note();
     const before = (await client.getItem(id)).data.item;
     expect(before.version).toBe(1);
 
     const tagged = await client.addTags(id, [`order-${ctx.runId}`]);
     expect(tagged.status, JSON.stringify(tagged.error)).toBe(200);
-    expect(tagged.data.metadata.tags).toEqual([`order-${ctx.runId}`]);
+    expect(tagged.data.tags).toEqual([`order-${ctx.runId}`]);
     expect((await client.getItem(id)).data.item.version).toBe(1);
 
-    const replaced = await client.replaceMetadata(id, {
+    const replaced = await client.replaceTags(id, {
       tags: [`order-${ctx.runId}`, "second"],
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    expect(replaced.data.metadata.tags).toEqual([
-      `order-${ctx.runId}`,
-      "second",
-    ]);
+    expect(replaced.data.tags).toEqual([`order-${ctx.runId}`, "second"]);
     expect((await client.getItem(id)).data.item.version).toBe(1);
 
     const extended = await client.setItemExtension(id, "order.test", { n: 1 });
     expect(extended.status, JSON.stringify(extended.error)).toBe(200);
-    expect(extended.data.extensions["order.test"]).toEqual({ n: 1 });
+    expect(extensionsOf(extended.data)["order.test"]).toEqual({ n: 1 });
 
     const after = (await client.getItem(id)).data.item;
     expect(after.version).toBe(1);

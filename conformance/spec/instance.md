@@ -2,7 +2,7 @@
 
 What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, how it compresses its answers, backing up, health, a database the build did not write, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
 
-`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract`, `features` and `max_request_bytes`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
+`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract`, `features` and `max_request_bytes`. A page is the HTML a browser is given instead.
 
 ## Needs attention
 
@@ -310,27 +310,11 @@ When `GET /` is answered with the description, the server MUST answer `name` as 
 
 ### `instance/root-version`
 
-When `GET /` is answered with the description, the server MUST answer `version` as a string other than the contract version.
+When `GET /` is answered with the description, the server MUST answer `version` as the release the server runs, three dot-separated whole numbers.
 
-**Reason:** `version` is the build, which moves on a deploy, and the contract version does not.
+**Reason:** a person who is upgrading names a release, and reads it here. A build made from a checkout carries `0.0.0`, which has the same form.
 
-**Tests:** `compliance/instance.test.ts › describes itself at the root`, `› carries one contract version at the root and in its document`.
-
-### `instance/root-release`
-
-Where the server runs a build made as a numbered release, the server MUST answer `GET /` with `release` as that release's version, three dot-separated whole numbers.
-
-**Reason:** `version` names the build and stays what it was, so that a deployment can be traced to its commit. A person who is upgrading names a release, and reads it here. The fixtures boot a checkout, which is not a release, so they hold only the form of the number; `scripts/check-image.sh` boots a built release image and holds the field to the release it was made as.
-
-**Tests:** `compliance/instance.test.ts › names a release only as the version a tag carries`.
-
-### `instance/root-release-absent`
-
-When `GET /` is answered with the description for a build that is not a numbered release, the server MUST NOT give it `release`.
-
-**Reason:** a placeholder would read as a release that no tag carries.
-
-**Tests:** `compliance/instance.test.ts › names no release for a build made from a checkout`.
+**Tests:** `compliance/instance.test.ts › describes itself at the root`, `› names its version as three whole numbers`.
 
 ### `instance/features-array`
 
@@ -998,7 +982,7 @@ While a look at the backup folder's disk does not answer, the server MUST answer
 
 ### `instance/backup-health-store-clears`
 
-When the object store or the backup folder takes copies again and a run of `blob-replicate` has ended `ok`, the server MUST answer `backups.store_error` as `null`.
+When the object store or the backup folder takes copies again and a run of `blob-replicate` has ended `succeeded`, the server MUST answer `backups.store_error` as `null`.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
 
@@ -1534,7 +1518,7 @@ When the server is stopped, the server MUST end each event stream it has open wi
 
 ### `instance/stop-ends-copy-stream`
 
-When the server is stopped, the server MUST end an open copy stream, `GET /events?edges=all&copy=1`, with a terminal `stream_incomplete` frame.
+When the server is stopped, the server MUST end an open copy stream, `GET /events?edges=all&copy=true`, with a terminal `stream_incomplete` frame.
 
 **Tests:** `compliance/stream-shutdown.test.ts › ends an open copy stream with stream_incomplete when the server is stopped, and exits with status 0`.
 
@@ -1662,11 +1646,11 @@ Where the server believes the forwarded address of a peer, the server MUST count
 
 ## Bodies on the public listener
 
-The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
+The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
 
 ### `instance/body-deadline`
 
-If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
+If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a body at the 16 MiB default of `max_bulk_request_bytes` takes about 134 seconds over a 1 Mbit/s link, and 180 seconds allows for that while a client that stops sending cannot hold the memory its body takes. The deadline does not move with the settings: an owner who raises `max_bulk_request_bytes` or `max_request_bytes` above about 21 MiB gets bodies that cannot arrive in time over a 1 Mbit/s link, and the descriptions of both settings say so.
 
@@ -1712,7 +1696,7 @@ If a request with a body is sent to an operation that requires a credential and 
 
 ### `instance/credential-judged-after-body`
 
-If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
+If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
 
 **Reason:** a credential the server judged when the head arrived proves nothing about the moment the body is whole, and a caller who sends a body slowly must not keep authority the owner has taken away. A body that does not arrive whole is answered under `instance/body-deadline` or its own refusals.
 
@@ -1720,7 +1704,7 @@ If the credential a request carries is revoked, loses the permission its operati
 
 ### `instance/credential-judged-before-streamed-commit`
 
-If the credential a `POST /blobs` or `PUT /profile/picture` request carries is revoked while the server is reading the request's body, then the server MUST refuse the request with `401 unauthorized` once the body is whole and valid, and store nothing from it.
+If the credential a `POST /blobs` or `PUT /profile/avatar` request carries is revoked while the server is reading the request's body, then the server MUST refuse the request with `401 unauthorized` once the body is whole and valid, and store nothing from it.
 
 **Reason:** these bodies stream, so the server does not judge the caller again when the body is whole, but it judges the caller in the step that stores the upload, and a caller whose authority has ended is not given the result.
 
@@ -1970,7 +1954,7 @@ If a read or a write meets pages of the database file that SQLite cannot read, t
 
 ## The configuration operations
 
-`GET /config`, `PUT /config` and `PATCH /config` hold the instance's display name, levers and live settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
+`GET /config`, `PUT /config` and `PATCH /config` hold the instance's display name, levers and live settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
 
 ### `instance/config-name`
 
@@ -2520,7 +2504,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `audit_retention_days`           | `90` days          | Whole number of days, 0 to 36500                          | How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `revoked_grant_retention_days`   | `90` days          | Whole number of days, 0 to 36500                          | How long a revoked application grant is kept. At 0 no revoked grant is purged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `grant_inactivity_days`          | `365` days         | Whole number of days, 0 to 36500                          | How long an application grant may go unused before the server retires it. At 0 grants are never retired.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `event_log_retention_hours`      | `720` hours        | Whole number of hours, 0 to 876000                        | The least time an event stays in the event log, which bounds how far back a stream can replay, and the time the server keeps the answer to a write sent with an `Idempotency-Key`. At 0 neither expires by age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `event_log_retention_days`       | `30` days          | Whole number of days, 0 to 36500                          | The least time an event stays in the event log, which bounds how far back a stream can replay, and the time the server keeps the answer to a write sent with an `Idempotency-Key`. At 0 neither expires by age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `version_recent_days`            | `30` days          | Whole number of days, 0 to 36500                          | The window in which the version policy keeps every version of an item.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `version_daily_snapshot_days`    | `90` days          | Whole number of days, 0 to 36500                          | The window in which the version policy keeps one version a day. It must be at least `version_recent_days`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `version_weekly_snapshot_days`   | `365` days         | Whole number of days, 0 to 36500                          | The window in which the version policy keeps one version a week. It must be at least `version_daily_snapshot_days`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -2528,7 +2512,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `trash_retention_days`           | `60` days          | Whole number of days, 0 to 36500                          | How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `row_log_retention_days`         | `30` days          | Whole number of days, 0 to 36500                          | How long a table keeps a batch in its change log, which bounds how far back a batch can be undone. At 0 no batch leaves the log by age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `unapproved_app_retention_hours` | `1` hour           | Whole number of hours, 0 to 876000                        | How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 none is removed by age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `sse_max_viewers`                | `0`                | Whole number, 0 to 1000000                                | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `event_stream_max_viewers`       | `0`                | Whole number, 0 to 1000000                                | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `mcp_fetch_enabled`              | `true`             | `true` or `false`                                         | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `mcp_fetch_max_bytes`            | `52428800` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `mcp_fetch_timeout_seconds`      | `60` seconds       | Whole number of seconds, 1 to 3600                        | How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |

@@ -69,7 +69,6 @@ export const FIELD_TYPES: readonly FieldType[] = [
 export const FIELD_FORMATS: readonly FieldFormat[] = [
   "url",
   "email",
-  "datetime",
   "date",
   "thumbnail",
   "bcp47",
@@ -114,7 +113,6 @@ export const FORMAT_TO_FIELD_TYPE: Readonly<
 > = {
   url: "url",
   email: "email",
-  datetime: "datetime",
   date: "date",
   thumbnail: "thumbnail",
 };
@@ -175,6 +173,8 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "trashed_at",
   "trashed_by_cascade",
   "trashed_with",
+  "last_activity_at",
+  "read_only",
 ]);
 
 /**

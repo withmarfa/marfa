@@ -17,12 +17,12 @@ let server: FreshServer | undefined;
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 
 beforeAll(async () => {
   server = await bootFreshServer("stream-capacity", {
-    MARFA_SSE_MAX_VIEWERS: "1",
+    MARFA_EVENT_STREAM_MAX_VIEWERS: "1",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

@@ -110,7 +110,7 @@ describe("a malformed image", () => {
       const run = await operator.runHousekeeping("enrichment-sweep");
       const label = `sweep ${String(i + 1)}`;
       expect(run.status, label).toBe(200);
-      expect(run.data.outcome, label).toBe("ok");
+      expect(run.data.outcome, label).toBe("succeeded");
       expect(run.data.result, label).toMatchObject({ failed });
       const control = await client.getItem(controlId);
       expect(control.status, label).toBe(200);

@@ -222,7 +222,7 @@ describe("the version policy a type inherits", () => {
 
     const run = await getManagementClient().runHousekeeping("version-thinning");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
-    expect(run.data.outcome).toBe("ok");
+    expect(run.data.outcome).toBe("succeeded");
 
     const kept = async (id: string) =>
       (await client.getVersions(id)).data.data.length;
@@ -260,7 +260,7 @@ describe("the version policy a type inherits", () => {
   async function runThinning(): Promise<void> {
     const run = await getManagementClient().runHousekeeping("version-thinning");
     expect(run.status, JSON.stringify(run.error)).toBe(200);
-    expect(run.data.outcome).toBe("ok");
+    expect(run.data.outcome).toBe("succeeded");
   }
 
   const history = async (id: string) =>

@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS queue (
       'create_edge',
       'update_edge',
       'delete_edge',
-      'replace_metadata',
+      'replace_tags',
       'add_tag',
       'remove_tag',
       'write_extension',

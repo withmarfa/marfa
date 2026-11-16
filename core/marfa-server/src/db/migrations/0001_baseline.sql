@@ -375,7 +375,7 @@ CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,
-    last_outcome TEXT CHECK (last_outcome IN ('ok', 'error', 'held')),
+    last_outcome TEXT CHECK (last_outcome IN ('succeeded', 'failed', 'held')),
     last_error TEXT,
     last_result TEXT
 ) STRICT, WITHOUT ROWID;
@@ -711,7 +711,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     type TEXT NOT NULL,
     source TEXT NOT NULL,
     payload TEXT,
-    status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'dead_letter', 'canceled')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled')),
     status_code INTEGER,
     attempt INTEGER NOT NULL DEFAULT 0,
     cycle_attempt INTEGER NOT NULL DEFAULT 0,
@@ -720,7 +720,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (webhook_id, event_id),
-    CHECK (payload IS NOT NULL OR status IN ('success', 'canceled'))
+    CHECK (payload IS NOT NULL OR status IN ('succeeded', 'canceled'))
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS webhook_deliveries_due

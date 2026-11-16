@@ -144,7 +144,7 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
         OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
         OwnerCommand::Picture { output } => {
             let (content_type, mut reader) =
-                remote.stream(&Request::get(&["owner", "picture"]).streamed())?;
+                remote.stream(&Request::get(&["owner", "avatar"]).streamed())?;
             let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
@@ -165,10 +165,7 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
         OwnerCommand::Update(args) => {
             require_local(remote)?;
             let picture = match &args.avatar {
-                Some(file) => Some(super::profile::picture_request(
-                    &["owner", "picture"],
-                    file,
-                )?),
+                Some(file) => Some(super::profile::picture_request(&["owner", "avatar"], file)?),
                 None => None,
             };
             let mut body = serde_json::Map::new();

@@ -23,7 +23,7 @@ import type { SseEvent } from "./sse.js";
 export const MUTATION_EVENT_NAMES = new Set([
   "item.created",
   "item.updated",
-  "item.deleted",
+  "item.trashed",
   "item.purged",
   "item.restored",
   "item.state_changed",

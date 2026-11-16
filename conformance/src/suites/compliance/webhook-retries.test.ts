@@ -173,7 +173,7 @@ async function end(webhookId: string): Promise<void> {
 }
 
 describe("webhook retry waits", () => {
-  it("makes eight attempts with the seven waits of the schedule, then records dead_letter", async () => {
+  it("makes eight attempts with the seven waits of the schedule, then records failed", async () => {
     const failures = [500, 503, 429, 408, 502, 504, 500, 503];
     const id = await begin("schedule", (n) => ({
       status: failures[n - 1] ?? 503,
@@ -188,7 +188,7 @@ describe("webhook retry waits", () => {
         }
         await waitOut("schedule", n, SCHEDULE[n - 1]!);
       }
-      const last = await attemptRecorded("schedule", id, 8, "dead_letter");
+      const last = await attemptRecorded("schedule", id, 8, "failed");
       expect(last.status_code).toBe(503);
       expect(arrivals("schedule")).toHaveLength(8);
       const ids = new Set(
@@ -234,7 +234,7 @@ describe("webhook retry waits", () => {
         "retry-after-seconds",
         id,
         6,
-        "success",
+        "succeeded",
       );
       expect(done.succeeded).toBe(true);
     } finally {
@@ -259,7 +259,7 @@ describe("webhook retry waits", () => {
       await waitOut("retry-after-date", 1, dateWait);
       await attemptRecorded("retry-after-date", id, 2, "pending");
       await waitOut("retry-after-date", 2, 300 * SECOND);
-      await attemptRecorded("retry-after-date", id, 3, "success");
+      await attemptRecorded("retry-after-date", id, 3, "succeeded");
     } finally {
       await end(id);
     }
@@ -286,7 +286,7 @@ describe("webhook retry waits", () => {
         }
 
         await clock.advance(120 * SECOND);
-        await attemptRecorded(label, id, 2, "success");
+        await attemptRecorded(label, id, 2, "succeeded");
         // The server finds nothing more to send.
         await settle();
         expect(arrivals(label), "a restart sent an attempt twice").toHaveLength(
@@ -321,7 +321,7 @@ describe("webhook retry waits", () => {
       const a = await subscribe("queued-a", ["item.created"]);
       const b = await subscribe("queued-b", ["item.created"]);
       // Entitled to none of what is written.
-      const c = await subscribe("queued-c", ["item.deleted"]);
+      const c = await subscribe("queued-c", ["item.trashed"]);
       try {
         // Stop with delivery creation and position advancement still uncommitted.
         await server.setFault("hold:webhook-schedule");

@@ -1065,7 +1065,7 @@ export async function tables(): Promise<void> {
         !job.running_since
       ) {
         removed = job.last_result?.removed ?? 0;
-        cleaned = job.last_outcome === "ok";
+        cleaned = job.last_outcome === "succeeded";
         break;
       }
       if (

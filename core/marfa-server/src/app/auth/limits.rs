@@ -180,7 +180,8 @@ pub fn clear_for_recovery(limiter: &Limiter) {
 }
 
 pub fn spent(message: &'static str, wait_ms: i64) -> Refusal {
-    Refusal::new(Code::RateLimited, message).with_detail("retry_after", retry_seconds(wait_ms))
+    Refusal::new(Code::RateLimited, message)
+        .with_detail("retry_after_seconds", retry_seconds(wait_ms))
 }
 
 pub fn too_many_passwords(wait_ms: i64) -> Refusal {
@@ -581,7 +582,7 @@ mod tests {
     #[test]
     fn the_wait_is_whole_seconds_rounded_up_and_never_under_one() {
         let seconds = |wait_ms| {
-            spent("x", wait_ms).details.unwrap()["retry_after"]
+            spent("x", wait_ms).details.unwrap()["retry_after_seconds"]
                 .as_i64()
                 .unwrap()
         };

@@ -92,7 +92,7 @@ describe("a backup the object store does not take", () => {
     const scheduled =
       await clientsFor(server).operator.runHousekeeping("backup");
     expect(scheduled.status, JSON.stringify(scheduled.error)).toBe(200);
-    expect(scheduled.data.outcome).toBe("error");
+    expect(scheduled.data.outcome).toBe("failed");
     seen = await health(server);
     expect(seen.backups.failures).toBe(2);
     expect(await bucket.backupKeys()).toEqual(before);
@@ -100,7 +100,7 @@ describe("a backup the object store does not take", () => {
     await server.restart();
     const next = await clientsFor(server).operator.runHousekeeping("backup");
     expect(next.status, JSON.stringify(next.error)).toBe(200);
-    expect(next.data.outcome, next.data.error ?? "").toBe("ok");
+    expect(next.data.outcome, next.data.error ?? "").toBe("succeeded");
     expect((next.data.result as { outcome: string }).outcome).toBe("put");
     seen = await health(server);
     expect(seen.backups.status).toBe("ok");
@@ -119,7 +119,7 @@ describe("a backup the object store does not take", () => {
     await server.restart();
     const next = await clientsFor(server).operator.runHousekeeping("backup");
     expect(next.status, JSON.stringify(next.error)).toBe(200);
-    expect(next.data.outcome, next.data.error ?? "").toBe("ok");
+    expect(next.data.outcome, next.data.error ?? "").toBe("succeeded");
     expect((next.data.result as { outcome: string }).outcome).toBe("put");
     const seen = await health(server);
     expect(seen.backups.status).toBe("ok");

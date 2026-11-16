@@ -116,7 +116,7 @@ describe("webhook addresses", () => {
               { timeout: 30000 },
             )
             .toMatchObject({
-              status: "dead_letter",
+              status: "failed",
               attempt: 1,
               error: "The receiver's address is not public.",
             });
@@ -237,7 +237,7 @@ describe("webhook addresses", () => {
     const stored = "http://receiver.invalid/hook/stored";
     const created = await working.createWebhook({
       url: stored,
-      events: ["item.deleted"],
+      events: ["item.trashed"],
     });
     expect(created.status).toBe(201);
     try {
@@ -295,15 +295,15 @@ describe("webhook addresses", () => {
       // has been.
       const deadline = Date.now() + 30_000;
       let delivery: WebhookDelivery | undefined;
-      while (Date.now() < deadline && delivery?.status !== "dead_letter") {
+      while (Date.now() < deadline && delivery?.status !== "failed") {
         const log = await working.listWebhookDeliveries(created.data.id);
         expect(log.ok).toBe(true);
         delivery = log.data.data[0];
-        if (delivery?.status !== "dead_letter")
+        if (delivery?.status !== "failed")
           await new Promise((r) => setTimeout(r, 100));
       }
       expect(delivery).toMatchObject({
-        status: "dead_letter",
+        status: "failed",
         error: "The receiver's address is not public.",
         attempt: 1,
       });

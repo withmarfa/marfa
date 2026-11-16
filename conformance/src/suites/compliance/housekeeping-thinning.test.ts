@@ -357,7 +357,7 @@ describe("version thinning while a type is replaced", () => {
         expect(await history(writer, held)).toHaveLength(6);
 
         await server.clearFault();
-        expect((await run).outcome).toBe("ok");
+        expect((await run).outcome).toBe("succeeded");
 
         expect(await history(writer, held)).toEqual([2, 3, 4, 5, 6]);
         expect(await history(writer, behind)).toEqual([4, 5, 6]);

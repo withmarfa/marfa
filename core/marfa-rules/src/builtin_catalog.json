@@ -2843,7 +2843,6 @@
  "format_field_types": {
   "url": "url",
   "email": "email",
-  "datetime": "datetime",
   "date": "date",
   "thumbnail": "thumbnail"
  },
@@ -2874,8 +2873,10 @@
   "capture_longitude",
   "created_at",
   "id",
+  "last_activity_at",
   "occurred_at",
   "properties",
+  "read_only",
   "schema_version",
   "source",
   "source_id",

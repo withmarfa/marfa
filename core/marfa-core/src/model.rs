@@ -890,7 +890,7 @@ pub enum WriteKind {
     CreateEdge,
     UpdateEdge,
     DeleteEdge,
-    ReplaceMetadata,
+    ReplaceTags,
     AddTag,
     RemoveTag,
     WriteExtension,
@@ -910,7 +910,7 @@ impl WriteKind {
         WriteKind::CreateEdge,
         WriteKind::UpdateEdge,
         WriteKind::DeleteEdge,
-        WriteKind::ReplaceMetadata,
+        WriteKind::ReplaceTags,
         WriteKind::AddTag,
         WriteKind::RemoveTag,
         WriteKind::WriteExtension,
@@ -936,7 +936,7 @@ impl WriteKind {
             self,
             WriteKind::CreateItem
                 | WriteKind::UpdateItem
-                | WriteKind::ReplaceMetadata
+                | WriteKind::ReplaceTags
                 | WriteKind::WriteExtension
                 | WriteKind::CreateEdge
                 | WriteKind::UpdateEdge
@@ -957,7 +957,7 @@ impl WriteKind {
             | WriteKind::DeleteItem
             | WriteKind::RestoreItem
             | WriteKind::TransitionItem
-            | WriteKind::ReplaceMetadata
+            | WriteKind::ReplaceTags
             | WriteKind::AddTag
             | WriteKind::RemoveTag
             | WriteKind::WriteExtension
@@ -979,7 +979,7 @@ impl WriteKind {
             WriteKind::CreateEdge => "create_edge",
             WriteKind::UpdateEdge => "update_edge",
             WriteKind::DeleteEdge => "delete_edge",
-            WriteKind::ReplaceMetadata => "replace_metadata",
+            WriteKind::ReplaceTags => "replace_tags",
             WriteKind::AddTag => "add_tag",
             WriteKind::RemoveTag => "remove_tag",
             WriteKind::WriteExtension => "write_extension",
@@ -1813,11 +1813,11 @@ impl EdgeEdit {
 /// Extension namespaces are not here: the working copy does not hold them,
 /// and they travel as their own writes.
 #[derive(Debug, Clone, Default)]
-pub struct MetadataWrite {
+pub struct TagsWrite {
     pub tags: Vec<String>,
 }
 
-impl MetadataWrite {
+impl TagsWrite {
     pub(crate) fn payload(&self) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
         body.insert(

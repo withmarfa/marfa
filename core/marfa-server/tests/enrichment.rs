@@ -147,7 +147,7 @@ impl Instance {
 
     async fn sweep(&self) -> Value {
         let ended = housekeeping::run_now(&self.app, SWEEP).await.unwrap();
-        assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+        assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
         ended.result.unwrap()
     }
 
@@ -188,14 +188,14 @@ async fn keep_only_far_away(one: &Instance, ids: &[String]) {
     let ended = housekeeping::run_now(&one.app, "blob-replicate")
         .await
         .unwrap();
-    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
     for id in ids {
         std::fs::remove_file(one.blob_path(&one.hash_of(id).await)).unwrap();
     }
     let ended = housekeeping::run_now(&one.app, "blob-integrity")
         .await
         .unwrap();
-    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
 }
 
 /// The object store's key for a file's bytes.
@@ -564,7 +564,7 @@ async fn sweep_while_held(
     let app = one.app.clone();
     let sweep = tokio::spawn(async move {
         let ended = housekeeping::run_now(&app, SWEEP).await.unwrap();
-        assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+        assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
         ended.result.unwrap()
     });
     waits_to_be_held(one).await;
@@ -845,7 +845,7 @@ async fn reads_a_file_whose_only_copy_is_in_the_object_store() {
             std::fs::remove_file(file).unwrap();
         }
         let ended = housekeeping::run_now(&one.app, job).await.unwrap();
-        assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+        assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
     }
     let copies = "SELECT count(*) FROM blob_copies c JOIN stores s ON s.id = c.store_id \
                   WHERE c.hash = ?1 AND s.kind = 's3'";

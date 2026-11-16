@@ -5,7 +5,7 @@
  *
  * The bearer operations meet, in this order: the credential, the standing of
  * the credential for the operation, a query key the operation does not
- * declare, the `ttl` schema, the hash format, and then the read permission
+ * declare, the `ttl_seconds` schema, the hash format, and then the read permission
  * and the blob's existence, which answer alike. The instance's link has no
  * credential: it meets an undeclared query key, the query schema, the hash
  * format, the signature and expiry, and then the blob's existence.
@@ -83,7 +83,11 @@ function verdict(res: ApiResponse<unknown>) {
 
 const STRAY = { status: 400, unknownKeys: ["bogus"] };
 const NOT_FOUND = { status: 404, code: "blob_not_found" };
-const BAD_TTL = { status: 400, code: "validation_error", badFields: ["ttl"] };
+const BAD_TTL = {
+  status: 400,
+  code: "validation_error",
+  badFields: ["ttl_seconds"],
+};
 const BAD_HASH = {
   status: 400,
   code: "validation_error",
@@ -231,9 +235,9 @@ describe("the order a blob operation meets its refusals in", () => {
   it("answers a stray query key before a malformed ttl", async () => {
     const link = (query: string) =>
       client.rawRequest(`/blobs/${UNKNOWN}/url?${query}`);
-    expect(verdict(await link("ttl=0"))).toMatchObject(BAD_TTL);
+    expect(verdict(await link("ttl_seconds=0"))).toMatchObject(BAD_TTL);
 
-    const told = verdict(await link("ttl=0&bogus=1"));
+    const told = verdict(await link("ttl_seconds=0&bogus=1"));
     expect(told).toMatchObject(STRAY);
     expect(told.badFields).toBeUndefined();
   });
@@ -243,10 +247,12 @@ describe("the order a blob operation meets its refusals in", () => {
       client.rawRequest(`/blobs/${UNKNOWN}/url${query}`);
     // The witnesses: the same hash with a good ttl, and with none, is unknown.
     expect(verdict(await link(""))).toMatchObject(NOT_FOUND);
-    expect(verdict(await link("?ttl=60"))).toMatchObject(NOT_FOUND);
+    expect(verdict(await link("?ttl_seconds=60"))).toMatchObject(NOT_FOUND);
 
     for (const ttl of ["0", "-1", "1.5", "soon"]) {
-      expect(verdict(await link(`?ttl=${ttl}`)), ttl).toMatchObject(BAD_TTL);
+      expect(verdict(await link(`?ttl_seconds=${ttl}`)), ttl).toMatchObject(
+        BAD_TTL,
+      );
     }
   });
 
@@ -254,9 +260,9 @@ describe("the order a blob operation meets its refusals in", () => {
     const link = (query: string) =>
       client.rawRequest(`/blobs/${MALFORMED}/url${query}`);
     // The witness: with a good ttl the malformed hash is what is refused.
-    expect(verdict(await link("?ttl=60"))).toMatchObject(BAD_HASH);
+    expect(verdict(await link("?ttl_seconds=60"))).toMatchObject(BAD_HASH);
 
-    const told = verdict(await link("?ttl=0"));
+    const told = verdict(await link("?ttl_seconds=0"));
     expect(told).toMatchObject(BAD_TTL);
     expect(told.message).not.toBe(BAD_HASH.message);
   });
@@ -281,7 +287,9 @@ describe("the order a blob operation meets its refusals in", () => {
     );
 
     expect(
-      verdict(await bookmarkReader.rawRequest(`/blobs/${hash}/url?ttl=0`)),
+      verdict(
+        await bookmarkReader.rawRequest(`/blobs/${hash}/url?ttl_seconds=0`),
+      ),
     ).toMatchObject(BAD_TTL);
   });
 

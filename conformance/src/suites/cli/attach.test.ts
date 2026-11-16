@@ -102,7 +102,7 @@ describe("attaching a file", () => {
     expect(copies.data.map((copy) => copy.kind)).toContain("disk");
 
     // A link to the bytes, for a reader that cannot carry the key.
-    const link = await c.cli.json<{ url: string; expires_in: number }>([
+    const link = await c.cli.json<{ url: string; ttl_seconds: number }>([
       "blobs",
       "url",
       attached.blob.hash,
@@ -110,7 +110,7 @@ describe("attaching a file", () => {
       "120",
     ]);
     expect(link.url).toContain(attached.blob.hash.replace("sha256:", ""));
-    expect(link.expires_in).toBe(120);
+    expect(link.ttl_seconds).toBe(120);
 
     // The last copy cannot be dropped: the door answers its own refusal
     // with the floor it holds, and the copy record still names it after. A

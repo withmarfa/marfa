@@ -52,7 +52,7 @@ pub fn list_request() -> Request {
 }
 
 pub fn get_request(source: &str) -> Request {
-    Request::get(&["source"]).query("source", source)
+    Request::get(&["sources", source])
 }
 
 /// A field left out of the body keeps its value; `null` clears it.
@@ -64,9 +64,7 @@ pub fn update_request(source: &str, name: Option<Value>, mark: Option<Value>) ->
     if let Some(mark) = mark {
         body.insert("mark".into(), mark);
     }
-    Request::patch(&["source"])
-        .query("source", source)
-        .json(Value::Object(body))
+    Request::patch(&["sources", source]).json(Value::Object(body))
 }
 
 pub fn request(command: &SourcesCommand) -> Request {
@@ -119,10 +117,10 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn carries_the_code_in_the_query_where_a_path_would_rewrite_it() {
+    fn names_the_source_as_one_path_segment() {
         let req = get_request("../a/b");
-        assert_eq!(req.segments, ["source"]);
-        assert_eq!(req.query, [("source".to_string(), "../a/b".to_string())]);
+        assert_eq!(req.segments, ["sources", "../a/b"]);
+        assert!(req.query.is_empty());
     }
 
     #[test]
@@ -132,7 +130,7 @@ mod tests {
             name: None,
             mark: Some("simple-icons:github".into()),
         });
-        assert_eq!(req.segments, ["source"]);
+        assert_eq!(req.segments, ["sources", "github"]);
         assert_eq!(
             req.body,
             Body::Json(json!({ "mark": "simple-icons:github" }))

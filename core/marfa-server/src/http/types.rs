@@ -52,10 +52,7 @@ pub async fn register(
     caller.require_door(SchemaKind::Types, Door::Register)?;
     query::only(&uri, &[])?;
     let created = types::register(&app, &caller, body.open_object().await?).await?;
-    Ok(json_answer(
-        StatusCode::CREATED,
-        &json!({ "type": created }),
-    ))
+    Ok(json_answer(StatusCode::CREATED, &created))
 }
 
 pub async fn replace(
@@ -69,7 +66,7 @@ pub async fn replace(
     query::only(&uri, &["force"])?;
     let force = query::flag(&uri, "force")?.unwrap_or(false);
     let replaced = types::replace(&app, &caller, id, body.open_object().await?, force).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "type": replaced })))
+    Ok(json_answer(StatusCode::OK, &replaced))
 }
 
 pub async fn delete(
@@ -96,7 +93,7 @@ pub async fn set_icon(
     query::only(&uri, &[])?;
     let body = body.object(&ICON_FIELDS).await?;
     let answered = types::set_icon(&app, &caller, id, body).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "type": answered })))
+    Ok(json_answer(StatusCode::OK, &answered))
 }
 
 pub async fn clear_icon(
@@ -108,5 +105,5 @@ pub async fn clear_icon(
     caller.require_door(SchemaKind::Types, Door::Change)?;
     query::only(&uri, &[])?;
     let answered = types::clear_icon(&app, &caller, id).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "type": answered })))
+    Ok(json_answer(StatusCode::OK, &answered))
 }

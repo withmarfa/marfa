@@ -737,7 +737,7 @@ describe("the view door", () => {
           ?.properties?.title,
       ).toBe("b");
       // The delete passes through no state a working copy keeps.
-      for (const name of ["item.deleted", "item.state_changed"]) {
+      for (const name of ["item.trashed", "item.state_changed"]) {
         expect(
           events.some((e) => ours(e, name)),
           `${name} for a deleted view`,

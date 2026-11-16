@@ -232,7 +232,7 @@ describe("folders: a refused default edge", () => {
       refusing && edge.edge_type === "shelved-in"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -250,7 +250,7 @@ describe("folders: a refused default edge", () => {
       expect(file.flag, `${path}: ${JSON.stringify(file)}`).toBe(
         "default_edge_refused",
       );
-      expect(file.reason).toContain("edge_permission_denied");
+      expect(file.reason).toContain("edge_type_not_permitted");
       expect(file.reason).toContain("shelved-in");
     }
 
@@ -327,7 +327,7 @@ describe("folders: a refused default edge", () => {
       refusing && edge.edge_type === "shelved-in"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -387,7 +387,7 @@ describe("folders: a refused default edge", () => {
       edge.edge_type === "shelved-in"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -406,7 +406,7 @@ describe("folders: a refused default edge", () => {
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
-        "item.deleted",
+        "item.trashed",
         wireItem({
           id: id!,
           type: "core.note",

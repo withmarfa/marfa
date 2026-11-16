@@ -61,7 +61,7 @@ describe("a run of trash-purge", () => {
       const recent = await binned("recent");
 
       const first = await runJob(server, "trash-purge");
-      expect(first.outcome, String(first.error)).toBe("ok");
+      expect(first.outcome, String(first.error)).toBe("succeeded");
       expect(first.result).toEqual({ deleted: 0, passed_over: 1 });
       expect(await inBin()).toEqual([stuck, recent].sort());
 
@@ -70,7 +70,7 @@ describe("a run of trash-purge", () => {
         db.exec("DROP TRIGGER refuse_one_purge");
       });
       const second = await runJob(server, "trash-purge");
-      expect(second.outcome, String(second.error)).toBe("ok");
+      expect(second.outcome, String(second.error)).toBe("succeeded");
       expect(second.result).toEqual({ deleted: 1 });
       expect(await inBin()).toEqual([recent]);
     },

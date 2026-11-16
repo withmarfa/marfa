@@ -30,7 +30,7 @@ pub(crate) use archived::{Archived, archived, versions};
 pub(crate) use plan::require_version;
 pub use read::{
     Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,
-    extension, extensions, history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
+    extension, extensions, history, lookup, summaries, tag_counts, titles, trash_preview,
 };
 pub(crate) use read::{
     Reader, listed, listed_rows, readable_tags, reading, reading_background, reading_under,
@@ -526,6 +526,24 @@ fn extensions_text(
         .map(|(namespace, data)| format!("{}:{data}", Value::from(namespace)))
         .collect();
     Ok(format!("{{{}}}", entries.join(",")))
+}
+
+fn extension_documents_text(
+    tx: &Transaction<'_>,
+    item: &Item,
+    shown: impl Fn(&str) -> bool,
+) -> Result<String> {
+    let entries: Vec<String> = rows::extensions(tx, item.seq)?
+        .into_iter()
+        .filter(|(namespace, _)| shown(namespace))
+        .map(|(namespace, data)| {
+            format!(
+                "{{\"namespace\":{},\"document\":{data}}}",
+                Value::from(namespace)
+            )
+        })
+        .collect();
+    Ok(format!("{{\"data\":[{}]}}", entries.join(",")))
 }
 
 fn metadata_for(tx: &Transaction<'_>, item: &Item, caller: &Caller) -> Result<String> {

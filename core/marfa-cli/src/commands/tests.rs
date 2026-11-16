@@ -1377,7 +1377,7 @@ fn blobs_are_fetched_as_a_stream_and_a_link_carries_its_ttl() {
     assert_eq!(download.path(), "/blobs/sha256:abc");
     assert!(download.stream);
     assert_eq!(
-        query(&blobs::url_request("sha256:abc", Some(60)), "ttl").as_deref(),
+        query(&blobs::url_request("sha256:abc", Some(60)), "ttl_seconds").as_deref(),
         Some("60")
     );
 }
@@ -1597,6 +1597,7 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
     );
 
     let report = connectors::report_request(&connectors::ReportArgs {
+        id: "c1".into(),
         outcome: connectors::Outcome::Failed,
         started_at: "2026-09-21T10:00:00Z".into(),
         finished_at: "2026-09-21T10:01:00Z".into(),
@@ -1604,7 +1605,7 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
         error: Some("the mailbox refused".into()),
     });
     assert_eq!(report.method, Method::Post);
-    assert_eq!(report.path(), "/connectors/runs");
+    assert_eq!(report.path(), "/connectors/c1/runs");
     assert_eq!(
         report.body,
         Body::Json(json!({
@@ -2032,10 +2033,10 @@ mod dispatch {
     #[test]
     fn a_tag_write_names_the_version_it_was_given() {
         use clap::Parser;
-        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let tags = r#"{"tags":[]}"#;
         let door = Door::open(vec![
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", tags),
         ]);
         for args in [
             ["marfa", "items", "tag", "i", "a", "--version", "3"].as_slice(),
@@ -2058,13 +2059,13 @@ mod dispatch {
         let key = |value: &str| items::IdempotencyArgs {
             idempotency_key: Some(value.into()),
         };
-        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let tags = r#"{"tags":[]}"#;
         let door = Door::open(vec![
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", metadata),
-            Answer::json("200 OK", r#"{"extensions":{}}"#),
-            Answer::json("200 OK", r#"{"extensions":{}}"#),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", tags),
+            Answer::json("200 OK", r#"{"data":[]}"#),
+            Answer::json("200 OK", r#"{"data":[]}"#),
         ]);
         let remote = remote_at(&door);
         items::run(
@@ -2137,7 +2138,7 @@ mod dispatch {
         let expected = [
             ("POST", "/items/i/tags", "tag"),
             ("DELETE", "/items/i/tags/a", "untag"),
-            ("PUT", "/items/i/metadata", "replace"),
+            ("PUT", "/items/i/tags", "replace"),
             ("PUT", "/items/i/extensions/app.cursor", "write"),
             ("DELETE", "/items/i/extensions/app.cursor", "delete"),
         ]
@@ -2312,10 +2313,10 @@ fn a_picture_is_put_to_its_door_as_the_file_itself() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("me.png");
     std::fs::write(&file, b"picture bytes").unwrap();
-    for door in [["owner", "picture"], ["profile", "picture"]] {
+    for door in [["owner", "avatar"], ["profile", "avatar"]] {
         let request = profile::picture_request(&door, &file).unwrap();
         assert_eq!(request.method, Method::Put);
-        assert_eq!(request.path(), format!("/{}/picture", door[0]));
+        assert_eq!(request.path(), format!("/{}/avatar", door[0]));
         assert_eq!(
             request.body,
             Body::File {
@@ -2330,7 +2331,7 @@ fn a_picture_is_put_to_its_door_as_the_file_itself() {
 #[test]
 fn a_picture_that_cannot_be_read_is_refused_before_any_request_is_built() {
     let missing = std::env::temp_dir().join(format!("marfa-no-picture-{}.png", std::process::id()));
-    match profile::picture_request(&["owner", "picture"], &missing) {
+    match profile::picture_request(&["owner", "avatar"], &missing) {
         Err(CliError::Invalid(message)) => assert!(message.contains("cannot read"), "{message}"),
         other => panic!(
             "expected a refusal, got {:?}",
@@ -2343,7 +2344,7 @@ fn a_picture_that_cannot_be_read_is_refused_before_any_request_is_built() {
 fn a_picture_path_that_is_a_directory_is_refused_before_any_request_is_built() {
     let dir = std::env::temp_dir().join(format!("marfa-picture-dir-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let result = profile::picture_request(&["profile", "picture"], &dir);
+    let result = profile::picture_request(&["profile", "avatar"], &dir);
     std::fs::remove_dir_all(&dir).unwrap();
     match result {
         Err(CliError::Invalid(message)) => {
@@ -2365,9 +2366,9 @@ fn a_picture_over_two_mebibytes_is_refused_before_any_request_is_built() {
     // A sparse file: the size is what the check reads, not the bytes.
     let handle = std::fs::File::create(&file).unwrap();
     handle.set_len(limit + 1).unwrap();
-    let over = profile::picture_request(&["owner", "picture"], &file);
+    let over = profile::picture_request(&["owner", "avatar"], &file);
     handle.set_len(limit).unwrap();
-    let exact = profile::picture_request(&["owner", "picture"], &file);
+    let exact = profile::picture_request(&["owner", "avatar"], &file);
     std::fs::remove_dir_all(&dir).unwrap();
     match over {
         Err(CliError::Invalid(message)) => assert_eq!(
@@ -2393,7 +2394,7 @@ fn the_overview_is_one_credentialed_read_of_the_overview_path() {
 #[test]
 fn the_overview_reads_as_sections_with_what_was_cut() {
     let text = overview::describe(&json!({
-        "instance": { "name": "Marfa", "version": "abc", "release": "0.1.2" },
+        "instance": { "name": "Marfa", "version": "0.1.2" },
         "credential": {
             "kind": "key",
             "label": "Notes agent",
@@ -2410,7 +2411,7 @@ fn the_overview_reads_as_sections_with_what_was_cut() {
     assert_eq!(
         text,
         [
-            "instance Marfa (0.1.2, build abc)",
+            "instance Marfa (0.1.2)",
             "credential key Notes agent",
             "  can read and write core.note",
             "  can read * (and others, 31 in all)",

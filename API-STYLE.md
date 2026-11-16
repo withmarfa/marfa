@@ -92,6 +92,13 @@ A person reading the API reference, and an agent or a code generator reading the
 - **The shared responses, `401`, `412`, `413`, `429`, `500` and `503`, take one text each**, the same on every operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
 - **(checked: at most 400 characters)**
 
+## Shapes
+
+- **A delete answers `200`.** It answers `{"ok": true}` when the thing is gone, and the object when the object stays in a new state. It never answers `204`. **(checked)**
+- **A single object answers bare.** An answer wraps the object only when it carries more than the object, such as `{item, acknowledged}`, and then every read and write of the object answers the same wrapper.
+- **A list answers `{data}`**, or `{data, next_cursor}` where it can page. A schema for a page is named `…Page`, and no schema is named `…List`. **(checked: the schema names)** A list that answers each entry of the request in turn, such as the `results` of a bulk write, is named for what it holds.
+- **A boolean in the query is `true` or `false`**, declared `type: boolean`. Any other spelling, such as `1` or `yes`, is `400 validation_error`. **(checked: never a string enum)**
+
 ## Streams and requests Marfa sends
 
 - **A stream** (`text/event-stream`) has a named schema for each frame and a `oneOf` over them. Its success response lists each frame and when it comes, and its example shows the raw stream.

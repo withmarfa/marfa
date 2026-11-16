@@ -384,7 +384,7 @@ When `GET /items` or `GET /items/stats` names `beneath`, the server MUST NOT rea
 
 ### `search-and-filters/beneath-edge-read`
 
-If `GET /items` or `GET /items/stats` names `beneath` and the key cannot read `parent-of` edges, then the server MUST answer `403 edge_permission_denied`.
+If `GET /items` or `GET /items/stats` names `beneath` and the key cannot read `parent-of` edges, then the server MUST answer `403 edge_type_not_permitted`.
 
 **Tests:** `compliance/items-beneath.test.ts › refuses beneath to a key that cannot read parent-of edges`.
 
@@ -734,9 +734,9 @@ When a value in a `filter` expression, a `tags` parameter or the value of a `bac
 
 ### `search-and-filters/tag-count-question-mark`
 
-When a tag holds a `?`, the server MUST count it under its own name on `GET /metadata/tags`.
+When a tag holds a `?`, the server MUST count it under its own name on `GET /tags`.
 
-**Tests:** `compliance/question-mark-values.test.ts › counts a tag holding a ? under its own name on GET /metadata/tags`.
+**Tests:** `compliance/question-mark-values.test.ts › counts a tag holding a ? under its own name on GET /tags`.
 
 ### `search-and-filters/filter-max-length`
 

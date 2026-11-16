@@ -100,7 +100,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
           );
           break;
         case "metadata":
-          write = value(await device.replaceMetadata(id, ["saved-offline"]));
+          write = value(await device.replaceTags(id, ["saved-offline"]));
           break;
         case "edge":
           write = value(
@@ -155,7 +155,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
           break;
         }
         case "metadata": {
-          const read = await client.getMetadata(id);
+          const read = await client.getItem(id);
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
           expect(read.data.metadata.tags).toContain("saved-offline");
           break;
@@ -169,7 +169,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
         case "extension": {
           const read = await client.getItemExtension(id, "notes");
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
-          expect(read.data.data).toEqual({ body: "saved offline" });
+          expect(read.data.document).toEqual({ body: "saved offline" });
           break;
         }
       }

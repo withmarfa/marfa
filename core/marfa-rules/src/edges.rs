@@ -407,7 +407,6 @@ pub fn refused_parts_cycle(edge_type: &str, from_id: &str, to_id: &str) -> Refus
             "edge_type": edge_type,
             "from_id": from_id,
             "to_id": to_id,
-            "constraint": "cycle",
         }),
     }
 }

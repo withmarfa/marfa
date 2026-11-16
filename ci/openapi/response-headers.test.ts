@@ -41,7 +41,7 @@ const CONTRACT_REFUSED = "412";
 /** Statuses an idempotency claim gives back rather than records. */
 const RELEASED = new Set([401, 403]);
 
-const METHODS = new Set(["get", "put", "post", "patch", "delete"]);
+const METHODS = new Set(["get", "put", "post", "patch", "delete", "head"]);
 
 describe("the document declares the headers the server sets", () => {
   const spec = document;

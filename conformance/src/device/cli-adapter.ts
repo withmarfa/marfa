@@ -990,7 +990,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["tags", "remove", item, tag]);
   }
 
-  async replaceMetadata(
+  async replaceTags(
     item: string,
     tags: string[],
   ): Promise<Outcome<QueuedWrite>> {

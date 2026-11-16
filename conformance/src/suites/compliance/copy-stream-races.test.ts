@@ -27,7 +27,7 @@ import {
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 
 let server: FreshServer;

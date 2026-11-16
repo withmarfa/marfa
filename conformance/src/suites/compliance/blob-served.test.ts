@@ -195,7 +195,7 @@ describe("how a blob's bytes are served", () => {
     const long = await instanceLink(hash);
     const short = await client.getBlobUrl(hash, 1);
     expect(short.status).toBe(200);
-    expect(short.data.expires_in).toBe(1);
+    expect(short.data.ttl_seconds).toBe(1);
     expect(new URL(short.data.url).host).toBe(
       new URL(bootEnv("MARFA_API_URL")).host,
     );

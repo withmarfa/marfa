@@ -65,7 +65,7 @@ it("records a webhook delivery released by shutdown before closing storage", asy
   // A second event gives the completed first delivery as a witness.
   await waitFor("the first delivery record", async () => {
     const first = await writer.listWebhookDeliveries(subscription);
-    return first.data.data.some((row) => row.status === "success")
+    return first.data.data.some((row) => row.status === "succeeded")
       ? true
       : undefined;
   });
@@ -77,7 +77,7 @@ it("records a webhook delivery released by shutdown before closing storage", asy
   expect(item.status).toBe(201);
   await server!.waitForHold("hold:webhook:response");
   const before = await writer.listWebhookDeliveries(subscription);
-  expect(before.data.data.some((row) => row.status === "success")).toBe(true);
+  expect(before.data.data.some((row) => row.status === "succeeded")).toBe(true);
   expect(before.data.data.some((row) => row.status === "pending")).toBe(true);
   const ended = await server!.restart({ signal: "SIGTERM" });
   expect(ended.code).toBe(0);
@@ -88,7 +88,7 @@ it("records a webhook delivery released by shutdown before closing storage", asy
   }).listWebhookDeliveries(subscription);
   expect(after.status).toBe(200);
   expect(after.data.data).toHaveLength(2);
-  for (const row of after.data.data) expect(row.status).toBe("success");
+  for (const row of after.data.data) expect(row.status).toBe("succeeded");
   expect(bodies).toHaveLength(2);
 }, 180_000);
 

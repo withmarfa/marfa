@@ -9,7 +9,7 @@ use marfa_server::app::{App, housekeeping, webhooks};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::registry::{
-    AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, TRASH_RETENTION_DAYS, VERSION_MAX_VERSIONS,
+    AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_DAYS, TRASH_RETENTION_DAYS, VERSION_MAX_VERSIONS,
 };
 use marfa_server::settings::{Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
@@ -115,7 +115,7 @@ impl Instance {
         }
         let path = format!("/housekeeping/{job}/run");
         let run = self.ok(Method::POST, &path, json!({})).await;
-        assert_eq!(run["outcome"], "ok", "{run}");
+        assert_eq!(run["outcome"], "succeeded", "{run}");
         run["result"].clone()
     }
 
@@ -125,7 +125,7 @@ impl Instance {
             self.scheduled().await;
         }
         let ended = housekeeping::run_now(&self.app, job).await.unwrap();
-        assert_eq!(ended.outcome, "ok", "{job}: {:?}", ended.error);
+        assert_eq!(ended.outcome, "succeeded", "{job}: {:?}", ended.error);
         ended.kept_unread
     }
 
@@ -177,7 +177,7 @@ impl Instance {
             "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, type, source, \
              payload, status, status_code, attempt, cycle_attempt, due_at, created_at, \
              updated_at) VALUES ('dead', '{webhook}', 1, 'edge.deleted', 'core.note', 'writer', \
-             '{{}}', 'dead_letter', 400, 1, 1, '{at}', '{at}', '{at}')"
+             '{{}}', 'failed', 400, 1, 1, '{at}', '{at}', '{at}')"
         ))
         .await;
         webhook
@@ -291,7 +291,7 @@ async fn trash_purge_reads_the_retention_inside_its_write() {
     instance.app.faults.clear(Some("hold:write"));
 
     let ended = run.await.unwrap().unwrap();
-    assert_eq!(ended.outcome, "ok");
+    assert_eq!(ended.outcome, "succeeded");
     assert_eq!(instance.state(&id), "trashed");
 }
 
@@ -314,7 +314,7 @@ async fn trash_purge_keeps_what_a_retention_committed_before_it_is_live_keeps() 
     assert_eq!(instance.app.settings.live().get(TRASH_RETENTION_DAYS), 2);
     faults.clear(Some("hold:write"));
 
-    assert_eq!(run.await.unwrap().unwrap().outcome, "ok");
+    assert_eq!(run.await.unwrap().unwrap().outcome, "succeeded");
     assert_eq!(instance.state(&id), "trashed");
 }
 
@@ -340,7 +340,7 @@ async fn thinning_keeps_what_a_policy_committed_before_it_is_live_keeps() {
     faults.clear(Some("hold:write"));
 
     let ended = run.await.unwrap().unwrap();
-    assert_eq!(ended.outcome, "ok");
+    assert_eq!(ended.outcome, "succeeded");
     assert_eq!(ended.result, Some(json!({ "pruned": 0, "items": 0 })));
     assert_eq!(instance.count("SELECT count(*) FROM item_versions"), 3);
 }
@@ -349,7 +349,7 @@ async fn thinning_keeps_what_a_policy_committed_before_it_is_live_keeps() {
 async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() {
     let retentions = [
         ("MARFA_AUDIT_RETENTION_DAYS", "2"),
-        ("MARFA_EVENT_LOG_RETENTION_HOURS", "2"),
+        ("MARFA_EVENT_LOG_RETENTION_DAYS", "2"),
         ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&retentions).await;
@@ -365,10 +365,10 @@ async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() 
     instance.note().await;
 
     commit_unpublished(&instance.app, "audit_retention_days", "0").await;
-    commit_unpublished(&instance.app, "event_log_retention_hours", "0").await;
+    commit_unpublished(&instance.app, "event_log_retention_days", "0").await;
     let live = instance.app.settings.live();
     assert_eq!(live.get(AUDIT_RETENTION_DAYS), 2);
-    assert_eq!(live.get(EVENT_LOG_RETENTION_HOURS), 2);
+    assert_eq!(live.get(EVENT_LOG_RETENTION_DAYS), 2);
     let results = (
         instance.run("event-log-cleanup").await,
         instance.run("audit-cleanup").await,
@@ -393,7 +393,7 @@ async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothin
         ("MARFA_TRASH_RETENTION_DAYS", "2"),
         ("MARFA_VERSION_MAX_VERSIONS", "1"),
         ("MARFA_AUDIT_RETENTION_DAYS", "2"),
-        ("MARFA_EVENT_LOG_RETENTION_HOURS", "2"),
+        ("MARFA_EVENT_LOG_RETENTION_DAYS", "2"),
         ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&settings).await;
@@ -432,13 +432,13 @@ async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothin
     let jobs = [
         ("trash-purge", "trash_retention_days"),
         ("version-thinning", "version_max_versions"),
-        ("event-log-cleanup", "event_log_retention_hours"),
+        ("event-log-cleanup", "event_log_retention_days"),
         ("audit-cleanup", "audit_retention_days"),
     ];
     for (job, key) in jobs {
         commit_unpublished(app, key, "soon").await;
         let ended = housekeeping::run_now(app, job).await.unwrap();
-        assert_eq!(ended.outcome, "error", "{job}");
+        assert_eq!(ended.outcome, "failed", "{job}");
         assert!(ended.error.unwrap().contains(key), "{job}");
     }
     let path = format!("/webhooks/{webhook}/deliveries/dead/redeliver");
@@ -495,7 +495,7 @@ async fn audit_cleanup_takes_an_entry_a_second_past_its_retention() {
 
 #[tokio::test]
 async fn event_log_cleanup_takes_entries_a_second_past_the_retention_and_never_the_newest() {
-    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_DAYS", "2")]).await;
     let body = json!({ "type": "core.note", "properties": { "body": "keyed" } });
     let (status, _) = instance
         .send(Method::POST, "/items", body, Some("the-key"))
@@ -504,7 +504,7 @@ async fn event_log_cleanup_takes_entries_a_second_past_the_retention_and_never_t
     let held = instance.count("SELECT count(*) FROM event_log");
     assert!(held > 0);
 
-    instance.forward(2 * HOUR - SECOND);
+    instance.forward(2 * DAY - SECOND);
     instance.note().await;
     let result = instance.run("event-log-cleanup").await;
     assert_eq!(result, json!({ "deleted": 0, "purged_records": 0 }));
@@ -524,7 +524,7 @@ async fn event_log_cleanup_takes_entries_a_second_past_the_retention_and_never_t
 
 #[tokio::test]
 async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
-    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_DAYS", "2")]).await;
     instance.note().await;
     instance.scheduled().await;
     instance
@@ -539,7 +539,7 @@ async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
     let held = instance.count("SELECT count(*) FROM event_log");
     assert!(passed < held);
 
-    instance.forward(3 * HOUR);
+    instance.forward(3 * DAY);
     let path = "/housekeeping/event-log-cleanup/run";
     let run = instance.ok(Method::POST, path, json!({})).await;
     assert_eq!(run["result"]["deleted"], passed);
@@ -554,7 +554,7 @@ async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
 
 #[tokio::test]
 async fn event_log_cleanup_keeps_an_old_entry_behind_a_newer_one() {
-    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_DAYS", "2")]).await;
     instance.note().await;
     instance.note().await;
     instance.note().await;
@@ -569,14 +569,14 @@ async fn event_log_cleanup_keeps_an_old_entry_behind_a_newer_one() {
     .unwrap();
     drop(db);
 
-    instance.forward(3 * HOUR);
+    instance.forward(3 * DAY);
     assert_eq!(instance.run("event-log-cleanup").await["deleted"], 0);
     assert_eq!(instance.count("SELECT count(*) FROM event_log"), held);
 }
 
 #[tokio::test]
 async fn event_log_cleanup_keeps_an_event_whose_stored_time_does_not_read_and_every_one_after() {
-    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_DAYS", "2")]).await;
     instance.note().await;
     instance.note().await;
     let held = instance.count("SELECT count(*) FROM event_log");
@@ -595,7 +595,7 @@ async fn event_log_cleanup_keeps_an_event_whose_stored_time_does_not_read_and_ev
     instance.note().await;
     let damaged = instance.count("SELECT MIN(id) FROM event_log") + 1;
     instance.sql(at(damaged, "0")).await;
-    instance.forward(3 * HOUR);
+    instance.forward(3 * DAY);
     assert_eq!(instance.kept_unread("event-log-cleanup").await, 1);
     assert_eq!(instance.count("SELECT MIN(id) FROM event_log"), damaged);
     assert_eq!(instance.count("SELECT count(*) FROM event_log"), 2);
@@ -853,7 +853,7 @@ async fn feed_expiry_bins_an_item_a_second_past_its_window() {
     let audited = "SELECT count(*) FROM audit_log WHERE action = 'items.feed_expired'";
     assert_eq!(instance.count(audited), 1);
     let announced = format!(
-        "SELECT count(*) FROM event_log WHERE event_type = 'item.deleted' AND item_id = '{id}'"
+        "SELECT count(*) FROM event_log WHERE event_type = 'item.trashed' AND item_id = '{id}'"
     );
     assert_eq!(instance.count(&announced), 1);
 
@@ -990,7 +990,7 @@ async fn trash_purge_ends_in_error_when_every_row_fails_with_one() {
     let ended = housekeeping::run_now(&instance.app, "trash-purge")
         .await
         .unwrap();
-    assert_eq!(ended.outcome, "error", "{:?}", ended.result);
+    assert_eq!(ended.outcome, "failed", "{:?}", ended.result);
     assert_eq!(instance.state(&held[0]), "trashed");
 }
 
@@ -999,7 +999,7 @@ async fn a_zero_retention_keeps_every_kind_of_record() {
     let zero = [
         ("MARFA_TRASH_RETENTION_DAYS", "0"),
         ("MARFA_AUDIT_RETENTION_DAYS", "0"),
-        ("MARFA_EVENT_LOG_RETENTION_HOURS", "0"),
+        ("MARFA_EVENT_LOG_RETENTION_DAYS", "0"),
     ];
     let instance = Instance::start(&zero).await;
     let id = instance.note().await;
@@ -1023,7 +1023,7 @@ async fn the_largest_retention_gives_a_cutoff_that_takes_nothing_inside_it() {
     let largest = [
         ("MARFA_TRASH_RETENTION_DAYS", "36500"),
         ("MARFA_AUDIT_RETENTION_DAYS", "36500"),
-        ("MARFA_EVENT_LOG_RETENTION_HOURS", "876000"),
+        ("MARFA_EVENT_LOG_RETENTION_DAYS", "36500"),
     ];
     let instance = Instance::start(&largest).await;
     let id = instance.note().await;
@@ -1077,7 +1077,7 @@ async fn thinning_under_the_cap_keeps_a_snapshot_whose_stored_time_does_not_read
     let ended = housekeeping::run_now(&instance.app, "version-thinning")
         .await
         .unwrap();
-    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
     assert_eq!(ended.result, Some(json!({ "pruned": 1, "items": 1 })));
     assert_eq!(ended.kept_unread, 1);
     assert_eq!(instance.count(snapshots), 2);
@@ -1102,7 +1102,7 @@ async fn a_second_run_of_a_running_job_is_refused_and_another_job_runs() {
     instance.run("trash-purge").await;
 
     instance.app.faults.clear(Some(held));
-    assert_eq!(first.await.unwrap().unwrap().outcome, "ok");
+    assert_eq!(first.await.unwrap().unwrap().outcome, "succeeded");
     assert!(instance.job("audit-cleanup").await["running_since"].is_null());
 }
 
@@ -1187,12 +1187,12 @@ async fn the_scheduler_brings_a_schedule_past_its_interval_forward_and_repairs_a
     housekeeping::start(&instance.app);
     instance
         .when("a run from an unreadable schedule", async |instance| {
-            instance.job("trash-purge").await["last_outcome"] == "ok"
+            instance.job("trash-purge").await["last_outcome"] == "succeeded"
         })
         .await;
     instance
         .when("a run on the shortened interval", async |instance| {
-            instance.job("audit-cleanup").await["last_outcome"] == "ok"
+            instance.job("audit-cleanup").await["last_outcome"] == "succeeded"
         })
         .await;
 
@@ -1244,7 +1244,7 @@ async fn a_sleeping_scheduler_runs_a_job_when_the_clock_reaches_it() {
     instance
         .when(
             "a run once the clock passed the schedule",
-            async |instance| instance.job("audit-cleanup").await["last_outcome"] == "ok",
+            async |instance| instance.job("audit-cleanup").await["last_outcome"] == "succeeded",
         )
         .await;
     stopped(&instance).await;
@@ -1261,7 +1261,7 @@ async fn a_sleeping_scheduler_runs_a_job_a_commit_brought_forward() {
         .await;
     instance
         .when("a run of the job brought forward", async |instance| {
-            instance.job("trash-purge").await["last_outcome"] == "ok"
+            instance.job("trash-purge").await["last_outcome"] == "succeeded"
         })
         .await;
     assert_eq!(
@@ -1289,10 +1289,19 @@ async fn a_sleeping_scheduler_enters_a_job_a_changed_setting_switches_on() {
 async fn a_job_lists_the_interval_it_runs_at() {
     let instance = Instance::start(&[]).await;
     assert_eq!(
-        instance.job("credential-cleanup").await["interval_ms"],
-        3_600_000
+        instance.job("credential-cleanup").await["interval_seconds"],
+        3_600
     );
     let tuned =
         Instance::start(&[("MARFA_TEST_TUNING", "interval.credential-cleanup=60000")]).await;
-    assert_eq!(tuned.job("credential-cleanup").await["interval_ms"], 60_000);
+    assert_eq!(
+        tuned.job("credential-cleanup").await["interval_seconds"],
+        60
+    );
+    let between =
+        Instance::start(&[("MARFA_TEST_TUNING", "interval.credential-cleanup=1500")]).await;
+    assert_eq!(
+        between.job("credential-cleanup").await["interval_seconds"],
+        2
+    );
 }

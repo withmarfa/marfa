@@ -745,7 +745,7 @@ describe("where a file sits", () => {
       placed.edges.events.push(
         copyItemEvent(
           String(placed.edges.events.length + 2),
-          "item.deleted",
+          "item.trashed",
           wireItem({
             id,
             type: id === photo ? "core.file.image" : "core.note",
@@ -1425,7 +1425,7 @@ describe("where a file sits", () => {
       refusing && edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -1501,7 +1501,7 @@ describe("where a file sits", () => {
       refusing
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -1743,7 +1743,7 @@ describe("where a file sits", () => {
       return answered === 1
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : answers.edgeDuplicate({
@@ -1803,7 +1803,7 @@ describe("where a file sits", () => {
       refusing && edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -1974,7 +1974,7 @@ describe("where a file sits", () => {
       refusing
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -2063,7 +2063,7 @@ describe("where a file sits", () => {
       refusing && edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -2147,7 +2147,7 @@ describe("where a file sits", () => {
       edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -2188,7 +2188,7 @@ describe("where a file sits", () => {
       edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;
@@ -2228,7 +2228,7 @@ describe("where a file sits", () => {
       edge.edge_type === "in-folder"
         ? refusal(
             403,
-            "edge_permission_denied",
+            "edge_type_not_permitted",
             "Write access to edge type denied",
           )
         : undefined;

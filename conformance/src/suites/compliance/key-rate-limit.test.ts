@@ -124,8 +124,8 @@ describe("the key doors' rate limit", () => {
     expect(Number(retryAfter)).toBeGreaterThanOrEqual(1);
     expect(Number(retryAfter)).toBeLessThanOrEqual(60);
     expect(
-      (refused.error?.error as { details?: { retry_after?: number } }).details
-        ?.retry_after,
+      (refused.error?.error as { details?: { retry_after_seconds?: number } })
+        .details?.retry_after_seconds,
     ).toBe(Number(retryAfter));
   }, 120_000);
 

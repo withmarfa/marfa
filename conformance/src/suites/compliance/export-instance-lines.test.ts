@@ -157,7 +157,7 @@ describe("the instance lines of an archive", () => {
     });
     for (const [key, value] of [
       ["trash_retention_days", 45],
-      ["event_log_retention_hours", 500],
+      ["event_log_retention_days", 500],
     ] as const) {
       const set = await operator.patchConfig({ [key]: value });
       expect(set.status, JSON.stringify(set.error)).toBe(200);
@@ -216,7 +216,7 @@ describe("the instance lines of an archive", () => {
       (await operator.patchConfig({ trash_retention_days: null })).status,
     ).toBe(200);
     expect(
-      (await operator.patchConfig({ event_log_retention_hours: 600 })).status,
+      (await operator.patchConfig({ event_log_retention_days: 600 })).status,
     ).toBe(200);
     expect((await working.deleteConnectorState(connector.id)).status).toBe(200);
     expect(
@@ -252,7 +252,7 @@ describe("the instance lines of an archive", () => {
       (config.data as unknown as Record<string, { value?: unknown }>)[key]
         ?.value ?? (config.data as unknown as Record<string, unknown>)[key];
     expect(value("trash_retention_days")).toBe(45);
-    expect(value("event_log_retention_hours")).toBe(600);
+    expect(value("event_log_retention_days")).toBe(600);
     const state = await working.getConnectorState(connector.id);
     expect(state.data.state).toEqual({ cursor: "archived" });
     const agreed = await working.lookupConnectorAgreements(connector.id, [

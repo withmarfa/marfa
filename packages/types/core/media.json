@@ -32,10 +32,9 @@
       "description": "Who published the work."
     },
     "published_at": {
-      "type": "string",
+      "type": "datetime",
       "label": "Published",
-      "description": "When originally published or released",
-      "format": "datetime"
+      "description": "When originally published or released"
     },
     "image_url": {
       "type": "string",
@@ -52,10 +51,22 @@
       "type": "status",
       "description": "Where you are with the work, such as whether you have started or finished it.",
       "status_values": [
-        { "value": "planned", "group": "not_started" },
-        { "value": "started", "group": "in_progress" },
-        { "value": "finished", "group": "completed" },
-        { "value": "abandoned", "group": "canceled" }
+        {
+          "value": "planned",
+          "group": "not_started"
+        },
+        {
+          "value": "started",
+          "group": "in_progress"
+        },
+        {
+          "value": "finished",
+          "group": "completed"
+        },
+        {
+          "value": "abandoned",
+          "group": "canceled"
+        }
       ]
     },
     "rating": {
@@ -73,7 +84,9 @@
       "description": "A small preview of the work, supplied by whoever saved it."
     }
   },
-  "required": ["title"],
+  "required": [
+    "title"
+  ],
   "display_hints": {
     "title_field": "title",
     "body_field": "body",

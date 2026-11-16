@@ -28,7 +28,7 @@ afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 /** One run of a job, which must end ok. */
 async function run(name: string): Promise<void> {
   const ran = await runJob(server!, name);
-  expect(ran.outcome, ran.error ?? "").toBe("ok");
+  expect(ran.outcome, ran.error ?? "").toBe("succeeded");
 }
 
 describe("the audit log's record of the server's own writes", () => {

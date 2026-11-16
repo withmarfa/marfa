@@ -139,7 +139,7 @@ async fn registrations_racing_for_one_id_leave_one_type_and_refuse_the_other() {
     } else {
         &first
     };
-    assert_eq!(refused.code(), "type_already_exists");
+    assert_eq!(refused.code(), "type_exists");
     let ids = instance.type_ids().await;
     assert_eq!(ids.iter().filter(|id| *id == "acme.race").count(), 1);
 }
@@ -406,7 +406,7 @@ async fn a_stored_definition_the_program_cannot_read_is_kept_and_does_not_stop_t
     assert_eq!(read.code(), "type_chain_unresolvable");
     assert_eq!(read.body["error"]["details"]["type_id"], "acme.broken");
     let again = instance.register(simple("acme.broken")).await;
-    assert_eq!(again.code(), "type_already_exists");
+    assert_eq!(again.code(), "type_exists");
     let kept: String = {
         let stored = instance.app.db.read(|tx| {
             Ok(tx.query_row(
@@ -527,7 +527,7 @@ async fn a_type_declares_tables_and_reads_lists_and_normalizes_them() {
     let created = instance.register(ledger(lines())).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
     assert_eq!(
-        created.body["type"]["tables"]["lines"]["columns"]["amount"]["adds_up"],
+        created.body["tables"]["lines"]["columns"]["amount"]["adds_up"],
         "sum"
     );
 
@@ -762,7 +762,7 @@ async fn a_replacement_keeps_tables_it_names_and_drops_those_it_leaves_out_for_a
         )
         .await;
     assert_eq!(added.status, StatusCode::OK, "{}", added.body);
-    assert!(added.body["type"]["tables"]["audit"].is_object());
+    assert!(added.body["tables"]["audit"].is_object());
 
     let mut required = lines();
     required["lines"]["columns"]["note"] = json!({ "type": "string", "required": true });
@@ -810,11 +810,7 @@ async fn a_replacement_keeps_tables_it_names_and_drops_those_it_leaves_out_for_a
         .local(Method::PUT, "/types/acme.ledger", Some(put(None)))
         .await;
     assert_eq!(by_owner.status, StatusCode::OK, "{}", by_owner.body);
-    assert!(
-        by_owner.body["type"].get("tables").is_none(),
-        "{}",
-        by_owner.body
-    );
+    assert!(by_owner.body.get("tables").is_none(), "{}", by_owner.body);
 }
 
 #[tokio::test]

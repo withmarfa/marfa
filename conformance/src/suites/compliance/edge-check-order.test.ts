@@ -255,7 +255,7 @@ describe("the order POST /edges asks its refusals in", () => {
       edge_type: "about",
     });
     expect(alone.status).toBe(403);
-    expect(alone.error?.error.code).toBe("edge_permission_denied");
+    expect(alone.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("refuses write on the edge type before it recognizes a repeated edge id", async () => {
@@ -273,7 +273,7 @@ describe("the order POST /edges asks its refusals in", () => {
     const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
     const refused = await readOnly.createEdge(repeat);
     expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("edge_permission_denied");
+    expect(refused.error?.error.code).toBe("edge_type_not_permitted");
 
     // The witness: a key with the grant is told the edge is already held.
     const writer = await keyWith({ "core.note": "write" }, { about: "write" });
@@ -349,7 +349,7 @@ describe("the order POST /edges asks its refusals in", () => {
       edge_type: "in-folder",
     });
     expect(alone.status).toBe(400);
-    expect(alone.error?.error.code).toBe("validation_error");
+    expect(alone.error?.error.code).toBe("invalid_properties");
   });
 
   it("refuses bad properties before it looks for the to item", async () => {
@@ -362,7 +362,7 @@ describe("the order POST /edges asks its refusals in", () => {
       properties: { path: "../outside.md" },
     });
     expect(bad.status).toBe(400);
-    expect(bad.error?.error.code).toBe("validation_error");
+    expect(bad.error?.error.code).toBe("invalid_properties");
 
     // The witness: a good path to the same absent target is a not-found.
     const alone = await client.createEdge({
@@ -385,7 +385,7 @@ describe("the order POST /edges asks its refusals in", () => {
       properties: { path: "../outside.md" },
     });
     expect(bad.status).toBe(400);
-    expect(bad.error?.error.code).toBe("validation_error");
+    expect(bad.error?.error.code).toBe("invalid_properties");
 
     // The witness: a good path to the same target is the endpoint's refusal.
     const alone = await client.createEdge({
@@ -433,7 +433,7 @@ describe("the order POST /edges asks its refusals in", () => {
       edge_type: "about",
     });
     expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("edge_permission_denied");
+    expect(refused.error?.error.code).toBe("edge_type_not_permitted");
 
     // The witness: a key with the grant meets the missing target.
     const writer = await keyWith({ "core.note": "write" }, { about: "write" });
@@ -795,7 +795,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
       version: edge.version,
     });
     expect(alone.status).toBe(403);
-    expect(alone.error?.error.code).toBe("edge_permission_denied");
+    expect(alone.error?.error.code).toBe("edge_type_not_permitted");
   });
 
   it("refuses write on the edge type before it judges a stale version", async () => {
@@ -807,7 +807,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
       version: edge.version + 1,
     });
     expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("edge_permission_denied");
+    expect(refused.error?.error.code).toBe("edge_type_not_permitted");
 
     // The witness: a key with the grant is told the version is stale.
     const writer = await keyWith({ "core.note": "write" }, { about: "write" });
@@ -1068,7 +1068,7 @@ describe("the order an item write asks its inline edges in", () => {
     await expectRefused(
       { about: [generateId()] },
       403,
-      "edge_permission_denied",
+      "edge_type_not_permitted",
     );
   });
 
@@ -1249,7 +1249,7 @@ describe("the order POST /edges/bulk asks its gates and its ends in", () => {
       expect(refused.status, label).toBe(200);
       expect(refused.data.results[0], label).toMatchObject({
         outcome: "errored",
-        error: { code: "edge_permission_denied" },
+        error: { code: "edge_type_not_permitted" },
       });
 
       const missing = await writer.bulkEdges({ atomic: false, edges: [entry] });

@@ -52,7 +52,7 @@ fn page_under(rows: Vec<Value>, next: Option<&str>, fence: &str) -> Answer {
 }
 
 fn no_pins() -> Answer {
-    let body = json!({"items": [], "metadata": [], "listed": []});
+    let body = json!({"data": [], "metadata": [], "listed": []});
     scripted::certified(scripted::json(200, &body.to_string()))
 }
 
@@ -190,7 +190,7 @@ pub(crate) fn pinned_row() -> Answer {
 fn pinned_row_under(fence: &str) -> Answer {
     let rows = [row("pinned", 1, &[])];
     let body = json!({
-        "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
+        "data": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
         "metadata": [{"item_id": "pinned", "tags": [], "extensions": {}}],
         "listed": [true],
     });

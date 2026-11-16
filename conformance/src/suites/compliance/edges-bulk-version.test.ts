@@ -314,7 +314,7 @@ describe("edges.bulk with a stale version beside other refusals and modes", () =
           to_id: target,
           edge_type: "references",
         },
-        code: "edge_permission_denied",
+        code: "edge_type_not_permitted",
       },
       {
         label: "a source whose type the key may not write",

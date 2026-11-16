@@ -320,8 +320,6 @@ pub enum StatsBy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Conflict {
     Auto,
-    Manual,
-    Callback,
 }
 
 /// The key a write is answered from the server's record under, when sent
@@ -751,8 +749,6 @@ pub fn update_request(
     }
     let conflict = args.conflict.map(|conflict| match conflict {
         Conflict::Auto => "auto",
-        Conflict::Manual => "manual",
-        Conflict::Callback => "callback",
     });
     Ok(args.idempotency.apply(
         Request::patch(&["items", &args.id])

@@ -470,7 +470,7 @@ describe("who wrote each version", () => {
     });
     const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
-    expect(run.data.outcome, run.data.error ?? "").toBe("ok");
+    expect(run.data.outcome, run.data.error ?? "").toBe("succeeded");
     const enriched = await call(minted.key, "GET", `/items/${id}`);
     const item = enriched.body.item as {
       version: number;

@@ -184,7 +184,7 @@ async fn a_key_holding_only_keys_mint_cannot_touch_a_wider_key_at_any_door() {
     let absent = instance.call(&minter, Method::DELETE, &unknown, None).await;
     for answer in [&patched, &revoked] {
         assert_eq!(answer.status, StatusCode::NOT_FOUND);
-        assert_eq!(answer.code(), "api_key_not_found");
+        assert_eq!(answer.code(), "key_not_found");
         assert_eq!(
             answer.body["error"]["message"]
                 .as_str()
@@ -320,7 +320,7 @@ async fn a_key_that_expires_while_its_write_waits_writes_nothing() {
     body["expires_at"] = ends.into();
     let (_, secret) = instance.key(body).await;
     instance.hold("source.update");
-    let path = "/source?source=ending";
+    let path = "/sources/ending";
     let write = instance.call(
         &secret,
         Method::PATCH,
@@ -494,7 +494,7 @@ async fn the_cap_counts_a_credential_only_under_keys() {
         .unwrap();
     assert!((1..=60).contains(&wait), "{wait}");
     assert_eq!(over.body["error"]["code"], "rate_limited");
-    assert_eq!(over.body["error"]["details"]["retry_after"], wait);
+    assert_eq!(over.body["error"]["details"]["retry_after_seconds"], wait);
     let elsewhere = instance.call(&secret, Method::GET, "/sources", None).await;
     assert_eq!(elsewhere.status, StatusCode::OK);
 }

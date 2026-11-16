@@ -40,7 +40,7 @@ afterAll(async () => {
 async function sweep(): Promise<void> {
   const run = await operator.runHousekeeping("enrichment-sweep");
   expect(run.status).toBe(200);
-  expect(run.data.outcome, run.data.error ?? "").toBe("ok");
+  expect(run.data.outcome, run.data.error ?? "").toBe("succeeded");
 }
 
 async function extracted(client: MarfaClient, id: string): Promise<unknown> {

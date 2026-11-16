@@ -93,7 +93,9 @@ describe("a housekeeping run whose statement fails", () => {
       method: "POST",
     });
     expect(clean.status).toBe(200);
-    expect(((await clean.json()) as { outcome: string }).outcome).toBe("ok");
+    expect(((await clean.json()) as { outcome: string }).outcome).toBe(
+      "succeeded",
+    );
 
     await server!.setFault("fail:housekeeping:audit-cleanup");
     const failed = await operator("/housekeeping/audit-cleanup/run", {
@@ -104,7 +106,7 @@ describe("a housekeeping run whose statement fails", () => {
       outcome: string;
       error: string | null;
     };
-    expect(run.outcome).toBe("error");
+    expect(run.outcome).toBe("failed");
 
     const listed = await operator("/housekeeping");
     const job = (
@@ -116,7 +118,7 @@ describe("a housekeeping run whose statement fails", () => {
         }[];
       }
     ).data.find((row) => row.name === "audit-cleanup");
-    expect(job?.last_outcome).toBe("error");
+    expect(job?.last_outcome).toBe("failed");
 
     for (const recorded of [run.error, job?.last_error])
       expectFixedFailure(recorded);

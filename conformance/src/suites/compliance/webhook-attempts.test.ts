@@ -257,7 +257,7 @@ describe("the attempts a webhook receiver is sent", () => {
         expect(waited).toBeLessThan(12_000);
 
         // An answer after 6 seconds is inside the bound.
-        const answered = await record(slow, (r) => r.status === "success");
+        const answered = await record(slow, (r) => r.status === "succeeded");
         expect(answered).toMatchObject({ status_code: 200, attempt: 1 });
       } finally {
         for (const id of [silent, slow]) await client.deleteWebhook(id);

@@ -147,7 +147,7 @@ pub struct Settled {
 /// What an outcome leaves on a delivery at the attempt `cycle_attempt` of its cycle, counted from 0.
 pub fn settle(outcome: &Attempted, cycle_attempt: i64, now_ms: i64) -> Settled {
     let given_up = |status_code, error: &str| Settled {
-        status: Status::DeadLetter,
+        status: Status::Failed,
         status_code,
         error: Some(error.to_string()),
         due_at: now_ms,
@@ -158,7 +158,7 @@ pub fn settle(outcome: &Attempted, cycle_attempt: i64, now_ms: i64) -> Settled {
             .and_then(|index| WAITS_S.get(index))
         else {
             return Settled {
-                status: Status::DeadLetter,
+                status: Status::Failed,
                 status_code,
                 error: Some(error),
                 due_at: now_ms,
@@ -183,7 +183,7 @@ pub fn settle(outcome: &Attempted, cycle_attempt: i64, now_ms: i64) -> Settled {
             let code = Some(*status);
             match status {
                 200..=299 => Settled {
-                    status: Status::Success,
+                    status: Status::Succeeded,
                     status_code: code,
                     error: None,
                     due_at: now_ms,
@@ -323,7 +323,7 @@ mod tests {
                 waits.push(settled.due_at / 1_000);
             } else {
                 assert_eq!(attempt, 7);
-                assert_eq!(settled.status, Status::DeadLetter);
+                assert_eq!(settled.status, Status::Failed);
                 assert_eq!(settled.error.as_deref(), Some("HTTP 503"));
             }
         }
@@ -334,12 +334,12 @@ mod tests {
     fn gives_up_at_once_on_a_refusal_or_a_redirect() {
         for status in [400, 401, 404, 410, 422] {
             let settled = settle(&answered(status, None), 0, 0);
-            assert_eq!(settled.status, Status::DeadLetter, "{status}");
+            assert_eq!(settled.status, Status::Failed, "{status}");
             assert_eq!(settled.error, Some(format!("HTTP {status}")));
         }
         for status in [301, 302, 307, 308] {
             let settled = settle(&answered(status, None), 0, 0);
-            assert_eq!(settled.status, Status::DeadLetter);
+            assert_eq!(settled.status, Status::Failed);
             assert_eq!(settled.status_code, Some(status));
             assert_eq!(settled.error.as_deref(), Some(REDIRECTED));
         }
@@ -350,7 +350,7 @@ mod tests {
             );
         }
         let not_public = settle(&Attempted::NotPublic, 0, 0);
-        assert_eq!(not_public.status, Status::DeadLetter);
+        assert_eq!(not_public.status, Status::Failed);
         assert_eq!(not_public.status_code, None);
     }
 

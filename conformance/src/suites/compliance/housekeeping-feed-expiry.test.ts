@@ -103,7 +103,7 @@ async function stateOf(type: string, id: string): Promise<string | undefined> {
 
 async function expire(): Promise<{ moved: number; held: number }> {
   const run = await runJob(server, "feed-expiry");
-  expect(run.outcome, String(run.error)).toBe("ok");
+  expect(run.outcome, String(run.error)).toBe("succeeded");
   return run.result as { moved: number; held: number };
 }
 
@@ -131,7 +131,7 @@ describe("the feed-expiry job", () => {
     const listed = (await operator.listHousekeeping()).data.data.find(
       (row) => row.name === "feed-expiry",
     );
-    expect(listed?.last_outcome).toBe("ok");
+    expect(listed?.last_outcome).toBe("succeeded");
     expect(listed?.last_result).toMatchObject({ moved: 3, held: 0 });
 
     // The witness: with nothing left to move, the same run reports none.
@@ -304,7 +304,7 @@ describe("the feed-expiry job", () => {
     // The live item's announcement closes the read, so the absence of the
     // binned one's is settled by a later frame and not by a quiet window.
     const events = await readFrom(cursor, (seen) =>
-      seen.some((e) => e.event === "item.deleted" && itemOf(e) === live),
+      seen.some((e) => e.event === "item.trashed" && itemOf(e) === live),
     );
     expect(events.filter((e) => itemOf(e) === binned)).toEqual([]);
   });
@@ -370,7 +370,7 @@ describe("the feed-expiry job", () => {
     // The target's clock is behind the source's; carry it a window past both.
     await target.advanceClock(clock.now() - Date.now() + 5 * DAY_MS);
     const run = await runJob(target, "feed-expiry");
-    expect(run.outcome, String(run.error)).toBe("ok");
+    expect(run.outcome, String(run.error)).toBe("succeeded");
     const read = (id: string) => writerOf(target).getItem(id);
     expect((await read(restored)).data.item.state).toBe("active");
     expect((await read(never)).status).toBe(404);
@@ -442,13 +442,13 @@ describe("what the move to the bin is", () => {
     expect(await stateOf(type, id)).toBe("active");
   });
 
-  it("announces item.deleted for an expired item", async () => {
+  it("announces item.trashed for an expired item", async () => {
     const { id, cursor } = await expiredOne();
     const events = await readFrom(cursor, (seen) =>
-      seen.some((e) => e.event === "item.deleted" && itemOf(e) === id),
+      seen.some((e) => e.event === "item.trashed" && itemOf(e) === id),
     );
     const frames = events.filter(
-      (e) => e.event === "item.deleted" && itemOf(e) === id,
+      (e) => e.event === "item.trashed" && itemOf(e) === id,
     );
     expect(frames).toHaveLength(1);
     expect(frames[0]!.id).toBeDefined();
@@ -601,10 +601,10 @@ describe("the event log's retention", () => {
     expect(await stateOf(type, id)).toBe("trashed");
 
     const cleanup = await runJob(server, "event-log-cleanup");
-    expect(cleanup.outcome, String(cleanup.error)).toBe("ok");
+    expect(cleanup.outcome, String(cleanup.error)).toBe("succeeded");
     // The item's creation, three days old, is still in the log.
     const events = await readFrom(cursor, (seen) =>
-      seen.some((e) => e.event === "item.deleted" && itemOf(e) === id),
+      seen.some((e) => e.event === "item.trashed" && itemOf(e) === id),
     );
     expect(events.some((e) => e.event === "catchup_too_old")).toBe(false);
     expect(
@@ -615,7 +615,7 @@ describe("the event log's retention", () => {
     // the same events, so the same cursor is too old.
     await clock.advance(30 * DAY_MS);
     const later = await runJob(server, "event-log-cleanup");
-    expect(later.outcome, String(later.error)).toBe("ok");
+    expect(later.outcome, String(later.error)).toBe("succeeded");
     expect((later.result as { deleted: number }).deleted).toBeGreaterThan(0);
     const refused = await readFrom(cursor, (seen) =>
       seen.some((e) => e.event === "catchup_too_old"),

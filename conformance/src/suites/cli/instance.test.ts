@@ -1013,7 +1013,7 @@ describe("the instance from the terminal", () => {
     expect(names).toContain("trash-purge");
     const ran = await runHousekeepingJob("trash-purge");
     expect(ran.name).toBe("trash-purge");
-    expect(ran.outcome).toBe("ok");
+    expect(ran.outcome).toBe("succeeded");
     const unknown = await c.operator.refused([
       "housekeeping",
       "run",
@@ -1109,7 +1109,7 @@ describe("the instance from the terminal", () => {
       { timeout: 20_000, interval: 250 },
     );
     expect(delivered[0]?.event_type).toBe("item.created");
-    expect(delivered[0]?.status).toBe("success");
+    expect(delivered[0]?.status).toBe("succeeded");
     expect(delivered[0]?.succeeded).toBe(true);
 
     // The same write, and the paused subscription has nothing: a pause
@@ -1163,7 +1163,7 @@ describe("the instance from the terminal", () => {
             }>;
           }>(["webhooks", "deliveries", hook.id]);
           const row = rows.data.find((delivery) => delivery.id === deliveryId);
-          expect(row?.status).toBe("dead_letter");
+          expect(row?.status).toBe("failed");
           return row!;
         },
         { timeout: 20_000, interval: 250 },
@@ -1227,7 +1227,7 @@ describe("the instance from the terminal", () => {
             data: Array<{ id: string; status: string }>;
           }>(["webhooks", "deliveries", hook.id]);
           expect(rows.data.find((row) => row.id === deliveryId)?.status).toBe(
-            "success",
+            "succeeded",
           );
         },
         { timeout: 20_000, interval: 250 },

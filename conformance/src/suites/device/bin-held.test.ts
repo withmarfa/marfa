@@ -120,7 +120,7 @@ describe("an item the copy holds goes to the bin", () => {
       copyReplay("11", [
         copyItemEvent(
           "11",
-          "item.deleted",
+          "item.trashed",
           wireItem({ id: "row", state: "trashed", updated_at: T1 }),
         ),
       ]),
@@ -273,7 +273,7 @@ describe("when a held item went to the bin", () => {
       copyReplay("11", [
         copyItemEvent(
           "11",
-          "item.deleted",
+          "item.trashed",
           wireItem({
             id: "row",
             state: "trashed",
@@ -324,7 +324,7 @@ describe("an item that goes to the bin and back before the copy hears", () => {
       copyReplay("14", [
         copyItemEvent(
           "11",
-          "item.deleted",
+          "item.trashed",
           wireItem({ id: "back", state: "trashed", updated_at: T1 }),
         ),
         copyItemEvent(
@@ -339,7 +339,7 @@ describe("an item that goes to the bin and back before the copy hears", () => {
         ),
         copyItemEvent(
           "14",
-          "item.deleted",
+          "item.trashed",
           wireItem({ id: "gone-again", state: "trashed", updated_at: T2 }),
         ),
       ]),

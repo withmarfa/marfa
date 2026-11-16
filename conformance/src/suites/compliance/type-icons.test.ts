@@ -47,14 +47,14 @@ async function register(
 }
 
 function setIcon(who: MarfaClient, id: string, icon: unknown) {
-  return who.rawRequest<{ type: TypeSchema }>(`/types/${id}/icon`, {
+  return who.rawRequest<TypeSchema>(`/types/${id}/icon`, {
     method: "PUT",
     body: { icon },
   });
 }
 
 function clearIcon(who: MarfaClient, id: string) {
-  return who.rawRequest<{ type: TypeSchema }>(`/types/${id}/icon`, {
+  return who.rawRequest<TypeSchema>(`/types/${id}/icon`, {
     method: "DELETE",
   });
 }
@@ -205,7 +205,7 @@ describe("the owner's icon for a type", () => {
     const set = await setIcon(owner, id, "lucide:heart");
     expect(set.status, JSON.stringify(set.error)).toBe(200);
     await expectMatchesSchema("PUT", "/types/{id}/icon", 200, set.data);
-    expect(set.data.type.display_hints?.icon).toBe("lucide:heart");
+    expect(set.data.display_hints?.icon).toBe("lucide:heart");
     expect(await iconOf(id)).toBe("lucide:heart");
   });
 
@@ -215,7 +215,7 @@ describe("the owner's icon for a type", () => {
     const cleared = await clearIcon(owner, id);
     expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
     await expectMatchesSchema("DELETE", "/types/{id}/icon", 200, cleared.data);
-    expect(cleared.data.type.display_hints?.icon).toBe("lucide:star");
+    expect(cleared.data.display_hints?.icon).toBe("lucide:star");
     const again = await clearIcon(owner, id);
     expect(again.status).toBe(200);
     expect(await iconOf(id)).toBe("lucide:star");

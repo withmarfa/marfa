@@ -349,25 +349,10 @@ describe("the instance", () => {
     expect(odd).toEqual([]);
   });
 
-  it("names a release only as the version a tag carries", async () => {
+  it("names its version as three whole numbers", async () => {
     const root = await client.root();
     expect(root.ok).toBe(true);
-    const { release } = root.data;
-    // A release is three whole numbers; the build the root names beside it is
-    // a different thing and is not held to that form.
-    expect(
-      release === undefined ||
-        /^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2}$/.test(release),
-    ).toBe(true);
-  });
-
-  it("names no release for a build made from a checkout", async () => {
-    // The server this run boots is a checkout, never a numbered release. The
-    // field it omits is one the server gives a release build:
-    // `scripts/check-image.sh` against a built image shows the same door giving
-    // it.
-    const root = await client.root();
-    expect(root.ok).toBe(true);
+    expect(root.data.version).toMatch(/^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2}$/);
     expect(root.data).not.toHaveProperty("release");
   });
 
@@ -384,8 +369,8 @@ describe("the instance", () => {
       info: { version: string };
     };
     expect(document.info.version).toBe(String(root.data.contract));
-    // The build is a different number and moves on a deploy; the two are
-    // not the same field under two names.
+    // The release moves with a deploy; the two are not the same field under
+    // two names.
     expect(root.data.version).not.toBe(String(root.data.contract));
   });
 
@@ -502,7 +487,7 @@ describe("the instance", () => {
       tags: { name: string }[];
       paths: Record<string, Record<string, { tags?: string[] }>>;
     };
-    const methodNames = ["get", "post", "put", "patch", "delete"];
+    const methodNames = ["get", "post", "put", "patch", "delete", "head"];
     const carried = new Set<string>();
     const untagged: string[] = [];
     for (const [path, methods] of Object.entries(doc.paths)) {
@@ -538,7 +523,7 @@ describe("the instance", () => {
         Record<string, { operationId?: string; tags?: string[] }>
       >;
     };
-    const methodNames = ["get", "post", "put", "patch", "delete"];
+    const methodNames = ["get", "post", "put", "patch", "delete", "head"];
     // Each published operation by its operationId, a request Marfa sends
     // included.
     const carried = new Map<string, string[]>();

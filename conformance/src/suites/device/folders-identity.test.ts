@@ -1312,7 +1312,7 @@ describe("what a pull does with a file whose item stops matching", () => {
         copyReplay("2", [
           copyItemEvent(
             "2",
-            "item.deleted",
+            "item.trashed",
             wireItem({ ...held, state: "trashed" }),
           ),
         ]),
@@ -1576,7 +1576,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     edges.events.push(
       copyItemEvent(
         String(edges.events.length + 2),
-        "item.deleted",
+        "item.trashed",
         wireItem({ ...departed, state: "trashed" }),
       ),
     );
@@ -1928,7 +1928,7 @@ describe("what a pull does with a file whose item stops matching", () => {
           ),
           copyItemEvent(
             "3",
-            "item.deleted",
+            "item.trashed",
             wireItem({ ...trashed, state: "trashed" }),
           ),
         ]),

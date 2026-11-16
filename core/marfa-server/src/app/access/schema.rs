@@ -121,7 +121,7 @@ impl Caller {
             return Ok(());
         }
         Err(Refusal::new(
-            Code::EdgePermissionDenied,
+            Code::EdgeTypeNotPermitted,
             format!("Missing edge.{name}:{} permission", level.word()),
         )
         .with_detail("edge_type", name)

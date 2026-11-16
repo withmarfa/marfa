@@ -362,7 +362,7 @@ If a revoked key sends a request to any operation under `/connectors` that decla
 
 ### `connectors/revoked-run-not-recorded`
 
-If a revoked key sends `POST /connectors/runs`, then the server MUST NOT record a run.
+If a revoked key sends `POST /connectors/{id}/runs`, then the server MUST NOT record a run.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`.
 
@@ -378,7 +378,7 @@ If an app token lacking `connectors.manage` sends any operation under `/connecto
 
 ### `connectors/token-refused-own-key`
 
-If an app token sends `POST /connectors/heartbeat` or `POST /connectors/runs`, then the server MUST answer `403 forbidden`.
+If an app token sends `POST /connectors/{id}/heartbeat` or `POST /connectors/{id}/runs` naming a registered connector, then the server MUST answer `403 forbidden`.
 
 **Reason:** a heartbeat and a report of a run are made under the key a registration was made under, and a token is not a key.
 
@@ -408,7 +408,7 @@ A heartbeat says only that the process was alive at the time. What a stale one m
 
 ### `connectors/heartbeat-recorded`
 
-When a working key that has registered a connector sends `POST /connectors/heartbeat`, the server MUST answer `200` with `last_heartbeat_at` of that registration.
+When the working key a connector is registered under sends `POST /connectors/{id}/heartbeat`, the server MUST answer `200` with `last_heartbeat_at` of that registration.
 
 **Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`.
 
@@ -426,19 +426,19 @@ When the server has recorded a heartbeat, the server MUST give the registration 
 
 ### `connectors/heartbeat-other-refused`
 
-If a caller that is not a working key, such as an app token or the private socket, sends `POST /connectors/heartbeat`, then the server MUST answer `403 forbidden`.
+If a caller that is not the working key the connector is registered under, such as another key, a key holding `connectors.manage`, an app token or the private socket, sends `POST /connectors/{id}/heartbeat` naming a registered connector, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
-### `connectors/heartbeat-unregistered`
+### `connectors/heartbeat-unknown-connector`
 
-If a working key that has registered no connector, including a key holding `connectors.manage`, sends `POST /connectors/heartbeat`, then the server MUST answer `404 connector_not_found`.
+If a caller sends `POST /connectors/{id}/heartbeat` naming an ID no connector has, then the server MUST answer `404 connector_not_found`.
 
-**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-check-order.test.ts › answers 404 connector_not_found to a key with no registration, where the connector's own key is taken`.
+**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-check-order.test.ts › answers 403 forbidden to another key and to the operator, and 404 connector_not_found to an ID nothing holds`.
 
 ### `connectors/heartbeat-refused-keeps`
 
-If the server refuses `POST /connectors/heartbeat`, then the server MUST NOT move the `last_heartbeat_at` of any registration.
+If the server refuses `POST /connectors/{id}/heartbeat`, then the server MUST NOT move the `last_heartbeat_at` of any registration.
 
 **Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`.
 
@@ -460,7 +460,7 @@ A run is what a connector reports of one pass of its work. The server keeps the 
 
 ### `connectors/run-created`
 
-When a working key that has registered a connector sends `POST /connectors/runs` with an `outcome`, a `started_at` and a `finished_at`, the server MUST answer `201` with the run's `id`, `connector_id`, `outcome`, `started_at`, `finished_at`, `summary`, `error` and `reported_at`.
+When the working key a connector is registered under sends `POST /connectors/{id}/runs` with an `outcome`, a `started_at` and a `finished_at`, the server MUST answer `201` with the run's `id`, `connector_id`, `outcome`, `started_at`, `finished_at`, `summary`, `error` and `reported_at`.
 
 **Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`.
 
@@ -542,19 +542,19 @@ When the server decides whether a run's `finished_at` is before its `started_at`
 
 ### `connectors/run-other-refused`
 
-If a caller that is not a working key, such as an app token or the private socket, sends `POST /connectors/runs`, then the server MUST answer `403 forbidden`.
+If a caller that is not the working key the connector is registered under, such as another key, a key holding `connectors.manage`, an app token or the private socket, sends `POST /connectors/{id}/runs` naming a registered connector, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
 
-### `connectors/run-unregistered`
+### `connectors/run-unknown-connector`
 
-If a working key that has registered no connector, including a key holding `connectors.manage`, sends `POST /connectors/runs`, then the server MUST answer `404 connector_not_found`.
+If a caller sends `POST /connectors/{id}/runs` naming an ID no connector has, then the server MUST answer `404 connector_not_found`.
 
-**Tests:** `compliance/connectors.test.ts › stores a run's times in UTC and compares them as instants`, `compliance/connector-check-order.test.ts › answers 404 connector_not_found to a key with no registration, where the connector's own key is taken`.
+**Tests:** `compliance/connectors.test.ts › stores a run's times in UTC and compares them as instants`, `compliance/connector-check-order.test.ts › answers 403 forbidden to another key and to the operator, and 404 connector_not_found to an ID nothing holds`.
 
 ### `connectors/run-refused-not-recorded`
 
-If the server refuses `POST /connectors/runs`, then the server MUST NOT record a run.
+If the server refuses `POST /connectors/{id}/runs`, then the server MUST NOT record a run.
 
 **Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`.
 
@@ -620,21 +620,21 @@ A hold is a lock a process takes under a name it chose, renews before it lapses,
 
 ### `connectors/hold-take`
 
-When the connector's own key sends `POST /connectors/{id}/hold` with a `process` of 1 to 100 characters and no live hold names another process, the server MUST answer `200` with `expires_at`, `ttl_ms` and `renewed`.
+When the connector's own key sends `POST /connectors/{id}/hold` with a `process` of 1 to 100 characters and no live hold names another process, the server MUST answer `200` with `expires_at`, `ttl_seconds` and `renewed`.
 
 **Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› refuses a process outside its bounds`.
 
 ### `connectors/hold-window`
 
-When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window of 180000 milliseconds.
+When the server takes or renews a hold, the server MUST give `expires_at` as its own clock plus the hold window of 180 seconds.
 
 **Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› lets another process take a hold that lapsed, and takes its writes once it holds it`, `› stamps a renewed hold's expires_at as the server's clock at the renewal plus the window`.
 
 ### `connectors/hold-ttl`
 
-When the server takes or renews a hold, the server MUST give `ttl_ms` as the hold window in milliseconds.
+When the server takes or renews a hold, the server MUST give `ttl_seconds` as the hold window in whole seconds, rounded up.
 
-**Reason:** a process learns how long it holds without reading the server's clock.
+**Reason:** a process learns how long it holds without reading the server's clock, and is never told a window shorter than the real one.
 
 **Tests:** `compliance/connector-state.test.ts › takes and renews the hold for one process, and shows it on the registration`, `› tells a process whose hold lapsed that it did not renew it`.
 
@@ -1360,7 +1360,7 @@ If a key sends a request to an operation under `/connectors/{id}` that names an 
 
 ### `connectors/order-registration-before-run-checks`
 
-If a working key that has registered no connector sends `POST /connectors/runs` with a body whose declared fields fit the declaration and that names a run that finishes before it starts, names a time whose UTC year is outside 0000 to 9999, or carries a top-level field the operation does not declare, then the server MUST answer `404 connector_not_found`.
+If a caller sends `POST /connectors/{id}/runs` naming an ID no connector has, with a body whose declared fields fit the declaration and that names a run that finishes before it starts, names a time whose UTC year is outside 0000 to 9999, or carries a top-level field the operation does not declare, then the server MUST answer `404 connector_not_found`.
 
 **Reason:** a run is reported for the registration the key made, and the server looks for that registration before it judges what the run says, as it does under `/connectors/{id}` for a registration the key does not hold.
 

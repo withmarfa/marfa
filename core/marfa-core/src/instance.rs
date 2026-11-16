@@ -5,7 +5,6 @@ use crate::{CoreError, http::Http};
 pub struct InstanceDescription {
     pub name: String,
     pub version: String,
-    pub release: Option<String>,
     pub instance_id: String,
     pub contract: u64,
     pub features: Vec<String>,
@@ -50,7 +49,7 @@ mod tests {
 
     fn description(name: &str) -> serde_json::Value {
         serde_json::json!({
-            "name": name, "version": "build-test", "release": "0.0.14",
+            "name": name, "version": "0.0.14",
             "instance_id": "019a1950-3b30-7000-8000-000000000001",
             "contract": 0, "features": ["items", "webhooks"]
         })
@@ -69,8 +68,7 @@ mod tests {
                 .unwrap();
                 let instance = http.instance_description().unwrap();
                 assert_eq!(instance.name, name);
-                assert_eq!(instance.version, "build-test");
-                assert_eq!(instance.release.as_deref(), Some("0.0.14"));
+                assert_eq!(instance.version, "0.0.14");
                 assert_eq!(instance.instance_id, "019a1950-3b30-7000-8000-000000000001");
                 assert_eq!(instance.contract, 0);
                 assert_eq!(instance.features, ["items", "webhooks"]);
@@ -110,13 +108,11 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_build_without_a_release_and_another_contract() {
+    fn accepts_another_contract() {
         let mut body = description("Marfa");
-        body.as_object_mut().unwrap().remove("release");
         body["contract"] = serde_json::json!(999);
         let (url, serving) = answer(200, &body.to_string());
         let instance = instance_description(&url).unwrap();
-        assert_eq!(instance.release, None);
         assert_eq!(instance.contract, 999);
         serving.join().unwrap();
     }
