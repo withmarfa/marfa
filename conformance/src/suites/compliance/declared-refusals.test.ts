@@ -644,12 +644,7 @@ describe("client registration given a key", () => {
     const refusedBody = (await refused.json()) as { error?: string };
     expect(refused.status, JSON.stringify(refusedBody)).toBe(401);
     expect(refusedBody.error).toBe("invalid_token");
-    await expectMatchesSchema(
-      "POST",
-      "/oauth/register",
-      401,
-      refusedBody,
-    );
+    await expectMatchesSchema("POST", "/oauth/register", 401, refusedBody);
 
     // The witness: the same body with no credential registers.
     const accepted = await fetch(`${apiUrl}/oauth/register`, {
@@ -672,12 +667,7 @@ describe("client registration given a key", () => {
     const refusedBody = (await refused.json()) as { error?: string };
     expect(refused.status, JSON.stringify(refusedBody)).toBe(400);
     expect(refusedBody.error).toBe("invalid_client_metadata");
-    await expectMatchesSchema(
-      "POST",
-      "/oauth/register",
-      400,
-      refusedBody,
-    );
+    await expectMatchesSchema("POST", "/oauth/register", 400, refusedBody);
   });
 });
 
@@ -1067,17 +1057,14 @@ describe("a query key no door declares", () => {
     expect(sent.status).toBe(202);
     await sent.body?.cancel();
 
-    const registration = await fetch(
-      `${apiUrl}/oauth/register?${STRAY}=1`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: "{}",
+    const registration = await fetch(`${apiUrl}/oauth/register?${STRAY}=1`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: "{}",
+    });
     expect(registration.status).toBe(400);
     const body = (await registration.json()) as {
       error?: { details?: { unknown_parameters?: string[] } };

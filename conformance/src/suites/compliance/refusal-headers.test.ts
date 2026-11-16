@@ -34,7 +34,7 @@ let apiKey: string;
 /** A server booted to answer 429 and 503, which the run's server does not. */
 let limited: FreshServer | undefined;
 
-/** The registration the sign-in library answers. */
+/** The registration door, which refuses in the shape of RFC 7591. */
 const REGISTRATION = "/oauth/register";
 
 /** Low enough to reach in a few requests. */

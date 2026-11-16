@@ -62,7 +62,7 @@ If a request to any other operation carries an `edge[<edge type>]` or `backref[<
 
 ### `search-and-filters/undeclared-key-exempt`
 
-The server MUST NOT refuse as undeclared a query key sent to `POST /inbound/{token}`, to a discovery document under `/.well-known/` or `/auth/.well-known/`, or to a browser page or an OAuth protocol endpoint under `/auth/`, `POST /auth/oauth2/register` excepted.
+The server MUST NOT refuse as undeclared a query key sent to `POST /inbound/{token}`, to a discovery document under `/.well-known/`, to a browser page under `/auth/`, or to an OAuth protocol endpoint under `/oauth/`, `POST /oauth/register` excepted.
 
 **Reason:** a sender's query string belongs to the sender, and a redirect reaches the browser pages carrying the OAuth flow's own parameters.
 
@@ -70,7 +70,7 @@ The server MUST NOT refuse as undeclared a query key sent to `POST /inbound/{tok
 
 ### `search-and-filters/undeclared-key-register`
 
-If a request to `POST /auth/oauth2/register` carries an undeclared query key, then the server MUST answer `400 validation_error` naming it in `details.unknown_parameters`.
+If a request to `POST /oauth/register` carries an undeclared query key, then the server MUST answer `400 validation_error` naming it in `details.unknown_parameters`.
 
 **Tests:** `compliance/declared-refusals.test.ts › takes a query on the doors that are not this server's to declare, and still refuses one on the client registration door`.
 
@@ -1818,9 +1818,9 @@ When a list takes no `cursor`, the server MUST answer its whole set with `next_c
 
 ### `search-and-filters/page-grants`
 
-The server MUST answer `GET /auth/grants` in the envelope of a list.
+The server MUST answer `GET /grants` in the envelope of a list.
 
-**Tests:** `compliance/envelope.test.ts › answers GET /auth/grants to a key with grants.manage in the same envelope`.
+**Tests:** `compliance/envelope.test.ts › answers GET /grants to a key with grants.manage in the same envelope`.
 
 ### `search-and-filters/page-full-last`
 

@@ -898,7 +898,7 @@ describe("the sign-in routes", () => {
     ]);
   });
 
-  it("hold a route the sign-in library serves under its pattern to the statuses declared for it", () => {
+  it("hold a sign-in route served under its pattern to the statuses declared for it", () => {
     const caught = reportStatuses(
       parseRequestLines([consentLine(400), consentLine(418)].join("\n")),
       documentDeclaring([200]),
@@ -995,9 +995,7 @@ describe("the sign-in routes", () => {
         },
       },
     );
-    expect(report.observed.get("POST /oauth/register")?.has(201)).toBe(
-      true,
-    );
+    expect(report.observed.get("POST /oauth/register")?.has(201)).toBe(true);
     expect(report.unpublished.size).toBe(0);
   });
 

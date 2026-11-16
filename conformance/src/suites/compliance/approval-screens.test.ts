@@ -93,9 +93,7 @@ async function consentScreen(app: App, scope: string): Promise<Screen> {
       cookie,
     ),
   );
-  expect(landed?.pathname, `landed on ${String(landed)}`).toBe(
-    "/auth/consent",
-  );
+  expect(landed?.pathname, `landed on ${String(landed)}`).toBe("/auth/consent");
   const page = await fetch(landed!, { headers: { cookie } });
   expect(page.status).toBe(200);
   return { html: await page.text(), consent: landed! };

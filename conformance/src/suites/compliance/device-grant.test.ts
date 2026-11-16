@@ -7,6 +7,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * A device asking for a code and polling for its token, with a person
@@ -42,6 +43,7 @@ describe("the device authorization grant", () => {
     expect(pending.status).toBe(400);
     expect(pending.body.error).toBe("authorization_pending");
     expect(pending.body.access_token).toBeUndefined();
+    await expectMatchesSchema("POST", "/oauth/token", 400, pending.body);
   });
 
   it("answers the first poll after the approval, an interval after the last, with an access token for the approved scopes", async () => {
@@ -52,6 +54,7 @@ describe("the device authorization grant", () => {
     expect(approved.body.access_token).toBeTruthy();
     expect(approved.body.token_type?.toLowerCase()).toBe("bearer");
     expect(approved.body.scope).toBe("core.note:read");
+    await expectMatchesSchema("POST", "/oauth/token", 200, approved.body);
   });
 
   it("answers invalid_grant to a poll of a code a token was already issued for", async () => {
@@ -103,6 +106,7 @@ describe("a device code", () => {
     expect(complete.searchParams.get("user_code")).toBe(body.user_code);
     expect(body.expires_in).toBe(600);
     expect(body.interval).toBe(5);
+    await expectMatchesSchema("POST", "/oauth/device-authorization", 200, body);
   });
 
   it("is refused 400 invalid_scope when no scopes are named", async () => {

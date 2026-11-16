@@ -213,11 +213,14 @@ describe("a device signing in", () => {
     device_code: string;
     user_code: string;
   }> {
-    const response = await fetch(`${server!.apiUrl}/oauth/device-authorization`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: deviceClient, scope }),
-    });
+    const response = await fetch(
+      `${server!.apiUrl}/oauth/device-authorization`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: deviceClient, scope }),
+      },
+    );
     expect(response.status).toBe(200);
     return (await response.json()) as {
       device_code: string;

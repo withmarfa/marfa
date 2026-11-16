@@ -15,11 +15,15 @@ afterAll(async () => {
 });
 
 /**
- * Registration and discovery precede authentication, a health check is read
- * by whatever watches the instance, and claim carries its own machine proof.
+ * The OAuth doors precede authentication, a health check is read by
+ * whatever watches the instance, and claim carries its own machine proof.
  */
 const OPEN_DOORS = new Set([
   "POST /oauth/register",
+  "GET /oauth/authorize",
+  "POST /oauth/device-authorization",
+  "POST /oauth/token",
+  "POST /oauth/revoke",
   "GET /",
   "GET /health",
   "POST /owner",
@@ -90,10 +94,11 @@ describe("the open doors", () => {
       });
       await response.body?.cancel();
       expect(response.status, door).not.toBe(401);
-      // The root and the health check answer outright; registration refuses
-      // the malformed body on its merits, which is still not a credential
+      // The root and the health check answer outright; the OAuth doors refuse
+      // the malformed request on its merits, which is still not a credential
       // refusal.
-      if (door.startsWith("GET ")) expect(response.status, door).toBe(200);
+      if (door === "GET /" || door === "GET /health")
+        expect(response.status, door).toBe(200);
     }
   });
 });

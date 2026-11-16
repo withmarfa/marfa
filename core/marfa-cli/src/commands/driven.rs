@@ -668,8 +668,12 @@ const MISSED: &[&str] = &[
     // `folders push`: needs a bound working copy, exercised by the
     // `device/folder-health.test.ts` fixtures.
     "reportFolderStatus",
-    // `login`: found by discovery and sent in a browser flow.
+    // `login` and `logout`: found by discovery, and sent once a person
+    // approves the device code or a sign-in is kept.
     "registerOAuthClient",
+    "requestDeviceCode",
+    "exchangeToken",
+    "revokeToken",
     // Private transport: the CLI scenarios drive these with a real passkey,
     // and `device/contract.test.ts` checks their socket response contract.
     "listOwnerPasskeys",

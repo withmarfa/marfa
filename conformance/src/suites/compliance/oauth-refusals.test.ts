@@ -104,9 +104,7 @@ describe("GET /auth/device/consent", () => {
     const server = clients!;
     await quiet(server, ["credential-cleanup"]);
     const discovery = (await (
-      await fetch(
-        `${server.apiUrl}/.well-known/oauth-authorization-server`,
-      )
+      await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
     ).json()) as {
       registration_endpoint: string;
       device_authorization_endpoint: string;

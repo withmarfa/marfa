@@ -216,9 +216,7 @@ describe("authorization with consent", () => {
   it("sends its issuer with the code and with each error it sends to a redirect URI", async () => {
     const issuer = (
       (await (
-        await fetch(
-          `${server.apiUrl}/.well-known/oauth-authorization-server`,
-        )
+        await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
       ).json()) as { issuer: string }
     ).issuer;
     for (const { name, sent } of await responses()) {

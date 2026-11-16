@@ -286,13 +286,10 @@ describe("a credential whose authority changes while its body arrives", () => {
         ).data;
         const grant = grants.find((each) => each.client_id === app.clientId);
         expect(grant, "the approved app has no grant").toBeDefined();
-        const revoked = await fetch(
-          `${server.apiUrl}/grants/${grant!.id}`,
-          {
-            method: "DELETE",
-            headers: bearer(server.managementKey),
-          },
-        );
+        const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
+          method: "DELETE",
+          headers: bearer(server.managementKey),
+        });
         expect(revoked.ok, String(revoked.status)).toBe(true);
       },
     );

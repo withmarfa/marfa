@@ -402,7 +402,7 @@ If a request to `POST /auth/owner/password` that carries the owner's browser ses
 
 ## Where a browser session counts
 
-The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), the root asked for as a page (`GET /`), sign-in (`/auth/sign-in`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the consent screen (`/auth/oauth2/authorize`, `/auth/authorize` and `/auth/authorize/decision`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, its password change `POST /auth/owner/password`, the doors under `/auth/passkeys/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
+The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), the root asked for as a page (`GET /`), sign-in (`/auth/sign-in`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the authorization request and the consent screen (`/oauth/authorize` and `/auth/consent`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, its password change `POST /auth/owner/password`, the doors under `/auth/passkeys/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
 
 ### `authentication/session-pages-only`
 

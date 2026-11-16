@@ -65,14 +65,7 @@ function openRefusals(document: Record<string, unknown>): string[] {
               .allOf ?? [properties.error]
           ).find((branch) => branch.properties !== undefined) ??
           properties.error);
-    if (error === undefined) {
-      // The registration's `415` is the sign-in library's own shape, which
-      // names its code beside the message rather than under `error`.
-      if (properties.code !== undefined) {
-        return closedCode(properties.code) ? undefined : "open";
-      }
-      return "no code";
-    }
+    if (error === undefined) return "no code";
     return closedCode(error.properties?.code ?? error) ? undefined : "open";
   };
   for (const [key, operation] of operationKeys(document)) {

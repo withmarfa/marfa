@@ -63,7 +63,9 @@ describe("OAuth provider", () => {
     const unknownBody = (await unknown.json()) as { error: { code: string } };
     expect(unknown.status).toBe(404);
     // The witness: the document is served at the root.
-    const root = await fetch(`${apiUrl}/.well-known/oauth-authorization-server`);
+    const root = await fetch(
+      `${apiUrl}/.well-known/oauth-authorization-server`,
+    );
     expect(root.status).toBe(200);
     await root.body?.cancel();
     for (const path of [
@@ -72,9 +74,10 @@ describe("OAuth provider", () => {
     ]) {
       const r = await fetch(`${apiUrl}${path}`);
       expect(r.status, path).toBe(404);
-      expect(((await r.json()) as { error: { code: string } }).error.code, path).toBe(
-        unknownBody.error.code,
-      );
+      expect(
+        ((await r.json()) as { error: { code: string } }).error.code,
+        path,
+      ).toBe(unknownBody.error.code);
     }
   });
 
@@ -366,8 +369,8 @@ describe("OAuth provider", () => {
         const r = await revoke(
           hint === "" ? { token } : { token, token_type_hint: hint },
         );
-        await r.body?.cancel();
         expect(r.status, `${token} ${hint}`).toBe(200);
+        await expectMatchesSchema("POST", "/oauth/revoke", 200, await r.json());
       }
     }
     const none = await revoke({});

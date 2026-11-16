@@ -2,7 +2,7 @@
 
 `marfa` is Marfa from the command line: every operation of one instance, a working copy of a slice of it under `marfa device`, and folders that hold a slice as files under `marfa folders`.
 
-- **Commands, options and exit codes:** `marfa --help`, and the same text in [COMMANDS.md](COMMANDS.md), which is generated from it. `marfa operations` maps each published operation to its command.
+- **Commands, options and exit codes:** `marfa --help`, and the same text in [COMMANDS.md](COMMANDS.md), which is generated from it. `marfa operations` maps each published operation to its command, but `GET /oauth/authorize`, which an app opens in a person's browser.
 - **What the binary does:** the contract states it, in `conformance/spec/cli.md` (requests, profiles, credentials, output and telemetry), `device.md` (the working copy), `queue-and-verdicts.md` (the queue and its drain) and the `folder-` chapters (folders, the watch and syncing from login).
 - **What it sends to a collector or to PostHog:** [core/TELEMETRY.md](../TELEMETRY.md).
 - **What a program on the machine can read:** the [record of folder watches](FOLDER-WATCH-RECORD.md), and the server's [folder health reports](FOLDER-HEALTH.md).

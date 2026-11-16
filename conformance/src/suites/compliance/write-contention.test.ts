@@ -266,10 +266,9 @@ describe("contention on the write lock", () => {
     120_000,
   );
 
-  it("refuses a client registration, which the sign-in library writes", async () => {
-    // The registration door is the sign-in library's own, answered by its
-    // own handler rather than a route of this server's, so the refusal has
-    // to cross that library to reach the caller as the declared `503`.
+  it("refuses a client registration, which writes with no credential", async () => {
+    // Registration answers its own refusals in the shape of RFC 7591, so
+    // the contention refusal has to reach the caller as the declared `503`.
     const register = () =>
       fetch(`${impatient!.apiUrl}/oauth/register`, {
         method: "POST",

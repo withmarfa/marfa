@@ -36,10 +36,13 @@ const NOT_JSON: Record<string, string> = {
   "POST /restore": "a gzip archive",
   "PUT /owner/picture": "the bytes of a picture",
   "PUT /profile/picture": "the bytes of a picture",
+  "POST /oauth/token": "a form, as RFC 6749 defines",
+  "POST /oauth/revoke": "a form, as RFC 7009 defines",
+  "POST /oauth/device-authorization": "a form, as RFC 8628 defines",
 };
 
-/** A published door that takes JSON, answered by the sign-in library. */
-const SIGN_IN_LIBRARY = "POST /oauth/register";
+/** A published door that takes JSON and refuses in the shape of RFC 7591. */
+const REGISTRATION = "POST /oauth/register";
 
 /** One way of sending a body that is not sent as JSON. */
 const WAYS: {
@@ -89,7 +92,7 @@ async function jsonDoors(): Promise<string[]> {
       const door = `${method.toUpperCase()} ${path}`;
       const types = Object.keys(body.content ?? {});
       if (types.some((type) => /^application\/([a-z-.]+\+)?json/i.test(type))) {
-        if (door !== SIGN_IN_LIBRARY) doors.push(door);
+        if (door !== REGISTRATION) doors.push(door);
       } else if (!(door in NOT_JSON)) {
         unclassified.push(door);
       }

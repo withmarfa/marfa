@@ -411,10 +411,10 @@ async function waitForHealth(
  * with a name to sign in at is reached by it.
  */
 async function reachedAt(url: string): Promise<string> {
-  const found = await fetch(
-    `${url}/.well-known/oauth-authorization-server`,
-    { signal: AbortSignal.timeout(5_000), headers: { Connection: "close" } },
-  );
+  const found = await fetch(`${url}/.well-known/oauth-authorization-server`, {
+    signal: AbortSignal.timeout(5_000),
+    headers: { Connection: "close" },
+  });
   const issuer = (await found.json()) as { issuer?: unknown };
   if (typeof issuer.issuer !== "string") return url;
   const { protocol, host } = new URL(issuer.issuer);

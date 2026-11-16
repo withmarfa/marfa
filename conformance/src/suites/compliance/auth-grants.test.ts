@@ -403,11 +403,10 @@ describe("a code whose grant is revoked", () => {
 
 describe("PATCH /grants/{id}", () => {
   const narrow = async (id: string, expected: string[], scopes: string[]) => {
-    const answer = await controlRequest(
-      server.controlSocket,
-      `/grants/${id}`,
-      { method: "PATCH", body: { expected_scopes: expected, scopes } },
-    );
+    const answer = await controlRequest(server.controlSocket, `/grants/${id}`, {
+      method: "PATCH",
+      body: { expected_scopes: expected, scopes },
+    });
     return Response.json(answer.body, { status: answer.status });
   };
 

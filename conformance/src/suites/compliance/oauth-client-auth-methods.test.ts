@@ -128,21 +128,18 @@ describe("OAuth client authentication methods", () => {
           : ([["scope", "core.note:read"]] as [string, string][])),
     ];
     // The witness: the same request with no credential is answered on its merits.
-    const code = await asked("/oauth/device-authorization", fields("/oauth/device-authorization"));
+    const code = await asked(
+      "/oauth/device-authorization",
+      fields("/oauth/device-authorization"),
+    );
     expect(code.status).toBe(200);
     await code.body?.cancel();
-    const refresh = await asked(
-      "/oauth/token",
-      fields("/oauth/token"),
-    );
+    const refresh = await asked("/oauth/token", fields("/oauth/token"));
     expect(refresh.status).toBe(400);
     expect(((await refresh.json()) as { error: string }).error).toBe(
       "invalid_grant",
     );
-    const revoke = await asked(
-      "/oauth/revoke",
-      fields("/oauth/revoke"),
-    );
+    const revoke = await asked("/oauth/revoke", fields("/oauth/revoke"));
     expect(revoke.status).toBe(200);
     await revoke.body?.cancel();
     for (const path of doors) {

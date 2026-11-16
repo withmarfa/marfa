@@ -289,14 +289,17 @@ describe("a sign-in whose device code is no longer valid", () => {
     const login = await startLogin();
     // 1000 newer codes that nobody enters make the server remove the login's.
     for (let n = 0; n < 1000; n++) {
-      const response = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: other,
-          scope: "core.note:read",
-        }),
-      });
+      const response = await fetch(
+        `${server.apiUrl}/oauth/device-authorization`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: other,
+            scope: "core.note:read",
+          }),
+        },
+      );
       expect(response.status).toBe(200);
       await response.body?.cancel();
     }
