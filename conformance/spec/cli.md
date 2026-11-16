@@ -1546,6 +1546,14 @@ If the server answers `PUT /owner/password` with `401` through `--socket PATH`, 
 
 **Tests:** `cli/owner-commands.test.ts › replaces the owner's password with a key and with the private socket, asking for no password as an argument`.
 
+### `cli/owner-password-refusal-exit`
+
+If the server answers `PUT /owner/password` with `401`, then the CLI MUST fail with exit `1`, through a key, an app's token or `--socket PATH`.
+
+**Reason:** exit `5` tells a person to sign in again, and a key that just passed the server's check, or the socket, is not what this `401` refuses: the current password is.
+
+**Tests:** `cli/owner-commands.test.ts › replaces the owner's password with a key and with the private socket, asking for no password as an argument`.
+
 ### `cli/config-set-request`
 
 When a person runs `config set <name> <value>`, the CLI MUST read `GET /config/settings` and send one `PATCH /config` that holds only `<name>`, with the value as the kind the listed setting holds: a number, a boolean, a list of the comma-separated entries or text.

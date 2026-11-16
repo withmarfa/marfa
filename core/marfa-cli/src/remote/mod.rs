@@ -889,6 +889,11 @@ impl Remote {
                         and `items bulk-action cancel` work through --socket without one"
                 .into();
         }
+        if request.proving && status == 401 {
+            return CliError::SecretRefused {
+                error: Box::new(error),
+            };
+        }
         error
     }
 
@@ -1140,6 +1145,29 @@ mod tests {
         };
         let found = handed(&bare, Some("marfa_at_a"), Some("https://a.example"));
         assert!(matches!(found, Ok(Some(_))), "{found:?}");
+    }
+
+    #[test]
+    fn a_refused_secret_is_not_a_sign_out() {
+        let refusal =
+            r#"{"error":{"code":"unauthorized","message":"Current password is incorrect"}}"#;
+        let door = Door::open(vec![
+            Answer::json("401 Unauthorized", refusal),
+            Answer::json("401 Unauthorized", refusal),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        let proving = Request::put(&["owner", "password"])
+            .proving()
+            .json(serde_json::json!({"current_password":"a","new_password":"b"}));
+        let error = remote.json(&proving).unwrap_err();
+        assert_eq!(error.exit(), Exit::Refused);
+        assert_eq!(error.code(), "unauthorized");
+        assert_eq!(error.envelope()["error"]["server"]["status"], 401);
+        assert_eq!(error.envelope()["error"]["server"]["code"], "unauthorized");
+        // The witness: a request that proves nothing is a credential's refusal.
+        let plain = Request::get(&["items"]);
+        assert_eq!(remote.json(&plain).unwrap_err().exit(), Exit::Credential);
+        door.received();
     }
 
     #[test]

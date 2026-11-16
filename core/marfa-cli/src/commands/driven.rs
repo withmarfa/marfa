@@ -193,6 +193,7 @@ fn skipped(words: &[String]) -> bool {
         || socket_only(words)
         // Secret input needs a child process with its own stdin, driven below.
         || words == ["setup", "claim"]
+        || words == ["owner", "password"]
         // Removes this machine's stored key and sends nothing.
         || words == ["keys", "forget"]
 }

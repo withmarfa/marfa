@@ -153,6 +153,9 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
     match command {
         OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
         OwnerCommand::Password(args) => {
+            if !args.stdin {
+                terminal_only()?;
+            }
             // Renews an app's token and stops a key without the permission before
             // anything is typed, so a later `401` is the password's refusal.
             if !remote.is_local() {

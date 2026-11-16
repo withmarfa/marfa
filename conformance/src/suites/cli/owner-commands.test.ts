@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -203,6 +203,16 @@ async function signsIn(password: string): Promise<boolean> {
   return response.status === 200;
 }
 
+/** How many requests to `path` the server has logged so far. */
+async function logged(path: string): Promise<number> {
+  const log = await readFile(join(server.stateDir, "server.log"), "utf8");
+  return log
+    .split("\n")
+    .filter((line) => line.startsWith("{"))
+    .filter((line) => (JSON.parse(line) as { path?: string }).path === path)
+    .length;
+}
+
 interface Setting {
   key: string;
   value: unknown;
@@ -239,10 +249,18 @@ it("replaces the owner's password with a key and with the private socket, asking
   }
   expect(await signsIn(TEST_OWNER.password)).toBe(true);
 
-  // Without a terminal and without --stdin, the command asks for nothing.
+  // The witness: a key's `owner passkeys list` is a request the log holds,
+  // and so is the one `owner password` makes before it asks for anything.
+  const seen = await logged("/owner/passkeys");
+  await keyed.json(["owner", "passkeys", "list"]);
+  expect(await logged("/owner/passkeys")).toBe(seen + 1);
+
+  // Without a terminal and without --stdin, the command asks for nothing
+  // and the server sees nothing.
   const none = await keyed.refused(["owner", "password"]);
   expect(none.code).toBe(2);
   expect(none.envelope.error.message).toContain("--stdin");
+  expect(await logged("/owner/passkeys")).toBe(seen + 1);
 
   const changed = await keyed.json(["owner", "password", "--stdin"], {
     stdin: forward,
@@ -258,6 +276,17 @@ it("replaces the owner's password with a key and with the private socket, asking
   });
   expect(wrong.envelope.error.server?.code).toBe("unauthorized");
   expect(wrong.envelope.error.message).not.toContain("needs a key");
+  expect(wrong.code).toBe(1);
+
+  // A key that just worked is not signed out by a wrong password either.
+  const mistyped = await keyed.refused(["owner", "password", "--stdin"], {
+    stdin: JSON.stringify({
+      current_password: "not the owner's password",
+      new_password: "a different long password",
+    }),
+  });
+  expect(mistyped.envelope.error.server?.code).toBe("unauthorized");
+  expect(mistyped.code).toBe(1);
   expect(await signsIn("a different long password")).toBe(true);
 
   const restored = await local.json(["owner", "password", "--stdin"], {

@@ -25,6 +25,10 @@ pub enum CliError {
         "{purged} items were deleted before this failed, and the failed batch may have deleted more: {error}"
     )]
     BinPartlyEmptied { purged: u64, error: Box<CliError> },
+    /// The server's refusal of a secret the request sent for it to judge. A `401`
+    /// is that secret's refusal and not the credential's, so it is not exit `5`.
+    #[error("{error}")]
+    SecretRefused { error: Box<CliError> },
     #[error("{0}")]
     Io(io::Error),
     /// The core's `ReadingHandle`, said of the folder rather than its store.
@@ -319,7 +323,8 @@ macro_rules! own_codes {
                 match self {
                     CliError::Core(core) => core.code(),
                     CliError::CatchUp { error, .. }
-                    | CliError::BinPartlyEmptied { error, .. } => error.code(),
+                | CliError::BinPartlyEmptied { error, .. }
+                | CliError::SecretRefused { error } => error.code(),
                     CliError::Refused { status, .. } => refused_code(*status),
                     $($pattern => $code,)*
                 }
@@ -409,6 +414,10 @@ pub fn codes() -> Vec<&'static str> {
 impl CliError {
     pub fn exit(&self) -> Exit {
         match self {
+            CliError::SecretRefused { error } => match error.as_ref() {
+                CliError::Refused { status: 401, .. } => Exit::Refused,
+                other => other.exit(),
+            },
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
                 error.exit()
             }
@@ -497,9 +506,9 @@ impl CliError {
     /// command line's own is reported by `telemetry::Run::panicked`.
     pub fn is_fault(&self) -> bool {
         match self {
-            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
-                error.is_fault()
-            }
+            CliError::CatchUp { error, .. }
+            | CliError::BinPartlyEmptied { error, .. }
+            | CliError::SecretRefused { error } => error.is_fault(),
             CliError::Core(CoreError::RenewalFailed(cause)) => {
                 CliError::from(*cause.clone()).is_fault()
             }
@@ -516,9 +525,9 @@ impl CliError {
     /// The server's answer, independent of the command's classification.
     fn server(&self) -> Option<ServerAnswer> {
         match self {
-            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
-                error.server()
-            }
+            CliError::CatchUp { error, .. }
+            | CliError::BinPartlyEmptied { error, .. }
+            | CliError::SecretRefused { error } => error.server(),
             CliError::Core(core) => core.answer(),
             CliError::Watch(_, answer) => answer.as_deref().cloned(),
             CliError::Refused {
@@ -543,9 +552,9 @@ impl CliError {
 
     fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
         match self {
-            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
-                error.local()
-            }
+            CliError::CatchUp { error, .. }
+            | CliError::BinPartlyEmptied { error, .. }
+            | CliError::SecretRefused { error } => error.local(),
             CliError::Core(core) => core.local(),
             _ => None,
         }
@@ -553,9 +562,9 @@ impl CliError {
 
     fn retry_after_seconds(&self) -> Option<u64> {
         match self {
-            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
-                error.retry_after_seconds()
-            }
+            CliError::CatchUp { error, .. }
+            | CliError::BinPartlyEmptied { error, .. }
+            | CliError::SecretRefused { error } => error.retry_after_seconds(),
             CliError::Core(CoreError::RateLimited {
                 retry_after_seconds,
                 ..
