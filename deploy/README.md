@@ -111,12 +111,12 @@ Recovery changes the owner's password and ends browser sessions. Keys and approv
 
 ## Upgrade
 
-Before Marfa 0.1, a release cannot read the database of another release, or an export or backup that another release wrote. A newer release is therefore a new instance, not an upgrade of the one you run: don't move a running install to another release.
+Before Marfa 0.1, a release does not promise to read the database of another release, or an export or backup that another release wrote. A newer release is therefore a new instance, not an upgrade of the one you run: don't move a running install to another release.
 
 - Pin the release. Keep a Docker install on the release it was made with, and keep a native install on the programs it was made with. Don't use `latest`, and don't let anything update the image.
 - To try a newer release, make a new install in another `--dir` with its own port. Your running instance and its data stay as they are.
 
-A release that meets another release's database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server start`. [Railway](railway.md#choose-a-release) pins its image the same way.
+A release that refuses a database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server start`. [Railway](railway.md#choose-a-release) pins its image the same way.
 
 ## Remove the server
 

@@ -4786,7 +4786,7 @@ marfa server install [OPTIONS]
 
 Move the server to the release now installed.
 
-Before Marfa 0.1, a release refuses the database of any other release, so a newer release needs a new install, and this moves a server only between builds of one release. A native server runs the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. It refuses an older release than the one installed.
+Before Marfa 0.1, a release does not promise to open the database of another release, so a newer release needs a new install, and this moves a server only between builds of one release. A native server runs the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. It refuses an older release than the one installed.
 
 ```text
 marfa server upgrade [OPTIONS]
