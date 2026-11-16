@@ -888,7 +888,7 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup the server takes na
 
 Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST read and hash the parts in `<MARFA_BACKUP_PATH>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until it has read 536870912 bytes of them.
 
-**Reason:** a disk can change a file's bytes and keep its size, modified time and inode, by decay or by a copy that sets the time back, and `instance/backup-part-stored-again` does not see that change. A part that changed this way is found within 7 days of its last hash, and the runs it takes to reach it among the others that wait. A backup runs only when something changed or the owner asks for one. An object store checks its own objects, and reading them again would be billed.
+**Reason:** a disk can change a file's bytes and keep its size, modified time and inode, by decay or by a copy that sets the time back, and `instance/backup-part-stored-again` does not see that change. The server finds such a change at the first backup 7 days or more after the part's last hash, or once it has read the parts due before it. A backup runs only when something changed or the owner asks for one. An object store checks its own objects, and reading them again would be billed.
 
 **Tests:** `compliance/backup-parts.test.ts › takes a folder part as held while its size, modified time and inode are unchanged, and hashes it again once 7 days have passed since its last hash`.
 

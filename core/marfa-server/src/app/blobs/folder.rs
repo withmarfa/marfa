@@ -400,9 +400,8 @@ fn make_inside(path: &Path) -> io::Result<()> {
     }
 }
 
-/// A file's size, modified time and inode, which change when its bytes are written or replaced
-/// through the file system. A change that keeps all three, such as one with its time set back or
-/// a disk's own decay, keeps the stamp.
+/// A file's size, modified time and inode. A disk's decay, or a write that sets the time back,
+/// keeps it.
 pub fn stamp(meta: &Metadata) -> String {
     format!(
         "{}-{}.{:09}-{}",
