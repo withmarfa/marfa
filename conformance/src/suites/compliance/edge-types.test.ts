@@ -1327,9 +1327,7 @@ describe("custom edge-type registration", () => {
     });
     expect(known.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(known.data.to_type_constraints).toEqual([
-      "role:container",
-    ]);
+    expect(known.data.to_type_constraints).toEqual(["role:container"]);
   });
 
   it("refuses an edge property of type thumbnail, as its type, its items type or its format, with 400 validation_error", async () => {
