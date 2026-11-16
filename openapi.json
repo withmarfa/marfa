@@ -9094,7 +9094,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The key of each secret setting stored with a value Marfa can read. Marfa never returns a secret's value.",
+            "description": "The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.",
             "example": [
               "object_store_secret_access_key"
             ]

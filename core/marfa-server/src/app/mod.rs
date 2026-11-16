@@ -263,9 +263,12 @@ impl App {
     /// Takes the store beside the disk that the live settings name, or tries again to take one
     /// that could not be used.
     pub async fn follow_stores(&self) {
-        let wanted = blobs::Wanted::of(&self.settings.live());
         self.blobs
-            .follow(&self.db, wanted, || self.clock.stamp())
+            .follow(
+                &self.db,
+                || blobs::Wanted::of(&self.settings.live()),
+                || self.clock.stamp(),
+            )
             .await;
     }
 

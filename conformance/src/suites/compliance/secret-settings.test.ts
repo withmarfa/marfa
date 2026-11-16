@@ -184,7 +184,7 @@ describe("a secret setting", () => {
       const server = await bootFreshServer("secret-set", DISK);
       try {
         const { operator } = clientsFor(server);
-        expect(await config(server)).toMatchObject({ secrets_set: [] });
+        expect(await config(server)).not.toHaveProperty("secrets_set");
         expect(await listed(server, SECRET)).toMatchObject({
           secret: true,
           set: false,
@@ -216,7 +216,7 @@ describe("a secret setting", () => {
 
         const cleared = await operator.patchConfig({ [SECRET]: null });
         expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
-        expect(await config(server)).toMatchObject({ secrets_set: [] });
+        expect(await config(server)).not.toHaveProperty("secrets_set");
         expect((await listed(server, SECRET)).set).toBe(false);
 
         await operator.patchConfig({ [SECRET]: `again-${randomUUID()}` });
@@ -309,7 +309,7 @@ describe("a secret setting", () => {
           set: false,
           unreadable: true,
         });
-        expect(await config(server)).toMatchObject({ secrets_set: [] });
+        expect(await config(server)).not.toHaveProperty("secrets_set");
         expect(
           (await attentionOf(server))
             .filter((concern) => concern.kind === "setting")

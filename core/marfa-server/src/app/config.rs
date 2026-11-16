@@ -528,7 +528,9 @@ fn document(app: &App, rows: &Rows, name: Option<String>) -> Value {
             None => {}
         }
     }
-    body.insert(SECRETS_SET.into(), secrets.into());
+    if !secrets.is_empty() {
+        body.insert(SECRETS_SET.into(), secrets.into());
+    }
     Value::Object(body)
 }
 

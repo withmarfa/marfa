@@ -6350,7 +6350,7 @@ export interface components {
             /** @description `true` if outbound webhooks may reach loopback, private and other addresses that aren't public. Absent: `false`. */
             webhook_allow_private_addresses?: boolean;
             /**
-             * @description The key of each secret setting stored with a value Marfa can read. Marfa never returns a secret's value.
+             * @description The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.
              * @example [
              *       "object_store_secret_access_key"
              *     ]

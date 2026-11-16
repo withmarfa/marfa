@@ -21,7 +21,8 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  * the subscription under a server that allows private addresses and then
  * starting the same data again under one that does not.
  */
-const SETTING = "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES";
+const SETTING = "webhook_allow_private_addresses";
+const SEED = "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES";
 let server: FreshServer | undefined;
 let working: MarfaClient;
 let receiver: Receiver;
@@ -87,7 +88,7 @@ describe("webhook addresses", () => {
   it(
     "refuses special-purpose IPv6 at every delivery",
     async () => {
-      await server!.restart({ env: { [SETTING]: "true" } });
+      await server!.restart({ env: { [SEED]: "true" } });
       working = new MarfaClient({
         baseUrl: server!.apiUrl,
         apiKey: server!.workingKey,
@@ -270,7 +271,7 @@ describe("webhook addresses", () => {
       const port = new URL(receiver.url).port;
       // Registered under a server that allows it, as a name that resolved
       // elsewhere would have been, and then met by one that does not.
-      await server!.restart({ env: { [SETTING]: "true" } });
+      await server!.restart({ env: { [SEED]: "true" } });
       working = new MarfaClient({
         baseUrl: server!.apiUrl,
         apiKey: server!.workingKey,

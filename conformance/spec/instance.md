@@ -2997,7 +2997,7 @@ The server MUST NOT include the value of a secret setting in an answer to any re
 
 ### `instance/secrets-set-named`
 
-When the server answers `GET /config`, `PUT /config` or `PATCH /config` with the configuration, the server MUST answer `secrets_set` with the key of each secret setting stored with a value the server can read.
+When the server answers `GET /config`, `PUT /config` or `PATCH /config` with the configuration, the server MUST answer `secrets_set`, present only while one is set, with the key of each secret setting stored with a value the server can read.
 
 **Reason:** an app shows whether a secret is set without being given it. A body may send `secrets_set` back, and it sets nothing.
 

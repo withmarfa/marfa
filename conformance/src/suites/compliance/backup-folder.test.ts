@@ -1045,15 +1045,19 @@ describe("where backups may go", () => {
   });
 
   it("refuses a backup folder inside its data directory or its blob folder, judged where links lead, and makes none", async () => {
-    const server = await bootFreshServer("backup-folder-inside", DISK);
+    const blobs = mkdtempSync(join(tmpdir(), "marfa-backup-blobs-"));
+    const server = await bootFreshServer("backup-folder-inside", {
+      ...DISK,
+      MARFA_BLOB_PATH: blobs,
+    });
     const outside = mkdtempSync(join(tmpdir(), "marfa-backup-outside-"));
     try {
       const { operator } = clientsFor(server);
       const data = dirname(server.sqlitePath);
       const linked = join(outside, "into-the-blobs");
-      symlinkSync(join(data, "blobs"), linked);
+      symlinkSync(blobs, linked);
       for (const [path, says] of [
-        [join(data, "blobs", "backups"), "inside the blob folder"],
+        [join(blobs, "backups"), "inside the blob folder"],
         [join(data, "backups"), "inside the data directory"],
         [join(linked, "backups"), "inside the blob folder"],
       ] as const) {
@@ -1078,6 +1082,7 @@ describe("where backups may go", () => {
     } finally {
       await server.stop();
       rmSync(outside, { recursive: true, force: true });
+      rmSync(blobs, { recursive: true, force: true });
     }
   });
 

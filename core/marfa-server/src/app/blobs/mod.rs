@@ -433,8 +433,15 @@ impl Blobs {
 
     /// Takes the store `wanted` names in place of the one in use, or tries again to take one that
     /// could not be used. Work that began with the old store keeps it until it ends.
-    pub async fn follow(&self, db: &Db, wanted: Wanted, at: impl FnOnce() -> String) {
+    pub async fn follow(
+        &self,
+        db: &Db,
+        wanted: impl FnOnce() -> Wanted,
+        at: impl FnOnce() -> String,
+    ) {
         let _one = self.following.lock().await;
+        // Read once the lock is held, so the last change of the settings is the one followed.
+        let wanted = wanted();
         if self.follows(&wanted) {
             return;
         }
