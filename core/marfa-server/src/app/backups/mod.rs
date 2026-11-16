@@ -875,7 +875,7 @@ impl Outcome {
 
 /// The `backup` housekeeping job.
 pub async fn job(app: Arc<App>, _run: Run) -> Result<Report> {
-    let outcome = back_up(&app, false).await?;
+    let outcome = back_up(&app, false, None).await?;
     Ok(Report::done(outcome.report()))
 }
 
@@ -968,8 +968,8 @@ impl App {
     /// Puts a backup now, whether or not anything has changed since the last.
     pub async fn run_backup(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         caller.require(Permission::BackupsManage)?;
-        let app = self.clone();
-        let outcome = tokio::spawn(async move { back_up(&app, true).await })
+        let (app, asker) = (self.clone(), caller.clone());
+        let outcome = tokio::spawn(async move { back_up(&app, true, Some(asker)).await })
             .await
             .map_err(|_| Refusal::internal("a backup's task ended early"))??;
         match outcome {
@@ -1580,7 +1580,16 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 }
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
-async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
+/// Whether the caller who asked for a backup still holds `backups.manage`, as committed now.
+async fn stands(app: &App, asker: &Caller) -> Result<()> {
+    let (asker, at) = (asker.clone(), app.clock.stamp());
+    app.db
+        .read(move |tx| asker.current(tx, &at)?.require(Permission::BackupsManage))
+        .await
+}
+
+/// A backup a caller asked for is put and recorded only while that caller holds `backups.manage`.
+async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<Outcome> {
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {
         let restoring = app.backups.restoring.load(Ordering::Acquire);
@@ -1597,7 +1606,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
         return Ok(Outcome::Unchanged);
     }
     bring_replication_forward(app).await;
-    match put(app, &destination).await {
+    match put(app, &destination, asker.as_ref()).await {
         Ok(Put {
             at,
             name,
@@ -1610,9 +1619,15 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
         }) => {
             let store = destination.id();
             let (recorded, without) = (name.clone(), lost_message(&name, &lost));
+            let (standing, now) = (asker.clone(), app.clock.stamp());
             let waiting = app
                 .db
                 .write(Write::own(), move |tx| {
+                    if let Some(asker) = standing {
+                        asker
+                            .current(tx, &now)?
+                            .require(Permission::BackupsManage)?;
+                    }
                     record_put(tx, &store, changes, &recorded, at, without.as_deref())?;
                     files_waiting(tx, &store, &recorded)
                 })
@@ -1635,6 +1650,11 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
             })
         }
         Err(refused) => {
+            if let Some(asker) = &asker
+                && let Err(gone) = stands(app, asker).await
+            {
+                return Err(gone);
+            }
             let (message, at) = (refused.message.to_string(), app.clock.instant());
             let in_store = refused.code == Code::BlobStoreUnavailable;
             if let Err(error) = app
@@ -1687,7 +1707,7 @@ async fn bring_replication_forward(app: &Arc<App>) {
 /// whole, and only then writes its manifest, so a listed backup names only parts that are there.
 /// In the backup folder the parts are stored only once every file the backup names has a copy
 /// there or is known to be lost.
-async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
+async fn put(app: &Arc<App>, destination: &Destination, asker: Option<&Caller>) -> Result<Put> {
     settle_attempts(app, destination).await?;
     if let Destination::Folder(folder) = destination {
         let cleared = folder.clone();
@@ -1703,6 +1723,9 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
     let mut taken = app.backup_archive(&destination.id(), reuse).await?;
     app.faults.hold(HOLD_BACKUP_READ, None).await;
     let read_ms = began.elapsed().as_millis() as u64;
+    if let Some(asker) = asker {
+        stands(app, asker).await?;
+    }
     let (at, changes) = (taken.created_at, taken.changes);
     let name = name_of(at);
     let (files, in_store) = (
@@ -2846,7 +2869,7 @@ mod tests {
         let app = App::start(settings).await.unwrap();
         app.clock.pause(true);
         let put = |app: Arc<App>| async move {
-            match back_up(&app, true).await.unwrap() {
+            match back_up(&app, true, None).await.unwrap() {
                 Outcome::Put { name, taken, .. } => (name, taken),
                 _ => panic!("no backup was put"),
             }

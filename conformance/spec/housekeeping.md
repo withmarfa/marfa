@@ -103,6 +103,14 @@ When a caller authorized by `instance.maintain` or local authority sends `POST /
 
 **Tests:** `compliance/housekeeping.test.ts › runs a housekeeping job on demand and the listing records the run`.
 
+### `housekeeping/run-asker-gone`
+
+If the key that sent `POST /housekeeping/{name}/run` is revoked before the server records that the run started, then the server MUST answer `401 unauthorized` and start no run.
+
+**Reason:** once a run is recorded as started, it is the server's own work and finishes as `instance/background-request-authority` says.
+
+**Tests:** `compliance/owner-tasks.test.ts › starts no housekeeping run for a key revoked before the run is claimed`.
+
 ### `housekeeping/run-recorded`
 
 When a run finishes, the server MUST list its start, finish, outcome, error and result as the job's `last_started_at`, `last_finished_at`, `last_outcome`, `last_error` and `last_result`.

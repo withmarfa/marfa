@@ -49,7 +49,7 @@ struct Cleaned {
 }
 
 async fn cleaned(app: &Arc<App>) -> Cleaned {
-    let ended = housekeeping::run_now(app, "credential-cleanup")
+    let ended = housekeeping::run_now(app, &Caller::Server, "credential-cleanup")
         .await
         .unwrap();
     assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
@@ -1241,7 +1241,7 @@ async fn a_failing_stage_leaves_the_later_stages_to_run_and_fails_the_run() {
     app.faults
         .set("fail:commit", Some("auth.grant.retired"))
         .unwrap();
-    let ended = housekeeping::run_now(app, "credential-cleanup")
+    let ended = housekeeping::run_now(app, &Caller::Server, "credential-cleanup")
         .await
         .unwrap();
     assert_eq!(instance.count(clients).await, 1);
@@ -1465,7 +1465,7 @@ async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_no
     for key in keys {
         commit_unpublished(app, key, "soon").await;
     }
-    let ended = housekeeping::run_now(app, "credential-cleanup")
+    let ended = housekeeping::run_now(app, &Caller::Server, "credential-cleanup")
         .await
         .unwrap();
     assert_eq!(ended.outcome, "failed");

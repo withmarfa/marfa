@@ -277,7 +277,7 @@ describe("owner tasks", () => {
     ).toBe(401);
   });
 
-  it("lists and empties only the bin's items of the types a credential holding items.purge reads", async () => {
+  it("lists and empties only the bin's items of the types a credential holding items.purge writes, leaving those it only reads", async () => {
     const run = randomUUID();
     const writer = await mint({ ...EVERY_TYPE });
     const binned: Record<string, string> = {};
@@ -295,7 +295,7 @@ describe("owner tasks", () => {
     }
     const purger = await mint({
       permissions: ["items.purge"],
-      type_permissions: { "core.note": "write" },
+      type_permissions: { "core.note": "write", "core.task": "read" },
     });
     // The witness: the socket lists both.
     const everything = await local("GET", `/trash?q=${run}`);
@@ -369,6 +369,50 @@ describe("owner tasks", () => {
     );
   });
 
+  it("lists only the folders a credential's source filter admits, as the item listing does", async () => {
+    const run = randomUUID();
+    const made: string[] = [];
+    const sources: string[] = [];
+    for (const side of ["kept", "filtered"]) {
+      const writer = await mint({
+        type_permissions: { "system.folder": "write" },
+      });
+      const key = await call(writer.key, "GET", "/keys/current");
+      sources.push(key.body.source as string);
+      const folder = await call(writer.key, "POST", "/folders", {
+        title: `${side} ${run}`,
+      });
+      expect(folder.status, JSON.stringify(folder.body)).toBe(201);
+      made.push((folder.body.item as { id: string }).id);
+    }
+    const ours = (body: Record<string, unknown>) =>
+      (body.data as { id: string }[])
+        .map((row) => row.id)
+        .filter((id) => made.includes(id))
+        .sort();
+    // The witness: a reader with no filter lists both.
+    const open = await mint({ type_permissions: { "system.folder": "read" } });
+    const both = await call(open.key, "GET", "/folders?limit=200");
+    expect(both.status).toBe(200);
+    expect(ours(both.body)).toEqual([...made].sort());
+    const filtered = await mint({
+      type_permissions: { "system.folder": "read" },
+      enforcement_override: {
+        source_filter: { types: ["system.folder"], sources: [sources[0]] },
+      },
+    });
+    const items = await call(
+      filtered.key,
+      "GET",
+      "/items?type=system.folder&limit=200",
+    );
+    expect(items.status, JSON.stringify(items.body)).toBe(200);
+    expect(ours(items.body)).toEqual([made[0]]);
+    const listed = await call(filtered.key, "GET", "/folders?limit=200");
+    expect(listed.status).toBe(200);
+    expect(ours(listed.body)).toEqual([made[0]]);
+  });
+
   it("lets a key holding profile.email:write change the owner's email", async () => {
     const before = await local("GET", "/profile");
     expect(before.status).toBe(200);
@@ -389,6 +433,92 @@ describe("owner tasks", () => {
     expect((await local("PATCH", "/profile", { email })).status).toBe(200);
     expect((await local("GET", "/profile")).body.email).toBe(email);
   });
+
+  it(
+    "puts no backup for a key revoked before the backup's upload begins",
+    { retry: 0 },
+    async () => {
+      // retry: 0 because a failed try leaves the hold set.
+      const backupsNow = async () =>
+        ((await local("GET", "/backups")).body.data as { name: string }[])
+          .length;
+      const witness = await mint({ permissions: ["backups.manage"] });
+      const first = await backupsNow();
+      expect((await call(witness.key, "POST", "/backups")).status).toBe(200);
+      expect(await backupsNow()).toBe(first + 1);
+
+      const revoked = await mint({ permissions: ["backups.manage"] });
+      const before = await backupsNow();
+      await server.setFault("hold:backup:read");
+      const pending = call(revoked.key, "POST", "/backups");
+      await server.waitForHold("hold:backup:read");
+      expect((await local("DELETE", `/keys/${revoked.id}`)).status).toBe(200);
+      await server.clearFault("hold:backup:read");
+      const answer = await pending;
+      expect(answer.status, JSON.stringify(answer.body)).toBe(401);
+      expect(await backupsNow()).toBe(before);
+    },
+  );
+
+  it(
+    "records no backup for a key revoked while its backup uploads",
+    { retry: 0 },
+    async () => {
+      // retry: 0 because a failed try leaves the hold set.
+      const lastBackup = async () =>
+        (
+          (await local("GET", "/health")).body.backups as {
+            last_backup?: string;
+          }
+        ).last_backup;
+      const witness = await mint({ permissions: ["backups.manage"] });
+      const put = await call(witness.key, "POST", "/backups");
+      expect(put.status).toBe(200);
+      const recorded = await lastBackup();
+      expect(recorded).toBe((put.body.backup as { name: string }).name);
+
+      const revoked = await mint({ permissions: ["backups.manage"] });
+      await server.setFault("hold:backup:put");
+      const pending = call(revoked.key, "POST", "/backups");
+      await server.waitForHold("hold:backup:put");
+      expect((await local("DELETE", `/keys/${revoked.id}`)).status).toBe(200);
+      await server.clearFault("hold:backup:put");
+      const answer = await pending;
+      expect(answer.status, JSON.stringify(answer.body)).toBe(401);
+      expect(await lastBackup()).toBe(recorded);
+    },
+  );
+
+  it(
+    "starts no housekeeping run for a key revoked before the run is claimed",
+    { retry: 0 },
+    async () => {
+      // retry: 0 because a failed try leaves the hold set.
+      const JOB = "attention-check";
+      const started = async () =>
+        (
+          (await local("GET", "/housekeeping")).body.data as {
+            name: string;
+            last_started_at: string | null;
+          }[]
+        ).find((job) => job.name === JOB)?.last_started_at;
+      const witness = await mint({ permissions: ["instance.maintain"] });
+      const ran = await call(witness.key, "POST", `/housekeeping/${JOB}/run`);
+      expect(ran.status, JSON.stringify(ran.body)).toBe(200);
+      const before = await started();
+      expect(before).toBe(ran.body.started_at);
+
+      const revoked = await mint({ permissions: ["instance.maintain"] });
+      await server.setFault("hold:write=housekeeping.claim@1");
+      const pending = call(revoked.key, "POST", `/housekeeping/${JOB}/run`);
+      await server.waitForHold("hold:write");
+      expect((await local("DELETE", `/keys/${revoked.id}`)).status).toBe(200);
+      await server.clearFault("hold:write");
+      const answer = await pending;
+      expect(answer.status, JSON.stringify(answer.body)).toBe(401);
+      expect(await started()).toBe(before);
+    },
+  );
 
   it("still answers every owner task on the private socket", async () => {
     for (const [method, path] of [

@@ -15,6 +15,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use futures_util::StreamExt;
+use marfa_server::app::access::Caller;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -481,7 +482,9 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         let faults = &instance.app.faults;
         faults.set("hold:write", Some("blob.purge")).unwrap();
         let app = instance.app.clone();
-        let run = tokio::spawn(async move { housekeeping::run_now(&app, "blob-orphans").await });
+        let run = tokio::spawn(async move {
+            housekeeping::run_now(&app, &Caller::Server, "blob-orphans").await
+        });
         instance.when_held().await;
         commit_unpublished(&instance.app, key, value).await;
         let live = instance.app.settings.live();
@@ -512,7 +515,7 @@ async fn the_orphan_job_ends_in_error_and_purges_nothing_while_its_settings_do_n
         assert_eq!(first["purged"], 0, "{first}");
 
         commit_unpublished(&instance.app, key, "soon").await;
-        let ended = housekeeping::run_now(&instance.app, "blob-orphans")
+        let ended = housekeeping::run_now(&instance.app, &Caller::Server, "blob-orphans")
             .await
             .unwrap();
         assert_eq!(ended.outcome, "failed", "{key}");

@@ -27,8 +27,8 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     ))
 }
 
-/// The caller is judged here and nowhere after: the run is the server's, so a
-/// key revoked once it is admitted does not stop it.
+/// The caller is judged here and again as the run is claimed; a key revoked once
+/// the run is claimed does not stop it.
 pub async fn run(
     State(app): State<Arc<App>>,
     caller: Caller,
@@ -44,7 +44,7 @@ pub async fn run(
                 .into(),
         );
     }
-    let ended = housekeeping::run_now(&app, &name).await?;
+    let ended = housekeeping::run_now(&app, &caller, &name).await?;
     Ok(json_answer(StatusCode::OK, &ended.to_json()))
 }
 

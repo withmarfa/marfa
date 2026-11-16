@@ -362,7 +362,9 @@ impl Ended {
 }
 
 /// The claim and the run are one task, so a caller who goes away leaves neither half done.
-pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
+/// The caller's `instance.maintain` is decided in the claim's write; once claimed, the run is the
+/// server's.
+pub async fn run_now(app: &Arc<App>, caller: &Caller, name: &str) -> Result<Ended> {
     let job = JOBS
         .iter()
         .find(|job| job.name == name && job.runs_here(app))
@@ -373,16 +375,15 @@ pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
             )
         })?;
     let app = app.clone();
-    // The claim admits the run, so it is the request's write; the run itself is the server's.
     let claiming = {
-        let (app, clock) = (app.clone(), app.clock.clone());
+        let (app, caller) = (app.clone(), caller.clone());
         provenance::carried(async move {
-            app.db
-                .write(Write::own(), move |tx| {
-                    let at = clock.stamp();
-                    Ok(schedule::claim(tx, job.name, None, &at)?.then_some(at))
-                })
-                .await
+            app.write(&caller, "housekeeping.claim", move |unit| {
+                unit.caller.require(Permission::InstanceMaintain)?;
+                let at = unit.at.clone();
+                Ok(schedule::claim(unit.tx(), job.name, None, &at)?.then_some(at))
+            })
+            .await
         })
     };
     tokio::spawn(async move {
