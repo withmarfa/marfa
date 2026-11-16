@@ -1228,7 +1228,7 @@ export const answers = {
       { trashed: true },
     ),
   /** An edge end a move names that the server does not hold (`edges/move-end-missing`). */
-  edgeEndNotFound: (end: "source" | "target", id: string): Answer =>
+  edgeEndNotFound: (end: "from" | "to", id: string): Answer =>
     refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),
   /** A move of an edge end whose type holds more than one at the end that
    *  stays (`edges/move-many`). */

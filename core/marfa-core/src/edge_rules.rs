@@ -155,10 +155,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
             conn,
             catalog: &catalog,
             refused: &unread,
-            replaced: edge
-                .from
-                .replaced()
-                .map(|source| (source, edge.edge_type)),
+            replaced: edge.from.replaced().map(|source| (source, edge.edge_type)),
         };
         let proposed = edges::Proposed {
             edge_type: edge.edge_type,
@@ -411,13 +408,13 @@ fn refuse_unfitting_ends(
     let from_type = match edge.from {
         FromEnd::Made { r#type, .. } => Some(r#type.to_string()),
         FromEnd::Held(id) => match held_row(conn, id)? {
-            Some((_, true)) => return Err(end_not_found("source", id)),
+            Some((_, true)) => return Err(end_not_found("from", id)),
             Some((r#type, false)) => Some(r#type),
             None => None,
         },
     };
     let to_type = match held_row(conn, edge.to_id)? {
-        Some((_, true)) => return Err(end_not_found("target", edge.to_id)),
+        Some((_, true)) => return Err(end_not_found("to", edge.to_id)),
         Some((r#type, false)) => Some(r#type),
         None => None,
     };
@@ -1730,8 +1727,7 @@ mod tests {
         assert_eq!(queued(&core), before, "a refused move was queued");
 
         // The witness: a free end takes the move, and the check queued nothing.
-        core.check_edge_move(HELD_EDGE, End::To, NOTE_C)
-            .unwrap();
+        core.check_edge_move(HELD_EDGE, End::To, NOTE_C).unwrap();
         assert_eq!(queued(&core), before, "the check queued a write");
         core.update_edge(HELD_EDGE, &target(NOTE_C)).unwrap();
         assert_eq!(queued(&core), before + 1);

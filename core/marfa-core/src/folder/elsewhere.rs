@@ -186,8 +186,7 @@ impl Peer {
             edges.iter().any(|edge| {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
                     && self.bound_to(&edge.to_id).is_some()
-                    && !(taking.contains(&edge.to_id)
-                        && self.holds(&edge.to_id) == Some(false))
+                    && !(taking.contains(&edge.to_id) && self.holds(&edge.to_id) == Some(false))
             })
         })
     }

@@ -106,10 +106,7 @@ pub(crate) fn source_missing(id: &str) -> Refusal {
 }
 
 pub(crate) fn target_missing(id: &str) -> Refusal {
-    Refusal::new(
-        Code::ItemNotFound,
-        format!("Edge to item not found: {id}"),
-    )
+    Refusal::new(Code::ItemNotFound, format!("Edge to item not found: {id}"))
 }
 
 fn unknown_kind(edge_type: &str) -> Refusal {
@@ -122,7 +119,7 @@ fn unknown_kind(edge_type: &str) -> Refusal {
 fn self_loop(kind: &EdgeType) -> Refusal {
     Refusal::new(
         Code::EdgeCycle,
-        "Edge source and target must be different items",
+        "An edge's from item and to item must be different items",
     )
     .with_detail("edge_type", kind.id.as_str())
 }
@@ -172,20 +169,12 @@ pub(crate) fn judge_restored_ends(
     if let Some(held) = &held
         && !lineage_admits(held, &kind.from_type_constraints)
     {
-        return Err(constraint(edges::refused_end(
-            kind,
-            End::From,
-            from_type,
-        )));
+        return Err(constraint(edges::refused_end(kind, End::From, from_type)));
     }
     if let Some(target) = lineage(to_type)
         && !lineage_admits(&target, &kind.to_type_constraints)
     {
-        return Err(constraint(edges::refused_end(
-            kind,
-            End::To,
-            to_type,
-        )));
+        return Err(constraint(edges::refused_end(kind, End::To, to_type)));
     }
     if kind.flat && held.is_some_and(|held| lineage_admits(&held, &kind.to_type_constraints)) {
         let mut nesting = edges::refused_nesting(&kind.id, from_id, from_type);
@@ -445,11 +434,7 @@ impl<'c> Writing<'_, '_, 'c> {
     fn judge_ends(&self, kind: &EdgeType, source: (&str, &str), target: &Item) -> Result<()> {
         let (from_id, from_type) = source;
         if !admitted(self.catalog, &kind.from_type_constraints, from_type) {
-            return Err(constraint(edges::refused_end(
-                kind,
-                End::From,
-                from_type,
-            )));
+            return Err(constraint(edges::refused_end(kind, End::From, from_type)));
         }
         if !admitted(self.catalog, &kind.to_type_constraints, &target.type_id) {
             return Err(constraint(edges::refused_end(
@@ -499,12 +484,7 @@ impl<'c> Writing<'_, '_, 'c> {
         if let Some(held) = &held
             && self.may_read(held)?
         {
-            repeat(
-                held,
-                &create.from_id,
-                &create.to_id,
-                &create.edge_type,
-            )?;
+            repeat(held, &create.from_id, &create.to_id, &create.edge_type)?;
             self.note_edge(&held.id, &source);
             return Ok(Wrote::Repeated(held.clone()));
         }
@@ -653,7 +633,7 @@ impl<'c> Writing<'_, '_, 'c> {
         if source.id == target.id {
             return Err(Refusal::new(
                 Code::EdgeCycle,
-                "Edge source and target must be different items",
+                "An edge's from item and to item must be different items",
             ));
         }
         let proposed = Proposed {
@@ -1194,8 +1174,7 @@ pub(crate) fn judge_retype(
             continue;
         }
         let name = &kind.id;
-        if edge.from_id == *id
-            && !admitted(writing.catalog, &kind.from_type_constraints, next_type)
+        if edge.from_id == *id && !admitted(writing.catalog, &kind.from_type_constraints, next_type)
         {
             let refusal = edges::refused_end(kind, End::From, next_type);
             return Err(constraint(Refused {
@@ -1206,9 +1185,7 @@ pub(crate) fn judge_retype(
                 details: refusal.details,
             }));
         }
-        if edge.to_id == *id
-            && !admitted(writing.catalog, &kind.to_type_constraints, next_type)
-        {
+        if edge.to_id == *id && !admitted(writing.catalog, &kind.to_type_constraints, next_type) {
             let refusal = edges::refused_end(kind, End::To, next_type);
             return Err(constraint(Refused {
                 message: format!(
@@ -1261,11 +1238,7 @@ pub(crate) fn copy_edges(
             Some(end) => end == if outbound { End::From } else { End::To },
             None => outbound,
         };
-        let other = if outbound {
-            &edge.to_id
-        } else {
-            &edge.from_id
-        };
+        let other = if outbound { &edge.to_id } else { &edge.from_id };
         if !written
             || marfa_rules::edges::Graph::in_bin(&store, other)?
             || on_delete == OnDelete::Block

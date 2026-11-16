@@ -6409,11 +6409,7 @@ impl RefusedEdgeCreate {
                       WHERE owed.subject = 'edge' AND owed.id = edge.id)",
         )?;
         let held = statement.query_map(
-            params![
-                self.asked.from_id,
-                self.asked.edge_type,
-                self.asked.to_id
-            ],
+            params![self.asked.from_id, self.asked.edge_type, self.asked.to_id],
             |row| row.get::<_, String>(0),
         )?;
         for properties in held {

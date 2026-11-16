@@ -1953,9 +1953,7 @@ fn moved_line(
         (None, Some(to)) if source == &bound.item_id => {
             (marfa_rules::catalog::End::From, target, to)
         }
-        (Some(to), None) if target == &bound.item_id => {
-            (marfa_rules::catalog::End::To, source, to)
-        }
+        (Some(to), None) if target == &bound.item_id => (marfa_rules::catalog::End::To, source, to),
         _ => return Ok(None),
     };
     let edge_type = match crate::store::edge_ends(conn, edge_id)? {
@@ -8074,9 +8072,7 @@ mod tests {
             .queue()
             .unwrap()
             .into_iter()
-            .filter(|row| {
-                row.kind == WriteKind::CreateEdge && row.to_id.as_deref() == Some(SHELF)
-            })
+            .filter(|row| row.kind == WriteKind::CreateEdge && row.to_id.as_deref() == Some(SHELF))
             .count();
         assert_eq!(shelved, 2);
 
@@ -8140,9 +8136,7 @@ mod tests {
             .queue()
             .unwrap()
             .iter()
-            .filter(|row| {
-                row.kind == WriteKind::CreateEdge && row.to_id.as_deref() == Some(target)
-            })
+            .filter(|row| row.kind == WriteKind::CreateEdge && row.to_id.as_deref() == Some(target))
             .count()
     }
 
@@ -9578,12 +9572,7 @@ mod tests {
             match row.kind {
                 WriteKind::CreateEdge => {
                     let end = |field: &str| row.body[field].as_str().unwrap().to_string();
-                    found.push((
-                        "create",
-                        end("from_id"),
-                        end("edge_type"),
-                        end("to_id"),
-                    ));
+                    found.push(("create", end("from_id"), end("edge_type"), end("to_id")));
                 }
                 WriteKind::DeleteEdge => found.push((
                     "delete",

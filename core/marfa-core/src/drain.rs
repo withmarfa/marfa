@@ -3178,7 +3178,7 @@ fn queue_owed_time_clear(
 /// Given to an edit or delete of an edge a create was shown with that the
 /// server did not make.
 const UNMADE: &str =
-    "the server made no edge to this target when it answered the create the edge was drawn with";
+    "the server made no edge to this item when it answered the create the edge was drawn with";
 
 /// The edges a created item was drawn with while its write waited carry
 /// device-own ids. Each leaves where `answered`, the item the server answered

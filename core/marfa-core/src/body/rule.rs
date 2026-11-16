@@ -1056,9 +1056,7 @@ fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> 
 /// that goes takes its path with it.
 pub(crate) fn edge_leaving(conn: &Connection, id: &str) -> Result<()> {
     match store::edge_by_id_with(conn, id, &mut store::Unreadable::Keep(Default::default()))? {
-        Some(held) if held.edge_type == PLACEMENT_EDGE => {
-            item_changing(conn, &held.from_id, None)
-        }
+        Some(held) if held.edge_type == PLACEMENT_EDGE => item_changing(conn, &held.from_id, None),
         _ => Ok(()),
     }
 }

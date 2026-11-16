@@ -204,10 +204,7 @@ fn get_edges_answers_each_held_edge_once_and_where_it_was_moved() {
     moved.version = 2;
     store::put_server_edge(&core.conn().unwrap(), &moved).unwrap();
     let answered = core.get_edges(&ids(&["ab"])).unwrap();
-    assert_eq!(
-        (answered[0].to_id.as_str(), answered[0].version),
-        ("c", 2)
-    );
+    assert_eq!((answered[0].to_id.as_str(), answered[0].version), ("c", 2));
     let kept = core.get_edges_kept(&ids(&["ab"])).unwrap();
     assert_eq!(kept, [(answered[0].clone(), None)]);
 }

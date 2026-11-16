@@ -1209,13 +1209,13 @@ marfa edges get [OPTIONS] <ID>
 Link two items with an edge.
 
 ```text
-marfa edges create [OPTIONS] --from <ID> --to <ID> --type <TYPE>
+marfa edges create [OPTIONS] --from-id <ID> --to-id <ID> --type <TYPE>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--from <ID>` | The item the edge leaves. |
-| `--to <ID>` | The item the edge arrives at. |
+| `--from-id <ID>` | The item the edge points from. |
+| `--to-id <ID>` | The item the edge points to. |
 | `--type <TYPE>` | The edge type. |
 | `--properties <JSON>` | The edge's properties, as a JSON object. |
 | `--id <ID>` | The id to mint it under. Omitted, the server mints one. |
@@ -1236,8 +1236,8 @@ marfa edges update [OPTIONS] --version <VERSION> <ID>
 | Option | Description |
 | --- | --- |
 | `--properties <JSON>` | The properties, as a JSON object. Whole values. |
-| `--from <ID>` | Move the edge to this source, where each target holds one of its type. |
-| `--to <ID>` | Move the edge to this target, where each source holds one of its type. |
+| `--from-id <ID>` | Move the edge's from end to this item, where each to end holds one edge of its type. |
+| `--to-id <ID>` | Move the edge's to end to this item, where each from end holds one edge of its type. |
 | `--version <VERSION>` | The version the edit was based on. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
@@ -3168,7 +3168,7 @@ marfa device items create [OPTIONS] --type <TYPE> --properties <JSON>
 | `--state <STATE>` | The state to create it in; the default is active. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--capture-latitude <DEGREES>` | Where it was captured: the latitude, in degrees. Needs `--capture-longitude`. |
 | `--capture-longitude <DEGREES>` | Where it was captured: the longitude, in degrees. Needs `--capture-latitude`. |
-| `--edges <JSON>` | Edges to make with it, as a JSON object of edge type to a list of target ids. Queued and sent as one write with the item: if the server refuses any, it makes none of them and the item stays in the queue as refused. |
+| `--edges <JSON>` | Edges to make with it, as a JSON object of edge type to a list of the ids of the items they point to. Queued and sent as one write with the item: if the server refuses any, it makes none of them and the item stays in the queue as refused. |
 | `--source <SOURCE>` | The source to stamp it with. |
 | `--source-id <SOURCE_ID>` | The id this item has in the system it came from. |
 | `--occurred-at <OCCURRED_AT>` | The item's own time, RFC 3339. Defaults to now. |
@@ -4107,13 +4107,13 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Link two items, and queue the edge.
 
 ```text
-marfa device edges create [OPTIONS] --from <ID> --to <ID> --type <TYPE>
+marfa device edges create [OPTIONS] --from-id <ID> --to-id <ID> --type <TYPE>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--from <ID>` | The item the edge starts from. |
-| `--to <ID>` | The item the edge points at. |
+| `--from-id <ID>` | The item the edge points from. |
+| `--to-id <ID>` | The item the edge points to. |
 | `--type <TYPE>` | The edge type. |
 | `--properties <JSON>` | The edge's properties, as a JSON object. Default: `{}`. |
 | `--id <ID>` | The id to mint it under. Omitted, the device mints one. |
@@ -4125,13 +4125,13 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Say whether `edges create` would refuse an edge now, from what the copy holds, and queue nothing. The server still judges an edge the copy finds nothing against.
 
 ```text
-marfa device edges check [OPTIONS] --from <ID> --to <ID> --type <TYPE>
+marfa device edges check [OPTIONS] --from-id <ID> --to-id <ID> --type <TYPE>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--from <ID>` | The item the edge starts from. |
-| `--to <ID>` | The item the edge points at. |
+| `--from-id <ID>` | The item the edge points from. |
+| `--to-id <ID>` | The item the edge points to. |
 | `--type <TYPE>` | The edge type. |
 | `--properties <JSON>` | The edge's properties, as a JSON object. Default: `{}`. |
 | `--id <ID>` | The id it would be minted under. |
@@ -4143,7 +4143,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Say whether `edges update` would refuse moving one end of an edge now, from what the copy holds, and queue nothing. A move onto the end the edge holds already changes nothing. The server still judges a move the copy finds nothing against.
 
 ```text
-marfa device edges check-move [OPTIONS] <--from <ID>|--to <ID>> <ID>
+marfa device edges check-move [OPTIONS] <--from-id <ID>|--to-id <ID>> <ID>
 ```
 
 | Argument | Description |
@@ -4152,8 +4152,8 @@ marfa device edges check-move [OPTIONS] <--from <ID>|--to <ID>> <ID>
 
 | Option | Description |
 | --- | --- |
-| `--from <ID>` | Move the edge to this source. |
-| `--to <ID>` | Move the edge to this target. |
+| `--from-id <ID>` | Move the edge's from end to this item. |
+| `--to-id <ID>` | Move the edge's to end to this item. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4173,8 +4173,8 @@ marfa device edges update [OPTIONS] <ID>
 | --- | --- |
 | `--properties <JSON>` | The properties to write, as a JSON object. Whole values. Default: `{}`. |
 | `--version <VERSION>` | The version the edit was based on. Required, as on an item. |
-| `--from <ID>` | Move the edge to this source, where each target holds one of its type. |
-| `--to <ID>` | Move the edge to this target, where each source holds one of its type. |
+| `--from-id <ID>` | Move the edge's from end to this item, where each to end holds one edge of its type. |
+| `--to-id <ID>` | Move the edge's to end to this item, where each from end holds one edge of its type. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

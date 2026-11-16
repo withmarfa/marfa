@@ -491,10 +491,7 @@ impl Folder {
         } else {
             &work.links[..]
         };
-        let standing: Vec<String> = references
-            .iter()
-            .map(|edge| edge.to_id.clone())
-            .collect();
+        let standing: Vec<String> = references.iter().map(|edge| edge.to_id.clone()).collect();
         for raw in links {
             let typed = Typed::new(raw);
             let resolved = match self.recorded_link(item_id, raw, &standing)? {

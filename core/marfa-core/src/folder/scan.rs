@@ -1788,8 +1788,7 @@ impl Folder {
                 .map(Vec::as_slice)
                 .unwrap_or_default();
             for edge in candidates {
-                if by_item.contains_key(edge.from_id.as_str()) || taken.contains(&edge.from_id)
-                {
+                if by_item.contains_key(edge.from_id.as_str()) || taken.contains(&edge.from_id) {
                     continue;
                 }
                 if !self.holds(&edge.from_id, settings, &members) {

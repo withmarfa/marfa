@@ -765,8 +765,7 @@ pub(crate) fn settle_late_part(
     to_id: &str,
 ) -> Result<()> {
     let tx = unit.tx();
-    let (Some(source), Some(host)) = (rows::by_id(tx, from_id)?, rows::by_id(tx, to_id)?)
-    else {
+    let (Some(source), Some(host)) = (rows::by_id(tx, from_id)?, rows::by_id(tx, to_id)?) else {
         return Ok(());
     };
     let gate = Gate {

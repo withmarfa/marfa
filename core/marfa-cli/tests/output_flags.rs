@@ -610,7 +610,14 @@ fn an_edge_names_its_two_ends_by_from_id_and_to_id() {
         &home,
         &door.url,
         &[
-            "edges", "create", "--from-id", "a", "--to-id", "b", "--type", "about",
+            "edges",
+            "create",
+            "--from-id",
+            "a",
+            "--to-id",
+            "b",
+            "--type",
+            "about",
         ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
@@ -627,10 +634,24 @@ fn an_edge_names_its_two_ends_by_from_id_and_to_id() {
             "edges", "create", "--from", "a", "--to-id", "b", "--type", "about",
         ],
         [
-            "edges", "create", "--from-id", "a", "--to", "b", "--type", "about",
+            "edges",
+            "create",
+            "--from-id",
+            "a",
+            "--to",
+            "b",
+            "--type",
+            "about",
         ],
         [
-            "edges", "create", "--from-id", "a", "--target", "b", "--type", "about",
+            "edges",
+            "create",
+            "--from-id",
+            "a",
+            "--target",
+            "b",
+            "--type",
+            "about",
         ],
     ] {
         let ran = run(&home, "http://127.0.0.1:9", &words);

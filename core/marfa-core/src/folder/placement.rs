@@ -250,9 +250,7 @@ impl Folder {
             .edges_from(item_id)?
             .into_iter()
             .filter(|edge| {
-                edge.edge_type == PLACEMENT_EDGE
-                    && edge.to_id == self.folder
-                    && edge.version > 0
+                edge.edge_type == PLACEMENT_EDGE && edge.to_id == self.folder && edge.version > 0
             })
             .min_by_key(rank_of)
             .map(|edge| (edge.id, edge.version)))

@@ -4610,8 +4610,7 @@ fn ends_moved(held: &model::Edge, edit: &EdgeEdit) -> EdgeEdit {
 /// from the catalog the copy holds; one it does not hold is left to the
 /// server.
 fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> Result<()> {
-    let (moved, from_id, to_id) = match (edit.from_id.as_deref(), edit.to_id.as_deref())
-    {
+    let (moved, from_id, to_id) = match (edit.from_id.as_deref(), edit.to_id.as_deref()) {
         (None, None) => return Ok(()),
         (Some(_), Some(_)) => {
             return Err(CoreError::Validation {
@@ -4624,16 +4623,8 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
                 details: None,
             });
         }
-        (Some(source), None) => (
-            marfa_rules::catalog::End::From,
-            source,
-            held.to_id.as_str(),
-        ),
-        (None, Some(target)) => (
-            marfa_rules::catalog::End::To,
-            held.from_id.as_str(),
-            target,
-        ),
+        (Some(source), None) => (marfa_rules::catalog::End::From, source, held.to_id.as_str()),
+        (None, Some(target)) => (marfa_rules::catalog::End::To, held.from_id.as_str(), target),
     };
     match catalog::edge_type(conn, &held.edge_type) {
         Ok(edge_type) if !edge_type.one_at(moved.other()) => {

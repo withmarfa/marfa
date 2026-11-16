@@ -178,8 +178,7 @@ impl EdgeType {
     pub fn one_at(&self, end: End) -> bool {
         matches!(
             (end, self.cardinality.as_str()),
-            (End::From, "one-to-one" | "many-to-one")
-                | (End::To, "one-to-one" | "one-to-many")
+            (End::From, "one-to-one" | "many-to-one") | (End::To, "one-to-one" | "one-to-many")
         )
     }
 }

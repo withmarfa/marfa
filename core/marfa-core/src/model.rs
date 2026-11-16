@@ -1801,10 +1801,7 @@ impl EdgeEdit {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         body.insert("version".into(), Value::from(base_version));
-        for (key, end) in [
-            ("from_id", &self.from_id),
-            ("to_id", &self.to_id),
-        ] {
+        for (key, end) in [("from_id", &self.from_id), ("to_id", &self.to_id)] {
             if let Some(end) = end {
                 body.insert(key.into(), Value::String(end.clone()));
             }

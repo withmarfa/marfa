@@ -149,10 +149,7 @@ mod tests {
         assert!(parent.one_at(End::To) && !parent.one_at(End::From));
         assert_eq!(parent.name_at(End::To), Some("child-of"));
         let types = EdgeTypes::of(vec![parent]);
-        assert_eq!(
-            types.named("child-of").map(|(_, end)| end),
-            Some(End::To)
-        );
+        assert_eq!(types.named("child-of").map(|(_, end)| end), Some(End::To));
         assert_eq!(
             types.named("parent-of").map(|(_, end)| end),
             Some(End::From)

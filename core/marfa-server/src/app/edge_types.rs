@@ -228,14 +228,12 @@ fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<
         return Ok(());
     }
     for to_type in edges::to_types(unit.tx(), id)? {
-        unit.caller
-            .require_cascade_to(&to_type)
-            .map_err(|_| {
-                Refusal::new(
-                    Code::TypeNotPermitted,
-                    "This edge type cannot cascade onto the targets its stored edges hold.",
-                )
-            })?;
+        unit.caller.require_cascade_to(&to_type).map_err(|_| {
+            Refusal::new(
+                Code::TypeNotPermitted,
+                "This edge type cannot cascade onto the targets its stored edges hold.",
+            )
+        })?;
     }
     Ok(())
 }

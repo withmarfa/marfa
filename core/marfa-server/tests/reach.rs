@@ -149,9 +149,7 @@ impl Instance {
             .local(
                 Method::POST,
                 "/edges",
-                Some(
-                    json!({ "from_id": source, "to_id": target, "edge_type": "acme.pairs" }),
-                ),
+                Some(json!({ "from_id": source, "to_id": target, "edge_type": "acme.pairs" })),
             )
             .await;
         made.body["edge"].clone()

@@ -161,13 +161,7 @@ pub async fn delete(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, _| async move {
         let from_version = from_version_of(&uri)?;
-        write::run(
-            &door,
-            &who,
-            claim,
-            Op::Delete(Delete { id, from_version }),
-        )
-        .await
+        write::run(&door, &who, claim, Op::Delete(Delete { id, from_version })).await
     })
     .await
 }

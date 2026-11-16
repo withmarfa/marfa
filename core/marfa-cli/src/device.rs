@@ -928,8 +928,8 @@ pub struct CreateArgs {
         allow_hyphen_values = true
     )]
     pub capture_longitude: Option<f64>,
-    /// Edges to make with it, as a JSON object of edge type to a list of
-    /// target ids. Queued and sent as one write with the item: if the server
+    /// Edges to make with it, as a JSON object of edge type to a list of the
+    /// ids of the items they point to. Queued and sent as one write with the item: if the server
     /// refuses any, it makes none of them and the item stays in the queue as
     /// refused.
     #[arg(long, value_name = "JSON")]

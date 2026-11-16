@@ -2275,7 +2275,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a move to an item the server does not hold",
       { status: nowhere.status, body: nowhere.error },
-      answers.edgeEndNotFound("source", missing),
+      answers.edgeEndNotFound("from", missing),
       { same: ["error.code", "error.message"] },
     );
 

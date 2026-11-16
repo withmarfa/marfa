@@ -459,8 +459,7 @@ mod tests {
             other: "other".into(),
         };
         let edge = "{\"edge_type\":\"references\",\"from_id\":\"note\",\"to_id\":\"other\"}";
-        let to_note =
-            "{\"edge_type\":\"references\",\"from_id\":\"other\",\"to_id\":\"note\"}";
+        let to_note = "{\"edge_type\":\"references\",\"from_id\":\"other\",\"to_id\":\"note\"}";
         for (kind, extra) in [
             ("update_item", vec![]),
             ("add_tag", vec![("tag", "kept")]),
@@ -469,10 +468,7 @@ mod tests {
                 "transition_item",
                 vec![("payload", "{\"state\":\"archived\"}")],
             ),
-            (
-                "create_edge",
-                vec![("to_id", "other"), ("payload", edge)],
-            ),
+            ("create_edge", vec![("to_id", "other"), ("payload", edge)]),
             (
                 "create_edge",
                 vec![
@@ -481,10 +477,7 @@ mod tests {
                     ("payload", to_note),
                 ],
             ),
-            (
-                "delete_edge",
-                vec![("to_id", "other"), ("payload", edge)],
-            ),
+            ("delete_edge", vec![("to_id", "other"), ("payload", edge)]),
             (
                 "update_edge",
                 vec![

@@ -434,7 +434,7 @@ export class EdgeDoor {
       if (refused !== undefined) return refused;
       const moves =
         ends.from_id !== held.from_id || ends.to_id !== held.to_id;
-      for (const end of ["source", "target"] as const) {
+      for (const end of ["from", "to"] as const) {
         const id = ends[`${end}_id`];
         if (moves && !this.holds(id)) return answers.edgeEndNotFound(end, id);
       }

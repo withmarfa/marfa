@@ -477,10 +477,7 @@ pub async fn run(
                 &applied,
                 Refusal::new(
                     Code::EdgeNotFound,
-                    format!(
-                        "The item has no {} edge to {}.",
-                        edge.edge_type, edge.to_id
-                    ),
+                    format!("The item has no {} edge to {}.", edge.edge_type, edge.to_id),
                 ),
             ));
         };

@@ -336,8 +336,7 @@ pub fn cascade_reach<G: Graph>(graph: &G, start: &str) -> Result<Vec<String>, G:
     let mut reached = Vec::new();
     while let Some(at) = waiting.pop() {
         for link in graph.outbound(&at)? {
-            if graph.on_delete(&link.edge_type) == OnDelete::Cascade
-                && seen.insert(link.to.clone())
+            if graph.on_delete(&link.edge_type) == OnDelete::Cascade && seen.insert(link.to.clone())
             {
                 reached.push(link.to.clone());
                 waiting.push(link.to);

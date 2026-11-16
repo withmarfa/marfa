@@ -34,16 +34,16 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **batch**: One write to the rows of one table of an item, made whole and named by a UUIDv7. The table's **change log** keeps each row as it stood before each batch, so a batch can be undone; an undo is a batch too.
 - **tag**: A free-form, flat label on an item (`search-and-filters/search-tags-with-text`). A git tag that names a release, such as `v0.0.1`, is a release tag, not this.
 - **extension**: A namespaced JSON object of metadata attached to an item by something other than the key that wrote the item, read and written per namespace. Not a blob and not a property.
-- **edge**: A directed relationship between two items, named by its **edge type**. An edge has properties and a version of its own.
-- **reverse name**: The name an edge type may declare for its edges read from the target, such as `child-of` for `parent-of`, used as a frontmatter key. Never "inverse". Not a reverse label.
-- **written at**: The end of an edge type whose file writes its edges in a folder, `source` or `target`, or `none` where no file does (`written_from`).
-- **label**: The heading a type, a field or an edge type shows for itself. An edge type's label heads the source end of its edges, such as `Children` on `parent-of`. Not the `id` and not a reverse name.
+- **edge**: A directed relationship from one item to another, named by its **edge type**. `from_id` names its **from item**, the item it points from, and `to_id` its **to item**, the item it points to; together they are its two **ends**. An edge has properties and a version of its own. Never "source" or "target" for an end: a source is what wrote an item.
+- **reverse name**: The name an edge type may declare for its edges read from the to item, such as `child-of` for `parent-of`, used as a frontmatter key. Never "inverse". Not a reverse label.
+- **written from**: The end of an edge type whose file writes its edges in a folder, `from` or `to`, or `none` where no file does (`written_from`).
+- **label**: The heading a type, a field or an edge type shows for itself. An edge type's label heads the from end of its edges, such as `Children` on `parent-of`. Not the `id` and not a reverse name.
 - **plural**: The name of a list of a type's items, such as `People` for `core.entity.person`.
-- **reverse label**: The heading an edge type shows for the target end of its edges, such as `Parent` on `parent-of`. Not a reverse name, which is a frontmatter key.
-- **excerpt**: A highlight, quote or clip that carries its own text and is taken from one item: the source of an `excerpt-of` edge to that item. Not a mention.
+- **reverse label**: The heading an edge type shows for the to end of its edges, such as `Parent` on `parent-of`. Not a reverse name, which is a frontmatter key.
+- **excerpt**: A highlight, quote or clip that carries its own text and is taken from one item: the from item of an `excerpt-of` edge to that item. Not a mention.
 - **mention**: A link or embed in an item's text, or a system's own link from one item to another: a `references` edge, and nothing else. A passage taken from an item is an excerpt.
-- **part**: An item out of the bin that is the source of an edge, to an item out of the bin, whose type's `cascade_on_delete` is `with-hosts`, such as `attached-to` or `comments-on`. The filter term `part eq true` selects parts.
-- **host**: The target of a part's `with-hosts` edge: the item a comment is on or a file is attached to. Never a parent: a `parent-of` edge makes a child.
+- **part**: An item out of the bin that is the from item of an edge, to an item out of the bin, whose type's `cascade_on_delete` is `with-hosts`, such as `attached-to` or `comments-on`. The filter term `part eq true` selects parts.
+- **host**: The to item of a part's `with-hosts` edge: the item a comment is on or a file is attached to. Never a parent: a `parent-of` edge makes a child.
 
 ### Versions and events
 

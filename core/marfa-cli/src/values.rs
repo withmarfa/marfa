@@ -121,11 +121,11 @@ pub fn parse_sort_field(text: &str) -> Result<marfa_core::SortField, String> {
     }
 }
 
-/// The edges of a create: edge type to target ids.
+/// The edges of a create: edge type to the ids of the items they point to.
 pub fn edges(text: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>, CliError> {
     serde_json::from_str(text).map_err(|error| {
         CliError::Invalid(format!(
-            "--edges takes a JSON object of edge type to a list of target ids: {error}"
+            "--edges takes a JSON object of edge type to a list of the ids of the items they point to: {error}"
         ))
     })
 }

@@ -673,7 +673,7 @@ pub fn edge<'a>(
         ));
     };
     if from_id == to_id {
-        let message = "Edge source and target must be different items";
+        let message = "An edge's from item and to item must be different items";
         return Err(at.skipping(Refusal::new(Code::EdgeCycle, message)));
     }
     let Some(kind) = catalog.edge_kind(edge_type) else {

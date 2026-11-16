@@ -178,9 +178,7 @@ fn in_queue(folder: &Folder, id: &str) -> bool {
 fn edges_of(folder: &Folder) -> Vec<(String, String, String, String, i64, String)> {
     let conn = folder.core.conn().unwrap();
     let mut statement = conn
-        .prepare(
-            "SELECT id, from_id, to_id, edge_type, version, properties FROM edges ORDER BY id",
-        )
+        .prepare("SELECT id, from_id, to_id, edge_type, version, properties FROM edges ORDER BY id")
         .unwrap();
     statement
         .query_map([], |row| {
