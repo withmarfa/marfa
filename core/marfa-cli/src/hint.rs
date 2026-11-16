@@ -74,16 +74,25 @@ fn not_listening(origin: &str) -> String {
     let on_this_machine =
         url::Url::parse(origin).is_ok_and(|url| marfa_telemetry::host::is_loopback(&url));
     if on_this_machine {
-        "Nothing is listening at that address. Is the server running? `marfa server status` shows it, and `marfa server start` starts it.".into()
+        match crate::server::serving(origin) {
+            Some(install) => format!(
+                "Nothing is listening at that address. Is the server running? The install in {} serves it: `{}` shows it, and `{}` starts it.",
+                install.dir().display(),
+                install.command("status"),
+                install.command("start")
+            ),
+            None => "Nothing is listening at that address, and no install made with `marfa server install` on this machine serves it. Start the server where it runs, or check the address.".into(),
+        }
     } else {
         "Nothing answered at that address. Check the address and this machine's network.".into()
     }
 }
 
 fn needs_local(aim: &Aim) -> String {
-    let private = Remote::url_named(&aim.named)
+    let install = Remote::url_named(&aim.named)
         .ok()
-        .and_then(|origin| crate::server::private_command_for(&origin));
+        .and_then(|origin| crate::server::serving(&origin));
+    let private = install.as_ref().and_then(crate::server::Serving::private);
     let cannot =
         "A key or an app's sign-in cannot do this: it needs the server's private local command";
     if let Some(prefix) = private.as_ref().and_then(PrivateCommand::prefix) {
@@ -106,9 +115,15 @@ fn needs_local(aim: &Aim) -> String {
         text
     } else if let Some(words) = private.as_ref().and_then(PrivateCommand::container_words) {
         format!("{cannot}. On this machine, {words}.")
+    } else if let Some(install) = &install {
+        format!(
+            "{cannot}. The install in {} serves this address, but its socket is not there: `{}` starts it.",
+            install.dir().display(),
+            install.command("start")
+        )
     } else {
         format!(
-            "{cannot}, which runs on the server's own machine, as `marfa --socket <path>` followed by this command. A server installed with `marfa server install` keeps its socket under its install folder, in data/control/marfa.sock."
+            "{cannot}, which runs on the server's own machine, as `marfa --socket <path>` followed by this command. No install made with `marfa server install` on this machine serves this address; one on the server's machine keeps its socket under its install folder, in data/control/marfa.sock."
         )
     }
 }
@@ -202,9 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_connection_names_the_way_on_by_where_the_server_is() {
-        let here = not_listening("http://localhost:8600");
-        assert!(here.contains("marfa server status"), "{here}");
+    fn a_refused_connection_to_another_machine_names_no_install() {
         let there = not_listening("https://marfa.example.com");
         assert!(!there.contains("marfa server"), "{there}");
         assert!(there.contains("address"), "{there}");

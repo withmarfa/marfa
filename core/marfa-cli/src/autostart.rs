@@ -486,12 +486,12 @@ fn unxml(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
+pub(crate) fn after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
     text.find(marker).map(|at| &text[at + marker.len()..])
 }
 
 /// The `<string>` values from here to `end`.
-fn plist_strings(mut text: &str, end: &str) -> Option<Vec<String>> {
+pub(crate) fn plist_strings(mut text: &str, end: &str) -> Option<Vec<String>> {
     let stop = text.find(end)?;
     text = &text[..stop];
     let mut strings = Vec::new();
@@ -503,7 +503,7 @@ fn plist_strings(mut text: &str, end: &str) -> Option<Vec<String>> {
     Some(strings)
 }
 
-fn line_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+pub(crate) fn line_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     text.lines().find_map(|line| line.strip_prefix(key))
 }
 
@@ -525,7 +525,7 @@ pub(crate) fn quoted(word: &str, command: bool) -> String {
 }
 
 /// The words of a line written by [`quoted`], or `None` for any other.
-fn unquoted(line: &str) -> Option<Vec<String>> {
+pub(crate) fn unquoted(line: &str) -> Option<Vec<String>> {
     let mut words = Vec::new();
     let mut characters = line.trim().chars().peekable();
     while let Some(character) = characters.next() {

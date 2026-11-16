@@ -16,6 +16,7 @@ mod logs;
 mod names;
 mod native;
 mod prompt;
+mod registered;
 mod run;
 mod service;
 mod systemd;
@@ -370,22 +371,74 @@ impl PrivateCommand {
 /// The socket inside a Docker install's container.
 const CONTAINER_SOCKET: &str = "/data/control/marfa.sock";
 
-/// The private local command of the server at `origin`, if this machine's install is that server.
-pub fn private_command_for(origin: &str) -> Option<PrivateCommand> {
-    let asked = url::Url::parse(origin).ok()?;
-    let folder = Folder::new(&DirArgs { dir: None }).ok()?;
-    let (state, _) = folder.state().ok()??;
-    let on_this_port = marfa_telemetry::host::is_loopback(&asked)
-        && asked.port_or_known_default() == Some(state.port);
-    let at_its_address = state
-        .address
-        .as_deref()
-        .and_then(|address| url::Url::parse(address).ok())
-        .is_some_and(|address| address.origin() == asked.origin());
-    if !on_this_port && !at_its_address {
-        return None;
+/// The install on this machine that serves a server address.
+pub struct Serving {
+    folder: Folder,
+    state: State,
+    /// Whether this is the folder a command without `--dir` means.
+    default: bool,
+}
+
+impl Serving {
+    /// The private local command of the install, if it has one to run now.
+    pub fn private(&self) -> Option<PrivateCommand> {
+        PrivateCommand::of(&self.state, &self.folder)
     }
-    PrivateCommand::of(&state, &folder)
+
+    /// `command` with the folder of the install named, as it must be for any but the default one.
+    pub fn command(&self, command: &str) -> String {
+        if self.default {
+            format!("marfa server {command}")
+        } else {
+            format!(
+                "marfa server {command} --dir {}",
+                crate::hint::shell_word(&self.folder.dir.display().to_string())
+            )
+        }
+    }
+
+    pub fn dir(&self) -> &std::path::Path {
+        &self.folder.dir
+    }
+}
+
+/// The install on this machine that serves the server at `origin`: the default folder's, or one
+/// a service manager here runs from another folder.
+pub fn serving(origin: &str) -> Option<Serving> {
+    let asked = url::Url::parse(origin).ok()?;
+    let default = Folder::new(&DirArgs { dir: None })
+        .ok()
+        .map(|folder| folder.dir);
+    let mut dirs: Vec<PathBuf> = default.iter().cloned().collect();
+    for dir in registered::folders() {
+        if let Ok(folder) = Folder::new(&DirArgs { dir: Some(dir) })
+            && !dirs.contains(&folder.dir)
+        {
+            dirs.push(folder.dir);
+        }
+    }
+    for dir in dirs {
+        let folder = Folder { dir };
+        let Ok(Some((state, _))) = folder.state() else {
+            continue;
+        };
+        let on_this_port = marfa_telemetry::host::is_loopback(&asked)
+            && asked.port_or_known_default() == Some(state.port);
+        let at_its_address = state
+            .address
+            .as_deref()
+            .and_then(|address| url::Url::parse(address).ok())
+            .is_some_and(|address| address.origin() == asked.origin());
+        if on_this_port || at_its_address {
+            let is_default = default.as_ref() == Some(&folder.dir);
+            return Some(Serving {
+                folder,
+                state,
+                default: is_default,
+            });
+        }
+    }
+    None
 }
 
 /// The path with the part that exists made real, so that a link in it is
