@@ -554,7 +554,7 @@ describe("custom edge-type registration", () => {
     expect(inFolder?.property_schema).toHaveProperty("path");
   });
 
-  it("writes an in-folder edge from a key holding the source's type, the edge type and read on system.folder, and writing nothing of it", async () => {
+  it("writes an in-folder edge from a key holding the from item's type, the edge type and read on system.folder, and writing nothing of it", async () => {
     const made = await client.createFolder({ title: "placement" });
     expect(made.status).toBe(201);
     const folderId = made.data.item.id;
@@ -1169,7 +1169,7 @@ describe("custom edge-type registration", () => {
     }
   });
 
-  it("registers an edge type written at its target, and refuses one with no name to write it under", async () => {
+  it("registers an edge type written from its to end, and refuses one with no name to write it under", async () => {
     const etId = `mock.written-at.${ctx.runId}`;
     const reverse = `mock.written-by.${ctx.runId}`;
     const r = await client.registerEdgeType({

@@ -53,7 +53,7 @@ describe("POST /edges", () => {
     trackEdge(ctx, made.data.edge.id);
   });
 
-  it("answers a target in the bin as item_not_found", async () => {
+  it("answers a to item in the bin as item_not_found", async () => {
     const source = await note();
     const target = await note();
 

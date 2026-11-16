@@ -508,7 +508,7 @@ When `GET /export?format=archive` selects an edge with an end that is an item of
 
 **Reason:** the export checks the selection with the restore's checks (`archive/archive-restorable`), and a restore takes such an edge (`archive/restore-edges-end-unregistered`). A forced delete leaves the items of a type and the edges between them (`types/delete-force`), so an instance that refused to export them could not be backed up.
 
-**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose from constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose to constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
 
 ### `archive/archive-entries-refused`
 
@@ -1130,7 +1130,7 @@ When `POST /restore` meets an edge with an end that is an item of a type that is
 
 **Reason:** a forced delete removes a type and keeps its items and the edges between them (`types/delete-force`), and the type's parent and roles go with it, so no entry in the list, whether it names a registered type or not, can be judged against the end. `POST /edges` still refuses such an end (`edges/endpoint-unregistered`), and every other refusal of a restored edge is unchanged (`archive/restore-edge-skips`).
 
-**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`, `› restores an older archive whose item type is not registered, keeping the edge its constraint named the type for`.
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose from constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose to constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`, `› restores an older archive whose item type is not registered, keeping the edge its constraint named the type for`.
 
 ### `archive/restore-edges-end-registered`
 
@@ -1138,7 +1138,7 @@ When `POST /restore` meets an edge with an end that is an item of a registered t
 
 **Reason:** a type that other types name as parent cannot be deleted (`types/delete-subtypes`), so every ancestor of a registered type is registered, and an entry naming a type that is not registered admits no registered type.
 
-**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose from constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
 
 ### `archive/restore-snapshot-held`
 

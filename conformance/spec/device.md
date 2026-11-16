@@ -30,7 +30,7 @@ Where a slice has a query, and an item of a type and a tier it takes is not pinn
 
 **Reason:** a folder's copy then holds about as many items as the folder shows, not every item of its types. An item a waiting write names stays, as a pinned item stays, until the write is accepted, refused or withdrawn (a blocked or dead write still waits, to be released), so the person's write is shown and sent against the item it changes, and an edge the person draws keeps both its ends.
 
-**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets an item go when an event takes it out of the query, and holds one an event brings into it`, `› keeps an item a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`, `› keeps the target of an answered edge write that another waiting write still names`, `› lets go of the target of an edge write withdrawn after an event took it out of the query`, `› hydrates only the item and everything beneath it, with its parent-of edges whole`.
+**Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› lets an item go when an event takes it out of the query, and holds one an event brings into it`, `› keeps an item a waiting write names when an event takes it out of the query`, `› keeps the to item of a waiting edge write when an event takes it out of the query`, `› keeps the to item of an answered edge write that another waiting write still names`, `› lets go of the to item of an edge write withdrawn after an event took it out of the query`, `› hydrates only the item and everything beneath it, with its parent-of edges whole`.
 
 ### `device/slice-query-bin`
 
@@ -1170,7 +1170,7 @@ Where a slice has a query, when an event shows that an item the copy holds, that
 
 **Reason:** the copy stream cannot be narrowed (`reach/copy-query-refused`), so the device judges each item event by the query, as it judges a folder's files.
 
-**Tests:** `device/folders-copy-shrink.test.ts › lets an item go when an event takes it out of the query, and holds one an event brings into it`, `› keeps an item a waiting write names when an event takes it out of the query`, `› keeps the target of a waiting edge write when an event takes it out of the query`.
+**Tests:** `device/folders-copy-shrink.test.ts › lets an item go when an event takes it out of the query, and holds one an event brings into it`, `› keeps an item a waiting write names when an event takes it out of the query`, `› keeps the to item of a waiting edge write when an event takes it out of the query`.
 
 ### `device/catch-up-unknown-tags`
 
@@ -1232,7 +1232,7 @@ When an item leaves the copy, a device MUST let go the edges it draws, but those
 
 **Reason:** an edge the person's waiting write names is what the write is shown and sent against, so it stays until the server answers the write.
 
-**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its source`, `› keeps the edges a held item draws to an item that leaves the slice`, `› keeps an edge a queued write names when its source leaves the slice`.
+**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its from item`, `› keeps the edges a held item draws to an item that leaves the slice`, `› keeps an edge a queued write names when its from item leaves the slice`.
 
 ### `device/catch-up-leaving-edges-to`
 
@@ -1292,27 +1292,27 @@ When an event names a pinned item, a device MUST apply it whatever the item's ty
 
 Where an edge's type is held whole, a device MUST apply an event for the edge whatever its from item.
 
-**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its source`.
+**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its from item`.
 
-### `device/catch-up-edge-source`
+### `device/catch-up-edge-from`
 
 Where an edge's type is not held whole, a device MUST apply an event that creates or changes the edge only where the copy holds the edge's from item or a write of its own to the edge still waits.
 
-**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its source`, `› moves an edge whose source moved within the slice, and drops one whose source moved outside it`, `› keeps an edge whose source moved outside the slice while a move of its own waits`.
+**Tests:** `device/catch-up.test.ts › applies an edge of a type held whole whatever its from item`, `› moves an edge whose from item moved within the slice, and drops one whose from item moved outside it`, `› keeps an edge whose from item moved outside the slice while a move of its own waits`.
 
 ### `device/catch-up-edge-moved-out`
 
 When an event moves an edge whose type is not held whole to a from item the copy does not hold, a device MUST let the edge go, unless a write of its own to the edge still waits.
 
-**Reason:** an edge's frames name its new from item (`edges/move-source` and `edges/move-announced`), and no later frame would reach a copy that does not hold that from item.
+**Reason:** an edge's frames name its new from item (`edges/move-from` and `edges/move-announced`), and no later frame would reach a copy that does not hold that from item.
 
-**Tests:** `device/catch-up.test.ts › moves an edge whose source moved within the slice, and drops one whose source moved outside it`, `› keeps an edge whose source moved outside the slice while a move of its own waits`.
+**Tests:** `device/catch-up.test.ts › moves an edge whose from item moved within the slice, and drops one whose from item moved outside it`, `› keeps an edge whose from item moved outside the slice while a move of its own waits`.
 
 ### `device/catch-up-edge-own-write`
 
 While a write of its own to an edge still waits, a device MUST show that write over the server's change to the edge.
 
-**Tests:** `device/catch-up.test.ts › keeps an edge whose source moved outside the slice while a move of its own waits`, `› lays its own waiting move of an edge's target over the server's change to the edge`, `› applies an edge event beneath an edge edit it has not had answered`, `› lays its own waiting edit of the edge over the edge the item brings`, `› keeps an edge it deleted, with the delete waiting, out of the edges the item brings`.
+**Tests:** `device/catch-up.test.ts › keeps an edge whose from item moved outside the slice while a move of its own waits`, `› lays its own waiting move of an edge's to item over the server's change to the edge`, `› applies an edge event beneath an edge edit it has not had answered`, `› lays its own waiting edit of the edge over the edge the item brings`, `› keeps an edge it deleted, with the delete waiting, out of the edges the item brings`.
 
 ### `device/catch-up-entering-tags`
 
@@ -2288,7 +2288,7 @@ Where a slice holds an edge type whole, a device MUST answer an edge of that typ
 
 **Tests:** `device/working-copy.test.ts › reads a held-whole edge from either end`.
 
-### `device/edge-source-unheld`
+### `device/edge-from-unheld`
 
 If a caller creates an edge from an item the copy does not hold, of a type the slice does not hold whole, then a device MUST refuse it `invalid`, queueing nothing.
 
@@ -2296,21 +2296,21 @@ If a caller creates an edge from an item the copy does not hold, of a type the s
 
 **Tests:** `device/local-refusals.test.ts › refuses a local edge from an item the copy does not hold`.
 
-### `device/edge-source-left-unheld`
+### `device/edge-from-left-unheld`
 
 When a hydration leaves the from item of an edge create still waiting outside the slice, a device MUST NOT hold the edge, unless the slice holds its type whole.
 
 **Reason:** nothing would keep such an edge current.
 
-**Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
+**Tests:** `device/queue.test.ts › holds no waiting edge whose from item a re-hydration left outside the slice, nor its answer`.
 
-### `device/edge-source-left-queued`
+### `device/edge-from-left-queued`
 
 When a hydration leaves the from item of an edge create still waiting outside the slice, a device MUST keep the create queued.
 
 **Reason:** the caller was told the write was queued, so it is sent.
 
-**Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
+**Tests:** `device/queue.test.ts › holds no waiting edge whose from item a re-hydration left outside the slice, nor its answer`.
 
 ## Bytes, fetched and sent
 
@@ -4648,7 +4648,7 @@ If a catch-up or a held stream ends `decoding` on an event whose data the device
 
 ### `device/reach-changed`
 
-If the server says the copy's reach has changed, other than in the read after the answer a drain has just had to a move of an edge's from item or to a change of an item's type (`queue-and-verdicts/edge-source-move-carries-on`), then a device MUST end the operation `copy_expired` with the reason `reach_changed`, expiring the copy and keeping its queue.
+If the server says the copy's reach has changed, other than in the read after the answer a drain has just had to a move of an edge's from item or to a change of an item's type (`queue-and-verdicts/edge-from-move-carries-on`), then a device MUST end the operation `copy_expired` with the reason `reach_changed`, expiring the copy and keeping its queue.
 
 **Reason:** a retype, a narrowed grant or a changed source filter cannot then leave old items readable as current.
 
@@ -5350,7 +5350,7 @@ When a caller reads a view whose `query.filter` holds an `edge` term or a `sourc
 
 Where the copy holds the named edge type whole, when a caller reads a view whose `query.filter` holds a `backref[<type>]` term, a device MUST list the items the term selects, counting the incoming edges the copy holds without checking that the key may read their from items.
 
-**Reason:** the copy holds every edge of the type, so it answers the term as the server does for a key that reads every from item. No check of each from item is needed because a copy never receives an edge from a from item its key cannot read (`edges/read-id-source`, `edges/read-source-filter`), so each edge it counts is one the key may read.
+**Reason:** the copy holds every edge of the type, so it answers the term as the server does for a key that reads every from item. No check of each from item is needed because a copy never receives an edge from a from item its key cannot read (`edges/read-id-from`, `edges/read-source-filter`), so each edge it counts is one the key may read.
 
 **Tests:** `device/views.test.ts › answers a backref condition where the copy holds the edge type whole and refuses it where it does not`.
 

@@ -494,7 +494,7 @@ describe("a late part", () => {
     expect(await stateOf(part)).toBe("active");
   });
 
-  it("is refused from a source in the bin", async () => {
+  it("is refused from a from item in the bin", async () => {
     const tag = `parts-late-source-${ctx.runId}`;
     const host = await note(tag);
     const part = await note(tag);

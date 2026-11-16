@@ -2228,7 +2228,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).not.toContain("leaves");
   });
 
-  it("keeps an edge a queued write names when its source leaves the slice", async () => {
+  it("keeps an edge a queued write names when its from item leaves the slice", async () => {
     harness = await startHarness("eviction-queued-edge");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -2718,7 +2718,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
-  it("applies an edge of a type held whole whatever its source", async () => {
+  it("applies an edge of a type held whole whatever its from item", async () => {
     harness = await startHarness("whole-edge-events");
     const { server, device } = harness;
     const beneath = {
@@ -2805,7 +2805,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["kept-beneath"]);
   });
 
-  it("moves an edge whose source moved within the slice, and drops one whose source moved outside it", async () => {
+  it("moves an edge whose from item moved within the slice, and drops one whose from item moved outside it", async () => {
     harness = await startHarness("moved-edge-events");
     const { server, device } = harness;
     const within = {
@@ -2878,7 +2878,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
-  it("keeps an edge whose source moved outside the slice while a move of its own waits", async () => {
+  it("keeps an edge whose from item moved outside the slice while a move of its own waits", async () => {
     harness = await startHarness("moved-edge-waiting");
     const { server, device } = harness;
     const moving = {
@@ -2940,7 +2940,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["moving"]);
   });
 
-  it("lays its own waiting move of an edge's target over the server's change to the edge", async () => {
+  it("lays its own waiting move of an edge's to item over the server's change to the edge", async () => {
     harness = await startHarness("moved-edge-waiting-target");
     const { server, device } = harness;
     const moving = {

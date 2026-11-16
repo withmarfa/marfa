@@ -185,7 +185,7 @@ function expectNarrowed(filtered: string[], witness: string[], w: Written) {
 }
 
 describe("the source filter on the event stream", () => {
-  it("leaves out of a live stream the items and edges whose source item the filter hides, and nothing else", async ({
+  it("leaves out of a live stream the items and edges whose from item the filter hides, and nothing else", async ({
     signal,
   }) => {
     const filtered = await openEventStream(apiUrl, filteredKey, {

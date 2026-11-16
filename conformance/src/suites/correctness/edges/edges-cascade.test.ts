@@ -258,7 +258,7 @@ describe("edge cascade semantics", () => {
     expect(fetched.data.item.state).toBe("active");
   });
 
-  it("about defaults to orphan: deleting source leaves target intact", async () => {
+  it("about defaults to orphan: deleting the from item leaves the to item intact", async () => {
     const source = await makeItem("about-src");
     const target = await makeItem("about-tgt");
 
@@ -301,7 +301,7 @@ describe("edge cascade semantics", () => {
     expect(fetched.data.item.state).toBe("active");
   });
 
-  it("references defaults to orphan: deleting the referenced target leaves the source intact", async () => {
+  it("references defaults to orphan: deleting the referenced to item leaves the from item intact", async () => {
     const source = await makeItem("ref-src");
     const target = await makeItem("ref-tgt");
 
@@ -321,7 +321,7 @@ describe("edge cascade semantics", () => {
     expect(fetched.data.item.state).toBe("active");
   });
 
-  it("custom edge-type with cascade_on_delete=cascade cascades on source delete", async () => {
+  it("custom edge-type with cascade_on_delete=cascade cascades on from item delete", async () => {
     const etId = `mock.cascade.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       label: "Test edge type",
@@ -357,7 +357,7 @@ describe("edge cascade semantics", () => {
     expect(trashed.data.data.map((i) => i.id)).toContain(target);
   });
 
-  it("custom edge-type with cascade_on_delete=block refuses source delete while edges exist", async () => {
+  it("custom edge-type with cascade_on_delete=block refuses from item delete while edges exist", async () => {
     const etId = `mock.block.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       label: "Test edge type",

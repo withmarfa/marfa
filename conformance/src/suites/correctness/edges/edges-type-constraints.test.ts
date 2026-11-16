@@ -41,7 +41,7 @@ async function makeItem(
 }
 
 describe("edge type-constraints", () => {
-  it("source / target type constraints: matching types accepted", async () => {
+  it("from / to type constraints: matching types accepted", async () => {
     const edgeTypeId = `mock.tc.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       label: "Test edge type",
@@ -66,7 +66,7 @@ describe("edge type-constraints", () => {
     trackEdge(ctx, edge.data.edge.id);
   });
 
-  it("non-matching source type rejected", async () => {
+  it("non-matching from item type rejected", async () => {
     const edgeTypeId = `mock.tc2.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       label: "Test edge type",
@@ -92,7 +92,7 @@ describe("edge type-constraints", () => {
     expect(r.error?.error.code).toBe("edge_constraint_violation");
   });
 
-  it("non-matching target type rejected", async () => {
+  it("non-matching to item type rejected", async () => {
     const edgeTypeId = `mock.tc3.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       label: "Test edge type",
@@ -161,7 +161,7 @@ describe("edge type-constraints", () => {
     trackEdge(ctx, edge.data.edge.id);
   });
 
-  it("in-collection refuses a source that is itself a container, as nesting", async () => {
+  it("in-collection refuses a from item that is itself a container, as nesting", async () => {
     const album = await makeItem(createAlbum({ source: ctx.source }));
     const otherAlbum = await makeItem(createAlbum({ source: ctx.source }));
     const series = await makeItem(createSeries({ source: ctx.source }));
@@ -335,7 +335,7 @@ describe("endpoint constraints on every write path", () => {
     expect(await stored(other)).toEqual([]);
   });
 
-  it("refuses an inline edge whose new item or target is of the wrong type on POST /items", async () => {
+  it("refuses an inline edge whose new item or to item is of the wrong type on POST /items", async () => {
     const note = await makeItem(createNote({ source: ctx.source }));
     const bookmark = await makeItem(createBookmark({ source: ctx.source }));
 

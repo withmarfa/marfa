@@ -62,7 +62,7 @@ async function scopedItem(c: MarfaClient, label: string): Promise<string> {
 }
 
 describe("per-edge-type permissions", () => {
-  it("dual-gate: source-type write + edge-type write required", async () => {
+  it("dual-gate: from item type write + edge-type write required", async () => {
     const noEdgeScope = await makeKey("no-edge-scope", {
       type_permissions: { "*": "write" },
     });
@@ -192,7 +192,7 @@ describe("per-edge-type permissions", () => {
 
   // The type-permission gate on an edge write reads the source item whether
   // it is live or trashed.
-  it("trashed source: PATCH/DELETE edge still gated on source type", async () => {
+  it("trashed from item: PATCH/DELETE edge still gated on from item type", async () => {
     // Register two custom types so we can gate a key strictly on the target
     // type without granting core.note blanket access through wildcards.
     const sourceType = `user.evaluator-edgesrc-${ctx.runId}`;
@@ -392,7 +392,7 @@ describe("per-edge-type permissions", () => {
  * run's shared instance holds.
  */
 describe("the edge listing answers only what the credential may read", () => {
-  it("drops an edge whose source is a type the credential cannot read", async () => {
+  it("drops an edge whose from item is a type the credential cannot read", async () => {
     const edgeType = `mock.disclosure.src.${ctx.runId}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
@@ -522,7 +522,7 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(widePage.data.data.map((e) => e.id)).toContain(edge.data.edge.id);
   });
 
-  it("drops it still when the source is trashed, which is when a null source would read as no source at all", async () => {
+  it("drops it still when the from item is trashed, which is when a null from item would read as none at all", async () => {
     // The door resolves the source including trashed items on purpose. A
     // plain read answers null for a trashed item, and a null source has
     // no type to refuse — so trashing the source item would turn the
@@ -771,7 +771,7 @@ describe("the doors under an item answer only what the credential may read", () 
     );
   });
 
-  it("leaves an edge with an unreadable source out of GET /items/{id}/backrefs", async () => {
+  it("leaves an edge with an unreadable from item out of GET /items/{id}/backrefs", async () => {
     const edgeType = await kind("back");
     const anchor = await scopedItem(client, "backref-anchor");
     const readableSource = await scopedItem(client, "backref-readable");
@@ -1196,7 +1196,7 @@ describe("the doors under an item answer only what the credential may read", () 
   });
 });
 
-describe("an edge write says nothing of a target the credential cannot read", () => {
+describe("an edge write says nothing of a to item the credential cannot read", () => {
   let writer: MarfaClient;
   let source: string;
   let unreadable: string;
@@ -1334,7 +1334,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
   }
 
   it.each(doors)(
-    "$name answers an unreadable target as a missing one, whatever its type",
+    "$name answers an unreadable to item as a missing one, whatever its type",
     async (door) => {
       // The witnesses: a readable target is written, and a readable target
       // of the wrong type meets the constraint, so both answers exist.
@@ -1361,7 +1361,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     },
   );
 
-  it("answers an unreadable target as a missing one on the bulk door, where an edge to it already exists", async () => {
+  it("answers an unreadable to item as a missing one on the bulk door, where an edge to it already exists", async () => {
     const from = await scopedItem(writer, "target-blind-existing");
     for (const target of [readable, unreadable]) {
       const held = await client.createEdge({
@@ -1396,7 +1396,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     }
   });
 
-  it("answers an unreadable target as a missing one on a stale PATCH, before the version is read", async () => {
+  it("answers an unreadable to item as a missing one on a stale PATCH, before the version is read", async () => {
     const from = await scopedItem(writer, "target-blind-stale");
     const bumped = await writer.updateItem(from, {
       version: 1,

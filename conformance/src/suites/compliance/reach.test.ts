@@ -1324,7 +1324,7 @@ describe("what a reach is bound to", () => {
 });
 
 describe("what moves a reach", () => {
-  it("changes the reach when an edge moves to another source, and keeps it when only the target moves", async () => {
+  it("changes the reach when an edge moves to another from item, and keeps it when only the to item moves", async () => {
     const from = await seed("move source");
     const to = await seed("move target");
     const farther = await seed("move farther target");

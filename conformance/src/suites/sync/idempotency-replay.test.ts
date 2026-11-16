@@ -641,7 +641,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
   });
 
-  it("judges an edge replay by the edge's current source", async () => {
+  it("judges an edge replay by the edge's current from item", async () => {
     const actor = await mint();
     const [from, to] = [await note(), await note()];
     const edge = await link(from.id, to.id, "parent-of");
@@ -767,7 +767,7 @@ describe("a retained answer after its credential is narrowed", () => {
     );
   });
 
-  it("replays an edge answer without read on its target", async () => {
+  it("replays an edge answer without read on its to item", async () => {
     const actor = await mint();
     const target = await task("Unreadable target");
     const source = await note();

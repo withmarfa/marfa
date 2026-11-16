@@ -381,7 +381,7 @@ export class EdgeDoor {
         edge_type: body.edge_type ?? "references",
       });
     }
-    // One parent a child, as the server refuses a second (`edges/card-target-held`).
+    // One parent a child, as the server refuses a second (`edges/card-to-held`).
     if (
       body.edge_type === "parent-of" &&
       [...this.edges.values()].some(

@@ -141,7 +141,7 @@ describe("edge events", () => {
     });
   });
 
-  it("carries the source item's type on every edge frame", async ({
+  it("carries the from item's type on every edge frame", async ({
     signal,
   }) => {
     await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {

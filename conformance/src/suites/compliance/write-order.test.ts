@@ -250,7 +250,7 @@ it("refuses an item whose type was deleted before its write starts", async () =>
   await note("too late", id("order_gone"));
 });
 
-it("refuses edge creation after its source is retyped outside write reach", async () => {
+it("refuses edge creation after its from item is retyped outside write reach", async () => {
   await register(id("edge_before"));
   await register(id("edge_after"));
   const source = await note("edge source", id("edge_before"));

@@ -116,7 +116,7 @@ it("admits only one concurrent exact write to different fields", async () => {
   expect(current.data.item.version).toBe(2);
 });
 
-it("conditions lifecycle and edge writes on the source version without replacing other edges", async () => {
+it("conditions lifecycle and edge writes on the from item's version without replacing other edges", async () => {
   const source = await note(),
     target = await note(),
     other = await note();

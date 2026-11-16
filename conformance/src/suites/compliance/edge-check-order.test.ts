@@ -135,7 +135,7 @@ async function hiddenEdge(): Promise<{
 }
 
 describe("the order POST /edges asks its refusals in", () => {
-  it("refuses a malformed id before it looks for the source", async () => {
+  it("refuses a malformed id before it looks for the from item", async () => {
     const target = await note();
     const absent = generateId();
     for (const body of [
@@ -210,7 +210,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("invalid_id");
   });
 
-  it("answers a source in the bin as missing before it asks for write on the source's type", async () => {
+  it("answers a from item in the bin as missing before it asks for write on the from item's type", async () => {
     const reader = await keyWith({ "core.note": "read" }, { about: "write" });
     const source = await note();
     const target = await note();
@@ -235,7 +235,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(gone.error?.error.code).toBe("item_not_found");
   });
 
-  it("refuses write on the source's type before write on the edge type", async () => {
+  it("refuses write on the from item's type before write on the edge type", async () => {
     const source = await note();
     const target = await note();
     const neither = await keyWith({ "core.note": "read" }, { about: "read" });
@@ -352,7 +352,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("validation_error");
   });
 
-  it("refuses bad properties before it looks for the target", async () => {
+  it("refuses bad properties before it looks for the to item", async () => {
     const source = await note();
     const absent = generateId();
     const bad = await client.createEdge({
@@ -398,7 +398,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("edge_constraint_violation");
   });
 
-  it("answers a missing target before it checks the endpoint types", async () => {
+  it("answers a missing to item before it checks the endpoint types", async () => {
     const edgeType = await edgeTypeOf("endpoints-missing", {
       cardinality: "many-to-many",
       from_type_constraints: ["core.bookmark"],
@@ -423,7 +423,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.details?.from_type).toBe("core.note");
   });
 
-  it("answers a missing target as forbidden when the key lacks write on the edge type", async () => {
+  it("answers a missing to item as forbidden when the key lacks write on the edge type", async () => {
     const source = await note();
     const absent = generateId();
     const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
@@ -446,7 +446,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("item_not_found");
   });
 
-  it("checks the source's type before the target's type", async () => {
+  it("checks the from item's type before the to item's type", async () => {
     const edgeType = await edgeTypeOf("endpoints-both", {
       cardinality: "many-to-many",
       from_type_constraints: ["core.bookmark"],
@@ -571,7 +571,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("edge_cycle");
   });
 
-  it("answers a repeated edge id as missing when its source is now in the bin", async () => {
+  it("answers a repeated edge id as missing when its from item is now in the bin", async () => {
     const source = await note();
     const target = await note();
     const id = generateId();
@@ -594,7 +594,7 @@ describe("the order POST /edges asks its refusals in", () => {
     expect(gone.error?.error.code).toBe("item_not_found");
   });
 
-  it("acknowledges a repeated edge id and triple after the target went to the bin", async () => {
+  it("acknowledges a repeated edge id and triple after the to item went to the bin", async () => {
     const source = await note();
     const target = await note();
     const id = generateId();
@@ -753,7 +753,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     return edgeTypeOf(`patch-${label}`, { cardinality: "one-to-one" });
   }
 
-  it("answers an edge whose source's type the key cannot read as missing before it asks for write on that type", async () => {
+  it("answers an edge whose from item's type the key cannot read as missing before it asks for write on that type", async () => {
     const id = await held(await bookmark(), await note(), "about");
     const edge = (await client.getEdge(id)).data.edge;
     const blind = await keyWith({ "core.note": "write" }, { "*": "write" });
@@ -777,7 +777,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("type_not_permitted");
   });
 
-  it("refuses write on the source's type before write on the edge type", async () => {
+  it("refuses write on the from item's type before write on the edge type", async () => {
     const id = await held(await note(), await note(), "about");
     const edge = (await client.getEdge(id)).data.edge;
     const neither = await keyWith({ "core.note": "read" }, { about: "read" });
@@ -925,7 +925,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("edge_type_not_found");
   });
 
-  it("refuses a move the edge type cannot make before it looks for the new source", async () => {
+  it("refuses a move the edge type cannot make before it looks for the new from item", async () => {
     const edgeType = await edgeTypeOf("patch-many-to-one", {
       cardinality: "many-to-one",
     });
@@ -948,7 +948,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("item_not_found");
   });
 
-  it("answers a new source the key cannot read as missing before it asks for write on it", async () => {
+  it("answers a new from item the key cannot read as missing before it asks for write on it", async () => {
     const edgeType = await moveable("source-unreadable");
     const writer = await keyWith(
       { "core.note": "write", "core.bookmark": "read" },
@@ -975,7 +975,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("type_not_permitted");
   });
 
-  it("refuses a new source the key cannot write before it looks for the end that stays", async () => {
+  it("refuses a new from item the key cannot write before it looks for the end that stays", async () => {
     const edgeType = await moveable("source-before-target");
     const writer = await keyWith(
       { "core.note": "write", "core.bookmark": "read" },
@@ -1001,7 +1001,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("item_not_found");
   });
 
-  it("refuses write on the new source's type before it finds a source moved onto its own target", async () => {
+  it("refuses write on the new from item's type before it finds a from item moved onto its own to item", async () => {
     const reader = await keyWith(
       { "core.note": "write", "core.bookmark": "read" },
       { "*": "write" },
@@ -1031,7 +1031,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 });
 
 describe("the order an item write asks its inline edges in", () => {
-  it("refuses a malformed target id in an item write before it asks for write on the edge type", async () => {
+  it("refuses a malformed to item id in an item write before it asks for write on the edge type", async () => {
     const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
     const source = `${ctx.source}-edge-check-order-${String(keyCount)}`;
     const created = await readOnly.createItem(createNote({ source }));
@@ -1072,7 +1072,7 @@ describe("the order an item write asks its inline edges in", () => {
     );
   });
 
-  it("answers an unregistered edge type in an item write before it looks for the target", async () => {
+  it("answers an unregistered edge type in an item write before it looks for the to item", async () => {
     const unregistered = `mock.inline-unknown.${ctx.runId}`;
     const missing = generateId();
     const edges = { [unregistered]: [missing] };
@@ -1144,7 +1144,7 @@ describe("the order an item write asks its inline edges in", () => {
     expect(stale.error?.error.code).toBe("version_conflict");
   });
 
-  it("answers a missing target of an edge type with a required property as invalid properties in an item write that names a stale version", async () => {
+  it("answers a missing to item of an edge type with a required property as invalid properties in an item write that names a stale version", async () => {
     const edgeType = await edgeTypeOf("stale-required", {
       cardinality: "many-to-many",
       property_schema: { score: { type: "number", required: true } },

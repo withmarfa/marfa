@@ -4999,7 +4999,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(5);
   });
 
-  it("holds no waiting edge whose source a re-hydration left outside the slice, nor its answer", async () => {
+  it("holds no waiting edge whose from item a re-hydration left outside the slice, nor its answer", async () => {
     harness = await startHarness("queue-overlay-edge-source");
     const { server, device } = harness;
     scriptHydration(server, {

@@ -32,7 +32,7 @@ Where one request meets more than one refusal below, `edges/create-order` says w
 
 When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a key the operation does not declare; a malformed id; a from item no item holds, in the bin or that the key may not read; no write on the from item's type; no write on the edge type; a stale `from_version`; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a to item no item holds, in the bin or that the key may not read; no write on the to item's type, for an edge type that cascades on delete; an endpoint type, a revoked folder or nesting, the from item's type before the to item's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
 
-**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing field and before a malformed id`, `› refuses a malformed id before it looks for the source`, `› answers a source in the bin as missing before it asks for write on the source's type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the target`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing target before it checks the endpoint types`, `› answers a missing target as forbidden when the key lacks write on the edge type`, `› checks the source's type before the target's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `compliance/edge-cascade-target.test.ts › refuses write on a cascading target's type after it finds the target of a create and before it checks the endpoint types`, `compliance/edge-check-order.test.ts › acknowledges a repeated edge id and triple after the target went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing field and before a malformed id`, `› refuses a malformed id before it looks for the from item`, `› answers a from item in the bin as missing before it asks for write on the from item's type`, `› refuses write on the from item's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the to item`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing to item before it checks the endpoint types`, `› answers a missing to item as forbidden when the key lacks write on the edge type`, `› checks the from item's type before the to item's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `compliance/edge-cascade-target.test.ts › refuses write on a cascading to item's type after it finds the to item of a create and before it checks the endpoint types`, `compliance/edge-check-order.test.ts › acknowledges a repeated edge id and triple after the to item went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
 
 ### `edges/inline-order`
 
@@ -40,7 +40,7 @@ When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names 
 
 **Reason:** the first group reads only the edge and its two ends, so it holds whatever version the item is at, and an app that sends an edge inside an item write gets the same answer as one that sends it to `POST /edges`. The second reads the edges the item holds, which a stale write merges over, so it waits for the version.
 
-**Tests:** `compliance/edge-check-order.test.ts › refuses a malformed target id in an item write before it asks for write on the edge type`, `› answers an unregistered edge type in an item write before it looks for the target`, `› answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same`, `› answers a missing target of an edge type with a required property as invalid properties in an item write that names a stale version`, `› answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version`, `› answers a cardinality an item write breaks only after it asks the version`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses a malformed to item id in an item write before it asks for write on the edge type`, `› answers an unregistered edge type in an item write before it looks for the to item`, `› answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same`, `› answers a missing to item of an edge type with a required property as invalid properties in an item write that names a stale version`, `› answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version`, `› answers a cardinality an item write breaks only after it asks the version`.
 
 ### `edges/create`
 
@@ -108,7 +108,7 @@ If `POST /edges` names a triple of `from_id`, `to_id` and `edge_type` that an ed
 
 If `POST /edges` names a `from_id` or a `to_id` that no item holds, then the server MUST answer `404 item_not_found`.
 
-**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`, `compliance/unreadable-items.test.ts › $name`.
+**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable to item as a missing one, whatever its type`, `compliance/unreadable-items.test.ts › $name`.
 
 ### `edges/create-end-in-bin`
 
@@ -116,7 +116,7 @@ If `POST /edges` names a `from_id` whose item is in the bin, or a `to_id` whose 
 
 **Reason:** an edge of a `with-hosts` type to a host in the bin is a part that arrives late, such as an offline write that syncs after the host's trash (`edges/parts-late-accepted`).
 
-**Tests:** `correctness/edges/edges-parts.test.ts › is refused from a source in the bin`, `compliance/edge-move.test.ts › refuses a move of an edge whose end that stays is in the bin, as its create is refused`, `compliance/edge-gaps.test.ts › answers a target in the bin as item_not_found`.
+**Tests:** `correctness/edges/edges-parts.test.ts › is refused from a from item in the bin`, `compliance/edge-move.test.ts › refuses a move of an edge whose end that stays is in the bin, as its create is refused`, `compliance/edge-gaps.test.ts › answers a to item in the bin as item_not_found`.
 
 ## Client-minted edge ids
 
@@ -134,7 +134,7 @@ When a key that may write the from item's type and the edge type sends `POST /ed
 
 **Reason:** a client that lost the answer to its create sends it again, and gets the edge it made.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored edge and announces nothing`, `› answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored edge and announces nothing`, `› answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the from item's version without replacing other edges`.
 
 ### `edges/id-repeat-unchanged`
 
@@ -148,13 +148,13 @@ When `POST /edges` answers `acknowledged: true`, the server MUST NOT announce an
 
 **Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored edge and announces nothing`, `› answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`.
 
-### `edges/id-repeat-source-in-bin`
+### `edges/id-repeat-from-in-bin`
 
 If `POST /edges` repeats the `id` and triple of an edge whose from item is now in the bin, then the server MUST answer `404 item_not_found`.
 
 **Reason:** the from item is looked up before the `id`, and a from item in the bin is answered as missing (`edges/create-end-in-bin`).
 
-**Tests:** `compliance/edge-check-order.test.ts › answers a repeated edge id as missing when its source is now in the bin`.
+**Tests:** `compliance/edge-check-order.test.ts › answers a repeated edge id as missing when its from item is now in the bin`.
 
 ### `edges/id-reused`
 
@@ -306,13 +306,13 @@ While an item is in the bin, the server MUST go on answering the edges it holds 
 
 **Tests:** `compliance/edge-listings.test.ts › stay readable by id and listed, whichever end is in the bin`.
 
-### `edges/target-named`
+### `edges/to-named`
 
 When a key may read an edge's edge type and its from item's type, the server MUST answer the edge with its `to_id` whatever the to item's type, on `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, the `edges` an item read carries and the `edge.created` event.
 
 **Reason:** a limit accepted: an edge is a statement its from item makes about its to item, so it names the to item even where the key may not read the to item.
 
-**Tests:** `compliance/edge-hidden-limits.test.ts › names a hidden target's id on an edge the key may read`, `› names a hidden target's id on every read of an edge the key may read`.
+**Tests:** `compliance/edge-hidden-limits.test.ts › names a hidden to item's id on an edge the key may read`, `› names a hidden to item's id on every read of an edge the key may read`.
 
 ## An item's edges
 
@@ -460,7 +460,7 @@ Where one request meets more than one rule of this section or the next, `edges/u
 
 When `PATCH /edges/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing `version`; a key the operation does not declare; an edge the key may not read; no write on the from item's type; no write on the edge type; a stale `version`; a malformed id; both ends moved; an edge type no longer registered; an end the edge type cannot move; a new from item no item holds or the key may not read; no write on the new from item's type; an end that stays no item holds, in the bin or that the key may not read; neither `properties` nor a moved end; then the order of `edges/create-order` from a self-loop on, which places the write on the to item's type of an edge type that cascades on delete.
 
-**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing version and before it looks for the edge`, `› answers an edge whose source's type the key cannot read as missing before it asks for write on that type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it judges a stale version`, `› refuses a stale version before it judges a malformed id in a move`, `› refuses a stale version before it finds the update names nothing`, `› refuses a malformed id before it finds both ends moved`, `› refuses a move of both ends before it looks up the edge type`, `› refuses a move the edge type cannot make before it looks for the new source`, `› answers a new source the key cannot read as missing before it asks for write on it`, `› refuses a new source the key cannot write before it looks for the end that stays`, `› refuses write on the new source's type before it finds a source moved onto its own target`, `compliance/edge-cascade-target.test.ts › refuses write on a cascading target's type after it finds the target of a move and before it checks the endpoint types`, `compliance/edge-refusals.test.ts › names version in details.field where an update names none, and asks for it before it looks for the edge`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing version and before it looks for the edge`, `› answers an edge whose from item's type the key cannot read as missing before it asks for write on that type`, `› refuses write on the from item's type before write on the edge type`, `› refuses write on the edge type before it judges a stale version`, `› refuses a stale version before it judges a malformed id in a move`, `› refuses a stale version before it finds the update names nothing`, `› refuses a malformed id before it finds both ends moved`, `› refuses a move of both ends before it looks up the edge type`, `› refuses a move the edge type cannot make before it looks for the new from item`, `› answers a new from item the key cannot read as missing before it asks for write on it`, `› refuses a new from item the key cannot write before it looks for the end that stays`, `› refuses write on the new from item's type before it finds a from item moved onto its own to item`, `compliance/edge-cascade-target.test.ts › refuses write on a cascading to item's type after it finds the to item of a move and before it checks the endpoint types`, `compliance/edge-refusals.test.ts › names version in details.field where an update names none, and asks for it before it looks for the edge`.
 
 ### `edges/move-invalid-id`
 
@@ -536,7 +536,7 @@ If `PATCH /edges/{id}` moves no end and names no `properties`, then the server M
 
 A move changes the `from_id` or the `to_id` of an edge in place, so a child changes parent, a message its thread and a successor its predecessor in one write.
 
-### `edges/move-target`
+### `edges/move-to`
 
 When `PATCH /edges/{id}` names a `to_id` for an edge whose type is `one-to-one` or `many-to-one`, the server MUST move the edge's to item to it.
 
@@ -544,7 +544,7 @@ When `PATCH /edges/{id}` names a `to_id` for an edge whose type is `one-to-one` 
 
 **Tests:** `correctness/edges/edges-move.test.ts › moves a message to another thread, and a successor onto another predecessor`.
 
-### `edges/move-source`
+### `edges/move-from`
 
 When `PATCH /edges/{id}` names a `from_id` for an edge whose type is `one-to-one` or `one-to-many`, the server MUST move the edge's from item to it.
 
@@ -602,7 +602,7 @@ If `PATCH /edges/{id}` moves an end of a `one-to-one` edge onto an item that alr
 
 If `PATCH /edges/{id}` moves the to item onto an item whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` naming the `to_type`.
 
-**Tests:** `compliance/edge-move.test.ts › refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
+**Tests:** `compliance/edge-move.test.ts › refuses a move onto a to item its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
 
 ### `edges/move-cycle`
 
@@ -612,21 +612,21 @@ If `PATCH /edges/{id}` moves an end of a `parent-of` or `supersedes` edge so tha
 
 ### `edges/move-cycle-self`
 
-If `PATCH /edges/{id}` moves an end that `edges/move-target` or `edges/move-source` lets it move onto the item at the edge's other end, then the server MUST answer `400 edge_cycle` with `details.edge_type`.
+If `PATCH /edges/{id}` moves an end that `edges/move-to` or `edges/move-from` lets it move onto the item at the edge's other end, then the server MUST answer `400 edge_cycle` with `details.edge_type`.
 
 **Tests:** `compliance/edge-move.test.ts › refuses a move that would close a cycle, and moves nothing`.
 
-### `edges/move-source-write`
+### `edges/move-from-write`
 
 If `PATCH /edges/{id}` moves the from item onto an item whose type the key may read and not write, then the server MUST answer `403 type_not_permitted`.
 
-**Tests:** `compliance/edge-move.test.ts › refuses a new source that does not exist, or whose type the key cannot write`.
+**Tests:** `compliance/edge-move.test.ts › refuses a new from item that does not exist, or whose type the key cannot write`.
 
 ### `edges/move-end-missing`
 
 If `PATCH /edges/{id}` moves an end onto an item that does not exist, then the server MUST answer `404 item_not_found`.
 
-**Tests:** `compliance/edge-move.test.ts › refuses a new source that does not exist, or whose type the key cannot write`, `› refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
+**Tests:** `compliance/edge-move.test.ts › refuses a new from item that does not exist, or whose type the key cannot write`, `› refuses a move onto a to item its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
 
 ### `edges/move-end-in-bin`
 
@@ -938,17 +938,17 @@ When `PATCH /items/{id}` names an empty list for an edge type under `edges`, the
 
 An edge type's `from_type_constraints` and `to_type_constraints` each hold `*`, a type identifier or `role:<name>`.
 
-### `edges/endpoint-source`
+### `edges/endpoint-from`
 
 If `POST /edges` names a from item whose type the edge type's `from_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `from_type` and the types `allowed`.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching source type rejected`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching from item type rejected`.
 
-### `edges/endpoint-target`
+### `edges/endpoint-to`
 
 If `POST /edges` names a to item whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `to_type` and the types `allowed`.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching target type rejected`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching to item type rejected`.
 
 ### `edges/endpoint-unregistered`
 
@@ -956,7 +956,7 @@ If `POST /edges` names an end whose item type is not registered, and the edge ty
 
 **Reason:** the type's parent and roles are not known, so the list cannot be judged and the write fails closed. A restore keeps such an edge as the archive holds it (`archive/restore-edges-end-unregistered`).
 
-**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`.
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose from constraint names the deleted type, and still refuses a registered end the constraint does not admit`.
 
 ### `edges/endpoint-bulk`
 
@@ -968,39 +968,39 @@ If an entry of `POST /edges/bulk` names an end of a type the edge type does not 
 
 If `POST /items` names an inline edge whose new item or to item is of a type the edge type does not admit, then the server MUST answer `400 edge_constraint_violation` with the `details` `POST /edges` gives.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an inline edge whose new item or target is of the wrong type on POST /items`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an inline edge whose new item or to item is of the wrong type on POST /items`.
 
 ### `edges/endpoint-subtype`
 
 When a constraint of an edge type names a type, the server MUST admit an item of any subtype of it.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › inheritance-aware: constraint accepts inheriting child type`, `› source / target type constraints: matching types accepted`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › inheritance-aware: constraint accepts inheriting child type`, `› from / to type constraints: matching types accepted`.
 
 ## Cardinality
 
 A cardinality says how many edges of one type an end holds: `one-to-one` lets each from item and each to item hold one, `one-to-many` each to item one, `many-to-one` each from item one, and `many-to-many` any number.
 
-### `edges/card-target-held`
+### `edges/card-to-held`
 
 If `POST /edges` names a to item that already holds an inbound edge of the edge type, and the type is `one-to-many` or `one-to-one`, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality` and the `edge_type` and `to_id`.
 
 **Reason:** a child has one parent at any depth, and a successor has one predecessor.
 
-**Tests:** `correctness/edges/edges-cardinality.test.ts › parent-of is one-parent-per-child: second parent rejected`, `› parent-of deep nesting respects the one-parent-per-child rule at depth`, `› supersedes is one-to-one: rejects second inbound to same target`, `› refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it`.
+**Tests:** `correctness/edges/edges-cardinality.test.ts › parent-of is one-parent-per-child: second parent rejected`, `› parent-of deep nesting respects the one-parent-per-child rule at depth`, `› supersedes is one-to-one: rejects second inbound to same to item`, `› refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it`.
 
-### `edges/card-source-held`
+### `edges/card-from-held`
 
 If `POST /edges` names a from item that already holds an outbound edge of the edge type, and the type is `many-to-one` or `one-to-one`, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality` and the `edge_type` and `from_id`.
 
-**Tests:** `correctness/edges/edges-cardinality.test.ts › in-thread is many-to-one: source can only join one thread`, `› supersedes is one-to-one: rejects second outbound from same source`, `› refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it`.
+**Tests:** `correctness/edges/edges-cardinality.test.ts › in-thread is many-to-one: a from item can only join one thread`, `› supersedes is one-to-one: rejects second outbound from same from item`, `› refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it`.
 
 ### `edges/card-excerpt-of`
 
 If `POST /edges` names an `excerpt-of` edge from a from item that already holds one, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality`.
 
-**Reason:** an excerpt is taken from one item, while an item may have many excerpts, so `excerpt-of` is `many-to-one` (`edges/card-source-held`).
+**Reason:** an excerpt is taken from one item, while an item may have many excerpts, so `excerpt-of` is `many-to-one` (`edges/card-from-held`).
 
-**Tests:** `correctness/edges/edges-excerpt-of.test.ts › is many-to-one: an item has many excerpts and an excerpt has one source`.
+**Tests:** `correctness/edges/edges-excerpt-of.test.ts › is many-to-one: an item has many excerpts and an excerpt is taken from one item`.
 
 ### `edges/card-many`
 
@@ -1026,7 +1026,7 @@ If `POST /edges` names a to item of a `one-to-many` or `one-to-one` type that al
 
 **Reason:** a limit accepted: every cardinality check counts the edges the key cannot see, so the one-parent rule stays whole. The refusal can reveal that something hidden exists, never its id or type.
 
-**Tests:** `compliance/edge-hidden-limits.test.ts › refuses a second parent the key cannot see, naming only the child`, `› refuses a successor the key cannot see on a one-to-one type, naming only the target`.
+**Tests:** `compliance/edge-hidden-limits.test.ts › refuses a second parent the key cannot see, naming only the child`, `› refuses a successor the key cannot see on a one-to-one type, naming only the to item`.
 
 ## Cycles
 
@@ -1074,11 +1074,11 @@ When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `
 
 **Tests:** `compliance/edge-types.test.ts › ships in-folder from any item to a system.folder, carrying its path`.
 
-### `edges/folder-target`
+### `edges/folder-to`
 
 If `POST /edges` names an `in-folder` edge to an item that is not a `system.folder`, then the server MUST answer `400 edge_constraint_violation`.
 
-**Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the source's type, the edge type and read on system.folder, and writing nothing of it`.
+**Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the from item's type, the edge type and read on system.folder, and writing nothing of it`.
 
 ### `edges/folder-path`
 
@@ -1110,7 +1110,7 @@ If `POST /items` or `PATCH /items/{id}` names an inline `in-folder` edge to a to
 
 **Reason:** an inline edge carries no properties, so the `path` an `in-folder` edge requires is what it lacks.
 
-**Tests:** `compliance/edge-types.test.ts › names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge`, `correctness/edges/edges-crud.test.ts › PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them`.
+**Tests:** `compliance/edge-types.test.ts › names the property an in-folder refusal rests on, on an edge update, a bulk entry and an inline edge`, `correctness/edges/edges-crud.test.ts › PATCH /items keeps a held edge whose type requires properties, and still refuses a new to item without them`.
 
 ### `edges/folder-revoked`
 
@@ -1130,21 +1130,21 @@ When a key holding write on an item's type, write on `in-folder` and read on `sy
 
 **Reason:** the folder item stays refused to every operation that would write it (`items/system-types`, `items/folder-grant`).
 
-**Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the source's type, the edge type and read on system.folder, and writing nothing of it`.
+**Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the from item's type, the edge type and read on system.folder, and writing nothing of it`.
 
 ### `edges/folder-blind`
 
 If a key without read on `system.folder` sends `POST /edges` for an `in-folder` edge, then the server MUST answer `404 item_not_found` for the folder.
 
-**Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the source's type, the edge type and read on system.folder, and writing nothing of it`.
+**Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the from item's type, the edge type and read on system.folder, and writing nothing of it`.
 
-### `edges/collection-target`
+### `edges/collection-to`
 
 If `POST /edges` names an `in-collection` edge to a to item whose type does not play the `container` role, declared or inherited, then the server MUST answer `400 edge_constraint_violation`.
 
 **Reason:** `in-collection` constrains its to item by role rather than by type, so a publisher's registered type that plays `container`, as declared or inherited, is a to item too; the shipped `core.collection`, `core.media.album` and `core.media.series` declare it.
 
-**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`.
+**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable to item as a missing one, whatever its type`.
 
 ### `edges/collection-no-nesting`
 
@@ -1152,13 +1152,13 @@ If `POST /edges` names an `in-collection` edge from a from item whose type plays
 
 **Reason:** a container holds items, never other containers, and `parent-of` is for hierarchy.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › in-collection refuses a source that is itself a container, as nesting`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › in-collection refuses a from item that is itself a container, as nesting`.
 
 ### `edges/collection-no-nesting-others`
 
 If an entry of `POST /edges/bulk`, or `POST /items` with an inline edge, names an `in-collection` edge from a from item whose type plays the `container` role, declared or inherited, then the server MUST refuse it `edge_constraint_violation` with `details.constraint` `nesting`.
 
-**Tests:** `correctness/edges/edges-type-constraints.test.ts › in-collection refuses a source that is itself a container, as nesting`.
+**Tests:** `correctness/edges/edges-type-constraints.test.ts › in-collection refuses a from item that is itself a container, as nesting`.
 
 ## Moving an item that holds edges
 
@@ -1200,7 +1200,7 @@ When `DELETE /items/{id}` names an item that holds outbound `parent-of` edges, t
 
 When `DELETE /items/{id}` names an item that holds outbound edges of a registered type whose `cascade_on_delete` is `cascade`, the server MUST move into the bin the to items of those edges.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › custom edge-type with cascade_on_delete=cascade cascades on source delete`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › custom edge-type with cascade_on_delete=cascade cascades on from item delete`.
 
 ### `edges/orphan-shipped`
 
@@ -1208,23 +1208,23 @@ When `DELETE /items/{id}` names an item that holds an edge of a shipped type who
 
 **Reason:** the edge stays while its item is in the bin. What a `with-hosts` edge takes is `edges/parts-trash`, and it takes nothing from the host when its part is deleted.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting source leaves target intact`, `› references defaults to orphan: deleting the referenced target leaves the source intact`, `› attached-to takes nothing from the attachment's side: deleting the attachment leaves the host intact`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting the from item leaves the to item intact`, `› references defaults to orphan: deleting the referenced to item leaves the from item intact`, `› attached-to takes nothing from the attachment's side: deleting the attachment leaves the host intact`.
 
-### `edges/excerpt-of-source-binned`
+### `edges/excerpt-of-from-binned`
 
 When `DELETE /items/{id}` names an item that is the to item of an `excerpt-of` edge, the server MUST leave the item at the edge's from item active.
 
 **Reason:** an excerpt, such as a highlight, carries its own text, so it stays in `GET /items` and stays readable when the item it was taken from goes to the bin.
 
-**Tests:** `correctness/edges/edges-excerpt-of.test.ts › leaves the excerpt in lists and active when its source is binned`.
+**Tests:** `correctness/edges/edges-excerpt-of.test.ts › leaves the excerpt in lists and active when the item it is taken from is binned`.
 
-### `edges/excerpt-of-source-purged`
+### `edges/excerpt-of-from-purged`
 
 When `POST /items/{id}/purge` names an item that is the to item of an `excerpt-of` edge, the server MUST leave the item at the edge's from item active.
 
 **Reason:** the purge deletes the edge with the item (`items/purge-edges`), and the excerpt, which carries its own text, stays in `GET /items`.
 
-**Tests:** `correctness/edges/edges-excerpt-of.test.ts › leaves the excerpt in lists and active when its source is purged`.
+**Tests:** `correctness/edges/edges-excerpt-of.test.ts › leaves the excerpt in lists and active when the item it is taken from is purged`.
 
 ### `edges/orphan-delete`
 
@@ -1248,7 +1248,7 @@ If `DELETE /items/{id}` or a transition into the bin is refused `400 edge_constr
 
 **Reason:** which edge types block is the registration's `cascade_on_delete`, and the refusal itself is `items/trash-blocked`.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › custom edge-type with cascade_on_delete=block refuses source delete while edges exist`, `› names every blocking edge in the cascade, not only the first it meets`, `› names every blocking edge in the cascade on a transition into the bin, as a delete does`, `compliance/edge-hidden-limits.test.ts › counts the edge without naming it, where a key that reads the type is told which`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › custom edge-type with cascade_on_delete=block refuses from item delete while edges exist`, `› names every blocking edge in the cascade, not only the first it meets`, `› names every blocking edge in the cascade on a transition into the bin, as a delete does`, `compliance/edge-hidden-limits.test.ts › counts the edge without naming it, where a key that reads the type is told which`.
 
 ### `edges/block-hidden-left-out`
 
@@ -1282,7 +1282,7 @@ The server MUST NOT refuse `POST /items/{id}/purge` for an item that a `block` e
 
 When a key deletes an item it may write, the server MUST move into the bin the `parent-of` children of the item whose types the key may not read.
 
-**Reason:** a limit accepted: a delete takes the children whatever their types. A key adds a child of an item only when it may write the item's type (`edges/write-cascade-target`).
+**Reason:** a limit accepted: a delete takes the children whatever their types. A key adds a child of an item only when it may write the item's type (`edges/write-cascade-to`).
 
 **Tests:** `compliance/edge-hidden-limits.test.ts › trashes a hidden child with the parent the key deletes`.
 
@@ -1458,19 +1458,19 @@ Where one registration meets more than one rule of this section, `edges/types-re
 
 When `POST /edge-types` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a key without `metadata.edge_types:write`; a missing field; a shipped `id`; an `id` that is not an edge type identifier; an `id` or `reverse_name` the key's edge map does not grant; `extends`; a key the edge type does not define; an `id` a registered edge type holds; write on the to items of the stored edges of the `id`, for an edge type that cascades on delete.
 
-**Tests:** `compliance/edge-types.test.ts › refuses a key without metadata.edge_types:write before it answers a shipped id`, `› answers a shipped id as a conflict before it refuses extends`, `› answers a shipped id as a conflict before it asks the key's edge map`, `› refuses an id that is not an edge type identifier before it asks the key's edge map`, `› refuses an id the key's edge map does not grant before it refuses extends`, `› refuses extends before a key the edge type does not define`, `› refuses a key the edge type does not define before it answers an id a registered edge type holds`, `compliance/edge-cascade-target.test.ts › answers an id a registered edge type holds as a conflict before it asks for write on the stored targets`.
+**Tests:** `compliance/edge-types.test.ts › refuses a key without metadata.edge_types:write before it answers a shipped id`, `› answers a shipped id as a conflict before it refuses extends`, `› answers a shipped id as a conflict before it asks the key's edge map`, `› refuses an id that is not an edge type identifier before it asks the key's edge map`, `› refuses an id the key's edge map does not grant before it refuses extends`, `› refuses extends before a key the edge type does not define`, `› refuses a key the edge type does not define before it answers an id a registered edge type holds`, `compliance/edge-cascade-target.test.ts › answers an id a registered edge type holds as a conflict before it asks for write on the stored to items`.
 
-### `edges/types-register-cascade-targets`
+### `edges/types-register-cascade-to`
 
 If a key sends `POST /edge-types` for an edge type whose `cascade_on_delete` is `cascade`, and a stored edge of that `id` has a to item whose type the key may not write, then the server MUST answer `403 type_not_permitted` and register nothing.
 
-**Reason:** the registration makes every one of those edges a cascading edge, which `edges/write-cascade-target` asks write on the to item's type for.
+**Reason:** the registration makes every one of those edges a cascading edge, which `edges/write-cascade-to` asks write on the to item's type for.
 
-**Tests:** `compliance/edge-cascade-target.test.ts › refuses a registration over a stored edge to a type the key may not write, without naming the type`, `› registers a cascading edge type over stored edges whose targets the key may write`.
+**Tests:** `compliance/edge-cascade-target.test.ts › refuses a registration over a stored edge to a type the key may not write, without naming the type`, `› registers a cascading edge type over stored edges whose to items the key may write`.
 
 ### `edges/types-register-cascade-unnamed`
 
-When the server refuses `POST /edge-types` under `edges/types-register-cascade-targets`, the server MUST NOT name the to item's type or item in its answer.
+When the server refuses `POST /edge-types` under `edges/types-register-cascade-to`, the server MUST NOT name the to item's type or item in its answer.
 
 **Reason:** the to item can be an item whose type the key may not read.
 
@@ -1758,7 +1758,7 @@ If `POST /edge-types` names an `id` that another edge type holds as its reverse 
 
 When a key registers an edge type, the server MUST list and answer it with the `written_from` the registration named, `from` where it named no `written_from`.
 
-**Tests:** `compliance/edge-types.test.ts › registers an edge type written at its target, and refuses one with no name to write it under`.
+**Tests:** `compliance/edge-types.test.ts › registers an edge type written from its to end, and refuses one with no name to write it under`.
 
 ### `edges/types-written-at-none`
 
@@ -1766,15 +1766,15 @@ If `POST /edge-types` names a `written_from` other than `from`, `to` or `none`, 
 
 **Reason:** `none` is the value for an edge no file writes, and the server keeps such an edge as it keeps any other. A value the server did not know would be listed back and read by a folder as no end at all.
 
-**Tests:** `compliance/edge-types.test.ts › registers an edge type written at its target, and refuses one with no name to write it under`.
+**Tests:** `compliance/edge-types.test.ts › registers an edge type written from its to end, and refuses one with no name to write it under`.
 
-### `edges/types-written-at-target`
+### `edges/types-written-from-to`
 
 If `POST /edge-types` names `written_from` `to` and no `reverse_name`, then the server MUST answer `400 validation_error`.
 
 **Reason:** the to item's file has no other name to write the edge under.
 
-**Tests:** `compliance/edge-types.test.ts › registers an edge type written at its target, and refuses one with no name to write it under`.
+**Tests:** `compliance/edge-types.test.ts › registers an edge type written from its to end, and refuses one with no name to write it under`.
 
 ### `edges/types-delete`
 
@@ -1952,7 +1952,7 @@ If `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names an
 
 **Reason:** an inline edge carries no properties, so a required property is what it lacks.
 
-**Tests:** `compliance/edge-property-schema.test.ts › refuses an item write whose inline edge lacks a required property, and writes nothing of it`, `correctness/edges/edges-crud.test.ts › PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them`.
+**Tests:** `compliance/edge-property-schema.test.ts › refuses an item write whose inline edge lacks a required property, and writes nothing of it`, `correctness/edges/edges-crud.test.ts › PATCH /items keeps a held edge whose type requires properties, and still refuses a new to item without them`.
 
 ### `edges/properties-inline-none`
 
@@ -2050,21 +2050,21 @@ When `GET /edges` meets an edge whose from item's type or whose edge type the cr
 
 **Reason:** a refusal would say the edge exists, so the listing drops it, as `GET /edges/{id}` answers it as missing.
 
-**Tests:** `compliance/edge-permissions.test.ts › drops an edge whose source is a type the credential cannot read`, `› drops an edge of an edge type the credential cannot read`.
+**Tests:** `compliance/edge-permissions.test.ts › drops an edge whose from item is a type the credential cannot read`, `› drops an edge of an edge type the credential cannot read`.
 
 ### `edges/read-source-filter`
 
 Where a source filter applies to the key, the server MUST leave an edge out of `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` and `backrefs` blocks that an item read, an item listing, `POST /items/bulk-get`, `POST /items/lookup` and the answer to a create or an update of an item carry, when the filter leaves out its from item, and not when it leaves out only its to item.
 
-**Reason:** an edge is a statement its from item makes about its to item (`edges/target-named`), so the from item decides where the statement shows. A block is the first page of the listing it continues at, so it holds what that listing holds. The filter narrows what a read returns and not the item or edge a read by id names (`types/source-filter-by-id`), so an item the filter leaves out is still read by id, and is answered with none of its own outbound edges, as `GET /items/{id}/edges` answers none. The `neighbors` an item read carries are the far ends of these blocks (`edges/neighbors`), so an edge left out brings no neighbor.
+**Reason:** an edge is a statement its from item makes about its to item (`edges/to-named`), so the from item decides where the statement shows. A block is the first page of the listing it continues at, so it holds what that listing holds. The filter narrows what a read returns and not the item or edge a read by id names (`types/source-filter-by-id`), so an item the filter leaves out is still read by id, and is answered with none of its own outbound edges, as `GET /items/{id}/edges` answers none. The `neighbors` an item read carries are the far ends of these blocks (`edges/neighbors`), so an edge left out brings no neighbor.
 
-**Tests:** `compliance/edge-source-filter.test.ts › decides an edge on GET /edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/backrefs by the source of its source item, whatever the source of its target`, `› lists the edges of every source a filter names that names several, and no other`, `› leaves an edge out of the inbound block of an item read when the filter hides its source item, whatever the source of its target`, `› judges the outbound edges of an item read by the source of that item, whatever the source of their targets`, `› applies to the edges an item listing and a bulk read by id carry`, `› applies to the edges a lookup carries`, `› applies to the edges the answer to a write carries`, `› applies to the edges the answer to a create carries`.
+**Tests:** `compliance/edge-source-filter.test.ts › decides an edge on GET /edges by the source of its from item, whatever the source of its to item`, `› decides an edge on GET /items/{id}/edges by the source of its from item, whatever the source of its to item`, `› decides an edge on GET /items/{id}/backrefs by the source of its from item, whatever the source of its to item`, `› lists the edges of every source a filter names that names several, and no other`, `› leaves an edge out of the inbound block of an item read when the filter hides its from item, whatever the source of its to item`, `› judges the outbound edges of an item read by the source of that item, whatever the source of their to items`, `› applies to the edges an item listing and a bulk read by id carry`, `› applies to the edges a lookup carries`, `› applies to the edges the answer to a write carries`, `› applies to the edges the answer to a create carries`.
 
 ### `edges/read-source-filter-bin`
 
 While the from item of an edge is in the bin, the server MUST judge the edge under a source filter by the source of that item, as it does for an item that is not.
 
-**Tests:** `compliance/edge-source-filter.test.ts › lists an edge on every listing while its source item is in the bin, by that item's source`.
+**Tests:** `compliance/edge-source-filter.test.ts › lists an edge on every listing while its from item is in the bin, by that item's source`.
 
 ### `edges/read-source-filter-page`
 
@@ -2072,7 +2072,7 @@ If a source filter leaves out an edge, then the server MUST NOT count the edge a
 
 **Reason:** a caller stops on a `next_cursor` of `null` and not on a short page or block, so one cut before the filter would hand back a fraction of its size, or none, while the listing it continues at held more.
 
-**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`, `› fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`, `› fills the block an item listing carries to its cap, whatever the source of the targets, and continues it at the listing`.
+**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`, `› fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`, `› fills the block an item listing carries to its cap, whatever the source of the to items, and continues it at the listing`.
 
 ### `edges/read-list-short`
 
@@ -2082,19 +2082,19 @@ When `GET /edges` leaves out of a page an edge whose from item's type or whose e
 
 **Tests:** `compliance/edge-permissions.test.ts › pages to the end of the listing though whole pages are dropped`.
 
-### `edges/read-source-trashed`
+### `edges/read-from-trashed`
 
 When the from item of an edge is in the bin, the server MUST judge the edge's readability by the type of that item as it does for an item that is not.
 
 **Reason:** a from item read away is a from item with no type to refuse, so trashing it would turn a refusal into a disclosure.
 
-**Tests:** `compliance/edge-permissions.test.ts › drops it still when the source is trashed, which is when a null source would read as no source at all`.
+**Tests:** `compliance/edge-permissions.test.ts › drops it still when the from item is trashed, which is when a null from item would read as none at all`.
 
 ### `edges/read-item-withheld`
 
 When `GET /items/{id}/edges` or `GET /items/{id}/backrefs` meets an edge whose from item's type or whose edge type the credential may not read, the server MUST leave the edge out of the page.
 
-**Tests:** `compliance/edge-permissions.test.ts › leaves an edge of an unreadable kind out of GET /items/{id}/edges`, `› leaves an edge with an unreadable source out of GET /items/{id}/backrefs`, `› pages a per-item door to the end though whole pages are dropped`.
+**Tests:** `compliance/edge-permissions.test.ts › leaves an edge of an unreadable kind out of GET /items/{id}/edges`, `› leaves an edge with an unreadable from item out of GET /items/{id}/backrefs`, `› pages a per-item door to the end though whole pages are dropped`.
 
 ### `edges/read-hydrated-withheld`
 
@@ -2120,7 +2120,7 @@ When `GET /export` answers a credential with edge lines, the server MUST leave o
 
 When `GET /export` carries edge lines, the server MUST leave out each edge whose from item or to item the export does not carry.
 
-**Tests:** `compliance/edge-hidden-limits.test.ts › leaves an edge out of an export when the key cannot read its target`.
+**Tests:** `compliance/edge-hidden-limits.test.ts › leaves an edge out of an export when the key cannot read its to item`.
 
 ### `edges/read-id-kind`
 
@@ -2128,11 +2128,11 @@ If `GET /edges/{id}`, `PATCH /edges/{id}` or `DELETE /edges/{id}` names an edge 
 
 **Tests:** `compliance/unreadable-items.test.ts › an edge of a type it cannot read answers as a missing edge on every door naming it`.
 
-### `edges/read-id-source`
+### `edges/read-id-from`
 
 If `GET /edges/{id}`, `PATCH /edges/{id}` or `DELETE /edges/{id}` names an edge whose from item is of a type the key may not read, in the bin or not, then the server MUST answer `404 edge_not_found` with the message an id no edge holds gets.
 
-**Tests:** `compliance/unreadable-items.test.ts › $name`, `compliance/edge-permissions.test.ts › trashed source: PATCH/DELETE edge still gated on source type`, `› drops it still when the source is trashed, which is when a null source would read as no source at all`.
+**Tests:** `compliance/unreadable-items.test.ts › $name`, `compliance/edge-permissions.test.ts › trashed from item: PATCH/DELETE edge still gated on from item type`, `› drops it still when the from item is trashed, which is when a null from item would read as none at all`.
 
 ### `edges/filter-term-hidden`
 
@@ -2146,7 +2146,7 @@ If a filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /item
 
 When a `backref` filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists is counted, the server MUST count only edges whose from item the credential may read.
 
-**Tests:** `compliance/unreadable-items.test.ts › a filter term anchored on an item it cannot read matches as one anchored on no item`, `› counts only edges from a source it can read, on GET /items/stats and on a view's items`.
+**Tests:** `compliance/unreadable-items.test.ts › a filter term anchored on an item it cannot read matches as one anchored on no item`, `› counts only edges from a from item it can read, on GET /items/stats and on a view's items`.
 
 ### `edges/filter-backref-source-filter`
 
@@ -2154,7 +2154,7 @@ Where a source filter applies to the key, when a `backref` filter term of `GET /
 
 **Reason:** `GET /items/{id}/backrefs` leaves the edge out (`edges/read-source-filter`), and a filter term that counted it would answer what that listing does not.
 
-**Tests:** `compliance/edge-source-filter.test.ts › counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats, POST /items/bulk-actions and a view's items`, `› matches a backref not_exists term on an item whose every inbound edge the filter hides`.
+**Tests:** `compliance/edge-source-filter.test.ts › counts only edges whose from item the filter shows, on GET /items, GET /search, GET /items/stats, POST /items/bulk-actions and a view's items`, `› matches a backref not_exists term on an item whose every inbound edge the filter hides`.
 
 ### `edges/filter-backref-anchor`
 
@@ -2162,29 +2162,29 @@ When a `backref` filter term names an item the credential may not read, in the b
 
 **Tests:** `compliance/unreadable-items.test.ts › a filter term anchored on an item it cannot read matches as one anchored on no item`.
 
-### `edges/filter-edge-target`
+### `edges/filter-edge-to`
 
 When an `edge` filter term names an item the credential may not read, the server MUST match every edge to it that the credential may read.
 
 **Reason:** a device that holds those edges answers the same.
 
-**Tests:** `compliance/unreadable-items.test.ts › an outbound term naming an item it cannot read matches the readable edges to it`, `device/fidelity.test.ts › answers an edge term naming a target the key cannot read as the server does`.
+**Tests:** `compliance/unreadable-items.test.ts › an outbound term naming an item it cannot read matches the readable edges to it`, `device/fidelity.test.ts › answers an edge term naming a to item the key cannot read as the server does`.
 
 ## What a key may write
 
-### `edges/write-source-type`
+### `edges/write-from-type`
 
 If a key that may read an edge's from item type but not write it sends `POST /edges`, `PATCH /edges/{id}` or `DELETE /edges/{id}` for the edge, then the server MUST answer `403 type_not_permitted`.
 
-**Reason:** writing an edge needs write on its from item's type and on its edge type, and on its to item's type when its edge type cascades on delete (`edges/write-cascade-target`); the from item type is asked first.
+**Reason:** writing an edge needs write on its from item's type and on its edge type, and on its to item's type when its edge type cascades on delete (`edges/write-cascade-to`); the from item type is asked first.
 
-**Tests:** `compliance/edge-permissions.test.ts › dual-gate: source-type write + edge-type write required`, `› trashed source: PATCH/DELETE edge still gated on source type`.
+**Tests:** `compliance/edge-permissions.test.ts › dual-gate: from item type write + edge-type write required`, `› trashed from item: PATCH/DELETE edge still gated on from item type`.
 
 ### `edges/write-edge-type`
 
 If a key that may read an edge type but not write it sends `POST /edges`, `PATCH /edges/{id}` or `DELETE /edges/{id}` for an edge of the type, then the server MUST answer `403 edge_permission_denied` with `details.edge_type`, `details.required` and `details.grant`.
 
-**Tests:** `compliance/edge-permissions.test.ts › dual-gate: source-type write + edge-type write required`, `› narrow scope: key with edge.about:write cannot create parent-of edges`, `› edge read scope: key with edge.about:read can list but not write`, `compliance/edge-refusals.test.ts › refuses an update and a delete from a key that reads the edge but may not write its type`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
+**Tests:** `compliance/edge-permissions.test.ts › dual-gate: from item type write + edge-type write required`, `› narrow scope: key with edge.about:write cannot create parent-of edges`, `› edge read scope: key with edge.about:read can list but not write`, `compliance/edge-refusals.test.ts › refuses an update and a delete from a key that reads the edge but may not write its type`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
 
 ### `edges/write-grant`
 
@@ -2206,49 +2206,49 @@ If a key sends `POST /edges/bulk` with an entry whose from item it may read and 
 
 **Tests:** `compliance/edges-bulk.test.ts › gates bulk edges per type and edge permission`, `compliance/write-refusal-details.test.ts › names the grant on a bulk page, inside the rollback or on the entry`.
 
-### `edges/write-cascade-target`
+### `edges/write-cascade-to`
 
 If a key may not write the type of an item, and sends `POST /edges`, an entry of `POST /edges/bulk`, an inline `edges` of `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk`, or a `PATCH /edges/{id}` that moves an end, so that an edge of an edge type whose `cascade_on_delete` is `cascade` would have the item as its to item, then the server MUST refuse it with `403 type_not_permitted` and `details.grant` naming the type and the level `write`, on a bulk page as `error` on the entry under `atomic: false` and as `details.details` of the rollback under `atomic: true`.
 
 **Reason:** a delete of the from item moves a cascading edge's to item to the bin, so the edge takes what writing the to item takes.
 
-**Tests:** `compliance/edge-cascade-target.test.ts › $name refuses an edge of a type that cascades to a target the key may read and not write, naming the grant to write its type`, `› refuses an edge of a registered type that cascades as it refuses parent-of`, `› refuses a move of the source of an edge to a target the key may not write, and a move of the target onto one`.
+**Tests:** `compliance/edge-cascade-target.test.ts › $name refuses an edge of a type that cascades to a to item the key may read and not write, naming the grant to write its type`, `› refuses an edge of a registered type that cascades as it refuses parent-of`, `› refuses a move of the from item of an edge to a to item the key may not write, and a move of the to item onto one`.
 
 ## Ends the key may not read
 
-### `edges/end-target-hidden`
+### `edges/end-to-hidden`
 
 If `POST /edges`, an entry of `POST /edges/bulk` from a key that may write its edge type, or an inline `edges` of `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names a to item whose type the key may not read, then the server MUST answer exactly as for a to item no item holds, `item_not_found` with the message `Edge to item not found: <id>`, on a bulk page as `error` on the entry under `atomic: false` and as `details.code` of the rollback under `atomic: true`.
 
 **Reason:** the answer discloses neither the item's existence nor its type.
 
-**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`, `compliance/edge-check-order.test.ts › answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can`.
+**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable to item as a missing one, whatever its type`, `compliance/edge-check-order.test.ts › answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can`.
 
-### `edges/end-target-hidden-first`
+### `edges/end-to-hidden-first`
 
-When an edge write names a to item whose type the key may not read, the server MUST answer as `edges/end-target-hidden` does before it applies an endpoint constraint to the to item, so a to item a constraint would refuse answers the same.
+When an edge write names a to item whose type the key may not read, the server MUST answer as `edges/end-to-hidden` does before it applies an endpoint constraint to the to item, so a to item a constraint would refuse answers the same.
 
-**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`.
+**Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable to item as a missing one, whatever its type`.
 
-### `edges/end-target-hidden-matched`
+### `edges/end-to-hidden-matched`
 
-When an entry of `POST /edges/bulk` names a to item whose type the key may not read and a triple an edge already holds, the server MUST answer as `edges/end-target-hidden` does, and not report the entry `updated` or `skipped` with the edge's `id`.
+When an entry of `POST /edges/bulk` names a to item whose type the key may not read and a triple an edge already holds, the server MUST answer as `edges/end-to-hidden` does, and not report the entry `updated` or `skipped` with the edge's `id`.
 
-**Tests:** `compliance/edge-permissions.test.ts › answers an unreadable target as a missing one on the bulk door, where an edge to it already exists`.
+**Tests:** `compliance/edge-permissions.test.ts › answers an unreadable to item as a missing one on the bulk door, where an edge to it already exists`.
 
-### `edges/end-target-hidden-stale`
+### `edges/end-to-hidden-stale`
 
-When `PATCH /items/{id}` names a stale `version` and an inline edge to a to item whose type the key may not read, the server MUST answer as `edges/end-target-hidden` does, and not `409`.
+When `PATCH /items/{id}` names a stale `version` and an inline edge to a to item whose type the key may not read, the server MUST answer as `edges/end-to-hidden` does, and not `409`.
 
-**Tests:** `compliance/edge-permissions.test.ts › answers an unreadable target as a missing one on a stale PATCH, before the version is read`.
+**Tests:** `compliance/edge-permissions.test.ts › answers an unreadable to item as a missing one on a stale PATCH, before the version is read`.
 
-### `edges/end-target-hidden-move`
+### `edges/end-to-hidden-move`
 
 If `PATCH /edges/{id}` moves the to item onto an item whose type the key may not read, then the server MUST answer exactly as for a to item no item holds, `404 item_not_found`.
 
-**Tests:** `compliance/edge-move.test.ts › refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
+**Tests:** `compliance/edge-move.test.ts › refuses a move onto a to item its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
 
-### `edges/end-source-hidden`
+### `edges/end-from-hidden`
 
 If `POST /edges`, or an entry of `POST /edges/bulk` from a key that may write its edge type, names a from item whose type the key may not read, then the server MUST answer exactly as for a from item no item holds, `404 item_not_found` with the message `Edge from item not found: <id>`.
 
@@ -2256,11 +2256,11 @@ If `POST /edges`, or an entry of `POST /edges/bulk` from a key that may write it
 
 **Tests:** `compliance/unreadable-items.test.ts › $name`, `compliance/edge-check-order.test.ts › answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can`.
 
-### `edges/end-source-hidden-move`
+### `edges/end-from-hidden-move`
 
 If `PATCH /edges/{id}` moves the from item onto an item whose type the key may not read, then the server MUST answer exactly as for a from item no item holds, `404 item_not_found`, before it asks the key's write on that type.
 
-**Tests:** `compliance/unreadable-items.test.ts › PATCH /edges/{id} moving the source onto an item it cannot read`.
+**Tests:** `compliance/unreadable-items.test.ts › PATCH /edges/{id} moving the from item onto an item it cannot read`.
 
 ## Concurrent writes
 
@@ -2284,7 +2284,7 @@ If an edge write lands after its from item was retyped into a type the key may n
 
 **Reason:** the permission is judged against the from item's type as it stands when the write lands.
 
-**Tests:** `compliance/write-order.test.ts › refuses edge creation after its source is retyped outside write reach`.
+**Tests:** `compliance/write-order.test.ts › refuses edge creation after its from item is retyped outside write reach`.
 
 ### `edges/race-event`
 

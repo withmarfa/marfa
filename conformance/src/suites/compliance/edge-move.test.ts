@@ -255,7 +255,7 @@ describe("moving an edge's end", () => {
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
   });
 
-  it("refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one", async () => {
+  it("refuses a move onto a to item its type's constraint refuses, and answers one the key cannot read exactly as a missing one", async () => {
     const edgeType = `mock.move.${ctx.runId}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
@@ -332,7 +332,7 @@ describe("moving an edge's end", () => {
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
   });
 
-  it("refuses a new source that does not exist, or whose type the key cannot write", async () => {
+  it("refuses a new from item that does not exist, or whose type the key cannot write", async () => {
     const minted = await client.createKey({
       label: "edge-move-writer",
       source: `${ctx.source}-edge-move-writer`,

@@ -458,7 +458,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     ).toBe(door.served);
   });
 
-  it("PATCH /edges/{id} moving the source onto an item it cannot read", async () => {
+  it("PATCH /edges/{id} moving the from item onto an item it cannot read", async () => {
     const moved = async (to: string): Promise<Seen> => {
       const child = await note();
       const parent = await note();
@@ -750,7 +750,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     ).toContain(target);
   });
 
-  it("counts only edges from a source it can read, on GET /items/stats and on a view's items", async () => {
+  it("counts only edges from a from item it can read, on GET /items/stats and on a view's items", async () => {
     const viewer = await client.createKey({
       label: "unreadable-items-viewer",
       source: `${ctx.source}-unreadable-items-viewer`,
@@ -812,7 +812,7 @@ describe("an item the key cannot read answers as a missing one", () => {
   });
 
   it("an outbound term naming an item it cannot read matches the readable edges to it", async () => {
-    // A readable edge names its target whoever reads it (`edges/target-named`), so
+    // A readable edge names its target whoever reads it (`edges/to-named`), so
     // the term answers from that edge, as a device holding it does.
     const pointer = await note();
     const into = await client.createEdge({

@@ -65,7 +65,7 @@ describe("edge cardinality enforcement", () => {
     expect(second.code).toBe("edge_constraint_violation");
   });
 
-  it("in-thread is many-to-one: source can only join one thread", async () => {
+  it("in-thread is many-to-one: a from item can only join one thread", async () => {
     const thread1 = await makeItem("thread1");
     const thread2 = await makeItem("thread2");
     const member = await makeItem("member");
@@ -78,7 +78,7 @@ describe("edge cardinality enforcement", () => {
     expect(second.code).toBe("edge_constraint_violation");
   });
 
-  it("supersedes is one-to-one: rejects second outbound from same source", async () => {
+  it("supersedes is one-to-one: rejects second outbound from same from item", async () => {
     const head = await makeItem("head");
     const t1 = await makeItem("t1");
     const t2 = await makeItem("t2");
@@ -91,7 +91,7 @@ describe("edge cardinality enforcement", () => {
     expect(second.code).toBe("edge_constraint_violation");
   });
 
-  it("supersedes is one-to-one: rejects second inbound to same target", async () => {
+  it("supersedes is one-to-one: rejects second inbound to same to item", async () => {
     const target = await makeItem("target");
     const successorA = await makeItem("succA");
     const successorB = await makeItem("succB");

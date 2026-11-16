@@ -3844,7 +3844,7 @@ impl ReachChange {
 }
 
 /// Whether a write is one the server answers by changing the reach: a move
-/// of an edge's source (`reach/moves-edge-source`) or a retype
+/// of an edge's source (`reach/moves-edge-from`) or a retype
 /// (`reach/moves-retype`). A write queued with an unchanged type carries no
 /// `retype`, so only a real type change counts (`reach/keeps-same-type`).
 /// Only one answered in the pass at hand is known to have changed it; a
@@ -3861,7 +3861,7 @@ fn changes_reach(row: &QueuedWrite) -> bool {
 /// changed reach and `reach_write` says the write was a move of an edge's
 /// source or a retype, the pass notes it and goes on, and every read after it is left
 /// unmade, since the server would refuse each the same way
-/// (`queue-and-verdicts/edge-source-move-carries-on`); any other change ends
+/// (`queue-and-verdicts/edge-from-move-carries-on`); any other change ends
 /// the pass here, with the copy expired.
 fn read_owed(
     core: &Core,

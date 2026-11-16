@@ -238,7 +238,7 @@ When a page creates a write, a device MUST read it back through `POST /items/bul
 
 **Reason:** a read for each created item would spend the request limit the page saved; the server takes at most 100 ids to a request (`items/bulk-get-cap`).
 
-**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› ends the drain where the read of a page meets a changed reach, with no write answered`, `› sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat`.
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› ends the drain where the read of a page meets a changed reach, with no write answered`, `› sends an edge the read of its from item does not hold on its own door, under its key, answered as a repeat`.
 
 ### `queue-and-verdicts/page-read-back-failed`
 
@@ -246,7 +246,7 @@ If the read back of writes a page created meets an environmental failure, then a
 
 **Reason:** the server took the page, so each write landed; sent again it would be a second attempt that only its own door may make (`queue-and-verdicts/page-never-sent`), so the device keeps the page's answer as the verdict and reads the items back before the next drain sends anything (`queue-and-verdicts/owed-read-first`).
 
-**Tests:** `device/pages.test.ts › keeps the verdicts of a page whose read-back the server limits, and sends none of its writes again`, `› settles an edge the owed read of its source leaves out by a read of the edge, and sends it no more`.
+**Tests:** `device/pages.test.ts › keeps the verdicts of a page whose read-back the server limits, and sends none of its writes again`, `› settles an edge the owed read of its from item leaves out by a read of the edge, and sends it no more`.
 
 ### `queue-and-verdicts/page-owed-read-refused`
 
@@ -2008,15 +2008,15 @@ Where a copy names the instance it was hydrated from, a device MUST name that in
 
 If the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, then a device MUST end the drain `copy_expired` with the reason `instance_changed`, expiring the copy.
 
-**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a from item move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
 
 ### `queue-and-verdicts/instance-changed-sends-nothing`
 
 When the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's from item or a change of an item's type earlier in it.
 
-**Reason:** a write behind a move or a change of type is sent as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`), and this refusal is about the server at the address, not about the write.
+**Reason:** a write behind a move or a change of type is sent as it would have been had the copy not expired (`queue-and-verdicts/edge-from-move-carries-on`), and this refusal is about the server at the address, not about the write.
 
-**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a from item move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
 
 ### `queue-and-verdicts/instance-changed-keeps-write`
 
@@ -2024,7 +2024,7 @@ When the server answers a write a drain sends `409 instance_changed`, a device M
 
 **Reason:** the instance that refused it never held the items it was made against and did not apply it. The write is held for the person once the copy is hydrated from that instance (`device/queue-other-instance-held`).
 
-**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a from item move the server took`, `device/retype-drain.test.ts › ends at once where another instance refuses a write behind a retype the server took`.
 
 ### `queue-and-verdicts/instance-changed-afresh`
 
@@ -2104,9 +2104,9 @@ When a hydration holds again an item of this device's own create still waiting t
 
 When a hydration leaves the copy without the from item of an edge create still waiting, of a type the slice does not hold whole, a device MUST NOT hold the edge again, nor its answer.
 
-**Reason:** the copy never holds an edge whose from item it does not hold (`device/edge-source-left-unheld`).
+**Reason:** the copy never holds an edge whose from item it does not hold (`device/edge-from-left-unheld`).
 
-**Tests:** `device/queue.test.ts › holds no waiting edge whose source a re-hydration left outside the slice, nor its answer`.
+**Tests:** `device/queue.test.ts › holds no waiting edge whose from item a re-hydration left outside the slice, nor its answer`.
 
 ## The version a later write is sent on
 
@@ -2778,7 +2778,7 @@ If a caller restores an item the copy does not hold while a restore of it alread
 
 When a caller edits an edge naming a new from item or a new to item, a device MUST queue the move as one `update_edge` write carrying the end it moves, the properties the edit names and the version the copy holds, never a delete and a create.
 
-**Reason:** the server moves one end of an edge in one write, judged without the edge being moved (`edges/move-target`, `edges/move-source` and `edges/move-cardinality`). A delete and a create are two writes with two verdicts: offline, the delete can be accepted and the create refused, and the end that stays is left with no edge, a child with no parent.
+**Reason:** the server moves one end of an edge in one write, judged without the edge being moved (`edges/move-to`, `edges/move-from` and `edges/move-cardinality`). A delete and a create are two writes with two verdicts: offline, the delete can be accepted and the create refused, and the end that stays is left with no edge, a child with no parent.
 
 **Tests:** `device/edge-move.test.ts › sends a move as one update of the edge, on the version the copy holds`, `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`.
 
@@ -2804,7 +2804,7 @@ While a move of an edge waits, a device MUST show the edge at its new end, read 
 
 **Reason:** a local read would otherwise show the old parent still drawing a child the person has moved.
 
-**Tests:** `device/edge-move.test.ts › shows a waiting move at its new end from both ends, over the answer to the edit ahead of it`, `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `device/catch-up.test.ts › lays its own waiting move of an edge's target over the server's change to the edge`, `› keeps an edge whose source moved outside the slice while a move of its own waits`.
+**Tests:** `device/edge-move.test.ts › shows a waiting move at its new end from both ends, over the answer to the edit ahead of it`, `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `device/catch-up.test.ts › lays its own waiting move of an edge's to item over the server's change to the edge`, `› keeps an edge whose from item moved outside the slice while a move of its own waits`.
 
 ### `queue-and-verdicts/edge-move-refused-back`
 
@@ -2812,15 +2812,15 @@ When the server refuses a move of an edge, a device MUST hold the edge where the
 
 **Tests:** `device/edge-move-live.test.ts › puts the edge back at its old parent when the server refuses the move for a cycle`.
 
-### `queue-and-verdicts/edge-source-move-expires`
+### `queue-and-verdicts/edge-from-move-expires`
 
 When the server takes a write that changes the reach, a move of an edge's from item or a change of an item's type, a device MUST expire the copy, whatever items the copy holds.
 
-**Reason:** each changes the reach (`reach/moves-edge-source`, `reach/moves-retype`) on the write alone, and nothing the server answers tells a device whether the write touched an item its copy holds, so the next hydration holds the item where the server does. An edit that names the type the item already has moves nothing, and a device queues none (`queue-and-verdicts/move-same-not-sent`, `reach/keeps-same-type`).
+**Reason:** each changes the reach (`reach/moves-edge-from`, `reach/moves-retype`) on the write alone, and nothing the server answers tells a device whether the write touched an item its copy holds, so the next hydration holds the item where the server does. An edit that names the type the item already has moves nothing, and a device queues none (`queue-and-verdicts/move-same-not-sent`, `reach/keeps-same-type`).
 
 **Tests:** `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `› holds a move onto its own unanswered create, and sends it naming the item the create landed on`, `› re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `device/reach-live.test.ts › sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it`.
 
-### `queue-and-verdicts/edge-source-move-carries-on`
+### `queue-and-verdicts/edge-from-move-carries-on`
 
 When a device expires the copy for a move of an edge's from item or a change of an item's type, a device MUST send the writes queued behind it in the same drain, each judged as it would have been had the copy not expired.
 
@@ -2828,7 +2828,7 @@ When a device expires the copy for a move of an edge's from item or a change of 
 
 **Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `device/reach-live.test.ts › sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it`.
 
-### `queue-and-verdicts/edge-source-move-reads-owed`
+### `queue-and-verdicts/edge-from-move-reads-owed`
 
 While a drain goes on after a move of an edge's from item or a change of an item's type changed the reach, a device MUST leave the read after each answer owed, asking the server for none.
 
@@ -2836,7 +2836,7 @@ While a drain goes on after a move of an edge's from item or a change of an item
 
 **Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`.
 
-### `queue-and-verdicts/edge-source-move-one-expiry`
+### `queue-and-verdicts/edge-from-move-one-expiry`
 
 When a drain has sent a move of an edge's from item or a change of an item's type that the server took, and ends with no wait, no unavailable server, no credential stop and no write left undelivered, a device MUST end the drain `copy_expired` once, after the last write it sent.
 
@@ -2844,7 +2844,7 @@ When a drain has sent a move of an edge's from item or a change of an item's typ
 
 **Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/retype-drain.test.ts › sends the writes queued behind it and expires the copy once, at the end`, `device/reach-live.test.ts › sends the writes queued behind a retype in one drain a real server takes, and one hydration covers it`.
 
-### `queue-and-verdicts/edge-source-move-report-kept`
+### `queue-and-verdicts/edge-from-move-report-kept`
 
 If a drain that expired the copy for a move of an edge's from item or a change of an item's type ends with a wait, an unavailable server, a credential stop or a write left undelivered, then a device MUST return the drain's report, with the copy expired.
 
@@ -2852,7 +2852,7 @@ If a drain that expired the copy for a move of an edge's from item or a change o
 
 **Tests:** `device/edge-move.test.ts › returns the report with the wait the server asked for, the copy expired`, `device/retype-drain.test.ts › returns the report with the wait the server asked for after a retype, the copy expired`.
 
-### `queue-and-verdicts/edge-source-move-error-wins`
+### `queue-and-verdicts/edge-from-move-error-wins`
 
 If a drain that expired the copy for a move of an edge's from item or a change of an item's type ends in an error of its own, a redirect or a stop among them, then a device MUST end the drain with that error, leaving the copy expired.
 
@@ -2860,11 +2860,11 @@ If a drain that expired the copy for a move of an edge's from item or a change o
 
 **Tests:** `device/edge-move.test.ts › ends with the error of its own where a redirect meets the drain after the move`, `› ends canceled where a stop meets the drain after the move, the copy expired`, `device/retype-drain.test.ts › ends with the error of its own where a redirect meets the drain after a retype, the copy expired`.
 
-### `queue-and-verdicts/edge-source-move-refused-keeps-copy`
+### `queue-and-verdicts/edge-from-move-refused-keeps-copy`
 
 If the server refuses every move of an edge's from item and every change of an item's type a drain sends, then a device MUST NOT expire the copy on account of those writes.
 
-**Reason:** a refused write changes nothing on the server, so its reach stands (`reach/moves-edge-source`, `reach/moves-retype`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/reach-change-ends-drain`).
+**Reason:** a refused write changes nothing on the server, so its reach stands (`reach/moves-edge-from`, `reach/moves-retype`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/reach-change-ends-drain`).
 
 **Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`, `device/retype-drain.test.ts › leaves the copy current where the server refuses every retype`.
 
@@ -2872,9 +2872,9 @@ If the server refuses every move of an edge's from item and every change of an i
 
 If a drain meets a changed reach anywhere but in the read after the answer it has just had to a move of an edge's from item or to a change of an item's type, then a device MUST end the drain `copy_expired` at once, sending no further write.
 
-**Reason:** only a move of a from item or a change of type answered in the drain at hand is known to have changed the reach (`reach/moves-edge-source`, `reach/moves-retype`); a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
+**Reason:** only a move of a from item or a change of type answered in the drain at hand is known to have changed the reach (`reach/moves-edge-from`, `reach/moves-retype`); a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
-**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`, `device/retype-drain.test.ts › ends at once where the read of an edit that retypes nothing meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose retypes were all refused`.
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no from item meets a changed reach`, `› ends at once where a read owed from an earlier drain meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose moves were all refused`, `device/retype-drain.test.ts › ends at once where the read of an edit that retypes nothing meets a changed reach`, `› expires the copy where another client changed the reach during a drain whose retypes were all refused`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 
@@ -2914,7 +2914,7 @@ A device judges an edge write from the catalog, items and edges its copy holds, 
 
 ### `queue-and-verdicts/edge-endpoint-refused`
 
-If an edge write would leave an end the copy holds, or the item a create makes, of a type that the held catalog says the edge type does not admit at that end, by type, by a type above it or by a role it plays (`edges/endpoint-source`, `edges/endpoint-target` and `edges/endpoint-subtype`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, the end's `from_type` or `to_type` and the `allowed` constraints, queueing nothing.
+If an edge write would leave an end the copy holds, or the item a create makes, of a type that the held catalog says the edge type does not admit at that end, by type, by a type above it or by a role it plays (`edges/endpoint-from`, `edges/endpoint-to` and `edges/endpoint-subtype`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, the end's `from_type` or `to_type` and the `allowed` constraints, queueing nothing.
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
 
@@ -2944,7 +2944,7 @@ If an edge write would leave a second edge of one type between one from item and
 
 If an edge write would leave a second edge of a type at an end the held catalog holds that type to one edge at, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `cardinality` with the `edge_type` and the full end's `from_id` or `to_id`, queueing nothing.
 
-**Reason:** the server holds the from item of a `one-to-one` or `many-to-one` type to one outbound edge and the to item of a `one-to-one` or `one-to-many` type to one inbound edge (`edges/card-source-held`, `edges/card-target-held`, `edges/card-inline` and `edges/move-cardinality`). A move does not count the edge it moves. An item create does not count the edges of a type it names that the item it lands on holds, since the server replaces them.
+**Reason:** the server holds the from item of a `one-to-one` or `many-to-one` type to one outbound edge and the to item of a `one-to-one` or `one-to-many` type to one inbound edge (`edges/card-from-held`, `edges/card-to-held`, `edges/card-inline` and `edges/move-cardinality`). A move does not count the edge it moves. An item create does not count the edges of a type it names that the item it lands on holds, since the server replaces them.
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally a duplicate, and an edge onto each end a cardinality holds to one, with the server's code`, `› counts an edge waiting to be sent, and frees the end a waiting delete leaves, as the server does once they reach it`, `› refuses a move onto a full end, checked or made, and finds nothing against a move onto the edge's own end`.
 

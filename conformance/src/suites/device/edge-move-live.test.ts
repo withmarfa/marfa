@@ -197,7 +197,7 @@ it("re-parents a note offline in one write a real server takes, never leaving it
     proxy.setOnline(true);
     await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       // A move of an edge's source changes the server's reach
-      // (`reach/moves-edge-source`): the move is answered, and the copy expires.
+      // (`reach/moves-edge-from`): the move is answered, and the copy expires.
       const drained = await device().drain();
       expect(drained.ok).toBe(false);
       if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
@@ -288,7 +288,7 @@ it("re-parents several notes in one drain a real server takes, and one hydration
     }
 
     // Each move changes the server's reach
-    // (`reach/moves-edge-source`), and the drain goes on to send
+    // (`reach/moves-edge-from`), and the drain goes on to send
     // the ones behind the first, ending once with the copy expired.
     const drained = await device.drain();
     expect(drained.ok).toBe(false);

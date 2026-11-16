@@ -542,7 +542,7 @@ While only an earlier version of an item references a blob, the server MUST answ
 
 When an item stops naming a digest, because an item, an edge or an extension namespace was rewritten without it, the edge or the namespace was deleted, or the item was purged with its edges and namespaces, the server MUST stop serving the blob to a credential that read it only through that item.
 
-**Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`, `› serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `› serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› serves a blob an edge names through a source in the bin, and stops once the source is purged`, `› serves a blob an extension names through an item in the bin, and stops once the item is purged`.
+**Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`, `› serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `› serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› serves a blob an edge names through a from item in the bin, and stops once the from item is purged`, `› serves a blob an extension names through an item in the bin, and stops once the item is purged`.
 
 ### `blobs/lend-edge`
 
@@ -562,7 +562,7 @@ If a working key or an app's access token lacking `blobs.manage` may not read an
 
 While the from item of an edge is in the bin, the server MUST go on serving a working key that may read the edge the blobs its properties reference through a reference that lends.
 
-**Tests:** `compliance/blob-reach.test.ts › serves a blob an edge names through a source in the bin, and stops once the source is purged`.
+**Tests:** `compliance/blob-reach.test.ts › serves a blob an edge names through a from item in the bin, and stops once the from item is purged`.
 
 ### `blobs/lend-extension`
 

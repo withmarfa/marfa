@@ -322,7 +322,7 @@ describe("edges in frontmatter", () => {
     ).not.toContain("Log");
   });
 
-  it("resolves a target written by id", async () => {
+  it("resolves a to item written by id", async () => {
     // A bookmark this folder of notes does not hold, so only its id, which
     // the server answers for, names it.
     const made = await edgeHarness(
@@ -400,7 +400,7 @@ describe("edges in frontmatter", () => {
     ).toEqual([]);
   });
 
-  it("changes no edge of a type whose target it cannot resolve", async () => {
+  it("changes no edge of a type whose to item it cannot resolve", async () => {
     const edge = "01a00000-0000-7000-8000-00000000e1e8";
     const made = await edgeHarness(
       "folder-edge-stand-down",
@@ -1319,7 +1319,7 @@ describe("edges in frontmatter", () => {
     expect(asked()).toBeGreaterThan(before);
   });
 
-  it("flags a new target for an end whose edge the file never showed, and deletes nothing", async () => {
+  it("flags a new to item for an end whose edge the file never showed, and deletes nothing", async () => {
     const parentEdge = {
       id: "01a00000-0000-7000-8000-00000000e1ed",
       from_id: project,
@@ -2290,7 +2290,7 @@ describe("edges in frontmatter", () => {
     ).toEqual([]);
   });
 
-  it("replaces a one-target edge's target in one step", async () => {
+  it("replaces the to item of an edge that holds one in one step", async () => {
     const parentEdge = "01a00000-0000-7000-8000-00000000e1ec";
     const threadEdge = "01a00000-0000-7000-8000-00000000e1ee";
     const made = await edgeHarness(
@@ -2708,7 +2708,7 @@ describe("edges in frontmatter", () => {
     ).toEqual([`${project} parent-of ${child}`]);
   });
 
-  it("flags a line naming too many targets for its edge type, and changes nothing", async () => {
+  it("flags a line naming too many to items for its edge type, and changes nothing", async () => {
     const made = await edgeHarness(
       "folder-edge-too-many",
       [titled(project, "One"), titled(other, "Two"), titled(child, "Child")],

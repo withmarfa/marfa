@@ -500,7 +500,7 @@ describe("edges CRUD", () => {
     expect(Object.keys(emptied.data.item.edges ?? {})).toEqual(["references"]);
   });
 
-  it("PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes", async ({
+  it("PATCH /items keeps the edge to a to item it still lists, with its id, version and properties, and announces only what it changes", async ({
     signal,
   }) => {
     const [stays, dropped, added] = await Promise.all(
@@ -620,7 +620,7 @@ describe("edges CRUD", () => {
   });
 
   it.each(["POST /items", "POST /items/bulk"])(
-    "%s landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes",
+    "%s landing on an item by its natural key keeps the edge to a to item it still lists, and announces only what it changes",
     async (door) => {
       const [stays, dropped, added] = await Promise.all(
         [1, 2, 3].map(() => makeContainer()),
@@ -708,7 +708,7 @@ describe("edges CRUD", () => {
     },
   );
 
-  it("PATCH /items keeps a held edge whose type requires properties, and still refuses a new target without them", async () => {
+  it("PATCH /items keeps a held edge whose type requires properties, and still refuses a new to item without them", async () => {
     const edgeType = `mock.keepreq.${ctx.runId}`;
     const registered = await client.registerEdgeType({
       label: "Keep required",

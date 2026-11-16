@@ -1658,7 +1658,7 @@ describe("outbound webhook delivery", () => {
     });
   });
 
-  it("delivers an edge event only where the key may read the type its source had when the event was published", async () => {
+  it("delivers an edge event only where the key may read the type its from item had when the event was published", async () => {
     const edgeType = await registerEdgeType("published-source");
     const owner = await keyWith("published-source-owner", {
       type_permissions: { "core.note": "read" },

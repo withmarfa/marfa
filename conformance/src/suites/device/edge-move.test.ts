@@ -537,7 +537,7 @@ function edgeCalls(started: Harness, edge: string) {
   };
 }
 
-describe("a drain that sends moves of an edge's source", () => {
+describe("a drain that sends moves of an edge's from item", () => {
   it("sends every move queued and expires the copy once, at the end", async () => {
     harness = await reparentable("edge-source-move-batch");
     const { server, device } = harness;
@@ -546,7 +546,7 @@ describe("a drain that sends moves of an edge's source", () => {
         writeAnswers.edge(childEdge(at, PARENT_B, 2), 200),
       );
       // The read of the edge a move was answered with is made under the reach
-      // the move changed (`reach/moves-edge-source`), and refused.
+      // the move changed (`reach/moves-edge-from`), and refused.
       server.answer(
         "GET",
         `/edges/${id}`,
@@ -929,7 +929,7 @@ describe("a drain that sends moves of an edge's source", () => {
     ).toHaveLength(0);
   });
 
-  it("ends at once where another instance refuses a write behind a source move the server took", async () => {
+  it("ends at once where another instance refuses a write behind a from item move the server took", async () => {
     harness = await reparentable("edge-source-move-instance");
     const { server, device } = harness;
     const [moved, refused, behind] = CHILD_EDGES;
@@ -996,7 +996,7 @@ describe("a drain that sends moves of an edge's source", () => {
     expect(value(await device.status()).hydration).toBe("expired");
   });
 
-  it("ends at once where the read of a write that moves no source meets a changed reach", async () => {
+  it("ends at once where the read of a write that moves no from item meets a changed reach", async () => {
     harness = await reparentable("edge-source-move-other");
     const { server, device } = harness;
     const [first, second] = CHILD_EDGES;

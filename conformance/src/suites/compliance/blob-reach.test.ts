@@ -1583,7 +1583,7 @@ describe("which write that names a digest lends it", () => {
     expect(await (await fetch(link.data.url)).text()).toBe(expected);
   });
 
-  it("serves a blob an edge names through a source in the bin, and stops once the source is purged", async () => {
+  it("serves a blob an edge names through a from item in the bin, and stops once the from item is purged", async () => {
     const hash = await upload("named by an edge from a binned source");
     const source = await noteSaying("a source that goes to the bin");
     const target = await noteSaying("a target that stays");

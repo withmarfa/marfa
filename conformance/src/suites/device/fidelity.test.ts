@@ -3343,7 +3343,7 @@ describe("a local read answers the listing grammar as the server does", () => {
     expect(own.ok ? own.value.map((item) => item.id) : own).toEqual([target]);
   });
 
-  it("answers an edge term naming a target the key cannot read as the server does", async () => {
+  it("answers an edge term naming a to item the key cannot read as the server does", async () => {
     const type = `user.edge-hidden-target-${ctx.runId}`;
     const hiddenType = `user.edge-hidden-kept-${ctx.runId}`;
     for (const id of [type, hiddenType]) {

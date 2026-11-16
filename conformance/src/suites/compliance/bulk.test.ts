@@ -929,7 +929,7 @@ describe("bulk", () => {
     expect(await listed()).toEqual([best.data.results[2]!.id]);
   });
 
-  it("writes nothing for a best-effort entry whose edge target is missing", async (context) => {
+  it("writes nothing for a best-effort entry whose edge's to item is missing", async (context) => {
     // The edge step is the last of an entry's writes, and a child syncing
     // before its parent meets it in ordinary use: the entry is reported
     // errored, so its item must not have landed either. The entry after it is

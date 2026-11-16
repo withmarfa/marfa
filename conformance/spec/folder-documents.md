@@ -1372,7 +1372,7 @@ When a changed file names a newly registered edge type and the server is reachab
 
 **Tests:** `device/folders-frontmatter.test.ts › learns an edge type the server registers, and reads its line as an edge`, `device/fidelity.test.ts › matches the edge types a working copy holds and a folder reads its frontmatter lines by`.
 
-### `folder-documents/edge-target-hydration`
+### `folder-documents/edge-to-hydration`
 
 When a new edge type is written from its to end, a device MUST refresh the folder slice to hold that type whole at the next push.
 
@@ -1388,13 +1388,13 @@ When a document writes an edge to a readable item outside the folder query, a de
 
 While at least one document line names an item outside the slice, a device MUST retain the pin it made for that item.
 
-**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge's to item pinned until the last owning file releases it`.
 
 ### `folder-documents/edge-pin-release`
 
 When no file binding or edge line requires an item pinned by the folder, a device MUST release the folder's pin, unless a pinned create was answered with the item after an edge line pinned it (`device/pin-create-lasts`).
 
-**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge's to item pinned until the last owning file releases it`.
 
 ### `folder-documents/edge-pin-other-owner`
 
@@ -1450,7 +1450,7 @@ When a to item title is ambiguous or cannot be represented in link syntax, a dev
 
 When an edge line names a readable item by ID, optionally followed by a heading or alias, a device MUST resolve that ID even if the item has no file in the folder.
 
-**Tests:** `device/folders-frontmatter.test.ts › resolves a target written by id`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
+**Tests:** `device/folders-frontmatter.test.ts › resolves a to item written by id`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
 
 ### `folder-documents/edge-filename-read`
 
@@ -1464,7 +1464,7 @@ When an edge line unambiguously names a to item with an alias or heading, a devi
 
 **Tests:** `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`, `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
 
-### `folder-documents/edge-deduplicate-target`
+### `folder-documents/edge-deduplicate-to`
 
 When several names in one edge line resolve to the same item, a device MUST treat them as one to item.
 
@@ -1642,13 +1642,13 @@ When a document removes a previously rendered edge line, a device MUST delete th
 
 When an edge has arrived from elsewhere but has not appeared in the file, a device MUST preserve it when processing that file.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a new to item for an end whose edge the file never showed, and deletes nothing`.
 
 ### `folder-documents/edge-line-invalid-keeps-type`
 
 If an edge line has an unresolved to item, names its own item, is at the wrong end, exceeds its end's cardinality, or holds a value not written as `[[name]]`, then a device MUST leave that file's edges of that type at that end unchanged.
 
-**Tests:** `device/folders-frontmatter.test.ts › writes no edge of a body link beside a references line not written as a name, and the edge once the line is gone`, `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-frontmatter.test.ts › writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› writes the edge of a child-of line beside a held parent-of line in the same file`.
+**Tests:** `device/folders-frontmatter.test.ts › writes no edge of a body link beside a references line not written as a name, and the edge once the line is gone`, `device/folders-frontmatter.test.ts › changes no edge of a type whose to item it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many to items for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-frontmatter.test.ts › writes no edge of a child-of line beside an unmatched name, nor once that name makes it two parents`, `› writes the edge of a child-of line beside a held parent-of line in the same file`.
 
 ### `folder-documents/edge-line-held-whole`
 
@@ -1662,7 +1662,7 @@ If a name on an edge line does not name exactly one existing edge of that line's
 
 If an edge line is invalid, then a device MUST flag the file `edges` with the reason.
 
-**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose target it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many targets for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-contract-extra-c.test.ts › leaves an invalid bare edge line untouched while a valid link queues its edge`.
+**Tests:** `device/folders-frontmatter.test.ts › changes no edge of a type whose to item it cannot resolve`, `device/folders-frontmatter.test.ts › flags a reverse-named edge stated at the wrong end, and changes nothing`, `device/folders-frontmatter.test.ts › flags a line naming too many to items for its edge type, and changes nothing`, `device/folders-frontmatter.test.ts › flags an in-folder line and a line naming its own item`, `device/folders-contract-extra-c.test.ts › leaves an invalid bare edge line untouched while a valid link queues its edge`.
 
 ### `folder-documents/edge-line-no-item-edit`
 
@@ -1674,25 +1674,25 @@ When a save changes only edge lines, a device MUST NOT send an item-property edi
 
 When a line changes the to item of an end that holds one edge, a device MUST move the existing edge's other end in one write.
 
-**Tests:** `device/folders-frontmatter.test.ts › replaces a one-target edge's target in one step`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
+**Tests:** `device/folders-frontmatter.test.ts › replaces the to item of an edge that holds one in one step`, `device/fidelity.test.ts › matches the refusal of a second parent, a parent moved in one step, and each refusal of a move`.
 
 ### `folder-documents/edge-replace-keeps-properties`
 
 When a line moves an existing edge's other end, a device MUST preserve that edge's ID and properties.
 
-**Tests:** `device/folders-frontmatter.test.ts › replaces a one-target edge's target in one step`.
+**Tests:** `device/folders-frontmatter.test.ts › replaces the to item of an edge that holds one in one step`.
 
 ### `folder-documents/edge-replace-unshown-refused`
 
 When a line names a new to item but the existing edge at that end has not appeared in the file, a device MUST flag the file.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a new to item for an end whose edge the file never showed, and deletes nothing`.
 
 ### `folder-documents/edge-replace-unshown-kept`
 
 When a line names a new to item but the existing edge at that end has not appeared in the file, a device MUST leave that edge unchanged.
 
-**Tests:** `device/folders-frontmatter.test.ts › flags a new target for an end whose edge the file never showed, and deletes nothing`.
+**Tests:** `device/folders-frontmatter.test.ts › flags a new to item for an end whose edge the file never showed, and deletes nothing`.
 
 ### `folder-documents/edge-delete-already-gone`
 
@@ -1768,11 +1768,11 @@ When an edge-line name uniquely matches a to item by title or filename, a device
 
 **Tests:** `device/folders-contract-extra-c.test.ts › resolves decorated IDs, frontmatter headings and equivalent names to one target`.
 
-### `folder-documents/edge-restored-target`
+### `folder-documents/edge-restored-to`
 
 When a line held because its to item was trashed names that item after its restoration reaches the working copy, a device MUST resolve the line at the next scan.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › resolves a held line when its trashed target is restored`.
+**Tests:** `device/folders-contract-extra-c.test.ts › resolves a held line when its trashed to item is restored`.
 
 ## Body links and embedded files
 

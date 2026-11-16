@@ -1190,7 +1190,7 @@ export const answers = {
       { ...edge, constraint: "duplicate" },
     ),
   /** A second edge at an end its type holds one at, a second parent say
-   *  (`edges/card-target-held`). */
+   *  (`edges/card-to-held`). */
   edgeCardinality: (edge: { to_id: string; edge_type: string }): Answer =>
     refusal(
       400,

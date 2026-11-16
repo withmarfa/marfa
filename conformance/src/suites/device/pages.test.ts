@@ -695,7 +695,7 @@ describe("creates in pages", () => {
     expect(verdicts.get(edges[1]?.id ?? "")).toBe("refused");
   });
 
-  it("sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat", async () => {
+  it("sends an edge the read of its from item does not hold on its own door, under its key, answered as a repeat", async () => {
     const made = await start("pages-edge-unread");
     harness = made.harness;
     const { door } = made;
@@ -848,7 +848,7 @@ describe("creates in pages", () => {
     ]);
   });
 
-  it("settles an edge the owed read of its source leaves out by a read of the edge, and sends it no more", async () => {
+  it("settles an edge the owed read of its from item leaves out by a read of the edge, and sends it no more", async () => {
     const made = await start("pages-owed-edge");
     harness = made.harness;
     const { door } = made;

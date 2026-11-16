@@ -146,7 +146,7 @@ async function pull() {
 }
 
 describe("folder contract edge and identity boundaries", () => {
-  it("keeps a shared edge target pinned until the last owning file releases it", async () => {
+  it("keeps a shared edge's to item pinned until the last owning file releases it", async () => {
     const target = { ...note(3, "Target"), type: "core.bookmark" };
     await seed(
       [note(1, "One"), note(2, "Two"), target],
@@ -280,7 +280,7 @@ describe("folder contract edge and identity boundaries", () => {
     ).toHaveLength(1);
   });
 
-  it("resolves a held line when its trashed target is restored", async () => {
+  it("resolves a held line when its trashed to item is restored", async () => {
     const target = { ...note(1, "Target"), state: "trashed" };
     const { frames } = await seed([target]);
     put("Host.md", `---\nreferences: "[[${id(1)}]]"\n---\nbody\n`);

@@ -215,7 +215,7 @@ async function roundTrip(
 }
 
 describe("an edge whose endpoint constraint names a force-deleted item type", () => {
-  it("keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit", async () => {
+  it("keeps an edge whose from constraint names the deleted type, and still refuses a registered end the constraint does not admit", async () => {
     const source = working(origin);
     const { papers, note } = await populate(source);
     const type = "user.cites-source";
@@ -259,7 +259,7 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     });
   }, 240_000);
 
-  it("keeps an edge whose target constraint names the deleted type", async () => {
+  it("keeps an edge whose to constraint names the deleted type", async () => {
     const source = working(origin);
     const { papers, note } = await populate(source);
     const type = "user.cites-target";

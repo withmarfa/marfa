@@ -68,7 +68,7 @@ async function listedIds(): Promise<string[]> {
 }
 
 describe("excerpt-of", () => {
-  it("is many-to-one: an item has many excerpts and an excerpt has one source", async () => {
+  it("is many-to-one: an item has many excerpts and an excerpt is taken from one item", async () => {
     const book = await makeNote("book");
     const otherBook = await makeNote("other-book");
     const first = await makeHighlight("first");
@@ -84,7 +84,7 @@ describe("excerpt-of", () => {
     expect(again.error?.error.details?.constraint).toBe("cardinality");
   });
 
-  it("leaves the excerpt in lists and active when its source is binned", async () => {
+  it("leaves the excerpt in lists and active when the item it is taken from is binned", async () => {
     const book = await makeNote("binned-book");
     const highlight = await makeHighlight("binned");
     expect((await link(highlight, book)).ok).toBe(true);
@@ -98,7 +98,7 @@ describe("excerpt-of", () => {
     expect(await listedIds()).toContain(highlight);
   });
 
-  it("leaves the excerpt in lists and active when its source is purged", async () => {
+  it("leaves the excerpt in lists and active when the item it is taken from is purged", async () => {
     const book = await makeNote("purged-book");
     const highlight = await makeHighlight("purged");
     expect((await link(highlight, book)).ok).toBe(true);

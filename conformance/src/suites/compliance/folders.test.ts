@@ -558,7 +558,7 @@ describe("the folder door", () => {
     }
   });
 
-  it("caps defaults.edges at 100 edge types and 100 targets for each", async () => {
+  it("caps defaults.edges at 100 edge types and 100 to items for each", async () => {
     const target = "01920000-0000-7000-8000-000000000000";
     const { id } = await folder();
     for (const [edges, path] of [

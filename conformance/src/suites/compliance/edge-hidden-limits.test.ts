@@ -153,7 +153,7 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect((await give(c, d)).status).toBe(201);
   });
 
-  it("refuses a successor the key cannot see on a one-to-one type, naming only the target", async () => {
+  it("refuses a successor the key cannot see on a one-to-one type, naming only the to item", async () => {
     const older = await note();
     const secret = await hidden();
     await parentOf(secret, older, "supersedes");
@@ -229,7 +229,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
     };
   }
 
-  it("names a hidden target's id on an edge the key may read", async () => {
+  it("names a hidden to item's id on an edge the key may read", async () => {
     const { note, secret, edge } = await pair("about");
     const listed = await writer.listItemEdges(note);
     expect(listed.status).toBe(200);
@@ -297,7 +297,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
     return { edgeType, blind, sighted, eventId, note, secret, edge };
   }
 
-  it("names a hidden target's id on every read of an edge the key may read", async ({
+  it("names a hidden to item's id on every read of an edge the key may read", async ({
     signal,
   }) => {
     const { edgeType, blind, eventId, note, secret, edge } =
@@ -350,7 +350,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
     });
   });
 
-  it("leaves an edge out of an export when the key cannot read its target", async ({
+  it("leaves an edge out of an export when the key cannot read its to item", async ({
     signal,
   }) => {
     const { blind, sighted, edge } = await hiddenTargetEdge("export", signal);

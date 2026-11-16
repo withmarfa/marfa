@@ -520,13 +520,13 @@ The server MUST send an edge event as `edge.created`, `edge.updated` or `edge.de
 
 **Tests:** `compliance/edge-events.test.ts › SSE delivers edge.created and edge.deleted`, `compliance/events-contract.test.ts › announces edge.updated when an edge's properties change`, `› names the event in event_type on an item frame and on an edge frame`.
 
-### `events/edge-source-type`
+### `events/edge-from-type`
 
 The server MUST carry on an edge event `from_type`, the type its from item had when the event was published.
 
 **Reason:** `from_type` decides who is told about the event, and a purge takes the source item before the event is read.
 
-**Tests:** `compliance/edge-events.test.ts › carries the source item's type on every edge frame`.
+**Tests:** `compliance/edge-events.test.ts › carries the from item's type on every edge frame`.
 
 ### `events/purged-with-only-purge`
 
@@ -668,7 +668,7 @@ When a write changes a type, an edge type, a source, a key, the instance's confi
 
 ## Edge events and who is told
 
-An edge event is held to the two permissions `GET /edges/{id}` asks for, `edges/read-id-kind` and `edges/read-id-source`.
+An edge event is held to the two permissions `GET /edges/{id}` asks for, `edges/read-id-kind` and `edges/read-id-from`.
 
 ### `events/edge-frame-kind`
 
@@ -676,7 +676,7 @@ The server MUST withhold an edge event from a subscriber that may not read the e
 
 **Tests:** `compliance/edge-events.test.ts › withholds a live edge frame the credential could not read singly`, `› withholds the same frames on a replay from a cursor`.
 
-### `events/edge-frame-source`
+### `events/edge-frame-from`
 
 The server MUST withhold an edge event from a subscriber that may not read the type the edge's from item had when the event was published.
 
@@ -710,7 +710,7 @@ Where the source filter names an item's type or a type above it and does not nam
 
 **Reason:** a stream frame carries the whole item, so a stream that sent it would hand over an item every listing leaves out.
 
-**Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose source item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
+**Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose from item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
 
 ### `events/source-filter-edge`
 
@@ -718,7 +718,7 @@ Where the source filter applies to a stream that is not a copy stream, the serve
 
 **Reason:** an edge listing decides an edge by its from item (`edges/read-source-filter`), and a stream frame is the same disclosure.
 
-**Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose source item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
+**Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose from item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
 
 ### `events/source-filter-current`
 
@@ -1236,13 +1236,13 @@ The server MUST NOT deliver an edge event to a subscription whose credential may
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the edge's kind`.
 
-### `events/delivery-reach-edge-source`
+### `events/delivery-reach-edge-from`
 
 The server MUST NOT deliver an edge event to a subscription whose credential may not read the type the edge's from item had when the event was published.
 
-**Reason:** the stream holds the same rule, `events/edge-frame-source`, and a later retype of the from item changes nothing about who may be told of the event.
+**Reason:** the stream holds the same rule, `events/edge-frame-from`, and a later retype of the from item changes nothing about who may be told of the event.
 
-**Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the type its source had when the event was published`.
+**Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the type its from item had when the event was published`.
 
 ### `events/delivery-reach-namespaces`
 
@@ -1250,7 +1250,7 @@ When the server delivers `metadata.changed`, the server MUST include only the ex
 
 **Tests:** `compliance/webhooks.test.ts › delivers only the extension namespaces the credential may read`.
 
-### `events/delivery-edge-purged-source`
+### `events/delivery-edge-purged-from`
 
 When a purge has taken an edge's from item, the server MUST withhold the edge's `edge.deleted` from a webhook whose credential may not read the type the from item had when the event was published.
 
