@@ -2749,7 +2749,8 @@ fn a_refused_address_is_traced_to_the_install_the_service_runs_wherever_it_is_in
     // The witness: with no service registered, nothing names the folder.
     let said = ask(&elsewhere);
     assert!(
-        !said.contains("--dir") && said.contains("no install in the default folder"),
+        !said.contains(&dir.display().to_string())
+            && said.contains("no install in the default folder"),
         "{said}"
     );
 }

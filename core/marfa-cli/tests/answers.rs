@@ -163,8 +163,8 @@ fn a_refused_connection_to_this_machine_asks_whether_the_server_runs() {
     assert!(
         ran.stderr.contains(
             "no install in the default folder, or run by a service on this machine, serves it"
-        ) && !ran.stderr.contains("marfa server status"),
-        "no install serves it, so no command to run: {}",
+        ) && ran.stderr.contains("marfa server status --dir <folder>"),
+        "no install serves it, so the command names no folder: {}",
         ran.stderr
     );
 
@@ -388,7 +388,11 @@ fn an_install_in_another_folder_is_found_from_the_service_that_runs_it() {
     );
     // The witness: the same refusal with no service registered finds nothing.
     let ran = run(&home, &url, &["items", "list"]);
-    assert!(!ran.stderr.contains("--dir"), "{}", ran.stderr);
+    assert!(
+        !ran.stderr.contains(&format!("--dir {quoted}")),
+        "{}",
+        ran.stderr
+    );
 
     // Running: the refused local command is printed with the real socket.
     let door = Door::open(vec![local_only()]);

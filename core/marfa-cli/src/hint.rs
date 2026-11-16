@@ -81,7 +81,7 @@ fn not_listening(origin: &str) -> String {
                 install.command("status"),
                 install.command("start")
             ),
-            None => "Nothing is listening at that address, and no install in the default folder, or run by a service on this machine, serves it. Start the server where it runs, or check the address. An install in another folder with no service is not found from here, so start that one by naming its folder.".into(),
+            None => "Is the server running? Nothing is listening at that address, and no install in the default folder, or run by a service on this machine, serves it. For an install in another folder, `marfa server status --dir <folder>` shows it; otherwise, check the address.".into(),
         }
     } else {
         "Nothing answered at that address. Check the address and this machine's network.".into()
