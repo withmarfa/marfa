@@ -44,8 +44,8 @@ describe("custom edge-type registration", () => {
     expect(r.status).toBe(201);
     trackEdgeType(ctx, etId);
     await expectMatchesSchema("POST", "/edge-types", 201, r.data);
-    expect(r.data.edge_type.id).toBe(etId);
-    expect(r.data.edge_type.cardinality).toBe("many-to-many");
+    expect(r.data.id).toBe(etId);
+    expect(r.data.cardinality).toBe("many-to-many");
   });
 
   it("lists the shipped edge types and a registered one", async () => {
@@ -936,7 +936,7 @@ describe("custom edge-type registration", () => {
     });
     expect(reg.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(reg.data.edge_type.shipped).toBe(false);
+    expect(reg.data.shipped).toBe(false);
 
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
@@ -958,8 +958,8 @@ describe("custom edge-type registration", () => {
     });
     expect(reg.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(reg.data.edge_type.acyclic).toBe(false);
-    expect(reg.data.edge_type.flat).toBe(false);
+    expect(reg.data.acyclic).toBe(false);
+    expect(reg.data.flat).toBe(false);
 
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
@@ -1024,7 +1024,7 @@ describe("custom edge-type registration", () => {
     expect(first.status).toBe(201);
     trackEdgeType(ctx, named);
     await expectMatchesSchema("POST", "/edge-types", 201, first.data);
-    expect(first.data.edge_type.reverse_label).toBe("Mentor");
+    expect(first.data.reverse_label).toBe("Mentor");
     const second = await client.registerEdgeType({
       id: alone,
       label: "Related to",
@@ -1032,7 +1032,7 @@ describe("custom edge-type registration", () => {
     });
     expect(second.status).toBe(201);
     trackEdgeType(ctx, alone);
-    expect(second.data.edge_type.reverse_label).toBe("Related to");
+    expect(second.data.reverse_label).toBe("Related to");
 
     const listed = await client.listEdgeTypes();
     await expectMatchesSchema("GET", "/edge-types", 200, listed.data);
@@ -1057,10 +1057,10 @@ describe("custom edge-type registration", () => {
     expect(first.status, JSON.stringify(first.error)).toBe(201);
     trackEdgeType(ctx, bare);
     await expectMatchesSchema("POST", "/edge-types", 201, first.data);
-    expect([
-      first.data.edge_type.label,
-      first.data.edge_type.reverse_label,
-    ]).toEqual(["Pair Link", "Pair Link"]);
+    expect([first.data.label, first.data.reverse_label]).toEqual([
+      "Pair Link",
+      "Pair Link",
+    ]);
     const second = await client.registerEdgeType({
       id: empty,
       label: "",
@@ -1068,7 +1068,7 @@ describe("custom edge-type registration", () => {
     });
     expect(second.status, JSON.stringify(second.error)).toBe(201);
     trackEdgeType(ctx, empty);
-    expect(second.data.edge_type.label).toBe("Empty Label");
+    expect(second.data.label).toBe("Empty Label");
 
     const listed = (await client.listEdgeTypes()).data.data;
     expect(listed.find((t) => t.id === bare)?.label).toBe("Pair Link");
@@ -1084,7 +1084,7 @@ describe("custom edge-type registration", () => {
     });
     expect(named.status, JSON.stringify(named.error)).toBe(201);
     trackEdgeType(ctx, id);
-    expect(named.data.edge_type.label).toBe("Partners");
+    expect(named.data.label).toBe("Partners");
     const row = (await client.listEdgeTypes()).data.data.find(
       (t) => t.id === id,
     );
@@ -1121,7 +1121,7 @@ describe("custom edge-type registration", () => {
     expect(r.status).toBe(201);
     trackEdgeType(ctx, etId);
     await expectMatchesSchema("POST", "/edge-types", 201, r.data);
-    expect(r.data.edge_type.reverse_name).toBe(reverse);
+    expect(r.data.reverse_name).toBe(reverse);
 
     const listed = await client.listEdgeTypes();
     await expectMatchesSchema("GET", "/edge-types", 200, listed.data);
@@ -1181,7 +1181,7 @@ describe("custom edge-type registration", () => {
     });
     expect(r.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(r.data.edge_type.written_from).toBe("to");
+    expect(r.data.written_from).toBe("to");
 
     // The default is the from end, and says so.
     const plainId = `mock.written-default.${ctx.runId}`;
@@ -1192,7 +1192,7 @@ describe("custom edge-type registration", () => {
     });
     expect(plain.status).toBe(201);
     trackEdgeType(ctx, plainId);
-    expect(plain.data.edge_type.written_from).toBe("from");
+    expect(plain.data.written_from).toBe("from");
 
     // An edge no file writes names no end, and needs no name to write it under.
     const noneId = `mock.written-none.${ctx.runId}`;
@@ -1204,7 +1204,7 @@ describe("custom edge-type registration", () => {
     });
     expect(none.status, JSON.stringify(none.error)).toBe(201);
     trackEdgeType(ctx, noneId);
-    expect(none.data.edge_type.written_from).toBe("none");
+    expect(none.data.written_from).toBe("none");
     const listedNone = await client.listEdgeTypes();
     expect(
       listedNone.data.data.find((t) => t.id === noneId)?.written_from,
@@ -1327,7 +1327,7 @@ describe("custom edge-type registration", () => {
     });
     expect(known.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(known.data.edge_type.to_type_constraints).toEqual([
+    expect(known.data.to_type_constraints).toEqual([
       "role:container",
     ]);
   });
@@ -1719,11 +1719,11 @@ describe("explicit edge-type constraint evolution", () => {
     const changed = await client.registerEdgeType(evolution);
     expect(changed.status).toBe(200);
     await expectMatchesSchema("POST", "/edge-types", 200, changed.data);
-    expect(changed.data.edge_type.from_type_constraints).toEqual([
+    expect(changed.data.from_type_constraints).toEqual([
       "core.note",
       "core.task",
     ]);
-    expect(changed.data.edge_type).not.toHaveProperty("evolve_constraints");
+    expect(changed.data).not.toHaveProperty("evolve_constraints");
     expect((await client.getEdge(made.data.edge.id)).data.edge).toEqual(before);
     expect((await client.registerEdgeType(evolution)).status).toBe(200);
     expect((await client.getEdge(made.data.edge.id)).data.edge).toEqual(before);

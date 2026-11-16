@@ -32,7 +32,7 @@ async function registerInitial(typeId: string): Promise<TypeSchema> {
   };
   const r = await client.registerType(initial);
   expect(r.ok).toBe(true);
-  expect(r.data?.type.version).toBe(0);
+  expect(r.data?.version).toBe(0);
   return initial;
 }
 
@@ -89,8 +89,8 @@ describe("PUT /types and a type's version", () => {
     for (const { label, schema } of steps) {
       const r = await client.replaceType(typeId, { ...schema, version: 0 });
       expect(r.status, label).toBe(200);
-      expect(r.data?.type.version, label).toBe(0);
-      expect(Object.keys(r.data?.type.fields ?? {}), label).toEqual(
+      expect(r.data?.version, label).toBe(0);
+      expect(Object.keys(r.data?.fields ?? {}), label).toEqual(
         Object.keys(schema.fields),
       );
     }
@@ -102,10 +102,10 @@ describe("PUT /types and a type's version", () => {
 
     const named = await client.replaceType(typeId, { ...initial, version: 3 });
     expect(named.status).toBe(200);
-    expect(named.data?.type.version).toBe(3);
+    expect(named.data?.version).toBe(3);
 
     const unnamed = await client.replaceType(typeId, initial);
     expect(unnamed.status).toBe(200);
-    expect(unnamed.data?.type.version).toBe(0);
+    expect(unnamed.data?.version).toBe(0);
   });
 });

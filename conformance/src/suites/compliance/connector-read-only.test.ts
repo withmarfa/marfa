@@ -49,7 +49,7 @@ afterAll(async () => {
 /** `GET /events` as a working copy opens it (`reach/copy-bootstrap`). */
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 
 function declare(by: MarfaClient, readOnlyTypes?: string[]) {

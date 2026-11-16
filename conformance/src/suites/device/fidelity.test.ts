@@ -1568,7 +1568,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a tag written",
       { status: tagged.status, body: tagged.data },
-      writeAnswers.metadata(seeded.id, ["fidelity"]),
+      writeAnswers.tags(["fidelity"]),
       { same: ["metadata.item_id", "metadata.tags", "metadata.extensions"] },
     );
 
@@ -1583,7 +1583,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a tag list replaced",
       { status: replaced.status, body: replaced.data },
-      writeAnswers.replacedTags(["replaced"]),
+      writeAnswers.tags(["replaced"]),
       { same: ["tags"] },
     );
 
@@ -3430,7 +3430,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     {
       query: [
         ["edges", "all"],
-        ["copy", "1"],
+        ["copy", "true"],
       ],
     },
     async (stream) =>

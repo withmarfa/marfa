@@ -495,7 +495,10 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
     assert_eq!(instance.served().await.bytes, kept);
     let reply = instance.put_with_key(&writer, &next).await;
     assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.json(), json!({ "ok": true }));
+    assert_eq!(
+        reply.json(),
+        json!({ "avatar": format!("{ORIGIN}/owner/avatar") })
+    );
     assert_eq!(instance.served().await.bytes, next);
 
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
@@ -545,7 +548,10 @@ async fn the_profile_door_removes_the_picture_and_changes_the_name_in_one_step()
     )
     .await;
     assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.json(), json!({ "ok": true }));
+    let answered = reply.json();
+    assert_eq!(answered["name"], "Changed");
+    assert!(answered["avatar"].is_null());
+    assert!(answered.get("ok").is_none());
     let after = instance.owner().await;
     assert_eq!(after["name"], "Changed");
     assert!(after["avatar"].is_null());

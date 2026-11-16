@@ -308,7 +308,7 @@ it("sends a dead write again under its key once a caller releases it", async () 
   const read = await client.getItemExtension(id, "notes");
   expect(read.ok, JSON.stringify(read.error)).toBe(true);
   expect(
-    read.data.data,
+    read.data.document,
     "the release wrote the extension a second time, undoing the change made since",
   ).toEqual({ body: "theirs" });
 });

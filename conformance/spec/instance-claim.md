@@ -542,7 +542,7 @@ If an owner or delegated profile update contains no field, an unknown field, an 
 
 ### `instance-claim/delegated-profile-update`
 
-When a key or app submits a valid nonempty `PATCH /profile` containing only `name`, `avatar` set to `null`, or both and holds current profile write permission for every submitted field, the server MUST return only `{ "ok": true }` after changing those fields.
+When a key or app submits a valid nonempty `PATCH /profile` containing only `name`, `avatar` set to `null`, or both and holds current profile write permission for every submitted field, the server MUST change those fields and return the profile fields the credential may read, as `GET /profile` answers them.
 
 **Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
 
@@ -560,7 +560,7 @@ When the private local command sends `PUT /owner/avatar` with the bytes of a PNG
 
 ### `instance-claim/profile-picture-upload`
 
-When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return only `{ "ok": true }`.
+When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the profile fields the credential may read, as `GET /profile` answers them.
 
 **Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the profile door by a credential that may write the avatar`.
 

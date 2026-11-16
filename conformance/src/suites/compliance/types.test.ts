@@ -31,14 +31,14 @@ describe("type registration and listing", () => {
 
     const r = await client.registerType(customType);
     expect(r.ok).toBe(true);
-    expect(r.data.type.id).toBe(customType.id);
+    expect(r.data.id).toBe(customType.id);
   });
 
   it("reports the creator after replacement and distinguishes built-in types", async () => {
     const id = `user.creator-${ctx.runId}`;
     const created = await client.registerType({ id, fields: {} });
     expect(created.ok).toBe(true);
-    const provenance = created.data.type.provenance;
+    const provenance = created.data.provenance;
     expect(provenance?.origin).toBe("user");
     expect(provenance?.created_by?.kind).toBe("key");
     const replaced = await client.replaceType(id, {
@@ -769,7 +769,7 @@ describe("type registration and listing", () => {
       ),
     });
     expect(registered.status).toBe(201);
-    expect(Object.keys(registered.data.type.fields).sort()).toEqual(
+    expect(Object.keys(registered.data.fields).sort()).toEqual(
       [...names].sort(),
     );
 

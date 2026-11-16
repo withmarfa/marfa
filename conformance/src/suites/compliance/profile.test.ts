@@ -148,7 +148,8 @@ describe("owner and delegated profile changes", () => {
       expect((await profile(body)).status).toBe(400);
     const response = await profile({ name: "Final" });
     const result = await response.json();
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({ name: "Final" });
+    expect(result).not.toHaveProperty("ok");
     await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
   it("requires the private local command and refuses explicit email-write grants", async () => {

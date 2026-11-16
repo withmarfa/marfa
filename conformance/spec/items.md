@@ -702,7 +702,7 @@ If `GET /items/{id}` names a `state` that is empty, holds a value that is not a 
 
 ### `items/bulk-get`
 
-When a key sends `POST /items/bulk-get` with `ids`, the server MUST answer `200` with each item it may read that is not in the bin, and is not a `system.*` item unless the request's `include` holds `system`, once each, in the order the request named them.
+When a key sends `POST /items/bulk-get` with `ids`, the server MUST answer `200` with `data` holding each item it may read that is not in the bin, and is not a `system.*` item unless the request's `include` holds `system`, once each, in the order the request named them.
 
 **Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names system`.
 
@@ -754,7 +754,7 @@ If `POST /items/bulk-get` names a `system.*` item and its `include` does not hol
 
 ### `items/titles`
 
-When a key sends `POST /items/titles` with `names`, the server MUST answer `200` with `results`, one entry for each name in the order the request named them, each holding the `name` as sent and the `items` that the key may read, in the state active or archived, that are not `system.*` items and whose title equals the name under `items/titles-fold`, with each item's `id`, `type`, `title` as stored and whether its `blob_ref` holds a blob.
+When a key sends `POST /items/titles` with `names`, the server MUST answer `200` with `data`, one entry for each name in the order the request named them, each holding the `name` as sent and the `items` that the key may read, in the state active or archived, that are not `system.*` items and whose title equals the name under `items/titles-fold`, with each item's `id`, `type`, `title` as stored and whether its `blob_ref` holds a blob.
 
 **Reason:** a device resolving the links of a folder asks for many names at once, and the answer to a name is a lookup in an index, so it costs the same on a million items as on a hundred.
 
@@ -2202,6 +2202,12 @@ When a key sends `PUT /items/{id}/tags`, the server MUST answer `200` with `tags
 
 **Tests:** `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`, `› keeps each tag once, whichever operation writes it`.
 
+### `items/tags-write-answer`
+
+When `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` commits, the server MUST answer `200` with `tags` as the item's whole tag list and no other key.
+
+**Tests:** `correctness/tags.test.ts › adds tags as a set union with POST /items/{id}/tags`, `› favorite can be removed via DELETE /items/:id/tags/favorite`, `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
+
 ### `items/tags-remove`
 
 When a key sends `DELETE /items/{id}/tags/{tag}`, the server MUST remove that tag and keep the item's other tags.
@@ -2302,19 +2308,19 @@ If `PUT /items/{id}/extensions/{namespace}` is refused under `items/extension-li
 
 ### `items/extension-answer`
 
-When the server answers a write or delete of an extension namespace, the server MUST answer every namespace on the item the key may read, and no other.
+When the server answers a write or delete of an extension namespace, the server MUST answer under `data` every namespace on the item the key may read, each as `namespace` and `document`, in order of namespace, and no other.
 
 **Tests:** `compliance/extensions.test.ts › answers a key only the namespaces its extension map reads, on the replace and delete doors as on the reads`.
 
 ### `items/extension-read`
 
-When a key reads an item's extensions, the server MUST answer every namespace it may read (`keys-and-oauth/extension-map-only`) on `GET /items/{id}/extensions` and in the item's metadata, and `{ namespace, data }` on `GET /items/{id}/extensions/{namespace}`.
+When a key reads an item's extensions, the server MUST answer every namespace it may read (`keys-and-oauth/extension-map-only`) under `data` as `namespace` and `document` on `GET /items/{id}/extensions`, as a map in the item's metadata, and `{ namespace, document }` on `GET /items/{id}/extensions/{namespace}`.
 
 **Tests:** `compliance/extensions.test.ts › reads all extensions`, `› reads a specific namespace`, `› extensions persist on the item's metadata read`.
 
 ### `items/extension-absent`
 
-When a key reads an extension namespace an item does not hold, the server MUST answer `200` with `data: null`.
+When a key reads an extension namespace an item does not hold, the server MUST answer `200` with `document: null`.
 
 **Tests:** `compliance/extensions.test.ts › deletes a namespace, after which its read answers 200 with null data`.
 
@@ -2622,7 +2628,7 @@ When a key sends `POST /items/tombstones` naming a `type`, either `links` or `so
 
 ### `items/tombstone-settle-answer`
 
-When the server answers `POST /items/tombstones`, the server MUST answer each named tombstone as it then stands, in the order named, in UTC, leaving out a key with none.
+When the server answers `POST /items/tombstones`, the server MUST answer under `data` each named tombstone as it then stands, in the order named, in UTC, leaving out a key with none.
 
 **Tests:** `compliance/links.test.ts › answers tombstones in the order named`, `› moves settled_at later, never earlier`.
 

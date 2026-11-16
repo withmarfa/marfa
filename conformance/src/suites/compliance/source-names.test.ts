@@ -362,6 +362,32 @@ describe("a source's code", () => {
     expect(longer.status).toBe(400);
   });
 
+  it("refuses . and .. as a source, as a key's own and as a claim, which a client folds out of a path", async () => {
+    for (const code of [".", "..", " .. "]) {
+      const own = await owner.createKey({
+        label: "dot own",
+        source: code,
+      });
+      expect(own.status, `own ${JSON.stringify(code)}`).toBe(400);
+      expect(own.error?.error.code).toBe("validation_error");
+      const claim = await owner.createKey({
+        label: "dot claim",
+        source: `${ctx.source}-dot-claim`,
+        sources: [code],
+      });
+      expect(claim.status, `claim ${JSON.stringify(code)}`).toBe(400);
+      expect(claim.error?.error.code).toBe("validation_error");
+    }
+    // The witness: a code that only starts with dots is a source.
+    const fine = await owner.createKey({
+      label: "dots",
+      source: `${ctx.source}-dots`,
+      sources: ["..."],
+    });
+    expect(fine.status, JSON.stringify(fine.error)).toBe(201);
+    trackKey(ctx, fine.data.id);
+  });
+
   it("refuses a name an archive could not carry, and keeps what was set", async () => {
     const source = `${ctx.source}-name-length`;
     await nameSource(owner, source, { name: "Kept" });

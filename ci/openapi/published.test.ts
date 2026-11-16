@@ -78,6 +78,8 @@ function openRefusals(document: Record<string, unknown>): string[] {
       // A down instance answers its health check with the health itself.
       if (key === "GET /health" && status === "503") continue;
       const media = Object.values(response.content ?? {});
+      // A HEAD answer has no body, so its refusal is the header alone.
+      if (key.startsWith("HEAD ")) continue;
       if (media.length === 0) out.push(`${key} ${status} (no content)`);
       for (const { schema } of media) {
         const found = problem(inlineRefs(schema, document));
@@ -106,17 +108,21 @@ describe("the committed OpenAPI document", () => {
     // door that left the status out would send a client branching on the
     // document to a status it never declared.
     const ref = "#/components/schemas/InternalErrorRefusal";
-    const declares = (operation: Operation): boolean => {
+    const declares = (operation: Operation, key = ""): boolean => {
       const responses = (operation.responses ?? {}) as Record<
         string,
         { content?: Record<string, { schema?: { $ref?: string } }> }
       >;
+      // A HEAD answer has no body to name the code in.
+      if (key.startsWith("HEAD ")) {
+        return responses["500"] !== undefined;
+      }
       return (
         responses["500"]?.content?.["application/json"]?.schema?.$ref === ref
       );
     };
     const without = [...published.entries()]
-      .filter(([, operation]) => !declares(operation))
+      .filter(([key, operation]) => !declares(operation, key))
       .map(([key]) => key);
     expect(without).toEqual([]);
     // The witness: the check is about an operation that declares it.

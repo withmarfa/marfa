@@ -989,7 +989,7 @@ const FAULTS: {
   reach?: string;
 }[] = [
   { name: "an undeclared query key", query: "typ=core.note" },
-  { name: "a reach without copy=1", reach: "f".repeat(64) },
+  { name: "a reach without copy=true", reach: "f".repeat(64) },
   { name: "a wildcard type", query: "type=*" },
   { name: "an unregistered type", query: "type=core.nothing_registers_this" },
   { name: "an unknown edges value", query: "edges=bogus" },
@@ -1063,7 +1063,7 @@ describe("the answers of the plain stream and the order its checks run in", () =
     expect(without.details.errors?.[0]?.path).toBe("type");
   });
 
-  it("refuses X-Marfa-Reach without copy=1 before an undeclared query key", async () => {
+  it("refuses X-Marfa-Reach without copy=true before an undeclared query key", async () => {
     const reach = "f".repeat(64);
     const refused = await askEvents(apiKey, {
       query: "typ=core.note",

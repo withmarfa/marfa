@@ -169,7 +169,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
         case "extension": {
           const read = await client.getItemExtension(id, "notes");
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
-          expect(read.data.data).toEqual({ body: "saved offline" });
+          expect(read.data.document).toEqual({ body: "saved offline" });
           break;
         }
       }

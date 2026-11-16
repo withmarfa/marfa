@@ -152,8 +152,8 @@ pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
     Completeness, Draft, Edge, EdgeDraft, EdgeEdit, EdgeOp, Edit, FieldRefusal, GrantKind,
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
-    ListFilters, TagsWrite, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows,
-    SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier,
+    ListFilters, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows, SearchFilters,
+    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, TagsWrite, Tier,
     UnregisteredType, UnsentWrite, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
@@ -8636,9 +8636,7 @@ mod tests {
             ("remove_tag", reader.remove_tag("x", "t").unwrap_err()),
             (
                 "replace_tags",
-                reader
-                    .replace_tags("x", &TagsWrite::default())
-                    .unwrap_err(),
+                reader.replace_tags("x", &TagsWrite::default()).unwrap_err(),
             ),
             (
                 "write_extension",

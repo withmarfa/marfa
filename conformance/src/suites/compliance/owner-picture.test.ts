@@ -241,7 +241,8 @@ describe("the owner's picture", () => {
     const res = await putProfile(file);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ok: true });
+    expect(body).toMatchObject({ avatar: address() });
+    expect(body).not.toHaveProperty("ok");
     await expectMatchesSchema("PUT", "/profile/avatar", 200, body);
     expect((await served()).bytes).toEqual(file);
 

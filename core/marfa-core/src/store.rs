@@ -91,7 +91,7 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 /// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
@@ -7577,11 +7577,7 @@ pub(crate) mod testing {
             )
             .unwrap();
         let other = made
-            .replacen(
-                "'replace_tags',",
-                &format!("'replace_tags', '{kind}',"),
-                1,
-            )
+            .replacen("'replace_tags',", &format!("'replace_tags', '{kind}',"), 1)
             .replacen("CREATE TABLE queue", "CREATE TABLE queue_other", 1);
         assert!(other.contains(kind));
         conn.execute_batch(&format!(
@@ -10800,13 +10796,46 @@ mod tests {
         assert_eq!(unsent, Some(0));
     }
 
+    #[test]
+    fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_write_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_admitting(&conn, "replace_metadata");
+            conn.execute(
+                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at)
+                 VALUES ('q1', 'replace_metadata', 'n1', 'k1', '{\"tags\":[\"a\"]}',
+                         '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        at_version(&path, SCHEMA_VERSION - 1);
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(
+            reason.contains("1 write of kind replace_metadata, which this build cannot send"),
+            "{reason}"
+        );
+        assert!(reason.contains("schema version 4"), "{reason}");
+        assert_eq!(unsent, Some(1));
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT kind FROM queue", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "replace_metadata",
+            "refusing the store took the write"
+        );
+    }
+
     /// Append one hash per schema version; never change an existing entry.
-    const SHAPES: [&str; 5] = [
+    const SHAPES: [&str; 6] = [
         "9a505dc1b14cecc6",
         "115c1d4def4a3d91",
         "2d4e4e1e76ec61dc",
         "c2b64b3a6428a46c",
         "e5029183e86b7c37",
+        "0000000000000000",
     ];
 
     #[test]

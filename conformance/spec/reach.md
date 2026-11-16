@@ -4,25 +4,39 @@ A reach is the server's proof, for one credential, that an inventory, the direct
 
 ## The copy stream
 
-A copy stream is `GET /events?edges=all&copy=1`. A working copy opens one without a cursor to hydrate, and with its last cursor and reach to resume.
+A copy stream is `GET /events?edges=all&copy=true`. A working copy opens one without a cursor to hydrate, and with its last cursor and reach to resume.
 
 ### `reach/copy-bootstrap`
 
-When a credential sends `GET /events?edges=all&copy=1` with neither `Last-Event-ID` nor `X-Marfa-Reach`, the server MUST open a copy stream.
+When a credential sends `GET /events?edges=all&copy=true` with neither `Last-Event-ID` nor `X-Marfa-Reach`, the server MUST open a copy stream.
 
 **Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`.
 
 ### `reach/copy-resume`
 
-When a credential sends `GET /events?edges=all&copy=1` with one `Last-Event-ID` and one `X-Marfa-Reach` that equals its current reach, the server MUST open a copy stream that resumes after that cursor.
+When a credential sends `GET /events?edges=all&copy=true` with one `Last-Event-ID` and one `X-Marfa-Reach` that equals its current reach, the server MUST open a copy stream that resumes after that cursor.
 
 **Tests:** `compliance/reach.test.ts › bootstraps and resumes with one instance, cursor and opaque reach`, `› keeps the reach across content, metadata and write-only authority changes`.
 
 ### `reach/copy-query-refused`
 
-If `GET /events` names `copy` and a query key other than `edges` and `copy`, a `type` filter, a repeated `edges` or `copy`, no `edges` or an `edges` other than `all`, or a `copy` other than `1`, then the server MUST answer `400 validation_error` before a stream starts.
+If `GET /events` names `copy=true` and a query key other than `edges` and `copy`, a `type` filter, a repeated `edges` or `copy`, or no `edges` or an `edges` other than `all`, then the server MUST answer `400 validation_error` before a stream starts.
 
 **Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`.
+
+### `reach/copy-not-boolean`
+
+If `GET /events` names a `copy` other than `true` or `false`, then the server MUST answer `400 validation_error` before a stream starts.
+
+**Reason:** a boolean in the query is `true` or `false` and nothing else.
+
+**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`.
+
+### `reach/copy-false-plain`
+
+When `GET /events` names `copy=false`, the server MUST open the plain stream, as it does when the request names no `copy`.
+
+**Tests:** `compliance/reach.test.ts › opens the plain stream for copy=false, with no reach in its markers`.
 
 ### `reach/copy-resume-unpaired`
 
@@ -44,7 +58,7 @@ If a copy-stream request names an `X-Marfa-Reach` that is empty, repeated, or no
 
 ### `reach/copy-reach-ordinary`
 
-If a credential that reads some type sends `GET /events` naming `X-Marfa-Reach` and no `copy`, then the server MUST answer `400 validation_error`.
+If a credential that reads some type sends `GET /events` naming `X-Marfa-Reach` and no `copy=true`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`.
 
@@ -474,7 +488,7 @@ When a credential sends `GET /items/{id}` with a matching `X-Marfa-Reach` for an
 
 ### `reach/listed-bulk-get`
 
-When a credential sends `POST /items/bulk-get` with a matching `X-Marfa-Reach`, the server MUST answer a `listed` list holding a boolean for each answered item, in the order of `items`.
+When a credential sends `POST /items/bulk-get` with a matching `X-Marfa-Reach`, the server MUST answer a `listed` list holding a boolean for each answered item, in the order of `data`.
 
 **Reason:** the source filter does not narrow a read by id (`types/source-filter-by-id`), so `listed` is how a device that reads many items by id at once learns which of them belong to its inventory.
 

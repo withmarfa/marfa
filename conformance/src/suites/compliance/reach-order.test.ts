@@ -20,7 +20,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 const FRAME_BUDGET_MS = 15_000;
 /** Well formed, and not the reach of any credential. */

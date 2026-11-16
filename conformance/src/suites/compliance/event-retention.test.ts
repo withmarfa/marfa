@@ -191,7 +191,7 @@ describe("the event log's retention job", () => {
       const copy = (options: { lastEventId?: string; reach?: string }) => ({
         query: [
           ["edges", "all"],
-          ["copy", "1"],
+          ["copy", "true"],
         ] as Array<[string, string]>,
         ...options,
       });

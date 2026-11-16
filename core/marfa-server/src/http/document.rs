@@ -124,10 +124,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "the owner recovery form, proved by a code from the server's log",
     ),
     (
-        "HEAD /blobs/{hash}",
-        "the headers of the published read, without its bytes",
-    ),
-    (
         "GET /blobs/{hash}/fetch",
         "the signed link GET /blobs/{hash}/url answers",
     ),

@@ -51,7 +51,7 @@ describe("tags", () => {
     await expectMatchesSchema("POST", "/items/{id}/tags", 200, updated.data);
     // The whole set, not three memberships: an add that added a tag nobody
     // asked for would satisfy three `toContain` checks.
-    expect([...updated.data.metadata.tags].sort()).toEqual([
+    expect([...updated.data.tags].sort()).toEqual([
       "initial",
       "new-tag",
       "updated",
@@ -275,8 +275,8 @@ describe("favorite reserved tag", () => {
 
     const patched = await client.addTags(r.data.item.id, ["favorite"]);
     expect(patched.ok).toBe(true);
-    expect(patched.data.metadata.tags).toContain("favorite");
-    expect(patched.data.metadata.tags).toContain("env:test");
+    expect(patched.data.tags).toContain("favorite");
+    expect(patched.data.tags).toContain("env:test");
   });
 
   it("filtering by tags=[favorite] returns tagged items and excludes others", async () => {
@@ -323,8 +323,8 @@ describe("favorite reserved tag", () => {
       200,
       removed.data,
     );
-    expect(removed.data.metadata.tags).not.toContain("favorite");
-    expect(removed.data.metadata.tags).toContain("env:test");
+    expect(removed.data.tags).not.toContain("favorite");
+    expect(removed.data.tags).toContain("env:test");
 
     const list = await client.listItems({
       tags: ["favorite"],

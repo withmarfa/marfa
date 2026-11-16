@@ -255,10 +255,7 @@ fn type_line(verb: &str, answer: &Value) -> String {
     format!(
         "{verb} type {}{label} (version {})",
         crate::output::printable(text("id")),
-        answer
-            .get("version")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
+        answer.get("version").and_then(Value::as_u64).unwrap_or(0)
     )
 }
 

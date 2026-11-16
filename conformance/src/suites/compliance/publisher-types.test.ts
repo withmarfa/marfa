@@ -60,7 +60,7 @@ describe("publisher types", () => {
         fields: { name: { type: "string", required: true } },
       });
       expect(registered.status, id).toBe(201);
-      expect(registered.data.type.id).toBe(id);
+      expect(registered.data.id).toBe(id);
 
       // Registered is not enough: the type validates items like any other.
       const item = await client.createItem({

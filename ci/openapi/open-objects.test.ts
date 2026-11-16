@@ -36,7 +36,12 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
       "An item's or an edge's properties, whose shape its type or edge type declares at runtime.",
   },
   {
-    pattern: /^(Item|Metadata|ExtensionsResponse)\.extensions\.\*$/,
+    pattern: /^(Item|Metadata)\.extensions\.\*$/,
+    reason:
+      "One extension namespace's document, whose shape belongs to whoever writes the namespace.",
+  },
+  {
+    pattern: /^Extension\.document$/,
     reason:
       "One extension namespace's document, whose shape belongs to whoever writes the namespace.",
   },

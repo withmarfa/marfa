@@ -43,7 +43,7 @@ async function reach(): Promise<string> {
     {
       query: [
         ["edges", "all"],
-        ["copy", "1"],
+        ["copy", "true"],
       ],
     },
     async (stream) => {

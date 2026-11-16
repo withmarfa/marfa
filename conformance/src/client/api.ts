@@ -157,6 +157,21 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
   return text === "" ? "" : `?${text}`;
 }
 
+/** One extension namespace on an item, with its document. */
+export interface ItemExtension {
+  namespace: string;
+  document: Record<string, unknown> | null;
+}
+
+/** The documents of an extension list, by namespace. */
+export function extensionsOf(page: {
+  data: ItemExtension[];
+}): Record<string, Record<string, unknown> | null> {
+  return Object.fromEntries(
+    page.data.map(({ namespace, document }) => [namespace, document]),
+  );
+}
+
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
@@ -531,12 +546,12 @@ export class MarfaClient {
     id: string,
     tag: string,
     options?: { version?: number },
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
+  ): Promise<ApiResponse<{ tags: string[] }>> {
     const query =
       options?.version === undefined
         ? ""
         : `?version=${String(options.version)}`;
-    return this.request<{ metadata: MarfaMetadata }>(
+    return this.request<{ tags: string[] }>(
       `/items/${id}/tags/${encodeURIComponent(tag)}${query}`,
       { method: "DELETE" },
     );
@@ -582,10 +597,8 @@ export class MarfaClient {
     return this.request<PaginatedResult<SearchResult>>(`/search?${params}`);
   }
 
-  async registerType(
-    schema: TypeSchema,
-  ): Promise<ApiResponse<{ type: TypeSchema }>> {
-    return this.request<{ type: TypeSchema }>("/types", {
+  async registerType(schema: TypeSchema): Promise<ApiResponse<TypeSchema>> {
+    return this.request<TypeSchema>("/types", {
       method: "POST",
       body: schema,
     });
@@ -603,9 +616,9 @@ export class MarfaClient {
     typeId: string,
     schema: object,
     force?: boolean,
-  ): Promise<ApiResponse<{ type: TypeSchema }>> {
+  ): Promise<ApiResponse<TypeSchema>> {
     const query = force ? "?force=true" : "";
-    return this.request<{ type: TypeSchema }>(`/types/${typeId}${query}`, {
+    return this.request<TypeSchema>(`/types/${typeId}${query}`, {
       method: "PUT",
       body: schema,
     });
@@ -721,15 +734,14 @@ export class MarfaClient {
     id: string,
     namespace: string,
     data: Record<string, unknown>,
-  ): Promise<
-    ApiResponse<{ extensions: Record<string, Record<string, unknown>> }>
-  > {
-    return this.request<{
-      extensions: Record<string, Record<string, unknown>>;
-    }>(`/items/${id}/extensions/${namespace}`, {
-      method: "PUT",
-      body: data,
-    });
+  ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
+    return this.request<{ data: ItemExtension[] }>(
+      `/items/${id}/extensions/${namespace}`,
+      {
+        method: "PUT",
+        body: data,
+      },
+    );
   }
 
   /**
@@ -757,14 +769,14 @@ export class MarfaClient {
   /**
    * POST /items/bulk-get — read many items by id in one round-trip. Ids the
    * caller cannot read (type not permitted, trashed, or non-existent) are
-   * omitted from `items` rather than erroring. `metadata` is present only when
+   * omitted from `data` rather than erroring. `metadata` is present only when
    * `include` carries `metadata`.
    */
   async bulkGet(
     ids: string[],
     include?: Array<"edges" | "metadata" | "extensions" | "system">,
-  ): Promise<ApiResponse<{ items: MarfaItem[]; metadata?: MarfaMetadata[] }>> {
-    return this.request<{ items: MarfaItem[]; metadata?: MarfaMetadata[] }>(
+  ): Promise<ApiResponse<{ data: MarfaItem[]; metadata?: MarfaMetadata[] }>> {
+    return this.request<{ data: MarfaItem[]; metadata?: MarfaMetadata[] }>(
       "/items/bulk-get",
       {
         method: "POST",
@@ -786,7 +798,7 @@ export class MarfaClient {
    *  once both are folded, one result for each name in the order named. */
   async findItemsByTitle(names: string[]): Promise<
     ApiResponse<{
-      results: Array<{
+      data: Array<{
         name: string;
         items: Array<{
           id: string;
@@ -808,8 +820,8 @@ export class MarfaClient {
    *  later, never earlier. */
   async settleTombstones(
     input: Omit<LookupInput, "ids" | "include"> & { settled_at: string },
-  ): Promise<ApiResponse<{ tombstones: Tombstone[] }>> {
-    return this.request<{ tombstones: Tombstone[] }>("/items/tombstones", {
+  ): Promise<ApiResponse<{ data: Tombstone[] }>> {
+    return this.request<{ data: Tombstone[] }>("/items/tombstones", {
       method: "POST",
       body: input as unknown as Record<string, unknown>,
     });
@@ -989,8 +1001,8 @@ export class MarfaClient {
 
   async registerEdgeType(
     input: EdgeTypeRegistration,
-  ): Promise<ApiResponse<{ edge_type: EdgeTypeDefinition }>> {
-    return this.request<{ edge_type: EdgeTypeDefinition }>("/edge-types", {
+  ): Promise<ApiResponse<EdgeTypeDefinition>> {
+    return this.request<EdgeTypeDefinition>("/edge-types", {
       method: "POST",
       body: input,
     });
@@ -1398,15 +1410,15 @@ export class MarfaClient {
     id: string,
     tags: string[],
     options?: { version?: number },
-  ): Promise<ApiResponse<{ metadata: MarfaMetadata }>> {
+  ): Promise<ApiResponse<{ tags: string[] }>> {
     const query =
       options?.version === undefined
         ? ""
         : `?version=${String(options.version)}`;
-    return this.request<{ metadata: MarfaMetadata }>(
-      `/items/${id}/tags${query}`,
-      { method: "POST", body: { tags } },
-    );
+    return this.request<{ tags: string[] }>(`/items/${id}/tags${query}`, {
+      method: "POST",
+      body: { tags },
+    });
   }
 
   async replaceTags(
@@ -1444,12 +1456,8 @@ export class MarfaClient {
 
   async listItemExtensions(
     id: string,
-  ): Promise<
-    ApiResponse<{ extensions: Record<string, Record<string, unknown>> }>
-  > {
-    return this.request<{
-      extensions: Record<string, Record<string, unknown>>;
-    }>(`/items/${id}/extensions`);
+  ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
+    return this.request<{ data: ItemExtension[] }>(`/items/${id}/extensions`);
   }
 
   /**
@@ -1512,21 +1520,18 @@ export class MarfaClient {
   async getItemExtension(
     id: string,
     namespace: string,
-  ): Promise<ApiResponse<{ data: Record<string, unknown> }>> {
-    return this.request<{ data: Record<string, unknown> }>(
-      `/items/${id}/extensions/${namespace}`,
-    );
+  ): Promise<ApiResponse<ItemExtension>> {
+    return this.request<ItemExtension>(`/items/${id}/extensions/${namespace}`);
   }
 
   async deleteItemExtension(
     id: string,
     namespace: string,
-  ): Promise<
-    ApiResponse<{ extensions: Record<string, Record<string, unknown>> }>
-  > {
-    return this.request<{
-      extensions: Record<string, Record<string, unknown>>;
-    }>(`/items/${id}/extensions/${namespace}`, { method: "DELETE" });
+  ): Promise<ApiResponse<{ data: ItemExtension[] }>> {
+    return this.request<{ data: ItemExtension[] }>(
+      `/items/${id}/extensions/${namespace}`,
+      { method: "DELETE" },
+    );
   }
 
   async listEdges(

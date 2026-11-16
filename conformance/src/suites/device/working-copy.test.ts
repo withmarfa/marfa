@@ -2020,10 +2020,7 @@ describe("the working copy belongs to one server", () => {
           )
           .get() as { sql: string };
         const admitting = sql
-          .replace(
-            "'replace_tags',",
-            "'replace_tags', 'merge_metadata',",
-          )
+          .replace("'replace_tags',", "'replace_tags', 'merge_metadata',")
           .replace(/^CREATE TABLE\s+"?queue"?/, "CREATE TABLE queue_admitting");
         expect(admitting).toContain("'merge_metadata'");
         store.exec(admitting);

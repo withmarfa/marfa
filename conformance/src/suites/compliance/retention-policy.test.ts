@@ -39,7 +39,7 @@ describe("a type's retention policy", () => {
     ]) {
       const r = await client.registerType(declared(policy));
       expect(r.status, JSON.stringify(policy)).toBe(201);
-      expect(r.data.type.retention_policy).toEqual(policy);
+      expect(r.data.retention_policy).toEqual(policy);
     }
   });
 

@@ -4,8 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use clap::{Args, Subcommand};
 use marfa_core::{
-    Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, TagsWrite, SearchFilters,
-    Sort,
+    Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, SearchFilters, Sort, TagsWrite,
 };
 
 use crate::error::{CliError, Exit};

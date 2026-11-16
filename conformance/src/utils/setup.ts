@@ -230,7 +230,7 @@ export function trackRegisteredTypes(
   ) => {
     const response = await original(...args);
     if (response.ok) {
-      const schema = response.data.type;
+      const schema = response.data;
       const tracked = ctx.trackedTypes.find((t) => t.id === schema.id);
       if (tracked) {
         tracked.createdBy = client;
@@ -261,11 +261,11 @@ export function trackRegisteredTypes(
       const id = args[0];
       const tracked = ctx.trackedTypes.find((t) => t.id === id);
       if (tracked) {
-        tracked.parent = response.data.type.parent;
+        tracked.parent = response.data.parent;
         tracked.compatibleWith = compatibilityTargets(
-          response.data.type.compatible_with,
+          response.data.compatible_with,
         );
-        tracked.constrainedTo = constraintTargets(response.data.type.tables);
+        tracked.constrainedTo = constraintTargets(response.data.tables);
       }
     }
     return response;

@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_links, extension_documents_text, extensions_text, metadata_for, name_of, not_found, rows,
-    summary_of, with_blocks,
+    Door, Item, Keys, check_links, extension_documents_text, extensions_text, metadata_for,
+    name_of, not_found, rows, summary_of, with_blocks,
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;

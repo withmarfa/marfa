@@ -1564,7 +1564,7 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-register`
 
-When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
+When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the edge type, bare, as `GET /edge-types` lists it.
 
 **Tests:** `compliance/edge-types.test.ts › registers a custom edge type and answers 201`.
 

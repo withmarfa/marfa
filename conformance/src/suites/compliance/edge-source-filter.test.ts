@@ -434,16 +434,16 @@ describe("the source filter on the edges an item read carries", () => {
 
     const bulk = await filtered.bulkGet([shown, hidden], ["edges"]);
     expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
-    expect(about(bulk.data.items.find((i) => i.id === shown)?.edges)).toEqual([
+    expect(about(bulk.data.data.find((i) => i.id === shown)?.edges)).toEqual([
       shownEdge,
     ]);
-    expect(about(bulk.data.items.find((i) => i.id === hidden)?.edges)).toEqual(
+    expect(about(bulk.data.data.find((i) => i.id === hidden)?.edges)).toEqual(
       [],
     );
 
     // The witness: with no filter the same read carries the hidden item's edge.
     const whole = await unfiltered.bulkGet([hidden], ["edges"]);
-    expect(about(whole.data.items[0]?.edges)).toEqual([hiddenEdge]);
+    expect(about(whole.data.data[0]?.edges)).toEqual([hiddenEdge]);
   });
 
   it("applies to the edges a lookup carries", async () => {

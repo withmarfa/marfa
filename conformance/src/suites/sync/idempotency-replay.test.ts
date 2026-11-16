@@ -1172,7 +1172,7 @@ async function changedBetween(door: string): Promise<ChangedBetween> {
   const namespace = async (id: string): Promise<unknown> => {
     const read = await client.getItemExtension(id, "replay-between");
     expect(read.status, JSON.stringify(read.error)).toBe(200);
-    return read.data.data;
+    return read.data.document;
   };
   const ok = async (answer: Promise<Answer>): Promise<void> => {
     const settled = await answer;

@@ -776,6 +776,16 @@ When a database statement fails for an item that a `POST /items/bulk-actions` jo
 
 **Tests:** `compliance/failed-statement-reports.test.ts › names a database failure with its SQLite code in each entry's error, and none of the statement, the driver's message or the values its write was bound to`.
 
+## A boolean in the query
+
+### `errors/query-boolean`
+
+If a request names a boolean query parameter with a value other than `true` or `false`, or names it more than once, then the server MUST answer `400 validation_error`.
+
+**Reason:** one spelling for every door, so a client never learns that `1` works on one and not on another.
+
+**Tests:** `compliance/query-booleans.test.ts › takes true, and refuses every other spelling, for force on DELETE /types/{id}`, `› takes true, and refuses every other spelling, for force on PUT /types/{id}`, `› takes true, and refuses every other spelling, for force on DELETE /edge-types/{id}`, `› takes true, and refuses every other spelling, for files on GET /export`, `› takes true, and refuses every other spelling, for copy on GET /events`.
+
 ## Codes
 
 Every code the server answers over HTTP is a row of the table below, and a server answers no code the table does not hold. The codes of a tool error on the MCP endpoint, such as `confirmation_stale` and `file_not_fetched`, are in `mcp.md`, not in this table.

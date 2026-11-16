@@ -287,7 +287,11 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
 /// The owner's profile as far as `caller` may read it: a field it may not read is left out.
 pub async fn read_profile(app: &App, caller: &Caller) -> Result<Value> {
     let owner = find(app).await?.ok_or_else(not_found)?;
-    Ok(profile_of(&owner, app.addresses().sign_in().origin(), caller))
+    Ok(profile_of(
+        &owner,
+        app.addresses().sign_in().origin(),
+        caller,
+    ))
 }
 
 /// The owner's profile fields that `caller` may read.

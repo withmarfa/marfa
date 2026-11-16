@@ -51,7 +51,7 @@ describe("POST /items/bulk-get", () => {
     await expectMatchesSchema("POST", "/items/bulk-get", 200, res.data);
     expect(Object.keys(res.data)).toEqual(["items"]);
     // In the order named, and an id named twice answered once.
-    expect(res.data.items.map((i) => i.id)).toEqual([b, a]);
+    expect(res.data.data.map((i) => i.id)).toEqual([b, a]);
   });
 
   it("omits ids that do not resolve rather than erroring", async () => {
@@ -63,7 +63,7 @@ describe("POST /items/bulk-get", () => {
 
     const res = await client.bulkGet([present, gone]);
     expect(res.status).toBe(200);
-    const ids = res.data.items.map((i) => i.id);
+    const ids = res.data.data.map((i) => i.id);
     expect(ids).toContain(present);
     expect(ids).not.toContain(gone);
   });
@@ -92,13 +92,13 @@ describe("POST /items/bulk-get", () => {
     const ids = [note, bookmark.data.item.id, unused];
     const narrow = await noteReader.bulkGet(ids);
     expect(narrow.status).toBe(200);
-    expect(narrow.data.items.map((i) => i.id)).toEqual([note]);
+    expect(narrow.data.data.map((i) => i.id)).toEqual([note]);
 
     // The witness: a key that reads all three types is handed the bookmark,
     // so its absence above is the key's reach and not the item.
     const full = await client.bulkGet(ids);
     expect(full.status).toBe(200);
-    expect(full.data.items.map((i) => i.id)).toEqual([
+    expect(full.data.data.map((i) => i.id)).toEqual([
       note,
       bookmark.data.item.id,
     ]);

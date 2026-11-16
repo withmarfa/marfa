@@ -329,7 +329,7 @@ describe("type label compliance", () => {
       },
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    expect(replaced.data.type.plural).toBe("Tales");
+    expect(replaced.data.plural).toBe("Tales");
 
     const after = (await client.getType(typeId)).data;
     expect(after.plural).toBe("Tales");

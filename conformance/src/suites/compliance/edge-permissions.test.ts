@@ -900,7 +900,7 @@ describe("the doors under an item answer only what the credential may read", () 
     // The batched door through the same hydration.
     const bulk = await narrowClient.bulkGet([anchor], ["edges"]);
     expect(bulk.ok, JSON.stringify(bulk.error)).toBe(true);
-    const bulkBlocks = bulk.data.items[0]?.edges ?? {};
+    const bulkBlocks = bulk.data.data[0]?.edges ?? {};
     expect(
       bulkBlocks[seen]?.data.map((e) => e.id),
       "the bulk read dropped an edge of a kind the credential holds",

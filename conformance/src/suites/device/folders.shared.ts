@@ -251,7 +251,7 @@ export function scriptFolderWrites(
               : held.filter((named) => named !== decodeURIComponent(tag ?? ""));
           door.rows.set(id, { ...row, tags });
         }
-        return writeAnswers.metadata(id, door.rows.get(id)?.tags ?? []);
+        return writeAnswers.tags(door.rows.get(id)?.tags ?? []);
       },
     ],
     extensions: [{ kind: "json", status: 200, body: {} }],

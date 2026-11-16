@@ -73,7 +73,7 @@ async function serving(options = {}) {
       else answer();
     } else if (path === "/items/bulk-get" && req.method === "POST") {
       // This server holds no row, so a bulk read by id answers none.
-      json(200, { items: [], metadata: [], listed: [] });
+      json(200, { data: [], metadata: [], listed: [] });
     } else if (path === "/items") {
       pages += 1;
       if (options.slowPages && pages === 1) {

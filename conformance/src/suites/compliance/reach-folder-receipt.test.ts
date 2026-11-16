@@ -25,7 +25,7 @@ it("returns a folder write receipt without a reach certificate", async ({
     {
       query: [
         ["edges", "all"],
-        ["copy", "1"],
+        ["copy", "true"],
       ],
     },
     async (stream) => {

@@ -605,7 +605,7 @@ describe("announcing rows", () => {
             ? []
             : [
                 ["edges", "all"],
-                ["copy", "1"],
+                ["copy", "true"],
               ],
         }),
       ),

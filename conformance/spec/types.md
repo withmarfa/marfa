@@ -86,7 +86,7 @@ The server MUST judge a reserved root by the whole first segment, so `core-pub` 
 
 ### `types/register`
 
-When a key sends `POST /types` with an `id` and `fields` it may register, the server MUST answer `201` with the `type` as stored.
+When a key sends `POST /types` with an `id` and `fields` it may register, the server MUST answer `201` with the type as stored, bare, as `GET /types/{id}` answers it.
 
 **Tests:** `compliance/type-registry.test.ts › registers a new custom type`, `compliance/types.test.ts › registers a custom type`.
 
@@ -902,7 +902,7 @@ When a replacement withdraws a type's `link_field`, the server MUST stop holding
 
 ### `types/replace`
 
-When a key holding `schema.write` or `metadata.types:write` sends `PUT /types/{id}` for a type registered at run time, with a schema no other rule of this chapter refuses, the server MUST replace the type and answer `200` with it.
+When a key holding `schema.write` or `metadata.types:write` sends `PUT /types/{id}` for a type registered at run time, with a schema no other rule of this chapter refuses, the server MUST replace the type and answer `200` with it, bare.
 
 **Tests:** `compliance/type-registry.test.ts › updates type schema: adding a field succeeds`.
 
@@ -1600,7 +1600,7 @@ The owner can choose the icon any type is shown by, a core or connector type amo
 
 ### `types/icon-set`
 
-When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `icon` that is an ID `types/icon-name` accepts, for a registered type, the server MUST keep it as the owner's icon for that type and answer `200` with the `type` as `GET /types/{id}` now answers it.
+When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `icon` that is an ID `types/icon-name` accepts, for a registered type, the server MUST keep it as the owner's icon for that type and answer `200` with the type as `GET /types/{id}` now answers it, bare.
 
 **Reason:** an owner tells types apart by their icons, and a core or connector type's author cannot know which icon its owner wants. A core type can't be replaced, and a connector writes its own types again when it starts, so a choice made in the definition would not last.
 
@@ -1608,7 +1608,7 @@ When a caller allowed by `types/icon-who` sends `PUT /types/{id}/icon` with an `
 
 ### `types/icon-clear`
 
-When a caller allowed by `types/icon-who` sends `DELETE /types/{id}/icon` for a registered type, the server MUST remove the owner's icon for that type, whether or not one was set, and answer `200` with the `type` as `GET /types/{id}` now answers it.
+When a caller allowed by `types/icon-who` sends `DELETE /types/{id}/icon` for a registered type, the server MUST remove the owner's icon for that type, whether or not one was set, and answer `200` with the type as `GET /types/{id}` now answers it, bare.
 
 **Reason:** clearing restores the author's default, and a clear that failed for a type with no choice would make the call unsafe to repeat.
 

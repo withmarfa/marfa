@@ -1088,13 +1088,13 @@ describe("a purge's tombstones", () => {
       links: [both],
       settled_at: later,
     });
-    expect(moved.data.tombstones.map((t) => t.settled_at)).toEqual([later]);
+    expect(moved.data.data.map((t) => t.settled_at)).toEqual([later]);
     const none = await client.settleTombstones({
       type: linked,
       ...byKey,
       settled_at: later,
     });
-    expect(none.data.tombstones).toEqual([]);
+    expect(none.data.data).toEqual([]);
     expect(await tombstonesByLink([both], other)).toEqual([theirs]);
     expect(
       (await client.lookupItems({ type: other, ...byKey })).data.tombstones,
@@ -1255,7 +1255,7 @@ describe("POST /items/tombstones", () => {
     });
     expect(later.ok, JSON.stringify(later.error)).toBe(true);
     await expectMatchesSchema("POST", "/items/tombstones", 200, later.data);
-    expect(later.data.tombstones).toEqual([
+    expect(later.data.data).toEqual([
       { key: link, purged_at: tombstone?.purged_at, settled_at: at(2) },
     ]);
 
@@ -1266,7 +1266,7 @@ describe("POST /items/tombstones", () => {
         settled_at: earlier,
       });
       expect(kept.ok).toBe(true);
-      expect(kept.data.tombstones[0]?.settled_at).toBe(at(2));
+      expect(kept.data.data[0]?.settled_at).toBe(at(2));
     }
     // An offset is the same instant, answered in the stored spelling.
     const offset = await client.settleTombstones({
@@ -1274,7 +1274,7 @@ describe("POST /items/tombstones", () => {
       links: [link],
       settled_at: at(3).replace("Z", "+00:00"),
     });
-    expect(offset.data.tombstones[0]?.settled_at).toBe(at(3));
+    expect(offset.data.data[0]?.settled_at).toBe(at(3));
     expect((await tombstonesByLink([link]))[0]?.settled_at).toBe(at(3));
 
     const byKey = await client.settleTombstones({
@@ -1283,7 +1283,7 @@ describe("POST /items/tombstones", () => {
       source_ids: [key],
       settled_at: at(4),
     });
-    expect(byKey.data.tombstones).toEqual([
+    expect(byKey.data.data).toEqual([
       { key, purged_at: tombstone?.purged_at, settled_at: at(4) },
     ]);
     const earlierByKey = await client.settleTombstones({
@@ -1292,7 +1292,7 @@ describe("POST /items/tombstones", () => {
       source_ids: [key],
       settled_at: at(1),
     });
-    expect(earlierByKey.data.tombstones[0]?.settled_at).toBe(at(4));
+    expect(earlierByKey.data.data[0]?.settled_at).toBe(at(4));
   });
 
   it("refuses to move a tombstone to a key that may only read the type", async () => {
@@ -1333,7 +1333,7 @@ describe("POST /items/tombstones", () => {
       links: [link],
       settled_at: later,
     });
-    expect(moved.data.tombstones[0]?.settled_at).toBe(later);
+    expect(moved.data.data[0]?.settled_at).toBe(later);
   });
 
   it("refuses to move a natural key's tombstone under a source the key does not claim", async () => {
@@ -1368,7 +1368,7 @@ describe("POST /items/tombstones", () => {
       links: [link],
       settled_at: later,
     });
-    expect(byLink.data.tombstones[0]?.settled_at).toBe(later);
+    expect(byLink.data.data[0]?.settled_at).toBe(later);
 
     const refused = await stranger.settleTombstones({
       ...byKey,
@@ -1392,7 +1392,7 @@ describe("POST /items/tombstones", () => {
       ...byKey,
       settled_at: later,
     });
-    expect(moved.data.tombstones[0]?.settled_at).toBe(later);
+    expect(moved.data.data[0]?.settled_at).toBe(later);
   });
 
   it("answers tombstones in the order named", async () => {
@@ -1410,11 +1410,7 @@ describe("POST /items/tombstones", () => {
       links: named,
       settled_at: new Date(Date.now() + 3_600_000).toISOString(),
     });
-    expect(settled.data.tombstones.map((t) => t.key)).toEqual([
-      second,
-      third,
-      first,
-    ]);
+    expect(settled.data.data.map((t) => t.key)).toEqual([second, third, first]);
   });
 
   it("refuses a malformed tombstone request", async () => {
@@ -1621,7 +1617,7 @@ describe("POST /items/lookup", () => {
     ]);
     expect(found.data.tombstones).toEqual([]);
     const got = await client.bulkGet([binned.id, live.id]);
-    expect(got.data.items.map((i) => i.id)).toEqual([live.id]);
+    expect(got.data.data.map((i) => i.id)).toEqual([live.id]);
 
     const malformed = await client.lookupItems({
       type: linked,

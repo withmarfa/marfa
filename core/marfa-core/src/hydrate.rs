@@ -2149,7 +2149,7 @@ mod tests {
             .unwrap()["item"]
                 .clone();
             item["properties"] = json!({"title": format!("{id} v{version}")});
-            body["items"][at] = item;
+            body["data"][at] = item;
         }
         scripted::certified(scripted::json(200, &body.to_string()))
     }
@@ -2351,7 +2351,7 @@ mod tests {
                 .map(|id| (id.as_str(), true))
                 .collect::<Vec<_>>(),
         );
-        for item in body["items"].as_array_mut().unwrap() {
+        for item in body["data"].as_array_mut().unwrap() {
             item["properties"]["body"] = "x".repeat(900_000).into();
         }
         let body = body.to_string();
@@ -2543,7 +2543,7 @@ mod tests {
         bulk["listed"] = json!("yes");
         bulks.push(bulk);
         let mut bulk = bulk_body(&[("pin-000", true)]);
-        bulk["items"][0] = edges_without_cursor(bulk["items"][0].clone());
+        bulk["data"][0] = edges_without_cursor(bulk["data"][0].clone());
         bulks.push(bulk);
 
         let cases = pages

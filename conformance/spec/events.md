@@ -2,7 +2,7 @@
 
 `GET /events` is a server-sent event stream of the writes to items and edges, resumable by cursor, and outbound webhooks deliver those events to a URL, except the writes `items/bulk-fanout` holds back. The audit log, which records the writes the events announce, closes the chapter.
 
-Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=1`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
+Every rule about a stream is about the plain stream unless it says otherwise. The copy stream, `GET /events?edges=all&copy=true`, is `reach/copy-bootstrap` and the rules after it in `reach.md`. What a stream does when the server stops is `instance/stop-ends-streams` and the rules after it. The answer to a viewer past the instance's cap is `errors/stream-capacity`.
 
 ## Event types
 
@@ -1836,7 +1836,7 @@ Each entry names what it records in `action`. The first table gives the `action`
 | `item.update`                | A write changes an item.                                                        | `data`         |
 | `item.tag`                   | A tag operation adds tags to an item.                                           | `data`         |
 | `item.untag`                 | A tag operation removes a tag from an item.                                     | `data`         |
-| `item.tags.replace`      | A tag operation replaces the tags of an item.                                   | `data`         |
+| `item.tags.replace`          | A tag operation replaces the tags of an item.                                   | `data`         |
 | `extension.set`              | A write sets an extension namespace of an item.                                 | `data`         |
 | `extension.delete`           | A write deletes an extension namespace of an item.                              | `data`         |
 | `item.transition`            | A transition moves an item to another state.                                    | `data`         |

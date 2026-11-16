@@ -402,7 +402,7 @@ export function scriptHydration(
     "/events",
     (request) => {
       if (
-        request.query.toString() !== "edges=all&copy=1" ||
+        request.query.toString() !== "edges=all&copy=true" ||
         request.headers["last-event-id"] !== undefined ||
         request.headers["x-marfa-reach"] !== undefined
       )
@@ -416,7 +416,7 @@ export function scriptHydration(
     (request) => {
       const cursor = request.headers["last-event-id"];
       const fence = request.headers["x-marfa-reach"];
-      if (request.query.toString() !== "edges=all&copy=1")
+      if (request.query.toString() !== "edges=all&copy=true")
         return refusal(400, "validation_error", "invalid copy stream query");
       if (cursor === undefined && fence === undefined)
         return copyInstance(copyHeadRead(head()));
@@ -881,22 +881,10 @@ export interface ScriptedWrites {
   update?: Responder[];
   /** The certified single-item read used to reconcile a settled write. */
   read?: Responder[];
-  /** The tag and metadata doors, which answer the same sidecar. */
+  /** The tag doors, which each answer the item's tags. */
   tags?: Responder[];
   extensions?: Responder[];
   edges?: Responder[];
-}
-
-/** The answer of the door that replaces tags, from the answer of a door that adds one. */
-function replacedTags(responder: Responder): Responder {
-  if (typeof responder === "function" || responder.kind !== "json") {
-    return responder;
-  }
-  const held = (responder.body as { metadata?: { tags?: string[] } })?.metadata
-    ?.tags;
-  return held === undefined
-    ? responder
-    : { ...responder, body: { tags: held } };
 }
 
 export function scriptWrites(
@@ -920,15 +908,7 @@ export function scriptWrites(
   if (options.tags !== undefined) {
     server.answer("POST", /^\/items\/[^/]+\/tags$/, ...options.tags);
     server.answer("DELETE", /^\/items\/[^/]+\/tags\/[^/]+$/, ...options.tags);
-    // The replacing door answers the tags alone, and is scripted with the tag
-    // doors rather than needing a group of its own: leaving it out is how a
-    // drain carrying a tag replacement met an unscripted door and read the 501
-    // as a refusal.
-    server.answer(
-      "PUT",
-      /^\/items\/[^/]+\/tags$/,
-      ...options.tags.map(replacedTags),
-    );
+    server.answer("PUT", /^\/items\/[^/]+\/tags$/, ...options.tags);
   }
   if (options.extensions !== undefined) {
     const door = /^\/items\/[^/]+\/extensions\/[^/]+$/;

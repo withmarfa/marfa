@@ -1054,8 +1054,8 @@ it.each(["replacement", "tag addition"] as const)(
               ? tags
               : [...new Set([...(row.tags ?? []), ...tags])];
           return request.method === "PUT"
-            ? writeAnswers.replacedTags(row.tags)
-            : writeAnswers.metadata(id, row.tags);
+            ? writeAnswers.tags(row.tags)
+            : writeAnswers.tags(row.tags);
         }
         return undefined;
       },

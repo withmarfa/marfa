@@ -27,7 +27,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
 const FRAME_BUDGET_MS = 15_000;
@@ -317,11 +317,11 @@ describe("conditional working-copy reaches", () => {
   it("rejects every alternate copy grammar before starting a stream", async () => {
     const proof = await bootstrap();
     const cases: OpenEventStreamOptions[] = [
-      { query: [["copy", "1"]] },
+      { query: [["copy", "true"]] },
       {
         query: [
           ["edges", "none"],
-          ["copy", "1"],
+          ["copy", "true"],
         ],
       },
       {
@@ -330,9 +330,21 @@ describe("conditional working-copy reaches", () => {
           ["copy", "0"],
         ],
       },
+      {
+        query: [
+          ["edges", "all"],
+          ["copy", "1"],
+        ],
+      },
+      {
+        query: [
+          ["edges", "all"],
+          ["copy", "yes"],
+        ],
+      },
       { query: [...COPY_QUERY, ["type", "core.note"]] },
       { query: [...COPY_QUERY, ["unknown", "1"]] },
-      { query: [...COPY_QUERY, ["copy", "1"]] },
+      { query: [...COPY_QUERY, ["copy", "true"]] },
       { query: [...COPY_QUERY, ["edges", "all"]] },
       { query: COPY_QUERY, lastEventId: proof.cursor },
       { query: COPY_QUERY, reach: proof.reach },
@@ -406,6 +418,35 @@ describe("conditional working-copy reaches", () => {
         expect(stream.response.status).toBe(200);
       },
     );
+  });
+
+  it("opens the plain stream for copy=false, with no reach in its markers", async () => {
+    await withStream(
+      server.apiUrl,
+      server.workingKey,
+      {
+        query: [
+          ["edges", "all"],
+          ["copy", "false"],
+        ],
+      },
+      async (stream) => {
+        expect(stream.response.status).toBe(200);
+        const { events } = await collectUntil(
+          stream,
+          (frames) => frames.some((frame) => frame.event === "stream_live"),
+          "the plain stream's live marker",
+          AbortSignal.timeout(FRAME_BUDGET_MS),
+        );
+        expect(events[0]?.event).toBe("stream_cursor");
+        expect(
+          (events[0]!.data as Record<string, unknown>).reach,
+        ).toBeUndefined();
+      },
+    );
+    // The witness: the same request with copy=true carries a reach.
+    const proof = await bootstrap();
+    expect(proof.reach).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("walks conditional metadata pages to explicit null and certifies every supported read door", async () => {

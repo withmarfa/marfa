@@ -1502,7 +1502,7 @@ describe("own-field recovery", () => {
                 ? (row.tags ?? []).filter((tag) => tag !== "b")
                 : ["a", "b"];
             door.rows.set(id, { ...row, tags });
-            return writeAnswers.metadata(id, tags);
+            return writeAnswers.tags(tags);
           },
         ],
       });

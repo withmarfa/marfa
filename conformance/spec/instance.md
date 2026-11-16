@@ -1518,7 +1518,7 @@ When the server is stopped, the server MUST end each event stream it has open wi
 
 ### `instance/stop-ends-copy-stream`
 
-When the server is stopped, the server MUST end an open copy stream, `GET /events?edges=all&copy=1`, with a terminal `stream_incomplete` frame.
+When the server is stopped, the server MUST end an open copy stream, `GET /events?edges=all&copy=true`, with a terminal `stream_incomplete` frame.
 
 **Tests:** `compliance/stream-shutdown.test.ts › ends an open copy stream with stream_incomplete when the server is stopped, and exits with status 0`.
 

@@ -16,7 +16,7 @@ type Json = Record<string, unknown>;
 
 const document = JSON.parse(readFileSync(COMMITTED, "utf8")) as Json;
 
-const METHODS = ["get", "put", "post", "patch", "delete"];
+const METHODS = ["get", "put", "post", "patch", "delete", "head"];
 
 interface Published {
   id: string;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
+import { MarfaClient, extensionsOf } from "../../client/api.js";
 import type {
   BulkActionInput,
   BulkActionJob,
@@ -89,7 +89,7 @@ describe("type registry", () => {
     expect(r.ok).toBe(true);
     expect(r.status).toBe(201);
     await expectMatchesSchema("POST", "/types", 201, r.data);
-    expect(r.data.type.id).toBe(typeId);
+    expect(r.data.id).toBe(typeId);
   });
 
   it("rejects duplicate type registration with 409", async () => {
@@ -938,13 +938,13 @@ describe("type registry", () => {
     const tag = `orphan-${ctx.runId}`;
     const tagged = await client.addTags(id, [tag]);
     expect(tagged.status, JSON.stringify(tagged.error)).toBe(200);
-    expect(tagged.data.metadata.tags).toContain(tag);
+    expect(tagged.data.tags).toContain(tag);
 
     const extended = await client.setItemExtension(id, "orphan.notes", {
       seen: true,
     });
     expect(extended.status, JSON.stringify(extended.error)).toBe(200);
-    expect(extended.data.extensions["orphan.notes"]).toEqual({ seen: true });
+    expect(extensionsOf(extended.data)["orphan.notes"]).toEqual({ seen: true });
 
     const archived = await client.transitionItem(id, "archived");
     expect(archived.status, JSON.stringify(archived.error)).toBe(200);

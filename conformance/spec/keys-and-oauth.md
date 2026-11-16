@@ -853,6 +853,14 @@ The server MUST take a nonempty source code with no Unicode `White_Space` at eit
 
 **Tests:** `compliance/source-names.test.ts › takes a code as long as a restore can make one, and refuses a longer`, `compliance/source-name-characters.test.ts › counts a code in characters and takes no Unicode White_Space at either end`.
 
+### `keys-and-oauth/source-dot-segment`
+
+If a mint or an update names `.` or `..`, after trimming whitespace, as a claim or as an own `source`, then the server MUST answer `400 validation_error`, whoever the caller is.
+
+**Reason:** a client folds a `.` or `..` segment out of a path, so `GET /sources/{source}` could never name such a source.
+
+**Tests:** `compliance/source-names.test.ts › refuses . and .. as a source, as a key's own and as a claim, which a client folds out of a path`.
+
 ### `keys-and-oauth/source-read`
 
 When a credential sends `GET /sources/{source}` naming a source it can see, the server MUST answer the source's `source`, `name` and `name_from`, and its `mark` only where one is set.

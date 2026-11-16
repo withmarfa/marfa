@@ -1906,10 +1906,7 @@ describe("a refused write's content is kept", () => {
           "two",
         ]),
       ],
-      tags: [
-        writeAnswers.metadata(HELD.id, ["one"]),
-        writeAnswers.metadata(HELD.id, ["one", "two"]),
-      ],
+      tags: [writeAnswers.tags(["one"]), writeAnswers.tags(["one", "two"])],
     });
     const drained = await harness.device.drain();
     expect(drained.ok).toBe(true);
@@ -1959,7 +1956,7 @@ describe("a refused write's content is kept", () => {
     scriptWrites(harness.server, {
       update: [refusal(404, "item_not_found", "Item not found")],
       read: [answers.updated(wireItem({ id: HELD.id, version: HELD.version }))],
-      tags: [writeAnswers.metadata(HELD.id, ["kept"])],
+      tags: [writeAnswers.tags(["kept"])],
     });
     const drained = await harness.device.drain();
     expect(drained.ok).toBe(true);
@@ -2254,7 +2251,7 @@ describe("what a queue holds", () => {
     scriptWrites(harness.server, {
       read: [answers.updated(wireItem({ id }), ["alpha", "beta"])],
       create: [answers.created(wireItem({ id }), ["alpha", "beta"])],
-      tags: [writeAnswers.metadata(id, ["alpha", "beta"])],
+      tags: [writeAnswers.tags(["alpha", "beta"])],
       extensions: [writeAnswers.extensions({ "app.notes": { pinned: true } })],
       edges: [
         writeAnswers.edge({
@@ -2363,7 +2360,7 @@ describe("a write that is not about an item's fields", () => {
       ],
       create: [answers.created(wireItem({ id: otherId }))],
       update: [answers.updated(wireItem({ id: HELD.id, version: 4 }))],
-      tags: [writeAnswers.metadata(HELD.id, ["alpha"])],
+      tags: [writeAnswers.tags(["alpha"])],
       extensions: [writeAnswers.extensions({})],
       edges: [
         writeAnswers.edge({
@@ -7295,7 +7292,7 @@ describe("an edit behind an edit of the same item", () => {
           0,
         ),
       ],
-      tags: [writeAnswers.metadata(KEYED.id, ["kept"])],
+      tags: [writeAnswers.tags(["kept"])],
     });
     expect((await device.drain()).ok).toBe(true);
 

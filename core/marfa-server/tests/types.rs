@@ -527,7 +527,7 @@ async fn a_type_declares_tables_and_reads_lists_and_normalizes_them() {
     let created = instance.register(ledger(lines())).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
     assert_eq!(
-        created.body["type"]["tables"]["lines"]["columns"]["amount"]["adds_up"],
+        created.body["tables"]["lines"]["columns"]["amount"]["adds_up"],
         "sum"
     );
 
@@ -558,15 +558,15 @@ async fn a_type_declares_tables_and_reads_lists_and_normalizes_them() {
         .await;
     assert_eq!(judged.status, StatusCode::OK, "{}", judged.body);
     assert_eq!(
-        judged.body["type"]["tables"]["lines"]["columns"]["amount"]["required"],
+        judged.body["tables"]["lines"]["columns"]["amount"]["required"],
         false
     );
     assert_eq!(
-        judged.body["type"]["tables"]["lines"]["columns"]["memo"]["searchable"],
+        judged.body["tables"]["lines"]["columns"]["memo"]["searchable"],
         true
     );
     assert_eq!(
-        judged.body["type"]["tables"]["lines"]["columns"]["amount"]["searchable"],
+        judged.body["tables"]["lines"]["columns"]["amount"]["searchable"],
         false
     );
 }
@@ -762,7 +762,7 @@ async fn a_replacement_keeps_tables_it_names_and_drops_those_it_leaves_out_for_a
         )
         .await;
     assert_eq!(added.status, StatusCode::OK, "{}", added.body);
-    assert!(added.body["type"]["tables"]["audit"].is_object());
+    assert!(added.body["tables"]["audit"].is_object());
 
     let mut required = lines();
     required["lines"]["columns"]["note"] = json!({ "type": "string", "required": true });
@@ -810,11 +810,7 @@ async fn a_replacement_keeps_tables_it_names_and_drops_those_it_leaves_out_for_a
         .local(Method::PUT, "/types/acme.ledger", Some(put(None)))
         .await;
     assert_eq!(by_owner.status, StatusCode::OK, "{}", by_owner.body);
-    assert!(
-        by_owner.body["type"].get("tables").is_none(),
-        "{}",
-        by_owner.body
-    );
+    assert!(by_owner.body.get("tables").is_none(), "{}", by_owner.body);
 }
 
 #[tokio::test]

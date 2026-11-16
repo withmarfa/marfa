@@ -17,7 +17,7 @@ let server: FreshServer | undefined;
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
-  ["copy", "1"],
+  ["copy", "true"],
 ];
 
 beforeAll(async () => {

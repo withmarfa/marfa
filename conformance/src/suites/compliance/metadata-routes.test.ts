@@ -38,11 +38,11 @@ describe("metadata doors", () => {
     const added = await client.addTags(id, [tagA, tagB]);
     expect(added.ok).toBe(true);
     await expectMatchesSchema("POST", "/items/{id}/tags", 200, added.data);
-    expect([...added.data.metadata.tags].sort()).toEqual([tagA, tagB].sort());
+    expect([...added.data.tags].sort()).toEqual([tagA, tagB].sort());
 
     const again = await client.addTags(id, [tagB]);
     expect(again.ok).toBe(true);
-    expect([...again.data.metadata.tags].sort()).toEqual([tagA, tagB].sort());
+    expect([...again.data.tags].sort()).toEqual([tagA, tagB].sort());
 
     const read = await client.getItem(id);
     expect(read.ok).toBe(true);

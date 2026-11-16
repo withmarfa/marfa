@@ -40,7 +40,7 @@ async function reach(): Promise<string> {
   const tap = await tapStream(server.apiUrl, server.workingKey, {
     query: [
       ["edges", "all"],
-      ["copy", "1"],
+      ["copy", "true"],
     ],
   });
   try {
