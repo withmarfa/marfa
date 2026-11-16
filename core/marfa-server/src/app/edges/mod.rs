@@ -126,8 +126,8 @@ pub fn to_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
 /// An edge, its two ends, and the digests it names that lend.
 pub struct Ended {
     pub edge: Edge,
-    pub source: End,
-    pub target: End,
+    pub from: End,
+    pub to: End,
     pub lending: Vec<String>,
 }
 
@@ -135,7 +135,7 @@ pub struct Ended {
 pub fn with_ends(tx: &Transaction<'_>, after: i64, limit: i64) -> Result<Vec<Ended>> {
     rows::with_ends(tx, after, limit)?
         .into_iter()
-        .map(|(edge, source, target)| {
+        .map(|(edge, from, to)| {
             let lending =
                 super::blobs::references::held(tx, super::blobs::references::Row::Edge(edge.seq))?
                     .into_iter()
@@ -143,8 +143,8 @@ pub fn with_ends(tx: &Transaction<'_>, after: i64, limit: i64) -> Result<Vec<End
                     .collect();
             Ok(Ended {
                 edge,
-                source,
-                target,
+                from,
+                to,
                 lending,
             })
         })

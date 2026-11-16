@@ -46,12 +46,10 @@ impl Writing<'_, '_, '_> {
     /// be one, and a grant the caller lacks.
     fn entry_gates(&self, entry: &Entry) -> Result<()> {
         edges::check_entry_ids(entry)?;
-        if let Some(source) = items::row(self.unit.tx(), &entry.from_id)?
+        if let Some(from) = items::row(self.unit.tx(), &entry.from_id)?
             .filter(|row| self.unit.caller.may_read_type(&row.type_id))
         {
-            self.unit
-                .caller
-                .require_type(&source.type_id, Level::Write)?;
+            self.unit.caller.require_type(&from.type_id, Level::Write)?;
         }
         self.unit
             .caller
@@ -60,8 +58,8 @@ impl Writing<'_, '_, '_> {
 
     fn entry(&self, entry: Entry, create_only: bool) -> Result<Entered> {
         self.entry_gates(&entry)?;
-        let source = self.row_as_from(&entry.from_id)?;
-        self.require_row_write(&source)?;
+        let from = self.row_as_from(&entry.from_id)?;
+        self.require_row_write(&from)?;
         self.require_edge_write(&entry.edge_type)?;
         let reachable = items::row(self.unit.tx(), &entry.to_id)?
             .is_some_and(|row| self.unit.caller.may_read_type(&row.type_id));

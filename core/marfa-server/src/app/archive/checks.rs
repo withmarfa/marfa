@@ -665,7 +665,7 @@ pub fn edge<'a>(
             "an edge that does not name its ends and type",
         ));
     };
-    let (Some(source), Some(target)) = (ends(from_id), ends(to_id)) else {
+    let (Some(from), Some(to)) = (ends(from_id), ends(to_id)) else {
         return Err(at.skipped(
             None,
             "endpoint_missing",
@@ -679,7 +679,7 @@ pub fn edge<'a>(
     let Some(kind) = catalog.edge_kind(edge_type) else {
         return Ok(());
     };
-    judge_restored_ends(catalog, kind, (from_id, source.type_id), target.type_id)
+    judge_restored_ends(catalog, kind, (from_id, from.type_id), to.type_id)
         .map_err(|refusal| at.skipping(refusal))
 }
 
