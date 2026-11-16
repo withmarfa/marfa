@@ -12,6 +12,8 @@ use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 
+const ALLOW_MISSING_FILES: &str = "allow_missing_files";
+
 pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_local()?;
     query::only(&uri, &[])?;
@@ -38,9 +40,10 @@ pub async fn restore(
     caller.require_local()?;
     let started_at = app.clock.stamp();
     caller.require_recent(&started_at)?;
-    query::only(&uri, &[])?;
+    query::only(&uri, &[ALLOW_MISSING_FILES])?;
+    let whole = !query::flag(&uri, ALLOW_MISSING_FILES)?.unwrap_or(false);
     let answer = app
-        .restore_backup(&caller, started_at, &instance, &name)
+        .restore_backup(&caller, started_at, &instance, &name, whole)
         .await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }

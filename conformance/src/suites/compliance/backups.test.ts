@@ -14,10 +14,13 @@ import {
 import {
   afterFirstScheduledBackup,
   backupConcerns,
+  backupInBucket,
   backupName,
   bucketAt,
   instanceIdOf,
   ownerOf,
+  partName,
+  storedSize,
 } from "../../utils/backups.js";
 import {
   bootFreshServer,
@@ -38,8 +41,10 @@ import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
- * Backups to the object store a server is given: one archive object per
- * backup under `<S3_PREFIX>/backups/<instance id>/`, with no file bytes,
+ * Backups to the object store a server is given: one manifest object per
+ * backup under `<S3_PREFIX>/backups/<instance id>/`, naming parts under
+ * `<S3_PREFIX>/backup-parts/<instance id>/` that make an archive with no file
+ * bytes,
  * taken on a schedule or when the owner asks, listed and restored by the
  * owner alone. Each server here has a prefix of its own, so its bucket holds
  * only what it wrote; the restore boots a second server on the first one's
@@ -155,7 +160,7 @@ function sortedById<T extends { item?: { id: string }; edge?: { id: string } }>(
 }
 
 describe("a backup in the object store", () => {
-  it("puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything", async () => {
+  it("puts one manifest in the prefix's backups folder for its instance, named for its created_at, and parts named for their bytes that together hold what an archive export with state any and files false holds for a key that reaches everything", async () => {
     made = await contents(origin);
     const owner = ownerOf(origin);
     const run = await owner.runBackup();
@@ -164,17 +169,54 @@ describe("a backup in the object store", () => {
     expect(run.data.outcome).toBe("put");
     const { name, instance_id, created_at, size_bytes } = run.data.backup;
     expect(name).toBe(backupName(new Date(created_at)));
-    expect(name).toMatch(/^\d{8}T\d{6}\.\d{3}Z\.tar$/);
+    expect(name).toMatch(/^\d{8}T\d{6}\.\d{3}Z\.json$/);
     expect(instance_id).toBe(originId);
     firstName = name;
 
     expect(await bucket.backupKeys()).toEqual([
       `${store.S3_PREFIX}/backups/${originId}/${name}`,
     ]);
-    const backup = await bucket.get(
-      `${store.S3_PREFIX}/backups/${originId}/${name}`,
+    const stored = await backupInBucket(bucket, originId, name);
+    expect(storedSize(stored)).toBe(size_bytes);
+    expect(stored.manifest).toMatchObject({
+      format: "marfa-backup",
+      version: 1,
+    });
+    const entries = stored.manifest.parts.map((part) => part.entry);
+    expect(entries.slice(0, 6)).toEqual([
+      "files.ndjson.gz",
+      "instance.ndjson.gz",
+      "items.ndjson.gz",
+      "versions.ndjson.gz",
+      "edges.ndjson.gz",
+      "rows.ndjson.gz",
+    ]);
+    expect(new Set(entries.slice(5))).toEqual(new Set(["rows.ndjson.gz"]));
+    expect(await bucket.partKeys(originId)).toEqual(
+      [
+        ...new Set(
+          stored.manifest.parts.map(
+            (part) =>
+              `${store.S3_PREFIX}/backup-parts/${originId}/${partName(part)}`,
+          ),
+        ),
+      ].sort(),
     );
-    expect(backup.length).toBe(size_bytes);
+    const backup = stored.archive;
+    for (const file of [
+      "files",
+      "instance",
+      "items",
+      "versions",
+      "edges",
+      "rows",
+    ] as const) {
+      expect(
+        stored.manifest.parts
+          .filter((part) => part.entry === `${file}.ndjson.gz`)
+          .reduce((sum, part) => sum + part.lines, 0),
+      ).toBe(archiveLines(backup, file).length);
+    }
     const manifest = archiveManifest<{
       created_at: string;
       item_count: number;
@@ -224,14 +266,14 @@ describe("a backup in the object store", () => {
     // The witness: each credential is live, so a backup could have held it.
     expect((await working.getItem(made.note)).status).toBe(200);
     expect((await operator.listHousekeeping()).status).toBe(200);
-    const backup = await bucket.get(
-      `${store.S3_PREFIX}/backups/${originId}/${firstName}`,
-    );
-    const text = listEntries(backup)
-      .map((entry) =>
-        entry.name.endsWith(".gz")
-          ? gunzipSync(entry.body).toString("utf8")
-          : entry.body.toString("utf8"),
+    const stored = await backupInBucket(bucket, originId, firstName);
+    const text = [JSON.stringify(stored.manifest)]
+      .concat(
+        listEntries(stored.archive).map((entry) =>
+          entry.name.endsWith(".gz")
+            ? gunzipSync(entry.body).toString("utf8")
+            : entry.body.toString("utf8"),
+        ),
       )
       .join("\n");
     const secrets: string[] = [
@@ -325,7 +367,10 @@ describe("a backup in the object store", () => {
     expect(restored.data.previous_instance).toEqual({
       instance_id: originId,
       destination: "bucket",
-      kept_by_previous_instance: [`${store.S3_PREFIX}/backups/${originId}`],
+      kept_by_previous_instance: [
+        `${store.S3_PREFIX}/backups/${originId}`,
+        `${store.S3_PREFIX}/backup-parts/${originId}`,
+      ],
       message: expect.stringContaining(`${store.S3_PREFIX}/blobs/`),
     });
     expect((await working.getItem(made.note)).status).toBe(200);
@@ -341,7 +386,7 @@ describe("a backup in the object store", () => {
 
   it("answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's", async () => {
     await bucket.put(
-      `${store.S3_PREFIX}/backups/${originId}/notes.tar`,
+      `${store.S3_PREFIX}/backups/${originId}/notes.json`,
       "not a backup",
     );
     await bucket.put(
@@ -351,8 +396,9 @@ describe("a backup in the object store", () => {
     const owner = ownerOf(origin);
     for (const [instance, name] of [
       [originId, backupName(new Date("2020-01-01T00:00:00.000Z"))],
-      [originId, "2020-01-01T00:00:00.000Z.tar"],
-      [originId, "notes.tar"],
+      [originId, "2020-01-01T00:00:00.000Z.json"],
+      [originId, "20200101T000000.000Z.tar"],
+      [originId, "notes.json"],
       [OTHER_INSTANCE, firstName],
       ["deeper", firstName],
     ] as const) {
@@ -362,7 +408,7 @@ describe("a backup in the object store", () => {
     }
     const listed = await owner.listBackups();
     expect(listed.data.data.map((backup) => backup.name)).not.toContain(
-      "notes.tar",
+      "notes.json",
     );
   });
 });
@@ -522,6 +568,81 @@ describe("a backup taken while replication is held", () => {
       await server.stop();
     }
   });
+
+  it("calls the backups failing, not incomplete, in health and attention while files wait for their copy and a part an older backup names is damaged", async () => {
+    const own = ownObjectStore();
+    const mine = bucketAt(own.S3_PREFIX);
+    const server = await bootFreshServer("backups-incomplete-damaged", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+    });
+    try {
+      await afterFirstScheduledBackup(server);
+      const { operator, working } = clientsFor(server);
+      const id = await instanceIdOf(server);
+      const note = await working.createItem({
+        type: "core.note",
+        properties: { title: "in the older backup" },
+      });
+      expect(note.status, JSON.stringify(note.error)).toBe(201);
+      const older = await ownerOf(server).runBackup();
+      expect(older.status, JSON.stringify(older.error)).toBe(200);
+      const olderName = older.data.backup.name;
+      const olderItems = (
+        await backupInBucket(mine, id, olderName)
+      ).manifest.parts.find((part) => part.entry === "items.ndjson.gz")!;
+
+      await server.setFault("hold:housekeeping:blob-replicate");
+      const bytes = bytesOf("a file waiting while a part is damaged", 4096);
+      const uploaded = await working.uploadBlob(bytes, "text/plain");
+      expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+      const file = await working.createItem({
+        type: "core.file",
+        properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
+      });
+      expect(file.status, JSON.stringify(file.error)).toBe(201);
+      const waiting = await ownerOf(server).runBackup();
+      expect(waiting.status, JSON.stringify(waiting.error)).toBe(200);
+      expect(waiting.data.blobs_waiting).toBe(1);
+      const newerItems = (
+        await backupInBucket(mine, id, waiting.data.backup.name)
+      ).manifest.parts.find((part) => part.entry === "items.ndjson.gz")!;
+      expect(newerItems.sha256).not.toBe(olderItems.sha256);
+      const incomplete = await health(server, operator);
+      expect(incomplete.backups).toMatchObject({
+        status: "incomplete",
+        last_backup_files_waiting: 1,
+        damaged_parts: 0,
+      });
+      expect(
+        (await backupConcerns(server)).map((concern) => concern.reference),
+      ).toEqual(["incomplete"]);
+
+      const key = `${own.S3_PREFIX}/backup-parts/${id}/${partName(olderItems)}`;
+      const whole = await mine.get(key);
+      const changed = new Uint8Array(whole);
+      changed[Math.floor(changed.length / 2)]! ^= 0x01;
+      await mine.put(key, changed);
+      const checked = await ownerOf(server).runBackup();
+      expect(checked.status, JSON.stringify(checked.error)).toBe(200);
+      expect(checked.data.blobs_waiting).toBe(1);
+      const both = await health(server, operator);
+      expect(both.status).not.toBe("ok");
+      expect(both.backups).toMatchObject({
+        status: "failing",
+        last_backup_files_waiting: 1,
+        damaged_parts: 1,
+      });
+      const references = (await backupConcerns(server)).map(
+        (concern) => concern.reference,
+      );
+      expect(references).toContain("parts_damaged");
+      expect(references).not.toContain("incomplete");
+    } finally {
+      await server.clearFault();
+      await server.stop();
+    }
+  });
 });
 
 describe("the backup schedule", () => {
@@ -604,7 +725,7 @@ describe("the backup schedule", () => {
       expect(answer.backups.status).toBe("ok");
       const keys = await mine.backupKeys();
       expect(keys[0]).toMatch(
-        /\/backups\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\/\d{8}T\d{6}\.\d{3}Z\.tar$/,
+        /\/backups\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\/\d{8}T\d{6}\.\d{3}Z\.json$/,
       );
       expect(answer.backups.last_backup).toBe(keys[0]!.split("/").pop());
     } finally {

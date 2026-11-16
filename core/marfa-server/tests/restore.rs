@@ -425,7 +425,10 @@ async fn a_restore_from_another_instance_names_only_its_backups_in_the_bucket_an
     assert_eq!(previous["destination"], "bucket");
     assert_eq!(
         previous["kept_by_previous_instance"],
-        json!([format!("tenant/marfa/backups/{id}")])
+        json!([
+            format!("tenant/marfa/backups/{id}"),
+            format!("tenant/marfa/backup-parts/{id}")
+        ])
     );
     let message = previous["message"].as_str().unwrap();
     assert!(message.contains("no longer runs"), "{message}");

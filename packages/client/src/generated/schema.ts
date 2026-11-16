@@ -3173,12 +3173,12 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: on schedule, and the last backup is whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups.
+                 * @description `ok`: on schedule, with the last backup whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, a store refuses copies, or a part is damaged, so overall `status` is at least `degraded`. `off`: none scheduled.
                  * @enum {string}
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off`: `no_backup_destination` when the instance has nowhere to put them, with neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` set, `turned_off` when `backup_interval_seconds` is 0.
+                 * @description Why backups are `off`: `no_backup_destination` when neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` is set, or `turned_off` when `backup_interval_seconds` is 0, which is also given beside `failing`.
                  * @enum {string}
                  */
                 reason?: "no_backup_destination" | "turned_off";
@@ -3209,6 +3209,8 @@ export interface components {
                 last_backup_files_waiting?: number | null;
                 /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 store_error?: string | null;
+                /** @description How many parts a check found altered or, in a backup folder, unreadable, and not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                damaged_parts?: number | null;
             };
             /** @description What needs attention in the background work. Present only for a caller that holds `instance.read`. */
             housekeeping?: {
@@ -5575,11 +5577,11 @@ export interface components {
         /** @description One known concern or unavailable check. */
         AttentionConcern: {
             /**
-             * @description health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; clock: ahead or behind; unavailable: no answer.
+             * @description health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off, failing, incomplete, or folder unlocked; clock: ahead or behind; unavailable: no answer.
              * @enum {string}
              */
             kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "clock" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, the name of the check that could not answer, for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`, or for a clock concern `clock_ahead` or `clock_behind`. */
+            /** @description The component, job, connector, folder, or key ID, the check that could not answer, a backup concern such as `no_backup_destination`, `run`, `incomplete`, `parts_damaged`, or `folder_unlocked`, or a clock concern `clock_ahead` or `clock_behind`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
@@ -6941,11 +6943,29 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        BackupPartsMissingRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "backup_parts_missing";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description Names the parts the restore could not read whole. */
+                details?: {
+                    /** @description The name of each part the backup's manifest names that the destination lacks, or holds with another size or SHA-256 than the manifest records. */
+                    missing_parts: string[];
+                };
+            };
+        };
         /** @description A backup in the instance's backup folder or object store. */
         Backup: {
             /**
-             * @description The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.tar`.
-             * @example 20261109T101530.250Z.tar
+             * @description The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.json`.
+             * @example 20261109T101530.250Z.json
              */
             name: string;
             /**
@@ -6958,7 +6978,7 @@ export interface components {
              * @description When Marfa took the backup.
              */
             created_at: string;
-            /** @description The backup's size, in bytes. */
+            /** @description The bytes the backup takes: its manifest and every part it names, a part another backup shares included. */
             size_bytes: number;
         };
         /** @description An error response. */
@@ -33647,7 +33667,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds. */
+            /** @description Returns every backup, in one page. A backup is a manifest and the parts it names, which together make an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds. A part an earlier backup stored unchanged is stored once. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -33783,7 +33803,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the backup Marfa put, how many old backups it deleted, and the files it lost. */
+            /** @description Returns the backup Marfa put, the bytes it sent, how many old backups it deleted, and the files it lost. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -33798,6 +33818,8 @@ export interface operations {
                          */
                         outcome: "put";
                         backup: components["schemas"]["Backup"];
+                        /** @description How many bytes of parts Marfa stored for the backup that the destination didn't already hold. A backup of an instance that hasn't changed since the last one stores only its manifest, and this is `0`. */
+                        sent_bytes: number;
                         /** @description How many old backups Marfa deleted. */
                         removed: number;
                         /** @description How many old backups Marfa tried to delete and couldn't. It tries again after the next backup. */
@@ -34071,7 +34093,10 @@ export interface operations {
     };
     restoreBackup: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `true` to restore without the files that neither the destination nor this instance holds whole, naming them in `blobs_missing`. Absent or `false`, the restore refuses with `backup_files_missing`. Any other value is a `validation_error`. */
+                allow_missing_files?: boolean;
+            };
             header?: never;
             path: {
                 /** @description The ID of the instance that took the backup, as `GET /backups` lists it. */
@@ -34177,7 +34202,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
+             * @description - `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -34229,7 +34254,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `backup_files_missing`: neither the destination nor this instance holds files it needs, in `details.missing_blobs`. Nothing was restored.
+             * @description - `backup_files_missing`, `backup_parts_missing`: files in `details.missing_blobs` or parts in `details.missing_parts` are absent or altered.
              *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
              *     - `link_taken`: the archive's type names a `link_field` two items share.
              *     - `no_backup_destination`: there is nowhere to put backups.
@@ -34242,7 +34267,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BackupFilesMissingRefusal"] | components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["BackupFilesMissingRefusal"] | components["schemas"]["BackupPartsMissingRefusal"] | components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

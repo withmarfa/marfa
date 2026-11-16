@@ -6,7 +6,11 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { MarfaClient } from "../client/api.js";
+import { tar } from "./archive.js";
 import { controlRequest } from "./control-request.js";
 import type { FreshServer } from "./fresh-server.js";
 import { clientsFor } from "./own-blob-server.js";
@@ -22,6 +26,8 @@ export interface Bucket {
   keys(): Promise<string[]>;
   /** The keys directly and indirectly under `<prefix>/backups/`, sorted. */
   backupKeys(): Promise<string[]>;
+  /** The keys under `<prefix>/backup-parts/<instance>/`, sorted. */
+  partKeys(instance: string): Promise<string[]>;
   get(key: string): Promise<Uint8Array>;
   put(key: string, body: Uint8Array | string): Promise<void>;
   delete(key: string): Promise<void>;
@@ -60,6 +66,7 @@ export function bucketAt(prefix: string): Bucket {
     prefix,
     keys: () => listed(`${prefix}/`),
     backupKeys: () => listed(`${prefix}/backups/`),
+    partKeys: (instance) => listed(`${prefix}/backup-parts/${instance}/`),
     async get(key) {
       const found = await client.send(
         new GetObjectCommand({ Bucket: bucket, Key: key }),
@@ -96,7 +103,110 @@ export function ownerOf(server: FreshServer): MarfaClient {
 
 /** The name a backup taken at `at` carries: the instant in the ISO 8601 basic format. */
 export function backupName(at: Date): string {
-  return `${at.toISOString().replace(/[-:]/g, "")}.tar`;
+  return `${at.toISOString().replace(/[-:]/g, "")}.json`;
+}
+
+/** One part a backup's manifest names. */
+export interface BackupPart {
+  entry: string;
+  sha256: string;
+  size_bytes: number;
+  lines: number;
+}
+
+/** What a backup's manifest holds. */
+export interface BackupManifest {
+  format: string;
+  version: number;
+  archive: Record<string, unknown>;
+  parts: BackupPart[];
+}
+
+/** The name a part is stored under: the SHA-256 of its bytes. */
+export function partName(part: { sha256: string }): string {
+  return `${part.sha256}.ndjson.gz`;
+}
+
+export function sha256Of(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * The archive a backup's manifest and parts make: the archive manifest as
+ * `manifest.json`, then each line file as its parts joined in order. Each part
+ * read must hold the bytes its name gives.
+ */
+export async function assembled(
+  manifest: BackupManifest,
+  read: (name: string) => Promise<Uint8Array>,
+): Promise<Uint8Array> {
+  const entries = new Map<string, Buffer[]>();
+  for (const part of manifest.parts) {
+    const bytes = await read(partName(part));
+    if (bytes.length !== part.size_bytes || sha256Of(bytes) !== part.sha256) {
+      throw new Error(`the part ${partName(part)} does not hold its bytes`);
+    }
+    const joined = entries.get(part.entry) ?? [];
+    joined.push(Buffer.from(bytes));
+    entries.set(part.entry, joined);
+  }
+  return tar([
+    { name: "manifest.json", body: JSON.stringify(manifest.archive) },
+    ...[...entries].map(([name, parts]) => ({
+      name,
+      body: new Uint8Array(Buffer.concat(parts)),
+    })),
+  ]);
+}
+
+/** A backup as its destination holds it: its manifest, and the archive it and its parts make. */
+export interface StoredBackup {
+  manifest: BackupManifest;
+  /** The bytes of the manifest itself. */
+  manifestBytes: number;
+  archive: Uint8Array;
+}
+
+/** The backup `name` of `instance` in `bucket`. */
+export async function backupInBucket(
+  bucket: Bucket,
+  instance: string,
+  name: string,
+): Promise<StoredBackup> {
+  const bytes = await bucket.get(
+    `${bucket.prefix}/backups/${instance}/${name}`,
+  );
+  const manifest = JSON.parse(
+    Buffer.from(bytes).toString("utf8"),
+  ) as BackupManifest;
+  const archive = await assembled(manifest, (part) =>
+    bucket.get(`${bucket.prefix}/backup-parts/${instance}/${part}`),
+  );
+  return { manifest, manifestBytes: bytes.length, archive };
+}
+
+/** The backup `name` of `instance` in the backup folder `root`. */
+export async function backupInFolder(
+  root: string,
+  instance: string,
+  name: string,
+): Promise<StoredBackup> {
+  const bytes = readFileSync(join(root, "backups", instance, name));
+  const manifest = JSON.parse(bytes.toString("utf8")) as BackupManifest;
+  const archive = await assembled(manifest, (part) =>
+    Promise.resolve(
+      new Uint8Array(readFileSync(join(root, "backup-parts", instance, part))),
+    ),
+  );
+  return { manifest, manifestBytes: bytes.length, archive };
+}
+
+/** What a stored backup takes: its manifest and every part it names. */
+export function storedSize(backup: StoredBackup): number {
+  return backup.manifest.parts.reduce(
+    (sum, part) => sum + part.size_bytes,
+    backup.manifestBytes,
+  );
 }
 
 /** The server's instance id, which names the folder its backups go in. */

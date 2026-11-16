@@ -1014,21 +1014,24 @@ async fn unreadable_enforcement_settings_refuse_an_export_and_a_backup_names_the
     let backed_up = origin.back_up().await;
     assert_eq!(backed_up.status, StatusCode::OK, "{}", backed_up.body);
     let name = backed_up.body["backup"]["name"].as_str().unwrap();
-    let archive = std::fs::read(
-        folder
-            .path()
-            .join("backups")
-            .join(&origin.app.instance_id)
-            .join(name),
+    let backup: Value = serde_json::from_slice(
+        &std::fs::read(
+            folder
+                .path()
+                .join("backups")
+                .join(&origin.app.instance_id)
+                .join(name),
+        )
+        .unwrap(),
     )
     .unwrap();
-    let manifest = manifest_of(&entries(&archive));
+    let manifest = &backup["archive"];
     assert_eq!(manifest["item_count"], held, "{manifest:?}");
     assert_eq!(manifest["enforcement_count"], 0);
     assert_eq!(manifest["unreadable"], json!(["enforcement"]));
 
     let fresh = Instance::start(folder.path(), &[]).await;
-    let restored = fresh.restore(archive).await;
+    let restored = fresh.restore_backup(&origin.app.instance_id, name).await;
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
     assert_eq!(restored.body["imported"], held, "{}", restored.body);
     let named = restored.body["not_restored"]
@@ -1064,7 +1067,11 @@ async fn a_restore_from_another_instance_names_its_backup_folders_and_calls_none
     assert_eq!(previous["destination"], "folder");
     assert_eq!(
         previous["kept_by_previous_instance"],
-        json!([format!("backups/{id}"), format!("files/{id}")])
+        json!([
+            format!("backups/{id}"),
+            format!("backup-parts/{id}"),
+            format!("files/{id}")
+        ])
     );
     assert!(previous.get("safe_to_delete").is_none(), "{previous}");
     let message = previous["message"].as_str().unwrap();
