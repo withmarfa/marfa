@@ -858,9 +858,7 @@ impl Passes {
     }
 }
 
-/// A follow that ended for its credential, refused or signed out, is the
-/// credential's; a panic of the core's is not the server's.
-/// What to tell of directories the platform could not watch, once for all.
+/// What to tell of directories the platform could not watch, as one message.
 fn unwatchable(failures: &[notify::Error]) -> Option<String> {
     let first = failures.first()?;
     Some(match failures.len() {
@@ -869,6 +867,8 @@ fn unwatchable(failures: &[notify::Error]) -> Option<String> {
     })
 }
 
+/// A follow that ended for its credential, refused or signed out, is the
+/// credential's; a panic of the core's is not the server's.
 fn follow_ended<E>(error: CoreError) -> WatchError<E> {
     match error {
         CoreError::Unauthorized { .. } => WatchError::CredentialRefused(error),
