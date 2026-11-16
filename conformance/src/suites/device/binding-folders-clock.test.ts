@@ -23,6 +23,9 @@ import {
   settingsFile,
 } from "./folders.shared.js";
 
+/** The wait that looks for a command asking for the folder is always on the clock. */
+const LOOK_WAIT_MS = 200;
+
 const made: BindingFolderHarness[] = [];
 afterEach(async () => {
   for (const harness of made.splice(0).reverse()) await harness.stop();
@@ -76,17 +79,57 @@ async function startFirstPass(harness: BindingFolderHarness) {
   await untilHeld(device, "folder-file-changed");
   await device.clock.advance(250);
   await device.hooks.release("folder-file-changed");
+  await untilPassStart(device);
+  await device.hooks.release("folder-pass-start");
+  return watch;
+}
+
+/**
+ * Waits until the first pass stands at its start. One write can reach the
+ * watch as several notifications, and the watch dates each by the clock when
+ * it arrives, so one that arrives after the clock moved restarts the settle
+ * wait. Each time the watch is back on that wait, the clock steps to its end.
+ */
+async function untilPassStart(device: BindingFolderHarness["device"]) {
   await vi.waitFor(
     async () => {
+      if ((await device.hooks.waiting("folder-pass-start")) > 0) return;
+      const settling = (await device.clock.waits())
+        .filter((wait) => wait.askedMs !== LOOK_WAIT_MS)
+        .map((wait) => wait.leftMs)
+        .filter(
+          (left): left is number => left !== null && left > 0 && left <= 250,
+        );
+      if (settling.length > 0)
+        await device.clock.advance(Math.min(...settling));
       expect(
         await device.hooks.waiting("folder-pass-start"),
         "the initial pass did not start after its wake settled",
       ).toBe(1);
     },
-    { timeout: 10_000, interval: 10 },
+    { timeout: 10_000, interval: 5 },
   );
-  await device.hooks.release("folder-pass-start");
-  return watch;
+}
+
+/**
+ * Waits until a pass stands at its pull. A pass that ends first never reaches
+ * it, and the wait says so at once.
+ */
+async function untilPull(
+  device: BindingFolderHarness["device"],
+  watch: Awaited<ReturnType<typeof startFirstPass>>,
+) {
+  const stood = await vi.waitFor(
+    async () => {
+      if ((await device.hooks.waiting("folder-pass-pull")) > 0) return "pull";
+      if ((await device.hooks.waiting("folder-pass-ended")) > 0) return "ended";
+      throw new Error(
+        `no call was held at folder-pass-pull; the watch told ${JSON.stringify(watch.kinds)}`,
+      );
+    },
+    { timeout: 10_000, interval: 5 },
+  );
+  expect(stood, "the pass ended without reaching its pull").toBe("pull");
 }
 
 /** Stops between passes before receiving another filesystem notification. */
@@ -123,7 +166,6 @@ async function advanceWithWatch(
   ms: number,
   heldAt?: string,
 ) {
-  const lookWaitMs = 200;
   await device.clock.advance(ms);
   await vi.waitFor(
     async () => {
@@ -132,7 +174,7 @@ async function advanceWithWatch(
       }
       const waits = await device.clock.waits();
       expect(
-        waits.filter((wait) => wait.askedMs !== lookWaitMs).length,
+        waits.filter((wait) => wait.askedMs !== LOOK_WAIT_MS).length,
         "the watch did not take the step",
       ).toBeGreaterThan(0);
     },
@@ -396,9 +438,9 @@ describe("folder clock and scan boundaries", () => {
     const { device, dir, served } = harness;
     writeFileSync(join(dir, "new.md"), "---\ntitle: New\n---\nwords\n");
     await device.hooks.hold("folder-pass-pull");
-    await startFirstPass(harness);
+    const watch = await startFirstPass(harness);
     // The pass has scanned the note and sent its create.
-    await untilHeld(device, "folder-pass-pull");
+    await untilPull(device, watch);
     expect(served.size).toBe(1);
     renameSync(join(dir, "new.md"), join(dir, "moved.md"));
     await device.hooks.release("folder-pass-pull");
@@ -423,8 +465,8 @@ describe("folder clock and scan boundaries", () => {
     const { device, dir, served, server } = harness;
     writeFileSync(join(dir, "new.md"), "---\ntitle: New\n---\nwords\n");
     await device.hooks.hold("folder-pass-pull");
-    await startFirstPass(harness);
-    await untilHeld(device, "folder-pass-pull");
+    const watch = await startFirstPass(harness);
+    await untilPull(device, watch);
     const id = [...served.keys()][0];
     unlinkSync(join(dir, "new.md"));
     await device.hooks.release("folder-pass-pull");
@@ -461,9 +503,9 @@ describe("folder clock and scan boundaries", () => {
       ).length;
     unlinkSync(join(dir, "note.md"));
     await device.hooks.hold("folder-pass-pull");
-    await startFirstPass(harness);
+    const watch = await startFirstPass(harness);
     // The sweep is done, inside the grace, and the pass is not.
-    await untilHeld(device, "folder-pass-pull");
+    await untilPull(device, watch);
     expect(deletes()).toBe(0);
     await device.clock.advance(5_000);
     await device.hooks.release("folder-pass-pull");

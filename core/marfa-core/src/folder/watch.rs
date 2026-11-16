@@ -3,14 +3,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use notify::{EventKind, RecursiveMode, Watcher};
-
 use super::handover::{self, Requests};
 use super::lists::Lists;
 use super::selective::Selection;
+use super::watched::{Listening, Reach, settings_file};
 use super::{
-    Barred, Drained, Flagged, Folder, PullReport, SETTINGS_FILE, STATE_DIR, ScanReport,
-    SettingsFileReport, StorageCause, Uncarried, Unsure,
+    Barred, Drained, Flagged, Folder, PullReport, ScanReport, SettingsFileReport, StorageCause,
+    Uncarried, Unsure,
 };
 use crate::error::CoreError;
 use crate::priority::{inheriting, lowered};
@@ -307,13 +306,13 @@ impl Folder {
         let absolute = std::path::absolute(&self.root)
             .map_err(|error| WatchError::Unwatchable(error.to_string()))?;
         let dir = &absolute;
-        let mut watcher = notify::recommended_watcher(move |event| {
+        let watcher = notify::recommended_watcher(move |event| {
             let _ = sender.send(Wake::File(event, crate::clock::now()));
         })
         .map_err(|error| WatchError::Unwatchable(format!("cannot watch: {error}")))?;
+        let (lists, mut full_every) = self.watch_settings(FULL_PASS);
         // Before the first pass, so a file arriving during it is not missed.
-        watcher
-            .watch(dir, RecursiveMode::Recursive)
+        let (mut listening, unwatched) = Listening::start(watcher, dir, Reach::new(lists))
             .map_err(|error| {
                 WatchError::Unwatchable(format!("cannot watch {}: {error}", dir.display()))
             })?;
@@ -322,12 +321,14 @@ impl Folder {
             storage: self.storage_cause(),
         })
         .map_err(WatchError::Told)?;
+        if let Some(said) = unwatchable(&unwatched) {
+            tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
+        }
 
         let mut gate = Gate::new(crate::clock::now());
         let mut telling = Telling::default();
         let mut last_full: Option<Instant> = None;
         let mut send_again_at = self.kept_wait();
-        let (mut lists, mut full_every) = self.watch_settings(FULL_PASS);
         // Whether anything has happened since the last pass began that it
         // did not see.
         let mut changed = true;
@@ -365,13 +366,20 @@ impl Folder {
             match heard {
                 Ok(Wake::File(Ok(event), delivered)) => {
                     if stale {
-                        (lists, full_every) = self.watch_settings(full_every);
+                        if self.reload(&mut listening, &mut full_every, tell)? {
+                            changed = true;
+                            gate.changed(delivered);
+                        }
                         stale = false;
                     }
                     stale |= event.paths.iter().any(|path| settings_file(dir, path));
-                    if !event_passed_over_unless(&event, dir, lists.as_ref(), |path| {
-                        self.stands_as_read(path)
-                    }) {
+                    if let Some(said) = unwatchable(&listening.follow(&event)) {
+                        tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
+                    }
+                    if !listening
+                        .reach
+                        .passes_over(&event, dir, |path| self.stands_as_read(path))
+                    {
                         changed = true;
                         gate.changed(delivered);
                         #[cfg(debug_assertions)]
@@ -441,7 +449,9 @@ impl Folder {
             if stale {
                 // A changed interval counts from the last full pass, so it
                 // takes effect without a restart.
-                (lists, full_every) = self.watch_settings(full_every);
+                if self.reload(&mut listening, &mut full_every, tell)? {
+                    changed = true;
+                }
                 stale = false;
             }
             let full = full_due(last_full, crate::clock::now(), full_every);
@@ -489,10 +499,30 @@ impl Folder {
             }
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "folder-pass-ended");
-            (lists, full_every) = self.watch_settings(full_every);
+            if self.reload(&mut listening, &mut full_every, tell)? {
+                changed = true;
+            }
             stale = false;
         }
         Ok(WatchEnd::Stopped)
+    }
+
+    /// Reads the settings again. Returns whether the rules for which paths
+    /// the folder takes changed, which leaves files unread that no pass has
+    /// looked at under them.
+    fn reload<E>(
+        &self,
+        listening: &mut Listening<notify::RecommendedWatcher>,
+        full_every: &mut Duration,
+        tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
+    ) -> Result<bool, WatchError<E>> {
+        let (lists, every) = self.watch_settings(*full_every);
+        *full_every = every;
+        let (changed, unwatched) = listening.reload(lists);
+        if let Some(said) = unwatchable(&unwatched) {
+            tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
+        }
+        Ok(changed)
     }
 
     /// Ends early, telling nothing, where a command asks for the folder: each
@@ -826,6 +856,15 @@ impl Passes {
     pub(super) fn render_all_next(&mut self) {
         self.telling.selection.render_all_next();
     }
+}
+
+/// What to tell of directories the platform could not watch, as one message.
+fn unwatchable(failures: &[notify::Error]) -> Option<String> {
+    let first = failures.first()?;
+    Some(match failures.len() {
+        1 => first.to_string(),
+        more => format!("{first}, and {} more directories", more - 1),
+    })
 }
 
 /// A follow that ended for its credential, refused or signed out, is the
@@ -1557,64 +1596,6 @@ fn same_line(one: &Flagged, other: &Flagged) -> bool {
     one.path == other.path && one.reason == other.reason
 }
 
-fn settings_file(root: &Path, path: &Path) -> bool {
-    path == root.join(STATE_DIR).join(SETTINGS_FILE)
-}
-
-/// Whether no pass can find anything at `path`, which an event names: it is
-/// a directory the walk does not enter, or a file the folder does not take,
-/// or it is gone and was neither. A directory is reached unless a line
-/// excludes it by itself, since `include` may match the files inside it by
-/// name. A path outside the folder's root or the root itself is never
-/// unreached.
-fn unreached(lists: &Lists, root: &Path, path: &Path) -> bool {
-    let Some(relative) = path
-        .strip_prefix(root)
-        .ok()
-        .and_then(|relative| relative.to_str())
-        .filter(|relative| !relative.is_empty())
-    else {
-        return false;
-    };
-    if lists.secret(relative) {
-        return false;
-    }
-    match std::fs::symlink_metadata(path) {
-        Ok(found) if found.is_dir() => !lists.enters(relative),
-        Ok(_) => !lists.takes(relative),
-        Err(_) => !lists.enters(relative) && !lists.takes(relative),
-    }
-}
-
-/// Whether an event starts no pass: it names only paths no pass can find,
-/// or is an access. An event that says events were lost, or names no path,
-/// is never passed over.
-#[cfg(test)]
-fn event_passed_over(event: &notify::Event, root: &Path, lists: Option<&Lists>) -> bool {
-    event_passed_over_unless(event, root, lists, |_| false)
-}
-
-/// `event_passed_over`, where a path `stands` as a scan read it counts as
-/// one no pass can find anything at.
-fn event_passed_over_unless(
-    event: &notify::Event,
-    root: &Path,
-    lists: Option<&Lists>,
-    stands: impl Fn(&Path) -> bool,
-) -> bool {
-    if event.need_rescan() || event.paths.is_empty() {
-        return false;
-    }
-    matches!(event.kind, EventKind::Access(_))
-        || event.paths.iter().all(|path| {
-            !settings_file(root, path)
-                && (match lists {
-                    Some(lists) => unreached(lists, root, path),
-                    None => dot_led(root, path),
-                } || stands(path))
-        })
-}
-
 /// How often passes start, so a loop of them shows in a log.
 #[derive(Debug, Default)]
 struct PassRate {
@@ -1644,15 +1625,6 @@ impl PassRate {
         self.recent.clear();
         Some(count)
     }
-}
-
-fn dot_led(root: &Path, path: &Path) -> bool {
-    let Ok(relative) = path.strip_prefix(root) else {
-        return false;
-    };
-    relative
-        .components()
-        .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
 }
 
 /// The follow hydrates a copy that is part way through a hydration or has
@@ -1985,126 +1957,6 @@ mod tests {
         assert_eq!(retry_schedule(4 * SECOND, &limited(1)).0, 4 * SECOND);
     }
 
-    fn record_lists() -> Lists {
-        let lines = |names: &[&str]| {
-            names
-                .iter()
-                .map(|name| name.to_string())
-                .collect::<Vec<_>>()
-        };
-        Lists::new(
-            &lines(&["/Notes/", "/Agents/"]),
-            &lines(&["/Repos/", "/Sandbox/"]),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn an_event_under_an_ignored_or_unlisted_folder_reaches_nothing() {
-        let (lists, root) = (record_lists(), Path::new("/folder"));
-        let reached = |relative: &str| !unreached(&lists, root, &root.join(relative));
-        // The witness: what the folder takes, and the folders on the way to
-        // it, are reached.
-        assert!(reached("Notes/a.md"));
-        assert!(reached("Agents/Sessions/001 One.md"));
-        assert!(reached("Notes"));
-        assert!(reached("Notes/Sub"));
-        for relative in [
-            "Repos",
-            "Repos/marfa/target/debug/build.o",
-            "Sandbox/Xcode Builds/App/Info.plist",
-            ".marfa/core.sqlite-wal",
-        ] {
-            assert!(!reached(relative), "{relative}");
-        }
-    }
-
-    #[test]
-    fn a_path_that_is_gone_is_reached_unless_both_lists_exclude_it() {
-        // None of these exist: a gone path may have been a directory or a
-        // file, so it is passed over only when no pass could have found it
-        // as either.
-        let (lists, root) = (record_lists(), Path::new("/folder"));
-        let reached = |relative: &str| !unreached(&lists, root, &root.join(relative));
-        for relative in ["_tmp/clone/file.rs", "README.md"] {
-            assert!(reached(relative), "{relative}");
-        }
-        for relative in ["Repos/marfa/gone.rs", "Sandbox/gone.txt"] {
-            assert!(!reached(relative), "{relative}");
-        }
-    }
-
-    #[test]
-    fn an_ignored_folder_is_unreached_while_it_is_a_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let lists = Lists::new(&[], &["/Repos/".to_string()]).unwrap();
-        // No include list: a file called `Repos` would be taken.
-        std::fs::create_dir(root.join("Repos")).unwrap();
-        std::fs::write(root.join("Repos/a.rs"), "").unwrap();
-        std::fs::write(root.join("notes.md"), "").unwrap();
-        assert!(unreached(&lists, root, &root.join("Repos")));
-        assert!(unreached(&lists, root, &root.join("Repos/a.rs")));
-        assert!(!unreached(&lists, root, &root.join("notes.md")));
-        assert!(!unreached(&lists, root, &root.join("Other/new.md")));
-        // Gone, it may have been a file the lists take.
-        std::fs::remove_dir_all(root.join("Repos")).unwrap();
-        assert!(!unreached(&lists, root, &root.join("Repos")));
-        std::fs::write(root.join("Repos"), "").unwrap();
-        assert!(!unreached(&lists, root, &root.join("Repos")));
-    }
-
-    #[test]
-    fn a_directory_moved_in_is_reached_where_include_matches_by_file_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let lists = Lists::new(&["*.md".to_string()], &["/Repos/".to_string()]).unwrap();
-        std::fs::create_dir_all(root.join("Moved/in")).unwrap();
-        std::fs::write(root.join("Moved/in/a.md"), "").unwrap();
-        std::fs::write(root.join("Moved/in/b.txt"), "").unwrap();
-        // One event names only the directory.
-        assert!(!unreached(&lists, root, &root.join("Moved")));
-        assert!(!unreached(&lists, root, &root.join("Moved/in")));
-        // The witness: a file include does not match, and an ignored folder.
-        assert!(unreached(&lists, root, &root.join("Moved/in/b.txt")));
-        std::fs::create_dir_all(root.join("Repos/x")).unwrap();
-        assert!(unreached(&lists, root, &root.join("Repos")));
-        assert!(unreached(&lists, root, &root.join("Repos/x")));
-        // Gone, it may have been a directory holding files the folder took.
-        assert!(!unreached(&lists, root, &root.join("Gone")));
-    }
-
-    #[test]
-    fn an_event_that_says_events_were_lost_or_names_no_path_starts_a_pass() {
-        use notify::event::{AccessKind, CreateKind, Flag};
-        let (lists, root) = (record_lists(), Path::new("/folder"));
-        let ignored = || root.join("Repos/app/out.o");
-        let create = || notify::Event::new(EventKind::Create(CreateKind::File));
-        // The witness: the same event on an ignored path is passed over.
-        assert!(event_passed_over(
-            &create().add_path(ignored()),
-            root,
-            Some(&lists)
-        ));
-        assert!(!event_passed_over(
-            &create().add_path(ignored()).set_flag(Flag::Rescan),
-            root,
-            Some(&lists)
-        ));
-        assert!(!event_passed_over(&create(), root, Some(&lists)));
-        assert!(!event_passed_over(
-            &notify::Event::new(EventKind::Other).set_flag(Flag::Rescan),
-            root,
-            None
-        ));
-        assert!(event_passed_over(
-            &notify::Event::new(EventKind::Access(AccessKind::Any))
-                .add_path(root.join("Notes/a.md")),
-            root,
-            Some(&lists)
-        ));
-    }
-
     #[test]
     fn passes_are_reported_only_when_a_minute_of_them_exceeds_one_a_second() {
         let start = Instant::now();
@@ -2143,16 +1995,6 @@ mod tests {
             rate.started(at(600.0 + step as f64 * 0.1));
         }
         assert_eq!(rate.started(at(606.0)), Some(61));
-    }
-
-    #[test]
-    fn an_event_the_folder_cannot_place_is_reached() {
-        let (lists, root) = (record_lists(), Path::new("/folder"));
-        assert!(!unreached(&lists, root, root), "the root itself");
-        assert!(
-            !unreached(&lists, root, Path::new("/elsewhere/Notes/a.md")),
-            "a path outside the root"
-        );
     }
 
     #[test]

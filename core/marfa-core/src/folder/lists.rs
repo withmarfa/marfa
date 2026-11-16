@@ -86,6 +86,8 @@ pub struct Lists {
     /// Those dot-led names, so the walk enters only a directory one names.
     dotted_names: Vec<DotName>,
     ignore: Patterns,
+    /// The lines these lists were built from, to tell a rule that changed.
+    lines: (Vec<String>, Vec<String>),
 }
 
 struct Patterns {
@@ -167,7 +169,13 @@ impl Lists {
             dotted: built("include", &dotted)?,
             dotted_names,
             ignore: built("ignore", ignore)?,
+            lines: (include.to_vec(), ignore.to_vec()),
         })
+    }
+
+    /// Whether `other` was built from the same `include` and `ignore` lines.
+    pub(super) fn same_rules(&self, other: &Lists) -> bool {
+        self.lines == other.lines
     }
 
     /// As wide as the built-in lists, entering the dot-led directories
