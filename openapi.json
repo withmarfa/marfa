@@ -8924,47 +8924,56 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies."
+            "description": "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies.",
+            "default": 30
           },
           "version_daily_snapshot_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies."
+            "description": "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies.",
+            "default": 90
           },
           "version_weekly_snapshot_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies."
+            "description": "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies.",
+            "default": 365
           },
           "version_max_versions": {
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000,
-            "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults."
+            "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults.",
+            "default": 500
           },
           "grant_inactivity_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Disconnect apps unused for this many days. Zero disables retirement."
+            "description": "Disconnect apps unused for this many days. Zero disables retirement.",
+            "default": 365
           },
           "enrichment_enabled": {
             "type": "boolean",
-            "description": "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies."
+            "description": "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies.",
+            "default": true
           },
           "enrichment_ocr_enabled": {
             "type": "boolean",
-            "description": "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies."
+            "description": "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies.",
+            "default": true
           },
           "error_reporting_enabled": {
             "type": "boolean",
-            "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies."
+            "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies.",
+            "default": true
           },
           "heartbeat_enabled": {
             "type": "boolean",
-            "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies."
+            "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies.",
+            "default": true
           },
           "name": {
             "type": "string",
@@ -9012,44 +9021,51 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies."
+            "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies.",
+            "default": 90
           },
           "event_log_retention_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies."
+            "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies.",
+            "default": 30
           },
           "trash_retention_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies."
+            "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies.",
+            "default": 60
           },
           "row_log_retention_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies."
+            "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies.",
+            "default": 30
           },
           "inbound_handled_retention_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
+            "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.",
+            "default": 7
           },
           "inbound_pending_retention_days": {
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
+            "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.",
+            "default": 30
           },
           "addresses": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them."
+            "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them.",
+            "default": []
           },
           "sign_in_address": {
             "type": "string",
@@ -9067,7 +9083,8 @@
           "object_store_region": {
             "type": "string",
             "maxLength": 100,
-            "description": "The region of the object store. Absent: `us-east-1`."
+            "description": "The region of the object store. Absent: `us-east-1`.",
+            "default": "us-east-1"
           },
           "object_store_endpoint": {
             "type": "string",
@@ -9076,11 +9093,13 @@
           },
           "object_store_path_style": {
             "type": "boolean",
-            "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`."
+            "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`.",
+            "default": true
           },
           "object_store_prefix": {
             "type": "string",
-            "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`."
+            "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`.",
+            "default": "marfa"
           },
           "object_store_access_key_id": {
             "type": "string",
@@ -9090,7 +9109,8 @@
           },
           "allow_private_addresses": {
             "type": "boolean",
-            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`."
+            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.",
+            "default": false
           },
           "secrets_set": {
             "type": "array",
@@ -9111,6 +9131,216 @@
                 "description": "What the move did and what the owner does next. Present only in the answer to the write that moved the sign-in address."
               }
             ]
+          },
+          "max_request_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 1048576,
+            "description": "The largest request body Marfa accepts, in bytes. Marfa waits 180 seconds for a body, so a body over about 21 MiB can't arrive in time over a 1 Mbit/s link."
+          },
+          "max_bulk_request_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 33554432,
+            "default": 16777216,
+            "description": "The largest body the bulk operations accept, in bytes, and the largest row a restore reads. The most you can set is 33554432, half the 67108864 bytes a restore reads on one archive line."
+          },
+          "disk_reserve_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1099511627776,
+            "default": 134217728,
+            "description": "Free disk space an upload must leave on the blob volume, in bytes. `0` refuses no write for room, and health still reports the disk as degraded below 64 MiB."
+          },
+          "blob_min_copies": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 1,
+            "description": "The fewest live copies Marfa keeps of each blob."
+          },
+          "blob_cleanup_enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "`true` if the `blob-orphans` job purges blobs nothing references once they have stood in the orphan report for `blob_cleanup_grace_seconds`."
+          },
+          "blob_cleanup_grace_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31536000,
+            "default": 86400,
+            "description": "How long a blob nothing references stands in the orphan report before a later run purges it, in seconds."
+          },
+          "backup_interval_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31536000,
+            "default": 3600,
+            "description": "How often Marfa makes a backup when anything it holds has changed, in seconds. `0` turns scheduled backups off."
+          },
+          "rate_limit_enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "`true` if the rate limiter is on for requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses."
+          },
+          "rate_limit_requests": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 4000,
+            "description": "How many requests one key or app may make in each rate-limit window, across every operation."
+          },
+          "rate_limit_keys_requests": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 200,
+            "description": "How many requests one key may make in each rate-limit window to the operations under `/keys`."
+          },
+          "rate_limit_window_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 60,
+            "description": "How long one rate-limit window lasts, in seconds."
+          },
+          "unapproved_app_retention_hours": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 876000,
+            "default": 1,
+            "description": "Hours Marfa keeps an app that registered itself and holds no grant. `0` keeps it with no age limit."
+          },
+          "revoked_grant_retention_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500,
+            "default": 90,
+            "description": "Days Marfa keeps a revoked app grant. `0` keeps it with no age limit."
+          },
+          "enrichment_max_blob_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 20971520,
+            "description": "The largest file Marfa reads whole to extract its text, in bytes. Marfa skips a larger file unread, and reads a sound or video from its headers whatever its size."
+          },
+          "enrichment_max_text_chars": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000,
+            "default": 100000,
+            "description": "The most Unicode characters of extracted text Marfa keeps, counted as characters and not UTF-16 code units. Marfa cuts longer text short."
+          },
+          "enrichment_max_inflated_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 67108864,
+            "description": "The most a document may inflate to when Marfa extracts its text, all its parts together, in bytes. Marfa skips a document that inflates past it."
+          },
+          "enrichment_max_memory_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 1073741824,
+            "description": "The most memory the process that reads one file may take, in bytes. Marfa skips a file that needs more."
+          },
+          "enrichment_max_attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 3,
+            "description": "How many times Marfa tries to read a file that fails, or that stops the server, before it stops trying."
+          },
+          "update_check_enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "`true` if Marfa checks GitHub for new releases every few hours. When `false`, it makes no request for them and reports no release as newer."
+          },
+          "event_stream_max_viewers": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "default": 0,
+            "description": "The most event-stream viewers one server serves at once. `0` sets no limit."
+          },
+          "mcp_fetch_enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "`true` if MCP tools fetch a file from a web address, or a file a chat attached, to save it. When `false`, a tool asked to fetch one is refused."
+          },
+          "mcp_fetch_max_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 52428800,
+            "description": "The largest file an MCP tool fetches from a web address to save, in bytes. Marfa refuses a larger file and stores nothing."
+          },
+          "mcp_fetch_timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "default": 60,
+            "description": "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds."
+          },
+          "inbound_max_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 26214400,
+            "description": "The largest inbound webhook delivery Marfa stores, in bytes."
+          },
+          "rate_limit_inbound_requests": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 600,
+            "description": "How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered."
+          },
+          "inbound_in_flight_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 104857600,
+            "description": "The most bytes of inbound webhook deliveries Marfa holds in memory at once. One source holds at most half."
+          },
+          "inbound_backlog_deliveries": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 10000,
+            "description": "The unhandled deliveries one registration may hold before Marfa refuses more for it."
+          },
+          "inbound_backlog_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 1073741824,
+            "description": "The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it."
+          },
+          "inbound_retained_deliveries": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "default": 10000,
+            "description": "The most deliveries one registration retains across its live and retired endpoints."
+          },
+          "inbound_retained_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1099511627776,
+            "default": 1073741824,
+            "description": "The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints."
+          },
+          "cors_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves. Each is an origin with no path."
           }
         },
         "required": [
@@ -59077,47 +59307,56 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies."
+                    "description": "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies.",
+                    "default": 30
                   },
                   "version_daily_snapshot_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies."
+                    "description": "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies.",
+                    "default": 90
                   },
                   "version_weekly_snapshot_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies."
+                    "description": "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies.",
+                    "default": 365
                   },
                   "version_max_versions": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 1000000,
-                    "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults."
+                    "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults.",
+                    "default": 500
                   },
                   "grant_inactivity_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Disconnect apps unused for this many days. Zero disables retirement."
+                    "description": "Disconnect apps unused for this many days. Zero disables retirement.",
+                    "default": 365
                   },
                   "enrichment_enabled": {
                     "type": "boolean",
-                    "description": "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies."
+                    "description": "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies.",
+                    "default": true
                   },
                   "enrichment_ocr_enabled": {
                     "type": "boolean",
-                    "description": "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies."
+                    "description": "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies.",
+                    "default": true
                   },
                   "error_reporting_enabled": {
                     "type": "boolean",
-                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies."
+                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies.",
+                    "default": true
                   },
                   "heartbeat_enabled": {
                     "type": "boolean",
-                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies."
+                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies.",
+                    "default": true
                   },
                   "name": {
                     "type": "string",
@@ -59166,44 +59405,51 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies.",
+                    "default": 90
                   },
                   "event_log_retention_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies.",
+                    "default": 30
                   },
                   "trash_retention_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies.",
+                    "default": 60
                   },
                   "row_log_retention_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies.",
+                    "default": 30
                   },
                   "inbound_handled_retention_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.",
+                    "default": 7
                   },
                   "inbound_pending_retention_days": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
+                    "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.",
+                    "default": 30
                   },
                   "addresses": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them."
+                    "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them.",
+                    "default": []
                   },
                   "sign_in_address": {
                     "type": "string",
@@ -59229,7 +59475,8 @@
                   "object_store_region": {
                     "type": "string",
                     "maxLength": 100,
-                    "description": "The region of the object store. Absent: `us-east-1`."
+                    "description": "The region of the object store. Absent: `us-east-1`.",
+                    "default": "us-east-1"
                   },
                   "object_store_endpoint": {
                     "type": "string",
@@ -59238,11 +59485,13 @@
                   },
                   "object_store_path_style": {
                     "type": "boolean",
-                    "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`."
+                    "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`.",
+                    "default": true
                   },
                   "object_store_prefix": {
                     "type": "string",
-                    "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`."
+                    "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`.",
+                    "default": "marfa"
                   },
                   "object_store_access_key_id": {
                     "type": "string",
@@ -59252,22 +59501,26 @@
                   },
                   "allow_private_addresses": {
                     "type": "boolean",
-                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`."
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.",
+                    "default": false
                   },
                   "object_store_secret_access_key": {
                     "type": "string",
                     "maxLength": 4096,
-                    "description": "The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it."
+                    "description": "The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
                   },
                   "heartbeat_url": {
                     "type": "string",
                     "format": "uri",
-                    "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it."
+                    "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
                   },
                   "error_webhook_url": {
                     "type": "string",
                     "format": "uri",
-                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it."
+                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
                   },
                   "secrets_set": {
                     "type": "array",
@@ -59275,6 +59528,216 @@
                       "type": "string"
                     },
                     "description": "The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing."
+                  },
+                  "max_request_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1048576,
+                    "description": "The largest request body Marfa accepts, in bytes. Marfa waits 180 seconds for a body, so a body over about 21 MiB can't arrive in time over a 1 Mbit/s link. Absent: the server's default applies."
+                  },
+                  "max_bulk_request_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 33554432,
+                    "default": 16777216,
+                    "description": "The largest body the bulk operations accept, in bytes, and the largest row a restore reads. The most you can set is 33554432, half the 67108864 bytes a restore reads on one archive line. Absent: the server's default applies."
+                  },
+                  "disk_reserve_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1099511627776,
+                    "default": 134217728,
+                    "description": "Free disk space an upload must leave on the blob volume, in bytes. `0` refuses no write for room, and health still reports the disk as degraded below 64 MiB. Absent: the server's default applies."
+                  },
+                  "blob_min_copies": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 1,
+                    "description": "The fewest live copies Marfa keeps of each blob. Absent: the server's default applies."
+                  },
+                  "blob_cleanup_enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "`true` if the `blob-orphans` job purges blobs nothing references once they have stood in the orphan report for `blob_cleanup_grace_seconds`. Absent: the server's default applies."
+                  },
+                  "blob_cleanup_grace_seconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 31536000,
+                    "default": 86400,
+                    "description": "How long a blob nothing references stands in the orphan report before a later run purges it, in seconds. Absent: the server's default applies."
+                  },
+                  "backup_interval_seconds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 31536000,
+                    "default": 3600,
+                    "description": "How often Marfa makes a backup when anything it holds has changed, in seconds. `0` turns scheduled backups off. Absent: the server's default applies."
+                  },
+                  "rate_limit_enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "`true` if the rate limiter is on for requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses. Absent: the server's default applies."
+                  },
+                  "rate_limit_requests": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 4000,
+                    "description": "How many requests one key or app may make in each rate-limit window, across every operation. Absent: the server's default applies."
+                  },
+                  "rate_limit_keys_requests": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 200,
+                    "description": "How many requests one key may make in each rate-limit window to the operations under `/keys`. Absent: the server's default applies."
+                  },
+                  "rate_limit_window_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 86400,
+                    "default": 60,
+                    "description": "How long one rate-limit window lasts, in seconds. Absent: the server's default applies."
+                  },
+                  "unapproved_app_retention_hours": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 876000,
+                    "default": 1,
+                    "description": "Hours Marfa keeps an app that registered itself and holds no grant. `0` keeps it with no age limit. Absent: the server's default applies."
+                  },
+                  "revoked_grant_retention_days": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 36500,
+                    "default": 90,
+                    "description": "Days Marfa keeps a revoked app grant. `0` keeps it with no age limit. Absent: the server's default applies."
+                  },
+                  "enrichment_max_blob_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 20971520,
+                    "description": "The largest file Marfa reads whole to extract its text, in bytes. Marfa skips a larger file unread, and reads a sound or video from its headers whatever its size. Absent: the server's default applies."
+                  },
+                  "enrichment_max_text_chars": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000000,
+                    "default": 100000,
+                    "description": "The most Unicode characters of extracted text Marfa keeps, counted as characters and not UTF-16 code units. Marfa cuts longer text short. Absent: the server's default applies."
+                  },
+                  "enrichment_max_inflated_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 67108864,
+                    "description": "The most a document may inflate to when Marfa extracts its text, all its parts together, in bytes. Marfa skips a document that inflates past it. Absent: the server's default applies."
+                  },
+                  "enrichment_max_memory_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1073741824,
+                    "description": "The most memory the process that reads one file may take, in bytes. Marfa skips a file that needs more. Absent: the server's default applies."
+                  },
+                  "enrichment_max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 3,
+                    "description": "How many times Marfa tries to read a file that fails, or that stops the server, before it stops trying. Absent: the server's default applies."
+                  },
+                  "update_check_enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "`true` if Marfa checks GitHub for new releases every few hours. When `false`, it makes no request for them and reports no release as newer. Absent: the server's default applies."
+                  },
+                  "event_stream_max_viewers": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "default": 0,
+                    "description": "The most event-stream viewers one server serves at once. `0` sets no limit. Absent: the server's default applies."
+                  },
+                  "mcp_fetch_enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "`true` if MCP tools fetch a file from a web address, or a file a chat attached, to save it. When `false`, a tool asked to fetch one is refused. Absent: the server's default applies."
+                  },
+                  "mcp_fetch_max_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 52428800,
+                    "description": "The largest file an MCP tool fetches from a web address to save, in bytes. Marfa refuses a larger file and stores nothing. Absent: the server's default applies."
+                  },
+                  "mcp_fetch_timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "default": 60,
+                    "description": "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds. Absent: the server's default applies."
+                  },
+                  "inbound_max_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 26214400,
+                    "description": "The largest inbound webhook delivery Marfa stores, in bytes. Absent: the server's default applies."
+                  },
+                  "rate_limit_inbound_requests": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 600,
+                    "description": "How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered. Absent: the server's default applies."
+                  },
+                  "inbound_in_flight_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 104857600,
+                    "description": "The most bytes of inbound webhook deliveries Marfa holds in memory at once. One source holds at most half. Absent: the server's default applies."
+                  },
+                  "inbound_backlog_deliveries": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 10000,
+                    "description": "The unhandled deliveries one registration may hold before Marfa refuses more for it. Absent: the server's default applies."
+                  },
+                  "inbound_backlog_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1073741824,
+                    "description": "The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it. Absent: the server's default applies."
+                  },
+                  "inbound_retained_deliveries": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 10000,
+                    "description": "The most deliveries one registration retains across its live and retired endpoints. Absent: the server's default applies."
+                  },
+                  "inbound_retained_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1073741824,
+                    "description": "The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints. Absent: the server's default applies."
+                  },
+                  "cors_origins": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": [],
+                    "description": "The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves. Each is an origin with no path. Absent: the server's default applies."
                   }
                 },
                 "additionalProperties": false
@@ -59586,7 +60049,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": 30
                   },
                   "version_daily_snapshot_days": {
                     "type": [
@@ -59595,7 +60059,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": 90
                   },
                   "version_weekly_snapshot_days": {
                     "type": [
@@ -59604,7 +60069,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": 365
                   },
                   "version_max_versions": {
                     "type": [
@@ -59613,7 +60079,8 @@
                     ],
                     "minimum": 1,
                     "maximum": 1000000,
-                    "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. `null` removes it, so the server's default applies."
+                    "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. `null` removes it, so the server's default applies.",
+                    "default": 500
                   },
                   "grant_inactivity_days": {
                     "type": [
@@ -59622,35 +60089,40 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Disconnect apps unused for this many days. Zero disables retirement. `null` removes it, so the server's default applies."
+                    "description": "Disconnect apps unused for this many days. Zero disables retirement. `null` removes it, so the server's default applies.",
+                    "default": 365
                   },
                   "enrichment_enabled": {
                     "type": [
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "`true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": true
                   },
                   "enrichment_ocr_enabled": {
                     "type": [
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "`true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": true
                   },
                   "error_reporting_enabled": {
                     "type": [
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": true
                   },
                   "heartbeat_enabled": {
                     "type": [
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "default": true
                   },
                   "instance_id": {
                     "type": "string",
@@ -59714,7 +60186,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "description": "Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. `null` removes it, so the server's default applies.",
+                    "default": 90
                   },
                   "event_log_retention_days": {
                     "type": [
@@ -59723,7 +60196,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "description": "Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies.",
+                    "default": 30
                   },
                   "trash_retention_days": {
                     "type": [
@@ -59732,7 +60206,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies.",
+                    "default": 60
                   },
                   "row_log_retention_days": {
                     "type": [
@@ -59741,7 +60216,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies.",
+                    "default": 30
                   },
                   "inbound_handled_retention_days": {
                     "type": [
@@ -59750,7 +60226,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "description": "Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies.",
+                    "default": 7
                   },
                   "inbound_pending_retention_days": {
                     "type": [
@@ -59759,7 +60236,8 @@
                     ],
                     "minimum": 0,
                     "maximum": 36500,
-                    "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                    "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies.",
+                    "default": 30
                   },
                   "addresses": {
                     "type": [
@@ -59769,7 +60247,8 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. `null` removes them, so the server's default applies."
+                    "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. `null` removes them, so the server's default applies.",
+                    "default": []
                   },
                   "sign_in_address": {
                     "type": [
@@ -59807,7 +60286,8 @@
                       "null"
                     ],
                     "maxLength": 100,
-                    "description": "The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies."
+                    "description": "The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies.",
+                    "default": "us-east-1"
                   },
                   "object_store_endpoint": {
                     "type": [
@@ -59822,14 +60302,16 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies."
+                    "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies.",
+                    "default": true
                   },
                   "object_store_prefix": {
                     "type": [
                       "string",
                       "null"
                     ],
-                    "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies."
+                    "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies.",
+                    "default": "marfa"
                   },
                   "object_store_access_key_id": {
                     "type": [
@@ -59845,7 +60327,8 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies."
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.",
+                    "default": false
                   },
                   "object_store_secret_access_key": {
                     "type": [
@@ -59853,7 +60336,8 @@
                       "null"
                     ],
                     "maxLength": 4096,
-                    "description": "The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it."
+                    "description": "The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
                   },
                   "heartbeat_url": {
                     "type": [
@@ -59861,7 +60345,8 @@
                       "null"
                     ],
                     "format": "uri",
-                    "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. `null` or an empty string removes it."
+                    "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
                   },
                   "error_webhook_url": {
                     "type": [
@@ -59869,7 +60354,8 @@
                       "null"
                     ],
                     "format": "uri",
-                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it."
+                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
                   },
                   "secrets_set": {
                     "type": "array",
@@ -59877,6 +60363,309 @@
                       "type": "string"
                     },
                     "description": "The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing."
+                  },
+                  "max_request_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1048576,
+                    "description": "The largest request body Marfa accepts, in bytes. Marfa waits 180 seconds for a body, so a body over about 21 MiB can't arrive in time over a 1 Mbit/s link. `null` removes it, so the server's default applies."
+                  },
+                  "max_bulk_request_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 33554432,
+                    "default": 16777216,
+                    "description": "The largest body the bulk operations accept, in bytes, and the largest row a restore reads. The most you can set is 33554432, half the 67108864 bytes a restore reads on one archive line. `null` removes it, so the server's default applies."
+                  },
+                  "disk_reserve_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1099511627776,
+                    "default": 134217728,
+                    "description": "Free disk space an upload must leave on the blob volume, in bytes. `0` refuses no write for room, and health still reports the disk as degraded below 64 MiB. `null` removes it, so the server's default applies."
+                  },
+                  "blob_min_copies": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 1,
+                    "description": "The fewest live copies Marfa keeps of each blob. `null` removes it, so the server's default applies."
+                  },
+                  "blob_cleanup_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "default": true,
+                    "description": "`true` if the `blob-orphans` job purges blobs nothing references once they have stood in the orphan report for `blob_cleanup_grace_seconds`. `null` removes it, so the server's default applies."
+                  },
+                  "blob_cleanup_grace_seconds": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 31536000,
+                    "default": 86400,
+                    "description": "How long a blob nothing references stands in the orphan report before a later run purges it, in seconds. `null` removes it, so the server's default applies."
+                  },
+                  "backup_interval_seconds": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 31536000,
+                    "default": 3600,
+                    "description": "How often Marfa makes a backup when anything it holds has changed, in seconds. `0` turns scheduled backups off. `null` removes it, so the server's default applies."
+                  },
+                  "rate_limit_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "default": true,
+                    "description": "`true` if the rate limiter is on for requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses. `null` removes it, so the server's default applies."
+                  },
+                  "rate_limit_requests": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 4000,
+                    "description": "How many requests one key or app may make in each rate-limit window, across every operation. `null` removes it, so the server's default applies."
+                  },
+                  "rate_limit_keys_requests": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 200,
+                    "description": "How many requests one key may make in each rate-limit window to the operations under `/keys`. `null` removes it, so the server's default applies."
+                  },
+                  "rate_limit_window_seconds": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 86400,
+                    "default": 60,
+                    "description": "How long one rate-limit window lasts, in seconds. `null` removes it, so the server's default applies."
+                  },
+                  "unapproved_app_retention_hours": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 876000,
+                    "default": 1,
+                    "description": "Hours Marfa keeps an app that registered itself and holds no grant. `0` keeps it with no age limit. `null` removes it, so the server's default applies."
+                  },
+                  "revoked_grant_retention_days": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 36500,
+                    "default": 90,
+                    "description": "Days Marfa keeps a revoked app grant. `0` keeps it with no age limit. `null` removes it, so the server's default applies."
+                  },
+                  "enrichment_max_blob_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 20971520,
+                    "description": "The largest file Marfa reads whole to extract its text, in bytes. Marfa skips a larger file unread, and reads a sound or video from its headers whatever its size. `null` removes it, so the server's default applies."
+                  },
+                  "enrichment_max_text_chars": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 100000000,
+                    "default": 100000,
+                    "description": "The most Unicode characters of extracted text Marfa keeps, counted as characters and not UTF-16 code units. Marfa cuts longer text short. `null` removes it, so the server's default applies."
+                  },
+                  "enrichment_max_inflated_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 67108864,
+                    "description": "The most a document may inflate to when Marfa extracts its text, all its parts together, in bytes. Marfa skips a document that inflates past it. `null` removes it, so the server's default applies."
+                  },
+                  "enrichment_max_memory_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1073741824,
+                    "description": "The most memory the process that reads one file may take, in bytes. Marfa skips a file that needs more. `null` removes it, so the server's default applies."
+                  },
+                  "enrichment_max_attempts": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 3,
+                    "description": "How many times Marfa tries to read a file that fails, or that stops the server, before it stops trying. `null` removes it, so the server's default applies."
+                  },
+                  "update_check_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "default": true,
+                    "description": "`true` if Marfa checks GitHub for new releases every few hours. When `false`, it makes no request for them and reports no release as newer. `null` removes it, so the server's default applies."
+                  },
+                  "event_stream_max_viewers": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "default": 0,
+                    "description": "The most event-stream viewers one server serves at once. `0` sets no limit. `null` removes it, so the server's default applies."
+                  },
+                  "mcp_fetch_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "default": true,
+                    "description": "`true` if MCP tools fetch a file from a web address, or a file a chat attached, to save it. When `false`, a tool asked to fetch one is refused. `null` removes it, so the server's default applies."
+                  },
+                  "mcp_fetch_max_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 52428800,
+                    "description": "The largest file an MCP tool fetches from a web address to save, in bytes. Marfa refuses a larger file and stores nothing. `null` removes it, so the server's default applies."
+                  },
+                  "mcp_fetch_timeout_seconds": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "default": 60,
+                    "description": "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds. `null` removes it, so the server's default applies."
+                  },
+                  "inbound_max_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 26214400,
+                    "description": "The largest inbound webhook delivery Marfa stores, in bytes. `null` removes it, so the server's default applies."
+                  },
+                  "rate_limit_inbound_requests": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 600,
+                    "description": "How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered. `null` removes it, so the server's default applies."
+                  },
+                  "inbound_in_flight_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 104857600,
+                    "description": "The most bytes of inbound webhook deliveries Marfa holds in memory at once. One source holds at most half. `null` removes it, so the server's default applies."
+                  },
+                  "inbound_backlog_deliveries": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 10000,
+                    "description": "The unhandled deliveries one registration may hold before Marfa refuses more for it. `null` removes it, so the server's default applies."
+                  },
+                  "inbound_backlog_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1073741824,
+                    "description": "The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it. `null` removes it, so the server's default applies."
+                  },
+                  "inbound_retained_deliveries": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 10000,
+                    "description": "The most deliveries one registration retains across its live and retired endpoints. `null` removes it, so the server's default applies."
+                  },
+                  "inbound_retained_bytes": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1099511627776,
+                    "default": 1073741824,
+                    "description": "The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints. `null` removes it, so the server's default applies."
+                  },
+                  "cors_origins": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "default": [],
+                    "description": "The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves. Each is an origin with no path. `null` removes it, so the server's default applies."
                   }
                 },
                 "additionalProperties": false
