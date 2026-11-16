@@ -22,7 +22,7 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 it("changes the owner through the private socket and through a credential", async () => {
   const changed = await local.json<{ email: string; name: string }>([
-    "owner",
+    "profile",
     "update",
     "--email",
     "Updated@Example.test",
@@ -35,15 +35,15 @@ it("changes the owner through the private socket and through a credential", asyn
   });
   const refused = await delegated
     .as(undefined)
-    .refused(["owner", "update", "--name", "No"]);
+    .refused(["profile", "update", "--name", "No"]);
   expect(refused.code).toBe(5);
   expect(
-    await delegated.json(["owner", "update", "--name", "CLI delegate"]),
+    await delegated.json(["profile", "update", "--name", "CLI delegate"]),
   ).toMatchObject({ name: "CLI delegate" });
   expect(
     await delegated.json(["profile", "update", "--name", "CLI profile"]),
   ).toMatchObject({ name: "CLI profile" });
-  expect((await local.json<{ name: string }>(["owner", "show"])).name).toBe(
+  expect((await local.json<{ name: string }>(["profile", "show"])).name).toBe(
     "CLI profile",
   );
 });
@@ -55,12 +55,12 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
     const file = join(dir, "me.png");
     await writeFile(file, sent);
     const owner = () =>
-      local.json<{ avatar: string | null }>(["owner", "show"]);
+      local.json<{ avatar: string | null }>(["profile", "show"]);
     expect((await owner()).avatar).toBeNull();
 
     // The witness for the refusals below: this file is taken.
     const updated = await local.json<{ avatar: string | null }>([
-      "owner",
+      "profile",
       "update",
       "--avatar",
       file,
@@ -68,14 +68,14 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
     expect(updated.avatar).toMatch(/\/profile\/avatar$/);
     expect((await owner()).avatar).toBe(updated.avatar);
     const fetched = join(dir, "fetched.png");
-    await local.json(["owner", "avatar", "--output", fetched]);
+    await local.json(["profile", "avatar", "--output", fetched]);
     expect((await readFile(fetched)).equals(sent)).toBe(true);
 
     // The name says PNG and the bytes say GIF: the server's word is shown.
     const lie = join(dir, "lie.png");
     await writeFile(lie, gif());
     const refusedKind = await local.refused([
-      "owner",
+      "profile",
       "update",
       "--avatar",
       lie,
@@ -86,9 +86,9 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
 
     // A file that cannot be read is refused before anything is sent, so the
     // name beside it is not changed either.
-    const before = await local.json<{ name: string }>(["owner", "show"]);
+    const before = await local.json<{ name: string }>(["profile", "show"]);
     const unreadable = await local.refused([
-      "owner",
+      "profile",
       "update",
       "--name",
       "Never sent",
@@ -96,11 +96,11 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
       join(dir, "missing.png"),
     ]);
     expect(unreadable.envelope.error.message).toContain("cannot read");
-    expect((await local.json<{ name: string }>(["owner", "show"])).name).toBe(
+    expect((await local.json<{ name: string }>(["profile", "show"])).name).toBe(
       before.name,
     );
     const stillThere = join(dir, "still.png");
-    await local.json(["owner", "avatar", "--output", stillThere]);
+    await local.json(["profile", "avatar", "--output", stillThere]);
     expect((await readFile(stillThere)).equals(sent)).toBe(true);
 
     const replaced = png(8, 8, 0x20);
@@ -110,7 +110,7 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
       await delegated.json(["profile", "update", "--avatar", second]),
     ).toMatchObject({ avatar: expect.any(String) });
     const swapped = join(dir, "swapped.png");
-    await local.json(["owner", "avatar", "--output", swapped]);
+    await local.json(["profile", "avatar", "--output", swapped]);
     expect((await readFile(swapped)).equals(replaced)).toBe(true);
 
     expect(
@@ -118,7 +118,7 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
     ).toMatchObject({ avatar: null });
     expect((await owner()).avatar).toBeNull();
     const gone = await local.refused([
-      "owner",
+      "profile",
       "avatar",
       "--output",
       join(dir, "gone.png"),

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   approvedApp,
   bootFreshServer,
@@ -38,6 +38,16 @@ beforeAll(async () => {
 afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+afterEach(async () => {
+  // A case that failed between its two replacements leaves the new password
+  // behind; the private command puts the first back, and refuses when it is
+  // already in place.
+  await controlRequest(server.controlSocket, "/owner/password", {
+    method: "PUT",
+    body: BACK,
+  });
+});
 
 function nextAddress(): string {
   addresses += 1;

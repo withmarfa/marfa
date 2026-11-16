@@ -1210,7 +1210,8 @@ const invocations: Record<string, () => string[]> = {
   "folders revoke": () => [ID],
   "folders health": () => [ID],
   login: () => ["--no-browser", "--print-token"],
-  "owner avatar": () => [],
+  "profile avatar": () => [],
+  "owner password": () => ["--stdin"],
   "profile show": () => [],
   "profile update": () => ["--name", "Profile"],
   "apps list": () => [],
@@ -1241,9 +1242,9 @@ const beyondTheTable: Record<string, () => string[]> = {
   "sources clear": () => ["--name", "github"],
   // `sign-ins end-all` sends the list and end operations `sign-ins list` and `sign-ins end` are the entries for.
   "sign-ins end-all": () => [],
-  // `owner show` and `owner update` send the profile operations `profile show` and `profile update` are the entries for.
-  "owner show": () => [],
-  "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
+  // `config set` and `config unset` send the update operation `config update` is the entry for.
+  "config set": () => ["version_recent_days", "30"],
+  "config unset": () => ["version_recent_days"],
   // `rows put`, `rows patch` and `rows delete` send the batch operation `rows write` is the entry for.
   "rows put": () => ["--values", "{}", ID, "lines"],
   "rows patch": () => ["--values", "{}", ID, "lines", ID],
@@ -1274,6 +1275,10 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
 };
 
 const stdinFor: Record<string, string> = {
+  "owner password": JSON.stringify({
+    current_password: "an owner password",
+    new_password: "a new owner password",
+  }),
   "setup claim": JSON.stringify({
     email: "a@cyzr.me",
     password: "an owner password",
@@ -1429,9 +1434,9 @@ const DESCRIBES = "status";
  * reads a stream, and the stream test above reads one on its own contract;
  * `login` needs a sign-in the door cannot complete, so its refusal is held
  * by its code alone; `views get` refuses an item that is not a view, and
- * `{}` names no type.
+ * `{}` names no type; `config set` finds no setting in a listing of `{}`.
  */
-const SILENT_HERE = ["events", "login", "views get"];
+const SILENT_HERE = ["events", "login", "views get", "config set"];
 
 describe("every command holds the server to the contract", () => {
   async function table(): Promise<{ operation_id: string; command: string }[]> {
@@ -1848,7 +1853,7 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
-  it("holds owner update to the contract through its private socket", async () => {
+  it("holds profile update to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
     const body = {
       id: "owner",
@@ -1865,11 +1870,14 @@ describe("every command holds the server to the contract", () => {
           "--json",
           "--socket",
           socket.path,
-          "owner",
+          "profile",
           "update",
-          ...beyondTheTable["owner update"]!(),
+          "--email",
+          "a@cyzr.me",
+          "--name",
+          "Owner",
         ]);
-        const label = `owner update on contract ${String(contract)}: ${outcome.stderr}`;
+        const label = `profile update on contract ${String(contract)}: ${outcome.stderr}`;
         expect(socket.asked, label).toEqual(["PATCH /profile"]);
         if (contract === BUILT_FOR) {
           expect(outcome.code, label).toBe(0);
@@ -1968,7 +1976,7 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
-  it("holds the owner avatar upload to the contract through its private socket", async () => {
+  it("holds the profile avatar upload to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
     const avatar = fileOf("owner-avatar.png", "avatar bytes");
     const body = {
@@ -1986,12 +1994,12 @@ describe("every command holds the server to the contract", () => {
           "--json",
           "--socket",
           socket.path,
-          "owner",
+          "profile",
           "update",
           "--avatar",
           avatar,
         ]);
-        const label = `owner update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
+        const label = `profile update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
         expect(socket.asked, label).toEqual(["PUT /profile/avatar"]);
         if (contract === BUILT_FOR) {
           expect(outcome.code, label).toBe(0);

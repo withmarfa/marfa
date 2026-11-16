@@ -108,6 +108,12 @@ const TASKS: readonly {
     path: "/owner/sign-ins/no-such-sign-in",
     scope: "sign_ins.manage",
   },
+  {
+    method: "PUT",
+    path: "/owner/password",
+    body: { current_password: "not used", new_password: "not used either" },
+    scope: "sign_ins.manage",
+  },
   { method: "GET", path: "/owner/passkeys", scope: "sign_ins.manage" },
   {
     method: "PATCH",
