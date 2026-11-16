@@ -3019,9 +3019,9 @@ When `PUT /config` leaves out a secret setting, the server MUST keep the value s
 
 ### `instance/settings-empty-clears`
 
-When a write to `/config` gives a setting whose allowed values the stored table ends with "or empty" the empty string, the server MUST remove the value stored for it.
+When a write to `/config` gives a setting whose allowed values the stored table ends with "or empty" the empty string, or, for a setting that is not a secret, text of white space alone, the server MUST remove the value stored for it.
 
-**Tests:** `compliance/secret-settings.test.ts › is named in secrets_set and listed as set with no value, kept by a PUT that leaves it out, and removed by null or an empty string`.
+**Tests:** `compliance/secret-settings.test.ts › is named in secrets_set and listed as set with no value, kept by a PUT that leaves it out, and removed by null or an empty string`, `compliance/destination-settings.test.ts › takes an untidy object store setting in its plain spelling, and refuses an endpoint that carries a credential without repeating it`.
 
 ### `instance/secret-refusal-hidden`
 
@@ -3125,9 +3125,9 @@ If a write to `/config` sets `object_store_endpoint` to a URL that carries a use
 
 ### `instance/object-store-plain-spelling`
 
-When a write to `/config` sets an `object_store_` setting, the server MUST store it in its plain spelling: an endpoint whose whole path is `/` without it, a prefix without a `/` at either end, and text without spaces at either end.
+When a write to `/config` sets an `object_store_` setting or `backup_path`, the server MUST store it in its plain spelling: an endpoint whose whole path is `/` without it, a prefix without a `/` at either end, a folder without a `/` at its end, and text without spaces at either end.
 
-**Tests:** `compliance/destination-settings.test.ts › takes an untidy object store setting in its plain spelling, and refuses an endpoint that carries a credential without repeating it`.
+**Tests:** `compliance/destination-settings.test.ts › takes an untidy object store setting in its plain spelling, and refuses an endpoint that carries a credential without repeating it`, `compliance/backup-folder.test.ts › refuses a backup folder inside its data directory or its blob folder, judged where links lead, and makes none`.
 
 ### `instance/heartbeat-url-live`
 

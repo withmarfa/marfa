@@ -185,6 +185,17 @@ describe("a destination set through /config", () => {
         expect((await operator.getConfig()).data).toMatchObject({
           object_store_endpoint: "http://127.0.0.1:9",
         });
+
+        const blank = await operator.patchConfig({
+          object_store_endpoint: "   ",
+          object_store_region: "",
+        });
+        expect(blank.status, JSON.stringify(blank.error)).toBe(200);
+        expect(blank.data).not.toHaveProperty("object_store_endpoint");
+        expect(blank.data).not.toHaveProperty("object_store_region");
+        expect(blank.data).toMatchObject({
+          object_store_prefix: "fixtures/untidy",
+        });
       } finally {
         await server.stop();
       }
