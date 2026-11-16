@@ -380,6 +380,26 @@ async fn a_program_folder_the_account_cannot_write_is_refused_with_the_programs_
 }
 
 #[test]
+fn a_refused_link_keeps_the_old_program_as_an_executable_copy() {
+    use std::os::unix::fs::PermissionsExt;
+    let case = Case::new("copy-aside");
+    let live = case.bin().join("marfa-server");
+    let kept = previous_of(&case.bin(), "marfa-server");
+    let refused = |_: &Path, _: &Path| Err(std::io::Error::other("links refused here"));
+    apply::keep_aside(&live, &kept, refused).unwrap();
+    assert_eq!(fs::read(&kept).unwrap(), fs::read(&live).unwrap());
+    assert_eq!(
+        fs::metadata(&kept).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    fs::remove_file(&kept).unwrap();
+    assert!(
+        apply::keep_aside(&case.bin().join("absent"), &kept, refused).is_err(),
+        "the witness: with nothing to copy the fallback fails too"
+    );
+}
+
+#[test]
 fn a_second_request_while_one_runs_joins_it_and_the_update_runs_once() {
     let updates = Updates::new(&DatabasePath::Memory);
     assert!(updates.begin("0.0.75"));

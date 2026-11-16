@@ -205,6 +205,19 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
     }
 }
 
+/// Some file systems and Linux's `protected_hardlinks` refuse the link, so a copy stands in.
+pub(super) fn keep_aside(
+    live: &Path,
+    kept: &Path,
+    link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if link(live, kept).is_ok() {
+        return Ok(());
+    }
+    fs::copy(live, kept)?;
+    set_executable(kept)
+}
+
 /// Swaps each program in, undoing the steps done when one fails. The old program stays under its
 /// name until the new one replaces it in one step, so neither is ever missing.
 pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
@@ -243,7 +256,7 @@ pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(),
             }
             _ => {}
         }
-        fs::hard_link(&live, &kept)
+        keep_aside(&live, &kept, |from, to| fs::hard_link(from, to))
             .map_err(|error| undo(&aside, "keeping the old program", error))?;
         aside.push(name);
         fs::rename(staging.join(name), &live)
