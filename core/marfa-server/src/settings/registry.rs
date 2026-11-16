@@ -143,7 +143,7 @@ impl Entry {
                 return Address::parse(text).map(|address| Value::Address(Some(address)));
             }
             Rule::Addresses => return addresses::parse_list(text).map(Value::Addresses),
-            _ if text.is_empty() => None,
+            _ if text.is_empty() || (!self.is_secret() && text.trim().is_empty()) => None,
             // A secret is used as written, so whitespace around it would be part of it.
             _ if self.is_secret() && text != text.trim() => {
                 return Err(
@@ -849,6 +849,45 @@ mod tests {
         );
         assert_eq!(list, r#"["http://a.example"]"#);
         assert_eq!(text(ADDRESSES.entry, &list), list);
+    }
+
+    #[test]
+    fn untidy_text_is_kept_plain_and_blank_text_clears() {
+        let text = |setting: &Entry, given: &str| setting.row_text(given);
+        assert_eq!(
+            text(BACKUP_PATH.entry, " /srv/backups// "),
+            Ok("/srv/backups".into())
+        );
+        assert_eq!(text(BACKUP_PATH.entry, "/"), Ok("/".into()));
+        assert!(text(BACKUP_PATH.entry, "backups").is_err());
+        assert!(text(BACKUP_PATH.entry, "/srv/../etc").is_err());
+        assert_eq!(
+            text(OBJECT_STORE_ENDPOINT.entry, "HTTP://Store.Example/"),
+            Ok("http://store.example".into())
+        );
+        assert!(text(OBJECT_STORE_ENDPOINT.entry, "http://k:s@store.example").is_err());
+        assert_eq!(text(OBJECT_STORE_PREFIX.entry, "/a/b/"), Ok("a/b".into()));
+        assert!(text(OBJECT_STORE_PREFIX.entry, "a//b").is_err());
+        for blank in ["", "   ", "\t"] {
+            for entry in [
+                BACKUP_PATH.entry,
+                OBJECT_STORE_BUCKET.entry,
+                OBJECT_STORE_ENDPOINT.entry,
+            ] {
+                assert_eq!(text(entry, blank), Ok(String::new()), "{}", entry.key);
+            }
+        }
+        let secret = OBJECT_STORE_SECRET_ACCESS_KEY.entry;
+        assert!(secret.secret_text(&Json::from(" hush")).is_err());
+        assert!(secret.secret_text(&Json::from("   ")).is_err());
+        assert_eq!(secret.secret_text(&Json::from("")), Ok(None));
+        assert_eq!(
+            HEARTBEAT_URL
+                .entry
+                .secret_text(&Json::from("https://beat.example/x?token=t"))
+                .map(|secret| secret.map(|secret| secret.expose().to_string())),
+            Ok(Some("https://beat.example/x?token=t".into()))
+        );
     }
 
     #[test]
