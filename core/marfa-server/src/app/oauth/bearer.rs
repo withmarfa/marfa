@@ -21,7 +21,7 @@ pub struct Granted {
     pub owner_id: String,
     /// The `system.connection` item the grant is shown as.
     pub grant_id: String,
-    /// When the owner last signed in for the token; none for work a grant started.
+    /// When the owner signed in for the token; none for work a grant started.
     pub authenticated_at: Option<Stamp>,
 }
 

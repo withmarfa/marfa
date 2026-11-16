@@ -725,7 +725,7 @@ pub struct AccessToken {
     pub client_id: String,
     pub owner_id: String,
     pub chain_id: String,
-    /// When the owner last signed in, for every token of the chain.
+    /// When the owner signed in, for every token of the chain.
     pub authenticated_at: Stamp,
     pub scopes: ScopeSet,
     pub audience: Option<String>,

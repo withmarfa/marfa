@@ -758,8 +758,7 @@ CREATE TABLE IF NOT EXISTS oauth_consent_destinations (
 
 -- `session_id` names no table: the row outlives the session it asks about. A
 -- spent row stays until `expires_at`, so a replay can end its `chain_id`.
--- `authenticated_at` is when the owner last signed in, and every token of the
--- chain the code leads to carries it.
+-- Every token of the chain a code leads to carries its `authenticated_at`.
 CREATE TABLE IF NOT EXISTS oauth_codes (
     digest TEXT PRIMARY KEY NOT NULL,
     client_id TEXT NOT NULL REFERENCES oauth_clients (client_id) ON DELETE CASCADE,

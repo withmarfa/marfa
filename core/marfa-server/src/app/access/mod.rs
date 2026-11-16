@@ -263,9 +263,7 @@ impl Caller {
         }
     }
 
-    /// An act that asks the owner to confirm it is them: an app's token holding `permission`
-    /// whose owner signed in within [`STEP_UP_SECONDS`] of `at`, or the private local command.
-    /// A key has no sign-in to renew, so it is refused outright rather than challenged.
+    /// A key has no sign-in to renew, so it is refused rather than challenged.
     pub fn require_step_up(&self, permission: Permission, at: &str) -> Result<()> {
         match self {
             Caller::Local(_) => Ok(()),

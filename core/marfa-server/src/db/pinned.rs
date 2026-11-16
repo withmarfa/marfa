@@ -16,7 +16,7 @@ struct Pin {
 /// One entry for each version in `MIGRATIONS`.
 const PINS: &[Pin] = &[Pin {
     version: 1,
-    file: "00f6c9d145e52e93ecfdf26723feab7442e81e1f14908fa08153ff0165478ba5",
+    file: "363db4535c879adb961a6f1389dfdd3dfcfacd1c43d0a79c613bd2c6fa5d1a80",
     holds: "4c74815be5940d054d36974d11be24b432c629e46fe104f1148c6cbd01d32755",
 }];
 

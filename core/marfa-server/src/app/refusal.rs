@@ -228,8 +228,7 @@ impl Refusal {
             .with_detail("needs", "recent_sign_in")
     }
 
-    /// `401` for an act an app's token makes only within `max_age` seconds of its owner signing
-    /// in (RFC 9470).
+    /// RFC 9470 section 3.
     pub fn insufficient_user_authentication(max_age: i64) -> Refusal {
         Refusal::new(
             Code::InsufficientUserAuthentication,

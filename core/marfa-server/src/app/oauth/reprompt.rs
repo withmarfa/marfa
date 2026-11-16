@@ -36,8 +36,7 @@ pub(super) fn max_age(text: &str) -> Option<i64> {
     text.parse::<i64>().ok()?.checked_mul(MS_PER_SECOND)
 }
 
-/// Whether `max_age` asks for a sign-in newer than `session`'s. A sign-in dated after now
-/// is not counted as recent.
+/// A sign-in dated after now is not recent.
 pub(super) fn signed_in_too_long_ago(
     app: &App,
     max_age_text: Option<&str>,
