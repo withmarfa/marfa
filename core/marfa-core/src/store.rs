@@ -209,15 +209,23 @@ fn folder_store(conn: &Connection) -> Result<crate::FolderStore, CoreError> {
 }
 
 /// The first of the folder's tables that `conn`'s store holds in a shape
-/// other than this build's, which a replacement cannot carry.
+/// other than this build's, which a replacement cannot carry: its statement,
+/// or for `folder_files` also a file's record this build does not read.
 #[cfg(unix)]
 fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
     let held = held_shape(conn)?;
     let built = built_shape()?;
-    Ok(FOLDER_TABLES.into_iter().find(|table| {
+    if let Some(table) = FOLDER_TABLES.into_iter().find(|table| {
         held.get(*table)
             .is_some_and(|statement| built.get(*table) != Some(statement))
-    }))
+    }) {
+        return Ok(Some(table));
+    }
+    if held.contains_key("folder_files") && crate::folder::state::unreadable_record(conn)?.is_some()
+    {
+        return Ok(Some("folder_files"));
+    }
+    Ok(None)
 }
 
 /// Opens another process's store to read: makes no store and applies no
@@ -1171,26 +1179,42 @@ fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
         HashSet::new()
     };
     let is_bound = |item: &Option<String>| item.as_ref().is_some_and(|item| bound.contains(item));
-    let mut statement = conn.prepare(
-        "SELECT id, kind, item_id, to_id, verdict, reason
-           FROM main.queue WHERE verdict IN (?1, ?2)",
-    )?;
+    // A queue of another shape may not hold an edge's to end under this
+    // build's name: its refusals are then judged by the from end alone.
+    let to_end = if queue_holds(conn, "to_id")? {
+        "to_id"
+    } else {
+        "NULL"
+    };
+    let mut statement = conn.prepare(&format!(
+        "SELECT id, kind, item_id, {to_end}, verdict, reason
+           FROM main.queue WHERE verdict IN (?1, ?2)"
+    ))?;
     let mut unrecorded = HashSet::new();
     let mut rows = statement.query([Verdict::Refused.as_str(), Verdict::Dead.as_str()])?;
     while let Some(row) = rows.next()? {
         let kind: String = row.get(1)?;
-        let (item, target): (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
+        let (item, to): (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
         let refused = row.get::<_, String>(4)? == Verdict::Refused.as_str();
         // A delete of an edge refused as already gone did what it asked.
         let done = kind == WriteKind::DeleteEdge.as_str()
             && row.get::<_, Option<String>>(5)?.as_deref() == Some("edge_not_found");
-        let handled = recorded_against_files.contains(&kind.as_str())
-            && (is_bound(&item) || is_bound(&target));
+        let handled =
+            recorded_against_files.contains(&kind.as_str()) && (is_bound(&item) || is_bound(&to));
         if !(refused && (done || handled)) {
             unrecorded.insert(row.get(0)?);
         }
     }
     Ok(unrecorded)
+}
+
+#[cfg(unix)]
+fn queue_holds(conn: &Connection, column: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('queue', 'main') WHERE name = ?1)",
+        [column],
+        |row| row.get(0),
+    )?)
 }
 
 /// The writes in the queue that a folder's file state names as waiting on

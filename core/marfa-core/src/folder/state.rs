@@ -47,7 +47,9 @@ pub struct Bound {
     pub writes: Writes,
 }
 
+/// `{}`, the column's default, is a file that has recorded no write.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Writes {
     /// Counts the file's saves, so a later one's landing can supersede.
     pub save: i64,
@@ -602,9 +604,8 @@ fn bound_where<P: rusqlite::Params>(
 
 fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
     let links: String = row.get(5)?;
-    let lines: String = row.get(6)?;
+    let path: String = row.get(0)?;
     Ok(Bound {
-        path: row.get(0)?,
         item_id: row.get(1)?,
         identity: row.get(2)?,
         content_hash: row.get(3)?,
@@ -613,21 +614,53 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
             .get::<_, Option<String>>(11)?
             .and_then(|value| serde_json::from_str(&value).ok()),
         blob: row.get(12)?,
-        // Unreadable, it names no links or lines, so no edge is removed for it.
+        // Unreadable, it names no links, so no edge is removed for it.
         links: serde_json::from_str(&links).unwrap_or_default(),
         embeds: row
             .get::<_, Option<String>>(13)?
             .and_then(|embeds| serde_json::from_str(&embeds).ok())
             .unwrap_or_default(),
-        lines: serde_json::from_str(&lines).unwrap_or_default(),
+        lines: recorded(row, 6, &path)?,
         edit_line: row.get(7)?,
         held: row.get(8)?,
         // Unreadable, it remembers nothing written, and no own line is sent.
         own: row
             .get::<_, Option<String>>(9)?
             .and_then(|own| serde_json::from_str(&own).ok()),
-        writes: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
+        writes: recorded(row, 10, &path)?,
+        path,
     })
+}
+
+/// Read as empty, a record of lines would let a line taken out leave its edge
+/// on the server, and one of writes would drop a refusal the file shows.
+fn recorded<T: serde::de::DeserializeOwned>(
+    row: &rusqlite::Row<'_>,
+    at: usize,
+    path: &str,
+) -> rusqlite::Result<T> {
+    serde_json::from_str(&row.get::<_, String>(at)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            at,
+            rusqlite::types::Type::Text,
+            format!("what the folder records of {path} cannot be read: {error}").into(),
+        )
+    })
+}
+
+/// The first file whose record of its lines or writes does not read as this
+/// build's, which a store this build did not make can hold.
+pub(crate) fn unreadable_record(conn: &Connection) -> Result<Option<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT path, edge_lines, writes FROM main.folder_files")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let lines = serde_json::from_str::<Vec<Line>>(&row.get::<_, String>(1)?);
+        let writes = serde_json::from_str::<Writes>(&row.get::<_, String>(2)?);
+        if lines.is_err() || writes.is_err() {
+            return Ok(Some(row.get(0)?));
+        }
+    }
+    Ok(None)
 }
 
 /// How a held file's reason begins; a line `EDGES_WAITING` on the server is
@@ -1092,6 +1125,47 @@ mod tests {
 
         prune_unheld(&conn, &HashSet::from(["c.md".to_string()])).unwrap();
         assert!(unheld(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_record_of_lines_or_writes_that_does_not_read_is_refused_not_read_as_empty() {
+        let conn = crate::store::open_in_memory().unwrap();
+        let row = |lines: &str, writes: &str| {
+            conn.execute("DELETE FROM folder_files", []).unwrap();
+            conn.execute(
+                "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, writes, seen_at)
+                 VALUES ('a.md', 'item', 'h', '[]', ?1, ?2, 'then')",
+                [lines, writes],
+            )
+            .unwrap();
+        };
+        let line = r#"[{"edge_type":"parent-of","end":"to","other":"shelf"}]"#;
+        // The witness: this build's records, and the column's default, read.
+        row(line, "{}");
+        let bound = super::bound_at(&conn, "a.md").unwrap().unwrap();
+        assert_eq!(bound.lines.len(), 1);
+        assert_eq!(bound.writes, super::Writes::default());
+        assert_eq!(super::unreadable_record(&conn).unwrap(), None);
+
+        for (lines, writes) in [
+            (
+                r#"[{"edge_type":"parent-of","end":"target","other":"shelf"}]"#,
+                "{}",
+            ),
+            (
+                "[]",
+                r#"{"save":1,"queued":[],"refused":[{"change":{"edge":{"line":{"edge_type":"parent-of","end":"source","other":"shelf"},"shown":true}},"save":1,"reason":"r"}]}"#,
+            ),
+        ] {
+            row(lines, writes);
+            let error = super::bound_at(&conn, "a.md").unwrap_err().to_string();
+            assert!(error.contains("a.md"), "{error}");
+            assert!(super::every_bound(&conn).is_err());
+            assert_eq!(
+                super::unreadable_record(&conn).unwrap().as_deref(),
+                Some("a.md")
+            );
+        }
     }
 
     fn digest_of_only_row(conn: &rusqlite::Connection) -> (String, super::Binding) {
