@@ -24,6 +24,7 @@ The contract has two halves.
 - `blobs.md`: uploads, downloads, ranges and the blob link.
 - `stores.md`: where a blob's bytes live, the copy record, and the rules that keep them.
 - `housekeeping.md`: the jobs the server runs on itself.
+- `updates.md`: the check for a new release, reading whether one is ready, and the update a server installed as a service makes of its own programs.
 - `connectors.md`: a program outside the server that has a connector registration: it registers under its key, heartbeats, reports its runs, holds its registration, and keeps its state and agreements on the instance.
 - `inbound-webhooks.md`: a connector's inbound endpoints, the operation a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.

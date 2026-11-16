@@ -51,7 +51,7 @@ impl Outcome {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Last {
     pub outcome: String,
-    pub version: String,
+    pub release: String,
     pub finished_at: String,
     pub reason: Option<String>,
 }
@@ -105,7 +105,7 @@ impl Folder {
     pub fn end(&self, outcome: Outcome, version: &str, reason: Option<String>) {
         let last = Last {
             outcome: outcome.word().to_string(),
-            version: version.to_string(),
+            release: version.to_string(),
             finished_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
             reason,
         };
@@ -246,7 +246,7 @@ mod tests {
         assert!(record.pending().is_none());
         let last = record.last().unwrap();
         assert_eq!(
-            (last.outcome.as_str(), last.version.as_str()),
+            (last.outcome.as_str(), last.release.as_str()),
             ("succeeded", "0.0.75")
         );
         assert_eq!(fs::read_to_string(dir.join("bin/marfa")).unwrap(), "new");

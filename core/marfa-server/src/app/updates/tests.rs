@@ -62,7 +62,10 @@ impl Stand {
     }
 
     fn serve(&self, path: &str, body: Vec<u8>) {
-        self.routes.lock().unwrap().insert(path.to_string(), (200, body));
+        self.routes
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), (200, body));
     }
 
     fn url(&self, path: &str) -> String {
@@ -116,8 +119,14 @@ impl Case {
             apply_mode(&path);
         }
         let faults = Arc::new(Faults::default());
-        faults.set("release-feed", Some("http://127.0.0.1:9/latest")).unwrap();
-        Case { root, stand: Stand::start(), faults }
+        faults
+            .set("release-feed", Some("http://127.0.0.1:9/latest"))
+            .unwrap();
+        Case {
+            root,
+            stand: Stand::start(),
+            faults,
+        }
     }
 
     fn bin(&self) -> PathBuf {
@@ -133,7 +142,10 @@ impl Case {
     fn release(&self, files: &[(&str, String)], sum: Option<&str>, bytes: Option<u64>) -> Job {
         let packed = archive(files);
         let name = archive_name("0.0.75", "linux-x86_64");
-        let line = format!("{}  {name}\n", sum.map_or_else(|| hex_of(&packed), str::to_string));
+        let line = format!(
+            "{}  {name}\n",
+            sum.map_or_else(|| hex_of(&packed), str::to_string)
+        );
         let claimed = bytes.unwrap_or(packed.len() as u64);
         self.stand.serve("/archive", packed);
         self.stand.serve("/sums", line.into_bytes());
@@ -141,8 +153,14 @@ impl Case {
             from: "0.0.74".into(),
             version: "0.0.75".into(),
             archive_name: name,
-            archive: Asset { url: self.stand.url("/archive"), bytes: claimed },
-            checksums: Asset { url: self.stand.url("/sums"), bytes: 100 },
+            archive: Asset {
+                url: self.stand.url("/archive"),
+                bytes: claimed,
+            },
+            checksums: Asset {
+                url: self.stand.url("/sums"),
+                bytes: 100,
+            },
             programs: self.bin(),
             database: self.root.join("data/marfa.db"),
             record: self.record(),
@@ -166,10 +184,12 @@ impl Case {
             assert!(!previous_of(&self.bin(), name).exists(), "{name}");
         }
         assert!(self.record().pending().is_none());
-        let staged = fs::read_dir(self.bin())
-            .unwrap()
-            .flatten()
-            .any(|entry| entry.file_name().to_string_lossy().starts_with(".marfa-update-"));
+        let staged = fs::read_dir(self.bin()).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".marfa-update-")
+        });
         assert!(!staged, "the unpacking folder is removed");
     }
 }
@@ -207,7 +227,10 @@ async fn a_release_that_checks_out_replaces_both_programs_and_keeps_the_old_ones
         );
     }
     let pending = case.record().pending().unwrap();
-    assert_eq!((pending.from.as_str(), pending.to.as_str()), ("0.0.74", "0.0.75"));
+    assert_eq!(
+        (pending.from.as_str(), pending.to.as_str()),
+        ("0.0.74", "0.0.75")
+    );
     assert_eq!((pending.schema, pending.starts), (Some(1), 0));
     assert!(!case.bin().join(".marfa-update-0.0.75").exists());
 }
@@ -227,12 +250,14 @@ async fn a_checksum_file_with_no_line_or_two_lines_for_the_archive_is_refused() 
     let case = Case::new("lines");
     let job = case.release(&good(OPENS), None, None);
     let name = job.archive_name.clone();
-    case.stand.serve("/sums", b"abc  marfa-0.0.75-other.tar.gz\n".to_vec());
+    case.stand
+        .serve("/sums", b"abc  marfa-0.0.75-other.tar.gz\n".to_vec());
     let refused = case.run(job).await.unwrap_err();
     assert!(refused.contains("no line"), "{refused}");
     let job = case.release(&good(OPENS), None, None);
     let line = format!("{}  {name}\n", "1".repeat(64));
-    case.stand.serve("/sums", format!("{line}{line}").into_bytes());
+    case.stand
+        .serve("/sums", format!("{line}{line}").into_bytes());
     let refused = case.run(job).await.unwrap_err();
     assert!(refused.contains("more than once"), "{refused}");
     case.untouched();
@@ -267,8 +292,14 @@ async fn a_release_that_will_not_open_this_database_changes_nothing_and_says_the
     let refuses = "echo 'the database is not this build' >&2; exit 78";
     let job = case.release(&good(refuses), None, None);
     let refused = case.run(job).await.unwrap_err();
-    assert!(refused.contains("will not open this server's database"), "{refused}");
-    assert!(refused.contains("the database is not this build"), "{refused}");
+    assert!(
+        refused.contains("will not open this server's database"),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("the database is not this build"),
+        "{refused}"
+    );
     case.untouched();
 
     let job = case.release(&good("echo nonsense"), None, None);
@@ -298,7 +329,10 @@ async fn a_disk_with_too_little_room_is_refused_before_anything_is_downloaded() 
 
     let job = case.release(&good(OPENS), None, None);
     case.run(job).await.unwrap();
-    assert!(case.stand.asked() > before, "the witness: with room the same release is fetched");
+    assert!(
+        case.stand.asked() > before,
+        "the witness: with room the same release is fetched"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -333,8 +367,14 @@ fn a_second_request_while_one_runs_joins_it_and_the_update_runs_once() {
     updates.stage("checking");
     assert_eq!(
         updates.state(),
-        State::Fetching { version: "0.0.75".into(), stage: "checking" }
+        State::Fetching {
+            version: "0.0.75".into(),
+            stage: "checking"
+        }
     );
     updates.set(State::Idle);
-    assert!(updates.begin("0.0.75"), "the witness: once it ends another may start");
+    assert!(
+        updates.begin("0.0.75"),
+        "the witness: once it ends another may start"
+    );
 }

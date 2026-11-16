@@ -115,7 +115,10 @@ impl Instance {
         let response = self.control.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     fn point_at(&self, feed: &Feed) {
@@ -130,7 +133,10 @@ impl Instance {
             .local(Method::POST, "/housekeeping/release-check/run", json!({}))
             .await;
         assert_eq!(status, StatusCode::OK, "{run}");
-        assert_eq!(run["outcome"], "succeeded", "a failed check is no failed run: {run}");
+        assert_eq!(
+            run["outcome"], "succeeded",
+            "a failed check is no failed run: {run}"
+        );
         run
     }
 
@@ -150,12 +156,15 @@ async fn a_found_release_is_read_as_available_with_the_step_a_server_that_cannot
     assert_eq!(feed.asked(), 1, "the witness: the check asked");
 
     let update = instance.update().await;
-    assert_eq!(update["version"], "0.0.0");
-    assert_eq!(update["latest"]["version"], "0.0.75");
+    assert_eq!(update["release"], "0.0.0");
+    assert_eq!(update["latest"]["release"], "0.0.75");
     assert_eq!(update["latest"]["published_at"], "2026-11-16T09:30:00.000Z");
     assert_eq!(update["available"], true);
     assert_eq!(update["method"], "manual");
-    assert!(update["step"].as_str().unwrap().contains("0.0.75"), "{update}");
+    assert!(
+        update["step"].as_str().unwrap().contains("0.0.75"),
+        "{update}"
+    );
     assert!(update["checked_at"].is_string());
     assert_eq!(update["check_error"], Value::Null);
     assert_eq!(update["progress"]["state"], "idle");
@@ -191,7 +200,7 @@ async fn a_release_that_is_not_newer_is_not_available_and_not_offered() {
     instance.point_at(&feed);
     instance.check().await;
     let update = instance.update().await;
-    assert_eq!(update["latest"]["version"], "0.0.0");
+    assert_eq!(update["latest"]["release"], "0.0.0");
     assert_eq!(update["available"], false);
     assert_eq!(update["step"], Value::Null);
     let (status, refused) = instance.local(Method::POST, "/update", json!({})).await;
@@ -209,7 +218,10 @@ async fn a_failed_check_keeps_the_last_release_found_and_says_why() {
 
     let prerelease = json!({ "prerelease": true });
     let mut draft: Value = serde_json::from_str(&release("0.0.99")).unwrap();
-    draft.as_object_mut().unwrap().extend(prerelease.as_object().unwrap().clone());
+    draft
+        .as_object_mut()
+        .unwrap()
+        .extend(prerelease.as_object().unwrap().clone());
     for (status, body) in [
         (500, "boom".to_string()),
         (403, "rate limited".to_string()),
@@ -220,16 +232,19 @@ async fn a_failed_check_keeps_the_last_release_found_and_says_why() {
         feed.says(status, body.clone());
         instance.check().await;
         let update = instance.update().await;
-        assert_eq!(update["latest"]["version"], "0.0.75", "{status} {body}");
+        assert_eq!(update["latest"]["release"], "0.0.75", "{status} {body}");
         assert_eq!(update["checked_at"], found_at);
-        assert!(update["check_error"]["message"].is_string(), "{status} {body}: {update}");
+        assert!(
+            update["check_error"]["message"].is_string(),
+            "{status} {body}: {update}"
+        );
         assert_eq!(update["available"], true);
     }
 
     feed.says(200, release("0.0.80"));
     instance.check().await;
     let update = instance.update().await;
-    assert_eq!(update["latest"]["version"], "0.0.80");
+    assert_eq!(update["latest"]["release"], "0.0.80");
     assert_eq!(update["check_error"], Value::Null);
 }
 
@@ -246,7 +261,7 @@ async fn an_absent_github_leaves_the_last_release_and_never_fails_a_request() {
         .unwrap();
     instance.check().await;
     let update = instance.update().await;
-    assert_eq!(update["latest"]["version"], "0.0.75");
+    assert_eq!(update["latest"]["release"], "0.0.75");
     assert!(update["check_error"]["message"].is_string());
 }
 
@@ -262,7 +277,11 @@ async fn a_server_with_test_hooks_asks_nobody_until_a_fault_names_an_address() {
     let feed = Feed::start(200, release("0.0.75"));
     instance.point_at(&feed);
     instance.check().await;
-    assert_eq!(feed.asked(), 1, "the witness: the same job asks once an address is named");
+    assert_eq!(
+        feed.asked(),
+        1,
+        "the witness: the same job asks once an address is named"
+    );
 }
 
 #[tokio::test]
@@ -274,14 +293,24 @@ async fn turning_the_check_off_makes_no_request_and_reports_no_release() {
     assert_eq!(feed.asked(), 1, "the witness: the check asked while on");
 
     let (status, config) = instance
-        .local(Method::PATCH, "/config", json!({ "update_check_enabled": false }))
+        .local(
+            Method::PATCH,
+            "/config",
+            json!({ "update_check_enabled": false }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{config}");
     let (status, _) = instance
         .local(Method::POST, "/housekeeping/release-check/run", json!({}))
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "the job is not run while off");
-    let (_, listing) = instance.local(Method::GET, "/housekeeping", Value::Null).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the job is not run while off"
+    );
+    let (_, listing) = instance
+        .local(Method::GET, "/housekeeping", Value::Null)
+        .await;
     assert!(
         listing["data"]
             .as_array()
@@ -295,10 +324,18 @@ async fn turning_the_check_off_makes_no_request_and_reports_no_release() {
     assert_eq!(update["available"], false);
     let (status, refused) = instance.local(Method::POST, "/update", json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert_eq!(feed.asked(), 1, "no request was made while the check was off");
+    assert_eq!(
+        feed.asked(),
+        1,
+        "no request was made while the check was off"
+    );
 
     instance
-        .local(Method::PATCH, "/config", json!({ "update_check_enabled": true }))
+        .local(
+            Method::PATCH,
+            "/config",
+            json!({ "update_check_enabled": true }),
+        )
         .await;
     instance.check().await;
     assert_eq!(feed.asked(), 2);

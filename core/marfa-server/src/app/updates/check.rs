@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 use url::Url;
 
 use super::feed::Feed;
-use super::release::{self, Latest};
+use super::release::{self, Asset, Latest};
 use crate::app::App;
 use crate::app::faults::ReleaseFeed;
 use crate::app::housekeeping::{self, Report, Run};
@@ -27,21 +27,51 @@ pub fn enabled(app: &App) -> bool {
     app.settings.live().get(UPDATE_CHECK_ENABLED)
 }
 
-/// Why the last check did not find a release, and when.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Trouble {
-    pub at: String,
-    pub message: String,
-}
-
-/// What the job keeps between runs.
+/// What the job keeps between runs, as the flat values a housekeeping result holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Kept {
     /// When a check last found the newest release.
     pub checked_at: Option<String>,
-    pub latest: Option<Latest>,
-    /// Why the latest check failed; `None` once one succeeds.
-    pub error: Option<Trouble>,
+    pub version: Option<String>,
+    pub published_at: Option<String>,
+    pub archive_url: Option<String>,
+    pub archive_bytes: Option<u64>,
+    pub checksums_url: Option<String>,
+    pub checksums_bytes: Option<u64>,
+    /// When the latest check failed, and why; both `None` once one succeeds.
+    pub failed_at: Option<String>,
+    pub error: Option<String>,
+}
+
+impl Kept {
+    fn found(latest: Latest, at: String) -> Kept {
+        Kept {
+            checked_at: Some(at),
+            version: Some(latest.version),
+            published_at: Some(latest.published_at),
+            archive_url: latest.archive.as_ref().map(|asset| asset.url.clone()),
+            archive_bytes: latest.archive.map(|asset| asset.bytes),
+            checksums_url: latest.checksums.as_ref().map(|asset| asset.url.clone()),
+            checksums_bytes: latest.checksums.map(|asset| asset.bytes),
+            failed_at: None,
+            error: None,
+        }
+    }
+
+    pub fn latest(&self) -> Option<Latest> {
+        let asset = |url: &Option<String>, bytes: Option<u64>| {
+            Some(Asset {
+                url: url.clone()?,
+                bytes: bytes?,
+            })
+        };
+        Some(Latest {
+            version: self.version.clone()?,
+            published_at: self.published_at.clone()?,
+            archive: asset(&self.archive_url, self.archive_bytes),
+            checksums: asset(&self.checksums_url, self.checksums_bytes),
+        })
+    }
 }
 
 pub async fn kept(app: &App) -> Result<Kept> {
@@ -95,15 +125,12 @@ pub async fn job(app: Arc<App>, run: Run) -> Result<Report> {
     };
     let at = app.clock.stamp();
     let after = match found {
-        Ok(latest) => Kept {
-            checked_at: Some(at),
-            latest: Some(latest),
-            error: None,
-        },
+        Ok(latest) => Kept::found(latest, at),
         Err(message) => {
             tracing::warn!("The check for a new release failed: {message}");
             Kept {
-                error: Some(Trouble { at, message }),
+                failed_at: Some(at),
+                error: Some(message),
                 ..before
             }
         }

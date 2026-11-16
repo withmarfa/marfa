@@ -183,7 +183,7 @@ pub async fn status(app: &App) -> Result<Value> {
     } else {
         check::Kept::default()
     };
-    let newer = latest_newer(kept.latest.clone());
+    let newer = latest_newer(kept.latest());
     let (method, step) = match &newer {
         Some(newer) => {
             let capable = matches!(app.updates.install, Install::Service { .. })
@@ -209,9 +209,9 @@ pub async fn status(app: &App) -> Result<Value> {
         ),
     };
     let progress = match app.updates.state() {
-        State::Idle => json!({ "state": "idle", "version": null }),
-        State::Fetching { version, stage } => json!({ "state": stage, "version": version }),
-        State::Restarting { version } => json!({ "state": "restarting", "version": version }),
+        State::Idle => json!({ "state": "idle", "release": null }),
+        State::Fetching { version, stage } => json!({ "state": stage, "release": version }),
+        State::Restarting { version } => json!({ "state": "restarting", "release": version }),
     };
     let record = app.updates.record.clone();
     let (settling, last) = tokio::task::spawn_blocking(move || {
@@ -221,17 +221,20 @@ pub async fn status(app: &App) -> Result<Value> {
     .map_err(|_| Refusal::internal("the update's record did not read"))?;
     let progress = match settling {
         Some(pending) if progress["state"] == "idle" => {
-            json!({ "state": "settling", "version": pending.to })
+            json!({ "state": "settling", "release": pending.to })
         }
         _ => progress,
     };
     Ok(json!({
-        "version": Version::running().to_string(),
+        "release": Version::running().to_string(),
         "check_enabled": enabled,
         "checked_at": kept.checked_at,
-        "check_error": kept.error,
-        "latest": kept.latest.as_ref().map(|latest| json!({
-            "version": latest.version,
+        "check_error": kept.error.as_ref().map(|message| json!({
+            "at": kept.failed_at,
+            "message": message,
+        })),
+        "latest": kept.latest().map(|latest| json!({
+            "release": latest.version,
             "published_at": latest.published_at,
         })),
         "available": newer.is_some(),
@@ -249,7 +252,7 @@ pub async fn start(app: &Arc<App>) -> Result<Value> {
     } else {
         check::Kept::default()
     };
-    let Some(latest) = latest_newer(kept.latest) else {
+    let Some(latest) = latest_newer(kept.latest()) else {
         return Err(Refusal::new(
             Code::UpdateNotReady,
             "No release newer than the running one has been found.",
