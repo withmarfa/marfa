@@ -728,7 +728,7 @@ fn a_list_has_a_header_and_a_status_with_no_items_says_so() {
         "data": [{"tag": "work", "count": 3}, {"tag": "home", "count": 12}],
         "next_cursor": null,
     }))]);
-    let ran = run(&home, &door.url, &["metadata", "tags"]);
+    let ran = run(&home, &door.url, &["tags"]);
     assert_eq!(ran.stdout, "tag   items\nwork  3\nhome  12\n");
 
     let door = Door::open_at(|_| {

@@ -347,7 +347,7 @@ describe("profiles", () => {
         "--db",
         store,
         "hydrate",
-        "--types",
+        "--type",
         "core.note",
         "--tier",
         "library",
@@ -549,7 +549,7 @@ describe("profiles", () => {
   it("names the server and profile on stderr before the first write, under --json too, and nothing for a read", async () => {
     const origin = new URL(c.apiUrl).origin;
     const id = await note();
-    const tag = (word: string) => ["items", "tag", id, word];
+    const tag = (word: string) => ["items", "tags", "add", id, word];
 
     const written = await base.run(["--profile", "demo", ...tag("profiled")]);
     expect(written.code, written.stderr).toBe(0);
@@ -598,7 +598,7 @@ describe("profiles", () => {
       "--profile",
       "demo",
       "items",
-      "delete",
+      "trash",
       "00000000-0000-7000-8000-000000000000",
     ]);
     expect(refused.code).not.toBe(0);

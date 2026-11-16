@@ -22,7 +22,7 @@ fn every_passkey_command_refuses_remote_before_loading_credentials() {
     for args in [
         vec!["list"],
         vec!["rename", "p1", "--name", "Studio"],
-        vec!["remove", "p1"],
+        vec!["delete", "p1"],
         vec!["add", "--no-browser"],
     ] {
         let output = command()

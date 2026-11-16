@@ -39,7 +39,7 @@ describe("the exit codes", () => {
     await c.cli.json([
       ...device,
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -77,8 +77,11 @@ describe("the exit codes", () => {
     expect(report.stopped).toBeTruthy();
     expect(report.verdicts[0].id).toBe(pending.id);
     expect(report.verdicts[0].verdict).toBe("blocked");
-    const queue = await c.cli.json<Array<{ id: string }>>([...device, "queue"]);
-    expect(queue.some((write) => write.id === pending.id)).toBe(true);
+    const queue = await c.cli.json<{ data: Array<{ id: string }> }>([
+      ...device,
+      "queue",
+    ]);
+    expect(queue.data.some((write) => write.id === pending.id)).toBe(true);
   });
 
   it(
@@ -173,7 +176,7 @@ describe("the exit codes", () => {
     await c.cli.json([
       ...device,
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -230,7 +233,7 @@ describe("the exit codes", () => {
     await c.cli.json([
       ...device,
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -258,7 +261,7 @@ describe("the exit codes", () => {
         "--db",
         join(dir, "refused-key"),
         "hydrate",
-        "--types",
+        "--type",
         "core.note",
         "--tier",
         "library",
@@ -322,7 +325,7 @@ describe("the exit codes", () => {
     // A never-hydrated copy answers local reads, but has no cursor to catch up.
     expect(
       await c.cli.json(["device", "--db", store, "items", "list"]),
-    ).toEqual({ items: [], completeness: "complete" });
+    ).toEqual({ data: [], next_cursor: null, completeness: "complete" });
     const unhydrated = await c.cli.refused([
       "device",
       "--db",

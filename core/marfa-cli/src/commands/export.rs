@@ -27,13 +27,13 @@ pub struct ExportArgs {
     /// blobs.
     #[arg(long, value_name = "PATH")]
     pub output: Option<PathBuf>,
-    /// A type identifier; its subtypes are included.
+    /// A type identifier, with its subtypes; repeat it for more, up to ten.
     #[arg(long = "type", value_name = "TYPE")]
-    pub type_: Option<String>,
-    /// A state to answer; repeat it or separate states with commas. `any` is
+    pub types: Vec<String>,
+    /// A state to answer; repeat it for more. `any` is
     /// every state, and is given alone. Unset, an archive carries every state,
     /// the bin included, and `ndjson` every state but the bin.
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long)]
     pub state: Vec<StateFilter>,
     /// The source the items were written under.
     #[arg(long)]
@@ -83,7 +83,7 @@ fn request_waiting(args: &ExportArgs, archive_wait: Duration) -> Result<Request,
     };
     let request = Request::get(&["export"])
         .query("format", args.format.as_str())
-        .query_opt("type", args.type_.clone())
+        .query_list("type", &args.types)
         .query_opt("state", states)
         .query_opt("source", args.source.clone())
         .query_opt("occurred_after", args.occurred_after.clone())

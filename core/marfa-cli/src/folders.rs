@@ -48,12 +48,8 @@ pub enum FoldersCommand {
     List,
     /// List active folders in Marfa, using the owner's private local socket.
     Inventory {
-        /// Maximum number of folders on this page.
-        #[arg(long)]
-        limit: Option<u32>,
-        /// Continue from the previous page's next_cursor.
-        #[arg(long)]
-        cursor: Option<String>,
+        #[command(flatten)]
+        page: crate::commands::PageArgs,
     },
     /// Take a folder off this machine: its own state under `.marfa` goes,
     /// and its files stay as plain files. Empty administrative directories
@@ -160,7 +156,7 @@ pub enum FoldersCommand {
     /// Change a folder's settings on the server, each named one replaced whole.
     /// Omitted settings stay. Every accepted change removes stored properties
     /// the current folder type does not declare, including with --file or --body.
-    Change(folder_settings::ChangeArgs),
+    Update(folder_settings::UpdateArgs),
     /// Retire a folder's settings on the server. A revoked folder does not change.
     Revoke {
         /// The folder's `system.folder` id.
@@ -191,7 +187,7 @@ pub enum FoldersCommand {
         /// for other programs on the machine to read.
         dir: Option<PathBuf>,
         /// Stop after this long. Unset, it runs until interrupted.
-        #[arg(long, value_name = "SECONDS")]
+        #[arg(long = "for-seconds", value_name = "SECONDS")]
         r#for: Option<u64>,
         /// Write what the watch prints, and its errors, to this file in place
         /// of the terminal. A file of 1 MiB or more is moved to the same name
@@ -305,22 +301,22 @@ pub fn run(
                 },
             )
         }
-        FoldersCommand::Inventory { limit, cursor } => {
+        FoldersCommand::Inventory { page } => {
             let request = crate::remote::request::Request::get(&["folders"])
-                .query_opt("limit", limit.map(|n| n.to_string()))
-                .query_opt("cursor", cursor);
+                .query_opt("limit", page.limit.map(|n| n.to_string()))
+                .query_opt("cursor", page.cursor);
             let remote = match socket {
                 Some(path) => Remote::local(path)?,
                 None => Remote::resolve(named)?,
             };
-            Printer { json }.value(&remote.json(&request)?)
+            Printer { json }.value(&remote.pages(&request, page.all)?)
         }
         FoldersCommand::List => {
             let listed = match Registry::located() {
                 Some(registry) => registry.folders()?,
                 None => Vec::new(),
             };
-            output::report(&listed, json, || {
+            output::list_report(&listed, None, json, || {
                 if listed.is_empty() {
                     return "no folders on this machine".into();
                 }
@@ -647,7 +643,7 @@ pub fn run(
         }
         FoldersCommand::Autostart { command } => autostart::run(command, named, json),
         FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
-        FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
+        FoldersCommand::Update(args) => send(folder_settings::update_request(&args)?, named, json),
         FoldersCommand::Revoke { id, idempotency } => send(
             folder_settings::revoke_request(&id, &idempotency),
             named,

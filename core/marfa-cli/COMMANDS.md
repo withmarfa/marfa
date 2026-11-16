@@ -15,7 +15,7 @@ Every command accepts these.
 | `--key <KEY>` | A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is readable by other users of the machine and stays in shell history. Falls back to MARFA_API_KEY, which a --url for another server than MARFA_API_URL names does not use, then to the keychain: the file MARFA_KEYCHAIN names, where it names one, unless the keychain is off. MARFA_PROFILE is not read beside it. |
 | `--no-keychain` | Treat the keychain as absent: read nothing from it and write nothing to it, so the server and the key must come from --url, --key, MARFA_API_URL or MARFA_API_KEY, or a profile with a key_command. A command that needs to keep something refuses. MARFA_NO_KEYCHAIN=1 does the same. |
 | `--allow-http` | Send a credential over plain http to a host that is not this machine without the warning, for a network that is private. MARFA_ALLOW_HTTP=1 does the same. |
-| `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. Item properties, edges, tags, search, counts, events and exports still need a key. `items summaries`, `items bin`, the `blobs` commands and bulk-action job status and cancel do not. |
+| `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. Item properties, edges, tags, search, counts, events and exports still need a key. `items summaries`, `items bin`, `items trash`, `items restore` and `items purge` of one item, the `blobs` commands and bulk-action job status and cancel do not. |
 | `--json` | Print the answer as JSON. A refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line. |
 
 `marfa` itself also accepts these.
@@ -88,21 +88,21 @@ The instance draws no owner console, so each task an owner has is a command. Mos
 | Rename a sign-in | `marfa sign-ins rename` |
 | End one sign-in | `marfa sign-ins end` |
 | End every sign-in of a kind at once | `marfa sign-ins end-all` |
-| List, narrow and disconnect a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps disconnect` |
-| Read and change the owner's email, name and picture, or clear the picture | `marfa owner show`, `marfa owner update`, `marfa owner picture` |
-| Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys rename`, `marfa owner passkeys remove` |
+| List, narrow and revoke a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps revoke` |
+| Read and change the owner's email, name and avatar, or clear the avatar | `marfa owner show`, `marfa owner update`, `marfa owner avatar` |
+| Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
 | Set a new owner password | `marfa owner recover` |
 | Claim a new instance | `marfa setup status`, `marfa setup code`, `marfa setup open`, `marfa setup claim` |
 | Read and change the profile apps show | `marfa profile show`, `marfa profile update` |
 | See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
 | Remove a connector | `marfa connectors delete` |
 | Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
-| List, make, change and revoke folders, and read their sync reports | `marfa folders inventory`, `marfa folders create`, `marfa folders change`, `marfa folders revoke`, `marfa folders health` |
+| List, make, update and revoke folders, and read their sync reports | `marfa folders inventory`, `marfa folders create`, `marfa folders update`, `marfa folders revoke`, `marfa folders health` |
 | Manage webhooks and their deliveries | `marfa webhooks create`, `marfa webhooks list`, `marfa webhooks get`, `marfa webhooks update`, `marfa webhooks delete`, `marfa webhooks deliveries`, `marfa webhooks redeliver` |
 | Read the audit log | `marfa audit` |
 | List and run the housekeeping jobs | `marfa housekeeping list`, `marfa housekeeping run` |
 | Manage blob stores and copies | `marfa blobs stores`, `marfa blobs copies`, `marfa blobs delete-copy`, `marfa blobs orphans` |
-| Empty and restore the bin | `marfa items bin list`, `marfa items bin restore`, `marfa items bin purge`, `marfa items bin empty` |
+| Trash, restore and purge an item, and empty the bin | `marfa items trash`, `marfa items restore`, `marfa items purge`, `marfa items bin list`, `marfa items bin empty` |
 | Export and restore the instance | `marfa export`, `marfa restore` |
 
 ## status
@@ -281,12 +281,12 @@ marfa owner passkeys rename [OPTIONS] --name <NAME> <ID>
 | --- | --- |
 | `--name <NAME>` | The new name. Spaces at each end are trimmed. |
 
-### marfa owner passkeys remove
+### marfa owner passkeys delete
 
-Remove one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
+Delete one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
 
 ```text
-marfa owner passkeys remove [OPTIONS] <ID>
+marfa owner passkeys delete [OPTIONS] <ID>
 ```
 
 | Argument | Description |
@@ -319,7 +319,7 @@ marfa owner recover [OPTIONS]
 
 ### marfa owner update
 
-Change the owner's email, display name, or picture (private socket required).
+Change the owner's email, display name, or avatar (private socket required).
 
 ```text
 marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--clear-avatar>
@@ -329,24 +329,24 @@ marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--cl
 | --- | --- |
 | `--email <EMAIL>` | The email address the owner uses to sign in. |
 | `--name <NAME>` | The owner's display name. |
-| `--avatar <FILE>` | A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes. |
-| `--clear-avatar` | Remove the owner's picture. |
+| `--avatar <FILE>` | A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes. |
+| `--clear-avatar` | Remove the owner's avatar. |
 
-### marfa owner picture
+### marfa owner avatar
 
-Fetch the owner's picture.
+Fetch the owner's avatar.
 
 ```text
-marfa owner picture [OPTIONS]
+marfa owner avatar [OPTIONS]
 ```
 
 | Option | Description |
 | --- | --- |
-| `--output <PATH>` | Where to write the picture. Omitted, its bytes go to stdout. |
+| `--output <PATH>` | Where to write the avatar. Omitted, its bytes go to stdout. |
 
 ## profile
 
-The owner's name and picture, changed with a key or app's profile write permission.
+The owner's name and avatar, changed with a key or app's profile write permission.
 
 ### marfa profile
 
@@ -373,12 +373,12 @@ marfa profile update [OPTIONS] <--name <NAME>|--avatar <FILE>|--clear-avatar>
 | Option | Description |
 | --- | --- |
 | `--name <NAME>` | The owner's new display name. |
-| `--avatar <FILE>` | A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes. |
-| `--clear-avatar` | Remove the owner's picture. |
+| `--avatar <FILE>` | A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes. |
+| `--clear-avatar` | Remove the owner's avatar. |
 
 ## apps
 
-List, narrow or disconnect approved apps.
+List, narrow or revoke approved apps.
 
 ### marfa apps
 
@@ -411,12 +411,12 @@ marfa apps narrow [OPTIONS] <ID>
 | `--scope <SCOPE>` | One scope to keep; repeat for the complete resulting set. |
 | `--clear` | Remove every scope. |
 
-### marfa apps disconnect
+### marfa apps revoke
 
 End an app's grant. Requires grants.manage or private machine authority.
 
 ```text
-marfa apps disconnect [OPTIONS] <ID>
+marfa apps revoke [OPTIONS] <ID>
 ```
 
 | Argument | Description |
@@ -507,13 +507,13 @@ marfa items list [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. |
+| `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--tier <TIER>` | One tier, or `all`. One of `library`, `feed`, `all`. |
 | `--tag <TAG>` | Items must carry every tag given. |
 | `--filter <FILTER>` | A property filter in the server's filter grammar. |
-| `--sort <SORT>` | The field to order by; the server's default is the creation time. One of `created-at`, `updated-at`, `occurred-at`. |
+| `--sort <SORT>` | The field to order by: `created-at` (the server's default), `updated-at`, `occurred-at`, `last-activity-at` or `properties.<name>`. |
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is newest first. One of `asc`, `desc`. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
@@ -535,14 +535,14 @@ marfa items summaries [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--type <TYPE>` | Only items of this exact type. |
-| `--q <Q>` | Text to find in item names, ignoring case. |
+| `--query <QUERY>` | Text to find in item names, ignoring case. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa items bin
 
-Manage the bin through direct local authority. Use `--socket`.
+Read and empty the bin through direct local authority. Use `--socket`.
 
 ```text
 marfa items bin [OPTIONS] <COMMAND>
@@ -559,70 +559,22 @@ marfa items bin list [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--type <TYPE>` | Only this exact item type. |
-| `--q <Q>` | Match item names, ignoring case. |
+| `--query <QUERY>` | Match item names, ignoring case. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
-
-### marfa items bin move
-
-Move the item and its cascading children into the bin.
-
-```text
-marfa items bin move [OPTIONS] --version <VERSION> <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The item ID from the summary listing. |
-
-| Option | Description |
-| --- | --- |
-| `--version <VERSION>` | The item version from the summary listing. |
-
-### marfa items bin restore
-
-Take the item and the children its move to the bin took out of it.
-
-```text
-marfa items bin restore [OPTIONS] --version <VERSION> <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The item ID from the summary listing. |
-
-| Option | Description |
-| --- | --- |
-| `--version <VERSION>` | The item version from the summary listing. |
-
-### marfa items bin purge
-
-Permanently delete one item that is still in the bin.
-
-```text
-marfa items bin purge [OPTIONS] --version <VERSION> <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The item ID from the summary listing. |
-
-| Option | Description |
-| --- | --- |
-| `--version <VERSION>` | The item version from the summary listing. |
 
 ### marfa items bin empty
 
 Permanently delete everything in the bin, 200 at a time, and say how many have gone as it does. It stops where a deletion could not be confirmed; run it again to carry on, as an interrupted run is safe to repeat. Items that changed meanwhile stay in the bin, and it says how many. If a batch fails, the error says how many had gone, and with --json carries the count as "purged".
 
 ```text
-marfa items bin empty [OPTIONS] --confirm <CONFIRM>
+marfa items bin empty [OPTIONS] --confirm <WORD>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--confirm <CONFIRM>` | Confirm permanent deletion with `PURGE`. One of `PURGE`. |
+| `--confirm <WORD>` | Confirm permanent deletion with `PURGE`. One of `PURGE`. |
 
 ### marfa items get
 
@@ -638,7 +590,7 @@ marfa items get [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--include <LIST>` | Extra to hydrate onto the item: `edges`, `metadata`, or both comma-separated. |
+| `--include <NAME>` | Extra to hydrate onto the item: `edges`, `metadata`; repeat it for both. |
 
 ### marfa items create
 
@@ -693,27 +645,28 @@ marfa items update [OPTIONS] --version <VERSION> <ID>
 | `--conflict <CONFLICT>` | How a colliding write is settled: `auto` asks the server to resolve within its own transaction. One of `auto`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
-### marfa items delete
+### marfa items trash
 
-Move one or more items to the bin, all of them or none.
+Move one or more items to the bin, all of them or none. With `--socket`, name one item and its `--version` from `items summaries`.
 
 ```text
-marfa items delete [OPTIONS] <IDS>...
+marfa items trash [OPTIONS] <ID>...
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<IDS>...` | One or more item ids, up to 20. |
+| `<ID>...` | One or more item ids, up to 20. |
 
 | Option | Description |
 | --- | --- |
-| `--dry-run` | Show what the delete would move to the bin, the items beneath included, and move nothing. |
-| `--digest <DIGEST>` | The digest `--dry-run` gave for the same ids. If what the delete would move to the bin has changed since, nothing is moved. |
+| `--version <VERSION>` | The version you read, for one item. If the item has changed since, nothing is moved. With `--socket` it is required. |
+| `--dry-run` | Show what the trash would move to the bin, the items beneath included, and move nothing. |
+| `--digest <DIGEST>` | The digest `--dry-run` gave for the same ids. If what the trash would move to the bin has changed since, nothing is moved. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items restore
 
-Take an item out of the bin.
+Take an item out of the bin. With `--socket`, name its `--version` from `items bin list`.
 
 ```text
 marfa items restore [OPTIONS] <ID>
@@ -725,6 +678,7 @@ marfa items restore [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
+| `--version <VERSION>` | The version you read. If the item has changed since, nothing is restored. With `--socket` it is required. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items transition
@@ -746,7 +700,7 @@ marfa items transition [OPTIONS] --state <STATE> <ID>
 
 ### marfa items purge
 
-Destroy an item in the bin irrecoverably. Needs `items.purge`.
+Destroy an item in the bin irrecoverably. Needs `items.purge`. With `--socket`, name its `--version` from `items bin list`.
 
 ```text
 marfa items purge [OPTIONS] <ID>
@@ -758,6 +712,7 @@ marfa items purge [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
+| `--version <VERSION>` | The version you read before the item went to the bin. If the item has changed since, nothing is purged. With `--socket` it is required. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items versions
@@ -778,12 +733,20 @@ marfa items versions [OPTIONS] <ID>
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
-### marfa items tag
+### marfa items tags
+
+An item's tags: add, remove or replace them.
+
+```text
+marfa items tags [OPTIONS] <COMMAND>
+```
+
+### marfa items tags add
 
 Put tags on an item.
 
 ```text
-marfa items tag [OPTIONS] <ID> <TAGS>...
+marfa items tags add [OPTIONS] <ID> <TAGS>...
 ```
 
 | Argument | Description |
@@ -796,12 +759,12 @@ marfa items tag [OPTIONS] <ID> <TAGS>...
 | `--version <VERSION>` | The item version you read. If the item has changed since, no tag is added. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
-### marfa items untag
+### marfa items tags remove
 
 Take one tag off an item.
 
 ```text
-marfa items untag [OPTIONS] <ID> <TAG>
+marfa items tags remove [OPTIONS] <ID> <TAG>
 ```
 
 | Argument | Description |
@@ -812,6 +775,23 @@ marfa items untag [OPTIONS] <ID> <TAG>
 | Option | Description |
 | --- | --- |
 | `--version <VERSION>` | The item version you read. If the item has changed since, the tag stays. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
+
+### marfa items tags replace
+
+Write an item's tags whole, dropping any not named; none at all clears them.
+
+```text
+marfa items tags replace [OPTIONS] <ID> [TAGS]...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The item id. |
+| `[TAGS]...` | The tags the item is to carry. |
+
+| Option | Description |
+| --- | --- |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items edges
@@ -938,12 +918,12 @@ marfa items bulk [OPTIONS] --file <PATH>
 Read many items by id in one request.
 
 ```text
-marfa items bulk-get [OPTIONS] <IDS>...
+marfa items bulk-get [OPTIONS] <ID>...
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<IDS>...` | The item ids. |
+| `<ID>...` | The item ids. |
 
 | Option | Description |
 | --- | --- |
@@ -1007,12 +987,15 @@ marfa items bulk-action [OPTIONS] <COMMAND>
 Move every matching item to a state.
 
 ```text
-marfa items bulk-action transition [OPTIONS] --to <STATE>
+marfa items bulk-action transition [OPTIONS] <STATE>
 ```
+
+| Argument | Description |
+| --- | --- |
+| `<STATE>` | The state to move them to. The options below select which items move, so `--state` there is the state they are in now. One of `active`, `archived`, `trashed`. |
 
 | Option | Description |
 | --- | --- |
-| `--to <STATE>` | The state to move them to. One of `active`, `archived`, `trashed`. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--state <STATE>` | One state. Unset excludes the bin, as a listing does; there is no `any` on this operation. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--source <SOURCE>` | The source the items were written under. |
@@ -1035,7 +1018,7 @@ marfa items bulk-action purge [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--confirm <PURGE>` | The word `PURGE`, because the operation asks for it out loud. |
+| `--confirm <WORD>` | The word `PURGE`, because the operation asks for it out loud. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--state <STATE>` | One state. Unset excludes the bin, as a listing does; there is no `any` on this operation. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--source <SOURCE>` | The source the items were written under. |
@@ -1077,12 +1060,15 @@ marfa items bulk-action tags [OPTIONS]
 Move every matching item to a tier.
 
 ```text
-marfa items bulk-action tier [OPTIONS] --to <TIER>
+marfa items bulk-action tier [OPTIONS] <TIER>
 ```
+
+| Argument | Description |
+| --- | --- |
+| `<TIER>` | The tier to move them to. The options below select which items move, so `--tier` there is the tier they are in now. One of `library`, `feed`. |
 
 | Option | Description |
 | --- | --- |
-| `--to <TIER>` | The tier to move them to. One of `library`, `feed`. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--state <STATE>` | One state. Unset excludes the bin, as a listing does; there is no `any` on this operation. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--source <SOURCE>` | The source the items were written under. |
@@ -1492,8 +1478,8 @@ marfa search [OPTIONS] <QUERY>
 
 | Option | Description |
 | --- | --- |
-| `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers the active state; the bin is never searched. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. |
+| `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset answers the active state; the bin is never searched. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--tier <TIER>` | One tier, or `all`. One of `library`, `feed`, `all`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
@@ -1509,39 +1495,14 @@ marfa search [OPTIONS] <QUERY>
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
-## metadata
+## tags
 
-An item's tags and the namespaces it carries, and every tag in use.
+Every distinct tag in use on the instance. An item's own tags are under `items tags`.
 
-### marfa metadata
-
-```text
-marfa metadata [OPTIONS] <COMMAND>
-```
-
-### marfa metadata replace
-
-Write an item's tags whole, dropping any not named.
+### marfa tags
 
 ```text
-marfa metadata replace [OPTIONS] <ID>
-```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The item id. |
-
-| Option | Description |
-| --- | --- |
-| `--tag <TAG>` | A tag, repeatable; none at all clears them. |
-| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
-
-### marfa metadata tags
-
-Every distinct tag in use on the instance.
-
-```text
-marfa metadata tags [OPTIONS]
+marfa tags [OPTIONS]
 ```
 
 ## extensions
@@ -1630,12 +1591,12 @@ marfa tables [OPTIONS] <COMMAND>
 The tables an item's type declares, with how many rows the item holds in each and when one last changed.
 
 ```text
-marfa tables list [OPTIONS] <ITEM>
+marfa tables list [OPTIONS] <ID>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 
 ## rows
 
@@ -1652,12 +1613,12 @@ marfa rows [OPTIONS] <COMMAND>
 One page of a table's rows, in the table's own order unless a sort is given, and by id for a table that names none. Pass the answer's `next_cursor` as `--cursor` for the next page.
 
 ```text
-marfa rows list [OPTIONS] <ITEM> <TABLE>
+marfa rows list [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -1674,12 +1635,12 @@ marfa rows list [OPTIONS] <ITEM> <TABLE>
 One row of a table.
 
 ```text
-marfa rows get [OPTIONS] <ITEM> <TABLE> <ROW>
+marfa rows get [OPTIONS] <ID> <TABLE> <ROW>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<ROW>` | The row id. |
 
@@ -1688,12 +1649,12 @@ marfa rows get [OPTIONS] <ITEM> <TABLE> <ROW>
 Apply a batch of `put`, `patch` and `delete` operations to a table, all of them or none. The batch is a JSON object holding `operations`, up to 1000, applied in order.
 
 ```text
-marfa rows write [OPTIONS] <ITEM> <TABLE>
+marfa rows write [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -1707,12 +1668,12 @@ marfa rows write [OPTIONS] <ITEM> <TABLE>
 Write one whole row: create it, or replace the row `--id` names.
 
 ```text
-marfa rows put [OPTIONS] --values <JSON> <ITEM> <TABLE>
+marfa rows put [OPTIONS] --values <JSON> <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -1726,12 +1687,12 @@ marfa rows put [OPTIONS] --values <JSON> <ITEM> <TABLE>
 Set the columns named on one row, leaving the others as they are. A `null` value clears a column.
 
 ```text
-marfa rows patch [OPTIONS] --values <JSON> <ITEM> <TABLE> <ROW>
+marfa rows patch [OPTIONS] --values <JSON> <ID> <TABLE> <ROW>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<ROW>` | The row id. |
 
@@ -1745,12 +1706,12 @@ marfa rows patch [OPTIONS] --values <JSON> <ITEM> <TABLE> <ROW>
 Delete one or more rows, all of them or none. A row that is not there is answered `absent`.
 
 ```text
-marfa rows delete [OPTIONS] <ITEM> <TABLE> <ROWS>...
+marfa rows delete [OPTIONS] <ID> <TABLE> <ROWS>...
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<ROWS>...` | One or more row ids. |
 
@@ -1763,12 +1724,12 @@ marfa rows delete [OPTIONS] <ITEM> <TABLE> <ROWS>...
 How many rows a filter selects, and the total of each column that names `adds_up`.
 
 ```text
-marfa rows totals [OPTIONS] <ITEM> <TABLE>
+marfa rows totals [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -1780,12 +1741,12 @@ marfa rows totals [OPTIONS] <ITEM> <TABLE>
 One page of the batches a table's change log holds, newest first, with how many rows each changed and the batch it undid. Pass the answer's `next_cursor` as `--cursor` for the next page.
 
 ```text
-marfa rows batches [OPTIONS] <ITEM> <TABLE>
+marfa rows batches [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -1799,12 +1760,12 @@ marfa rows batches [OPTIONS] <ITEM> <TABLE>
 Put back every row a batch changed as it was before the batch, all of them or none, as a new batch. Undo an undo to redo it.
 
 ```text
-marfa rows undo [OPTIONS] <ITEM> <TABLE> <BATCH>
+marfa rows undo [OPTIONS] <ID> <TABLE> <BATCH>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<BATCH>` | The batch id, as a write or `rows batches` answers it. |
 
@@ -1868,7 +1829,7 @@ marfa blobs url [OPTIONS] <HASH>
 
 | Option | Description |
 | --- | --- |
-| `--ttl <TTL>` | How long the link lives, in seconds. |
+| `--ttl-seconds <SECONDS>` | How long the link lives, in seconds. |
 
 ### marfa blobs stores
 
@@ -2061,14 +2022,14 @@ marfa sources get [OPTIONS] <SOURCE>
 | --- | --- |
 | `<SOURCE>` | The source code, as items carry it in `source`. |
 
-### marfa sources set
+### marfa sources update
 
-Set the name or mark a source is shown by. A key can set its own source and the sources it claims; any other needs keys.manage.
+Change the name or mark a source is shown by. A key can change its own source and the sources it claims; any other needs keys.manage.
 
 The mark is an Iconify icon ID from the sets a type's icon uses: `lucide`, such as `lucide:book-open`, or `simple-icons` for brand marks, such as `simple-icons:github`.
 
 ```text
-marfa sources set [OPTIONS] <SOURCE>
+marfa sources update [OPTIONS] <SOURCE>
 ```
 
 | Argument | Description |
@@ -2082,7 +2043,7 @@ marfa sources set [OPTIONS] <SOURCE>
 
 ### marfa sources clear
 
-Clear a source's name or mark, so the name falls back to the app's sign-in name, the key's label or the code. Needs the same access as `set`.
+Clear a source's name or mark, so the name falls back to the app's sign-in name, the key's label or the code. Needs the same access as `update`.
 
 ```text
 marfa sources clear [OPTIONS] <SOURCE>
@@ -2184,8 +2145,8 @@ marfa export [OPTIONS]
 | --- | --- |
 | `--format <FORMAT>` | `archive` for the whole instance, the default, or `ndjson` for items one per line, which leaves out tables, settings and files. One of `ndjson`, `archive`. Default: `archive`. |
 | `--output <PATH>` | Where to write. Omitted, the export goes to stdout, which an archive refuses when stdout is a terminal. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
-| `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset, an archive carries every state, the bin included, and `ndjson` every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. |
+| `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset, an archive carries every state, the bin included, and `ndjson` every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
@@ -2295,12 +2256,12 @@ marfa views create [OPTIONS]
 | `--group <JSON>` | How the view groups its items, as a JSON object: `by`, and optionally `bucket`, `order` and `hidden`. `null` removes the grouping, on a change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
-### marfa views change
+### marfa views update
 
 Change a view's settings, each named one replaced whole.
 
 ```text
-marfa views change [OPTIONS] --version <VERSION> <ID>
+marfa views update [OPTIONS] --version <VERSION> <ID>
 ```
 
 | Argument | Description |
@@ -2381,12 +2342,12 @@ Register a subscription. The secret is answered once, in plaintext.
 The secret leads the output on a line of its own, as `keys create` leads with a new key, and with `--json` it is the `secret` field. A secret given with `--secret` is not printed back.
 
 ```text
-marfa webhooks create [OPTIONS] --to <URL> --event <EVENT>
+marfa webhooks create [OPTIONS] --delivery-url <URL> --event <EVENT>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--to <URL>` | Where to deliver. Named `--to` rather than `--url`, which is the server. |
+| `--delivery-url <URL>` | Where to deliver. Named `--delivery-url` because `--url` is the server. |
 | `--event <EVENT>` | An event name from the vocabulary, repeatable; `*` is refused. |
 | `--type-filter <TYPE>` | Only events for items of this type. |
 | `--secret <SECRET>` | The secret deliveries are signed with. Omitted, the server mints one. |
@@ -2425,7 +2386,7 @@ marfa webhooks update [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--to <URL>` | Where to deliver. Named `--to` rather than `--url`, which is the server. |
+| `--delivery-url <URL>` | Where to deliver. Named `--delivery-url` because `--url` is the server. |
 | `--event <EVENT>` | The events, whole; repeatable. |
 | `--type-filter <TYPE>` | Only events for items of this type. |
 | `--active` | Resume deliveries. |
@@ -2458,6 +2419,8 @@ marfa webhooks deliveries [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa webhooks redeliver
 
@@ -2509,8 +2472,8 @@ marfa events [OPTIONS]
 | --- | --- |
 | `--type <TYPE>` | A type identifier to narrow to, repeatable up to ten; subtypes are included. |
 | `--edges <EDGES>` | Whether edge events ride along: `all` (the default) or `none`. One of `all`, `none`. |
-| `--from <CURSOR>` | Resume from this cursor, replaying what the log holds after it. |
-| `--for <SECONDS>` | Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends. |
+| `--cursor <CURSOR>` | Resume from this cursor, replaying what the log holds after it. |
+| `--for-seconds <SECONDS>` | Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends. |
 
 ## attention
 
@@ -2954,12 +2917,12 @@ A hydration that stopped before it finished carries on from the page it had reac
 A copy whose cursor the server's event log no longer holds is filled again in place for the same slice, server and key: it keeps answering, marked stale, and takes writes to the items it holds and new ones, which wait to be sent, until the hydration finishes and removes the items the server no longer lists. Any other hydration empties the copy first. Until the copy is whole, a write to an edge is refused `hydration_incomplete`, since a page still to arrive could bring the server's edge in place of the one the write was made against.
 
 ```text
-marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
+marfa device hydrate [OPTIONS] --type <TYPE> --tier <TIER>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--types <TYPE>` | Comma-separated type identifiers, such as core.note,core.file, or `*` alone for every type but `system.*`, hydrated in one pass without reading the catalog first. |
+| `--type <TYPE>` | A type identifier, repeatable, such as core.note, or `*` alone for every type but `system.*`, hydrated in one pass without reading the catalog first. |
 | `--tier <TIER>` | The tier to hold the slice at, or `all` for both. One of `library`, `feed`, `all`. |
 | `--edge-type <TYPE>` | An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds. Repeatable. |
 | `--in-place-only` | Fill only a copy whose cursor aged out, and only in place. Where the instance, the key's reach or the slice has changed, the server was restored to an earlier point, or the copy is not waiting to be filled again, the hydration is refused copy_expired with the reason before it changes anything, and the copy, its queue and its files stay as they were. Where the server refuses the key or its reach, the stale copy still ends, keeping the queue: `device status` then shows its hydration as expired, where a refused fill leaves a stale copy stale. |
@@ -3018,7 +2981,7 @@ marfa device follow [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--for <SECONDS>` | Stop after this many seconds; without it, follow until interrupted. Either way it ends with its report. |
+| `--for-seconds <SECONDS>` | Stop after this many seconds; without it, follow until interrupted. Either way it ends with its report. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3034,7 +2997,7 @@ marfa device watch [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--for <SECONDS>` | Stop after this many seconds; without it, watch until interrupted. |
+| `--for-seconds <SECONDS>` | Stop after this many seconds; without it, watch until interrupted. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3048,7 +3011,7 @@ marfa device changes [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--for <SECONDS>` | Stop after this many seconds; without it, watch until interrupted. |
+| `--for-seconds <SECONDS>` | Stop after this many seconds; without it, watch until interrupted. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -3091,9 +3054,8 @@ marfa device items list [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--type <TYPE>` | A type identifier, with its subtypes; repeat it or separate types with commas, up to ten. |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
-| `--all-states` | Every state, not just the active one. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. |
+| `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--tier <TIER>` | Only items at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Items must carry every tag given. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
@@ -3200,12 +3162,12 @@ marfa device items update [OPTIONS] <ID>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
-### marfa device items delete
+### marfa device items trash
 
-Move an item to the bin locally and queue the delete.
+Move an item to the bin locally and queue the trash.
 
 ```text
-marfa device items delete [OPTIONS] <ID>
+marfa device items trash [OPTIONS] <ID>
 ```
 
 | Argument | Description |
@@ -3459,12 +3421,12 @@ marfa device folders create [OPTIONS]
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
-### marfa device folders change
+### marfa device folders update
 
 Change a folder's settings through the folder operations, at once, each named one replaced whole. Omitted settings stay. Every accepted change removes stored properties the current folder type does not declare.
 
 ```text
-marfa device folders change [OPTIONS] --version <VERSION> <ID>
+marfa device folders update [OPTIONS] --version <VERSION> <ID>
 ```
 
 | Argument | Description |
@@ -3599,12 +3561,12 @@ marfa device tables hold [OPTIONS] <TYPE> <TABLE>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
-### marfa device tables let-go
+### marfa device tables forget
 
 Stop holding a table, removing the rows the copy holds of it.
 
 ```text
-marfa device tables let-go [OPTIONS] <TYPE> <TABLE>
+marfa device tables forget [OPTIONS] <TYPE> <TABLE>
 ```
 
 | Argument | Description |
@@ -3649,12 +3611,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 One page of a table's rows, as `marfa rows list` answers it.
 
 ```text
-marfa device rows list [OPTIONS] <ITEM> <TABLE>
+marfa device rows list [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -3673,12 +3635,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Queue a batch of `put`, `patch` and `delete` operations for a table, all of them or none, as `marfa rows write` takes it. Where the copy holds the table whole, its rows show the batch at once.
 
 ```text
-marfa device rows write [OPTIONS] <ITEM> <TABLE>
+marfa device rows write [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -3693,12 +3655,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Queue an undo of a batch, as `marfa rows undo` sends it. The rows it puts back reach the copy with its `rows.changed`.
 
 ```text
-marfa device rows undo [OPTIONS] <ITEM> <TABLE> <BATCH>
+marfa device rows undo [OPTIONS] <ID> <TABLE> <BATCH>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<BATCH>` | The batch id, as a write's answer names it. |
 
@@ -3709,12 +3671,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 One row of a table.
 
 ```text
-marfa device rows get [OPTIONS] <ITEM> <TABLE> <ROW>
+marfa device rows get [OPTIONS] <ID> <TABLE> <ROW>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<ROW>` | The row id. |
 
@@ -3725,12 +3687,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 How many rows a filter selects, and the total of each column that names `adds_up`.
 
 ```text
-marfa device rows totals [OPTIONS] <ITEM> <TABLE>
+marfa device rows totals [OPTIONS] <ID> <TABLE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TABLE>` | The table name. |
 
 | Option | Description |
@@ -3755,9 +3717,8 @@ marfa device search [OPTIONS] <QUERY>
 
 | Option | Description |
 | --- | --- |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`. |
-| `--all-states` | Every state, not just the active one. |
-| `--type <TYPE>` | A type identifier, with its subtypes; repeat it or separate types with commas, up to ten. |
+| `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. |
 | `--tier <TIER>` | Only hits at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
@@ -4075,12 +4036,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 The edges the copy holds from one item.
 
 ```text
-marfa device edges list [OPTIONS] <ITEM>
+marfa device edges list [OPTIONS] <ID>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item the edges start from. |
+| `<ID>` | The item the edges start from. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4089,12 +4050,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 The edges the copy holds to one item.
 
 ```text
-marfa device edges to [OPTIONS] <ITEM>
+marfa device edges to [OPTIONS] <ID>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item the edges point at. |
+| `<ID>` | The item the edges point at. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4203,12 +4164,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Put one tag on an item.
 
 ```text
-marfa device tags add [OPTIONS] <ITEM> <TAG>
+marfa device tags add [OPTIONS] <ID> <TAG>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TAG>` | The tag. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -4218,41 +4179,28 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Take one tag off an item.
 
 ```text
-marfa device tags remove [OPTIONS] <ITEM> <TAG>
+marfa device tags remove [OPTIONS] <ID> <TAG>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<TAG>` | The tag. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
-### marfa device metadata
+### marfa device tags replace
 
-An item's metadata, written whole.
-
-```text
-marfa device metadata [OPTIONS] <COMMAND>
-```
-
-Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
-
-### marfa device metadata replace
-
-Write the item's tags whole, dropping any not named.
+Write the item's tags whole, dropping any not named; none at all clears them.
 
 ```text
-marfa device metadata replace [OPTIONS] <ITEM>
+marfa device tags replace [OPTIONS] <ID> [TAGS]...
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
-
-| Option | Description |
-| --- | --- |
-| `--tag <TAG>` | A tag, repeatable. |
+| `<ID>` | The item id. |
+| `[TAGS]...` | The tags the item is to carry. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4271,12 +4219,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Write one extension namespace.
 
 ```text
-marfa device extensions write [OPTIONS] <ITEM> <NAMESPACE>
+marfa device extensions write [OPTIONS] <ID> <NAMESPACE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<NAMESPACE>` | The extension namespace. |
 
 | Option | Description |
@@ -4290,12 +4238,12 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Remove one extension namespace.
 
 ```text
-marfa device extensions delete [OPTIONS] <ITEM> <NAMESPACE>
+marfa device extensions delete [OPTIONS] <ID> <NAMESPACE>
 ```
 
 | Argument | Description |
 | --- | --- |
-| `<ITEM>` | The item id. |
+| `<ID>` | The item id. |
 | `<NAMESPACE>` | The extension namespace. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
@@ -4417,8 +4365,9 @@ marfa folders inventory [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--limit <LIMIT>` | Maximum number of folders on this page. |
-| `--cursor <CURSOR>` | Continue from the previous page's next_cursor. |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa folders remove
 
@@ -4574,12 +4523,12 @@ marfa folders create [OPTIONS]
 | `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
-### marfa folders change
+### marfa folders update
 
 Change a folder's settings on the server, each named one replaced whole. Omitted settings stay. Every accepted change removes stored properties the current folder type does not declare, including with --file or --body.
 
 ```text
-marfa folders change [OPTIONS] --version <VERSION> <ID>
+marfa folders update [OPTIONS] --version <VERSION> <ID>
 ```
 
 | Argument | Description |
@@ -4633,7 +4582,7 @@ marfa folders watch [OPTIONS] [DIR]
 
 | Option | Description |
 | --- | --- |
-| `--for <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
+| `--for-seconds <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
 | `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. When Ctrl-C or `SIGTERM` stops the watch, the last line written names the signal and the time, and the process that sent it where the system reports one. |
 | `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600), for a watch that runs with nobody signed in to unlock the keychain. The watch uses it for the folders that name that server and reads the keychain for none, so a folder of another server is reported as having no credential. Keep the file outside every folder. `folders autostart on --key-file` runs the watch with it. |
 | `--exit-on-new-build` | End with exit status 3 once a new build of marfa is installed at the path the watch was started by, after the passes under way finish, so that a service manager starts the new build. A link moved to another build counts, as does a file replaced in place. `folders autostart` runs the watch with it. Without it, the watch says once that a new build is installed and goes on. Either way, a path that leads to no file, or to one that does not say its version, is said once, and the watch goes on. |
@@ -4775,7 +4724,7 @@ marfa server install [OPTIONS]
 | `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets and the proxy setting this install needs, and says what is missing. It reads a quoted value the way Docker Compose reads it. |
 | `--autostart` | Start the server when you log in (on a Mac) or when the machine starts (on Linux). The default; a Docker install on Linux relies on Docker starting at boot. |
 | `--no-autostart` | Do not start the server at login or at boot. `marfa server start` starts it. |
-| `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
+| `--wait-seconds <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
 | `-y, --yes` | Ask nothing: use the flags and the defaults. |
 
 ### marfa server upgrade
@@ -4792,7 +4741,7 @@ marfa server upgrade [OPTIONS]
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 | `--release <VERSION>` | The release to move to, for a Docker install. The default is this binary's own version. A native server moves to the release installed. |
-| `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
+| `--wait-seconds <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
 
 ### marfa server status
 
@@ -4823,7 +4772,7 @@ marfa server start [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
-| `--wait <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
+| `--wait-seconds <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
 
 ### marfa server stop
 
@@ -4850,7 +4799,7 @@ marfa server restart [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
-| `--wait <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
+| `--wait-seconds <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
 
 ### marfa server run
 

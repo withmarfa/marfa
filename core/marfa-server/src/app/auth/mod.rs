@@ -1,4 +1,5 @@
 pub mod allowance;
+pub mod avatar;
 pub mod claim;
 pub mod device;
 pub mod limits;
@@ -6,7 +7,6 @@ pub mod names;
 pub mod owner;
 pub mod passkeys;
 pub mod password;
-pub mod picture;
 pub mod return_to;
 pub mod session;
 pub mod sign_in;

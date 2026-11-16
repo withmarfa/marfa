@@ -309,7 +309,7 @@
               "read",
               "write"
             ],
-            "description": "Access to the owner's profile picture."
+            "description": "Access to the owner's profile avatar."
           }
         },
         "additionalProperties": false,
@@ -2888,7 +2888,7 @@
               "null"
             ],
             "format": "uri",
-            "description": "The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`."
+            "description": "The address of the owner's avatar, or `null` when there is none. Present with `profile.avatar:read`."
           }
         },
         "additionalProperties": false,
@@ -9011,7 +9011,7 @@
               "string",
               "null"
             ],
-            "description": "The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`."
+            "description": "The address of the owner's avatar on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`."
           },
           "created_at": {
             "type": "string",
@@ -13951,12 +13951,13 @@
           "Items"
         ],
         "summary": "Trash an item",
-        "description": "Moves the item, and every item a cascading edge such as `parent-of` reaches, to the trash. You can restore them until the retention window ends. Marfa then purges them. The private local command can also call this operation. It must name `version`, and the answer is the item's summary in place of `{ \"ok\": true }`: `id`, `type`, `version`, `name`, `source` and `created_at`, with no content.",
+        "description": "Moves the item, and every item a cascading edge such as `parent-of` reaches, to the trash. You can restore them until the retention window ends. Marfa then purges them.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
+        "x-marfa-local-command": true,
         "parameters": [
           {
             "schema": {
@@ -14002,7 +14003,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns `{ \"ok\": true }`. An item that a cascading edge took into the trash has `trashed_by_cascade`, and `trashed_with` names this item if you can read its type.",
+            "description": "Returns `{ \"ok\": true }`. An item that a cascading edge took into the trash has `trashed_by_cascade`, and `trashed_with` names this item if you can read its type. The private local command must name `version` and gets the item's summary in place of this, with no content: `id`, `type`, `version`, `name`, `source` and `created_at`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15071,12 +15072,13 @@
           "Items"
         ],
         "summary": "Restore an item",
-        "description": "Restores a trashed item to `active`, along with every item its trash took through a cascading edge such as `parent-of`. Items that were already in the trash before then stay there. The private local command can also call this operation. It must name `version`, and the answer is the item's summary in place of the restored item: `id`, `type`, `version`, `name`, `source` and `created_at`, with no content.",
+        "description": "Restores a trashed item to `active`, along with every item its trash took through a cascading edge such as `parent-of`. Items that were already in the trash before then stay there.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
+        "x-marfa-local-command": true,
         "parameters": [
           {
             "schema": {
@@ -15122,7 +15124,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns the restored item and its metadata.",
+            "description": "Returns the restored item and its metadata. The private local command must name `version` and gets the item's summary in place of this, with no content: `id`, `type`, `version`, `name`, `source` and `created_at`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15448,12 +15450,13 @@
           "Items"
         ],
         "summary": "Purge an item",
-        "description": "Permanently deletes a trashed item with its edges, metadata and extensions. Requires `items.purge` and write on the item's type. Marfa keeps a tombstone of the item's link and natural key, which `POST /items/lookup` reads. The private local command can also call this operation. It must name `version`, and the answer is the item's summary in place of `{ \"ok\": true }`: `id`, `type`, `version`, `name`, `source` and `created_at`, with no content.",
+        "description": "Permanently deletes a trashed item with its edges, metadata and extensions. Requires `items.purge` and write on the item's type. Marfa keeps a tombstone of the item's link and natural key, which `POST /items/lookup` reads.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
+        "x-marfa-local-command": true,
         "parameters": [
           {
             "schema": {
@@ -15499,7 +15502,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns `{ \"ok\": true }`. Marfa announces each edge it deletes as `edge.deleted`, with `purged_with` naming this item.",
+            "description": "Returns `{ \"ok\": true }`. Marfa announces each edge it deletes as `edge.deleted`, with `purged_with` naming this item. The private local command must name `version` and gets the item's summary in place of this, with no content: `id`, `type`, `version`, `name`, `source` and `created_at`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -51959,7 +51962,7 @@
           "Owner"
         ],
         "summary": "Update the owner",
-        "description": "Updates the owner's email or name, or removes the picture. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
+        "description": "Updates the owner's email or name, or removes the avatar. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
         "requestBody": {
           "required": true,
           "content": {
@@ -51981,7 +51984,7 @@
                   },
                   "avatar": {
                     "type": "null",
-                    "description": "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`."
+                    "description": "Set `avatar` to `null` to remove the owner's avatar, or omit it to leave it unchanged. To set an avatar, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`."
                   }
                 },
                 "additionalProperties": false
@@ -52772,7 +52775,7 @@
           "Owner"
         ],
         "summary": "Update the owner's profile",
-        "description": "Updates the owner's name or removes the picture and returns the profile fields you can read. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",
+        "description": "Updates the owner's name or removes the avatar and returns the profile fields you can read. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",
         "security": [
           {
             "bearerAuth": []
@@ -52793,7 +52796,7 @@
                   },
                   "avatar": {
                     "type": "null",
-                    "description": "Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`."
+                    "description": "Set `avatar` to `null` to remove the owner's avatar, or omit it to leave it unchanged. To set an avatar, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`."
                   }
                 },
                 "additionalProperties": false
@@ -53096,15 +53099,15 @@
     },
     "/owner/avatar": {
       "put": {
-        "operationId": "replaceOwnerPicture",
+        "operationId": "replaceOwnerAvatar",
         "tags": [
           "Owner"
         ],
-        "summary": "Replace the owner's picture",
-        "description": "Stores the request body as the owner's picture and returns the owner. Requires the private local command.",
+        "summary": "Replace the owner's avatar",
+        "description": "Stores the request body as the owner's avatar and returns the owner. Requires the private local command.",
         "requestBody": {
           "required": true,
-          "description": "The picture's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side.",
+          "description": "The avatar's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side.",
           "content": {
             "application/octet-stream": {
               "schema": {
@@ -53116,7 +53119,7 @@
         },
         "responses": {
           "200": {
-            "description": "The updated owner, whose `avatar` is the picture's address.",
+            "description": "The updated owner, whose `avatar` is the avatar's address.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53407,20 +53410,20 @@
         "x-marfa-local-command": true
       },
       "get": {
-        "operationId": "getOwnerPicture",
+        "operationId": "getOwnerAvatar",
         "tags": [
           "Owner"
         ],
-        "summary": "Get the owner's picture",
+        "summary": "Get the owner's avatar",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "description": "Returns the owner's picture as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.",
+        "description": "Returns the owner's avatar as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.",
         "responses": {
           "200": {
-            "description": "Returns the picture's bytes.",
+            "description": "Returns the avatar's bytes.",
             "headers": {
               "X-Marfa-Contract": {
                 "$ref": "#/components/headers/X-Marfa-Contract"
@@ -53432,7 +53435,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "The quoted SHA-256 of the picture's bytes."
+                "description": "The quoted SHA-256 of the avatar's bytes."
               }
             },
             "content": {
@@ -53457,7 +53460,7 @@
             }
           },
           "304": {
-            "description": "The picture still matches the `If-None-Match` value.",
+            "description": "The avatar still matches the `If-None-Match` value.",
             "headers": {
               "X-Marfa-Contract": {
                 "$ref": "#/components/headers/X-Marfa-Contract"
@@ -53469,7 +53472,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "The quoted SHA-256 of the picture's bytes."
+                "description": "The quoted SHA-256 of the avatar's bytes."
               }
             }
           },
@@ -53537,7 +53540,7 @@
             }
           },
           "404": {
-            "description": "No picture is set.",
+            "description": "No avatar is set.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53674,20 +53677,20 @@
     },
     "/profile/avatar": {
       "put": {
-        "operationId": "replaceProfilePicture",
+        "operationId": "replaceProfileAvatar",
         "tags": [
           "Owner"
         ],
-        "summary": "Replace the picture as an app",
+        "summary": "Replace the avatar as an app",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "description": "Stores the request body as the owner's picture and returns the profile fields you can read. Requires profile write permission for the avatar.",
+        "description": "Stores the request body as the owner's avatar and returns the profile fields you can read. Requires profile write permission for the avatar.",
         "requestBody": {
           "required": true,
-          "description": "The picture's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side.",
+          "description": "The avatar's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side.",
           "content": {
             "application/octet-stream": {
               "schema": {
@@ -53699,7 +53702,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the profile fields you can read. The picture was stored.",
+            "description": "Returns the profile fields you can read. The avatar was stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -61415,9 +61418,6 @@
       "description": "Items in the trash: list them, move an item in, and restore, purge or empty them.",
       "x-operation-order": [
         "listTrash",
-        "trashItemSummary",
-        "restoreItemSummary",
-        "purgeItemSummary",
         "emptyTrash"
       ]
     },
@@ -61647,9 +61647,9 @@
         "updateOwner",
         "getProfile",
         "updateProfile",
-        "replaceOwnerPicture",
-        "replaceProfilePicture",
-        "getOwnerPicture"
+        "replaceOwnerAvatar",
+        "replaceProfileAvatar",
+        "getOwnerAvatar"
       ]
     },
     {

@@ -11,7 +11,7 @@ use crate::error::CliError;
 use crate::output::{self, Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
-use crate::values::{ItemState, SortDirection, SortField, Tier};
+use crate::values::{ItemState, SortDirection, Tier, parse_sort_field};
 
 #[derive(Debug, Subcommand)]
 pub enum ItemsCommand {
@@ -24,11 +24,11 @@ pub enum ItemsCommand {
         type_: Option<String>,
         /// Text to find in item names, ignoring case.
         #[arg(long)]
-        q: Option<String>,
+        query: Option<String>,
         #[command(flatten)]
         page: PageArgs,
     },
-    /// Manage the bin through direct local authority. Use `--socket`.
+    /// Read and empty the bin through direct local authority. Use `--socket`.
     Bin {
         #[command(subcommand)]
         command: BinCommand,
@@ -37,34 +37,44 @@ pub enum ItemsCommand {
     Get {
         /// The item id.
         id: String,
-        /// Extra to hydrate onto the item: `edges`, `metadata`, or both comma-separated.
-        #[arg(long, value_name = "LIST")]
-        include: Option<String>,
+        /// Extra to hydrate onto the item: `edges`, `metadata`; repeat it for both.
+        #[arg(long, value_name = "NAME")]
+        include: Vec<String>,
     },
     /// Create an item.
     Create(CreateArgs),
     /// Change an item's properties or fields, conditional on the version read.
     Update(UpdateArgs),
-    /// Move one or more items to the bin, all of them or none.
-    Delete {
+    /// Move one or more items to the bin, all of them or none. With `--socket`,
+    /// name one item and its `--version` from `items summaries`.
+    Trash {
         /// One or more item ids, up to 20.
-        #[arg(required = true)]
+        #[arg(required = true, value_name = "ID")]
         ids: Vec<String>,
-        /// Show what the delete would move to the bin, the items beneath
+        /// The version you read, for one item. If the item has changed since,
+        /// nothing is moved. With `--socket` it is required.
+        #[arg(long, conflicts_with_all = ["dry_run", "digest"])]
+        version: Option<i64>,
+        /// Show what the trash would move to the bin, the items beneath
         /// included, and move nothing.
-        #[arg(long, conflicts_with = "idempotency_key")]
+        #[arg(long, conflicts_with_all = ["idempotency_key", "version"])]
         dry_run: bool,
-        /// The digest `--dry-run` gave for the same ids. If what the delete
+        /// The digest `--dry-run` gave for the same ids. If what the trash
         /// would move to the bin has changed since, nothing is moved.
         #[arg(long, conflicts_with = "dry_run")]
         digest: Option<String>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Take an item out of the bin.
+    /// Take an item out of the bin. With `--socket`, name its `--version` from
+    /// `items bin list`.
     Restore {
         /// The item id.
         id: String,
+        /// The version you read. If the item has changed since, nothing is
+        /// restored. With `--socket` it is required.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -78,10 +88,15 @@ pub enum ItemsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Destroy an item in the bin irrecoverably. Needs `items.purge`.
+    /// Destroy an item in the bin irrecoverably. Needs `items.purge`. With
+    /// `--socket`, name its `--version` from `items bin list`.
     Purge {
         /// The item id.
         id: String,
+        /// The version you read before the item went to the bin. If the item
+        /// has changed since, nothing is purged. With `--socket` it is required.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -93,32 +108,10 @@ pub enum ItemsCommand {
         #[command(flatten)]
         page: PageArgs,
     },
-    /// Put tags on an item.
-    Tag {
-        /// The item id.
-        id: String,
-        /// One or more tags.
-        #[arg(required = true)]
-        tags: Vec<String>,
-        /// The item version you read. If the item has changed since, no tag
-        /// is added.
-        #[arg(long)]
-        version: Option<i64>,
-        #[command(flatten)]
-        idempotency: IdempotencyArgs,
-    },
-    /// Take one tag off an item.
-    Untag {
-        /// The item id.
-        id: String,
-        /// The tag to take off.
-        tag: String,
-        /// The item version you read. If the item has changed since, the tag
-        /// stays.
-        #[arg(long)]
-        version: Option<i64>,
-        #[command(flatten)]
-        idempotency: IdempotencyArgs,
+    /// An item's tags: add, remove or replace them.
+    Tags {
+        #[command(subcommand)]
+        command: ItemTagsCommand,
     },
     /// The edges leaving an item.
     Edges(ItemEdgesArgs),
@@ -153,7 +146,7 @@ pub enum ItemsCommand {
     /// Read many items by id in one request.
     BulkGet {
         /// The item ids.
-        #[arg(required = true)]
+        #[arg(required = true, value_name = "ID")]
         ids: Vec<String>,
         /// Extra to hydrate onto each item: `edges`, `metadata`.
         #[arg(long, value_name = "NAME")]
@@ -215,6 +208,47 @@ pub enum ItemsCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum ItemTagsCommand {
+    /// Put tags on an item.
+    Add {
+        /// The item id.
+        id: String,
+        /// One or more tags.
+        #[arg(required = true)]
+        tags: Vec<String>,
+        /// The item version you read. If the item has changed since, no tag
+        /// is added.
+        #[arg(long)]
+        version: Option<i64>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Take one tag off an item.
+    Remove {
+        /// The item id.
+        id: String,
+        /// The tag to take off.
+        tag: String,
+        /// The item version you read. If the item has changed since, the tag
+        /// stays.
+        #[arg(long)]
+        version: Option<i64>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Write an item's tags whole, dropping any not named; none at all clears
+    /// them.
+    Replace {
+        /// The item id.
+        id: String,
+        /// The tags the item is to carry.
+        tags: Vec<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum BinCommand {
     /// List what the bin holds, when each item is eligible for automatic deletion, and the retention, one page at a time.
     List {
@@ -223,33 +257,9 @@ pub enum BinCommand {
         type_: Option<String>,
         /// Match item names, ignoring case.
         #[arg(long)]
-        q: Option<String>,
+        query: Option<String>,
         #[command(flatten)]
         page: PageArgs,
-    },
-    /// Move the item and its cascading children into the bin.
-    Move {
-        /// The item ID from the summary listing.
-        id: String,
-        /// The item version from the summary listing.
-        #[arg(long)]
-        version: u64,
-    },
-    /// Take the item and the children its move to the bin took out of it.
-    Restore {
-        /// The item ID from the summary listing.
-        id: String,
-        /// The item version from the summary listing.
-        #[arg(long)]
-        version: u64,
-    },
-    /// Permanently delete one item that is still in the bin.
-    Purge {
-        /// The item ID from the summary listing.
-        id: String,
-        /// The item version from the summary listing.
-        #[arg(long)]
-        version: u64,
     },
     /// Permanently delete everything in the bin, 200 at a time, and say how
     /// many have gone as it does. It stops where a deletion could not be
@@ -259,24 +269,18 @@ pub enum BinCommand {
     /// --json carries the count as "purged".
     Empty {
         /// Confirm permanent deletion with `PURGE`.
-        #[arg(long, value_parser = ["PURGE"])]
+        #[arg(long, value_name = "WORD", value_parser = ["PURGE"])]
         confirm: String,
     },
 }
 
 pub fn bin_request(command: &BinCommand) -> Result<Request, CliError> {
-    let action = |id: &str, version: u64, action: &str| {
-        Request::post(&["items", "summaries", id, action]).query("version", version.to_string())
-    };
     Ok(match command {
-        BinCommand::List { type_, q, page } => Request::get(&["trash"])
+        BinCommand::List { type_, query, page } => Request::get(&["trash"])
             .query_opt("type", type_.as_deref())
-            .query_opt("q", q.as_deref())
+            .query_opt("q", query.as_deref())
             .query_opt("limit", page.limit.map(|n| n.to_string()))
             .query_opt("cursor", page.cursor.as_deref()),
-        BinCommand::Move { id, version } => action(id, *version, "trash"),
-        BinCommand::Restore { id, version } => action(id, *version, "restore"),
-        BinCommand::Purge { id, version } => action(id, *version, "purge"),
         BinCommand::Empty { confirm } => {
             if confirm != "PURGE" {
                 return Err(CliError::Usage(
@@ -343,12 +347,12 @@ impl IdempotencyArgs {
 
 #[derive(Debug, Default, Args)]
 pub struct ListArgs {
-    /// A type identifier; its subtypes are included.
+    /// A type identifier, with its subtypes; repeat it for more, up to ten.
     #[arg(long = "type", value_name = "TYPE")]
-    pub type_: Option<String>,
-    /// A state to answer; repeat it or separate states with commas. `any` is
+    pub types: Vec<String>,
+    /// A state to answer; repeat it for more. `any` is
     /// every state, and is given alone. Unset answers the active state.
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long)]
     pub state: Vec<StateFilter>,
     /// The source the items were written under.
     #[arg(long)]
@@ -362,9 +366,10 @@ pub struct ListArgs {
     /// A property filter in the server's filter grammar.
     #[arg(long)]
     pub filter: Option<String>,
-    /// The field to order by; the server's default is the creation time.
-    #[arg(long)]
-    pub sort: Option<SortField>,
+    /// The field to order by: `created-at` (the server's default),
+    /// `updated-at`, `occurred-at`, `last-activity-at` or `properties.<name>`.
+    #[arg(long, value_parser = parse_sort_field)]
+    pub sort: Option<marfa_rules::query::SortField>,
     /// `asc` or `desc`; the server's default is newest first.
     #[arg(long)]
     pub direction: Option<SortDirection>,
@@ -590,8 +595,9 @@ pub struct BulkFilterArgs {
 pub enum BulkActionCommand {
     /// Move every matching item to a state.
     Transition {
-        /// The state to move them to.
-        #[arg(long = "to", value_name = "STATE")]
+        /// The state to move them to. The options below select which items
+        /// move, so `--state` there is the state they are in now.
+        #[arg(value_name = "STATE")]
         to: TransitionState,
         #[command(flatten)]
         filter: BulkFilterArgs,
@@ -601,7 +607,7 @@ pub enum BulkActionCommand {
     /// `items.purge` and `--confirm PURGE`.
     Purge {
         /// The word `PURGE`, because the operation asks for it out loud.
-        #[arg(long, value_name = "PURGE")]
+        #[arg(long, value_name = "WORD")]
         confirm: Option<String>,
         #[command(flatten)]
         filter: BulkFilterArgs,
@@ -619,8 +625,9 @@ pub enum BulkActionCommand {
     },
     /// Move every matching item to a tier.
     Tier {
-        /// The tier to move them to.
-        #[arg(long = "to", value_name = "TIER")]
+        /// The tier to move them to. The options below select which items
+        /// move, so `--tier` there is the tier they are in now.
+        #[arg(value_name = "TIER")]
         to: Tier,
         #[command(flatten)]
         filter: BulkFilterArgs,
@@ -654,23 +661,23 @@ pub enum BulkActionCommand {
     },
 }
 
-pub fn summaries_request(type_: Option<&str>, q: Option<&str>, page: &PageArgs) -> Request {
+pub fn summaries_request(type_: Option<&str>, query: Option<&str>, page: &PageArgs) -> Request {
     Request::get(&["items", "summaries"])
         .query_opt("type", type_.map(str::to_string))
-        .query_opt("q", q.map(str::to_string))
+        .query_opt("q", query.map(str::to_string))
         .query_opt("limit", page.limit.map(|limit| limit.to_string()))
         .query_opt("cursor", page.cursor.clone())
 }
 
 pub fn list_request(args: &ListArgs) -> Result<Request, CliError> {
     Ok(Request::get(&["items"])
-        .query_opt("type", args.type_.clone())
+        .query_list("type", &args.types)
         .query_opt("state", state_list(&args.state)?)
         .query_opt("source", args.source.clone())
         .query_opt("tier", args.tier.map(TierFilter::as_str))
         .query_list("tags", &args.tags)
         .query_opt("filter", args.filter.clone())
-        .query_opt("sort", args.sort.map(SortField::as_str))
+        .query_opt("sort", args.sort.as_ref().map(ToString::to_string))
         .query_opt("direction", args.direction.map(SortDirection::as_str))
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
@@ -681,9 +688,9 @@ pub fn list_request(args: &ListArgs) -> Result<Request, CliError> {
         .query_opt("cursor", args.page.cursor.clone()))
 }
 
-pub fn get_request(id: &str, include: Option<&str>) -> Request {
+pub fn get_request(id: &str, include: &[String]) -> Request {
     Request::get(&["items", id])
-        .query_opt("include", include.map(str::to_string))
+        .query_list("include", include)
         .query("state", "any")
 }
 
@@ -757,11 +764,13 @@ pub fn update_request(
     ))
 }
 
-/// One id with no digest is a plain delete; several, or a digest, go through
+/// One id with no digest is a plain trash; several, or a digest, go through
 /// the door that moves them all to the bin in one step or none.
-pub fn delete_request(ids: &[String], digest: Option<&str>) -> Request {
+pub fn trash_request(ids: &[String], digest: Option<&str>, version: Option<i64>) -> Request {
     match (ids, digest) {
-        ([id], None) => Request::delete(&["items", id]),
+        ([id], None) => {
+            Request::delete(&["items", id]).query_opt("version", version.map(|v| v.to_string()))
+        }
         _ => {
             let mut body = json!({ "ids": ids });
             if let Some(digest) = digest {
@@ -778,16 +787,16 @@ pub fn bin_preview_request(ids: &[String]) -> Request {
         .reading()
 }
 
-pub fn restore_request(id: &str) -> Request {
-    Request::post(&["items", id, "restore"])
+pub fn restore_request(id: &str, version: Option<i64>) -> Request {
+    Request::post(&["items", id, "restore"]).query_opt("version", version.map(|v| v.to_string()))
 }
 
 pub fn transition_request(id: &str, state: TransitionState) -> Request {
     Request::post(&["items", id, "transition"]).json(json!({ "state": state.as_str() }))
 }
 
-pub fn purge_request(id: &str) -> Request {
-    Request::post(&["items", id, "purge"])
+pub fn purge_request(id: &str, version: Option<i64>) -> Request {
+    Request::post(&["items", id, "purge"]).query_opt("version", version.map(|v| v.to_string()))
 }
 
 pub fn versions_request(id: &str, page: &PageArgs) -> Request {
@@ -805,6 +814,10 @@ pub fn tag_request(id: &str, tags: &[String], version: Option<i64>) -> Request {
 pub fn untag_request(id: &str, tag: &str, version: Option<i64>) -> Request {
     Request::delete(&["items", id, "tags", tag])
         .query_opt("version", version.map(|v| v.to_string()))
+}
+
+pub fn replace_tags_request(id: &str, tags: &[String]) -> Request {
+    Request::put(&["items", id, "tags"]).json(json!({ "tags": tags }))
 }
 
 pub fn edges_request(args: &ItemEdgesArgs, inbound: bool) -> Request {
@@ -1094,7 +1107,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         return empty_bin(confirm, remote, out);
     }
     let done = match &command {
-        ItemsCommand::Delete {
+        ItemsCommand::Trash {
             ids,
             dry_run: false,
             ..
@@ -1102,13 +1115,17 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Purge { id, .. } => Some(format!("purged {id}")),
         _ => None,
     };
-    let (tagging, untagging) = (
-        matches!(command, ItemsCommand::Tag { .. }),
-        matches!(command, ItemsCommand::Untag { .. }),
-    );
-    let id_of = match &command {
-        ItemsCommand::Tag { id, .. } | ItemsCommand::Untag { id, .. } => id.clone(),
-        _ => String::new(),
+    let tagged = match &command {
+        ItemsCommand::Tags {
+            command: ItemTagsCommand::Add { id, .. },
+        } => Some(("tagged", id.clone())),
+        ItemsCommand::Tags {
+            command: ItemTagsCommand::Remove { id, .. },
+        } => Some(("untagged", id.clone())),
+        ItemsCommand::Tags {
+            command: ItemTagsCommand::Replace { id, .. },
+        } => Some(("set the tags of", id.clone())),
+        _ => None,
     };
     let wrote = match &command {
         ItemsCommand::Create(_) => Some("created"),
@@ -1124,10 +1141,10 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     let request = match &command {
         ItemsCommand::Bin { command } => bin_request(command)?,
         ItemsCommand::List(args) => list_request(args)?,
-        ItemsCommand::Summaries { type_, q, page } => {
-            summaries_request(type_.as_deref(), q.as_deref(), page)
+        ItemsCommand::Summaries { type_, query, page } => {
+            summaries_request(type_.as_deref(), query.as_deref(), page)
         }
-        ItemsCommand::Get { id, include } => get_request(id, include.as_deref()),
+        ItemsCommand::Get { id, include } => get_request(id, include),
         ItemsCommand::Create(args) => {
             let fields = field_definitions(remote, &args.properties, || Some(args.type_.clone()));
             create_request(args, fields.as_ref())?
@@ -1140,35 +1157,58 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             });
             update_request(args, fields.as_ref())?
         }
-        ItemsCommand::Delete {
+        ItemsCommand::Trash {
             ids, dry_run: true, ..
         } => bin_preview_request(ids),
-        ItemsCommand::Delete {
+        ItemsCommand::Trash {
             ids,
+            version,
             digest,
             idempotency,
             ..
-        } => idempotency.apply(delete_request(ids, digest.as_deref())),
-        ItemsCommand::Restore { id, idempotency } => idempotency.apply(restore_request(id)),
+        } => {
+            if version.is_some() && ids.len() > 1 {
+                return Err(CliError::Usage(
+                    "--version names the version of one item: give one id with it".into(),
+                ));
+            }
+            idempotency.apply(trash_request(ids, digest.as_deref(), *version))
+        }
+        ItemsCommand::Restore {
+            id,
+            version,
+            idempotency,
+        } => idempotency.apply(restore_request(id, *version)),
         ItemsCommand::Transition {
             id,
             state,
             idempotency,
         } => idempotency.apply(transition_request(id, *state)),
-        ItemsCommand::Purge { id, idempotency } => idempotency.apply(purge_request(id)),
+        ItemsCommand::Purge {
+            id,
+            version,
+            idempotency,
+        } => idempotency.apply(purge_request(id, *version)),
         ItemsCommand::Versions { id, page } => versions_request(id, page),
-        ItemsCommand::Tag {
-            id,
-            tags,
-            version,
-            idempotency,
-        } => idempotency.apply(tag_request(id, tags, *version)),
-        ItemsCommand::Untag {
-            id,
-            tag,
-            version,
-            idempotency,
-        } => idempotency.apply(untag_request(id, tag, *version)),
+        ItemsCommand::Tags { command } => match command {
+            ItemTagsCommand::Add {
+                id,
+                tags,
+                version,
+                idempotency,
+            } => idempotency.apply(tag_request(id, tags, *version)),
+            ItemTagsCommand::Remove {
+                id,
+                tag,
+                version,
+                idempotency,
+            } => idempotency.apply(untag_request(id, tag, *version)),
+            ItemTagsCommand::Replace {
+                id,
+                tags,
+                idempotency,
+            } => idempotency.apply(replace_tags_request(id, tags)),
+        },
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
         ItemsCommand::Add(args) => return add(args, remote, out),
@@ -1207,16 +1247,13 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         _ => false,
     };
     let answer = remote.pages(&request, all)?;
-    match (done, wrote) {
-        (Some(sentence), _) => out.report(&answer, |_| sentence),
-        (None, Some(verb)) => out.report(&answer, |answer| super::said::item(verb, answer)),
-        (None, None) if tagging => out.report(&answer, |answer| {
-            super::said::tags("tagged", &id_of, answer)
-        }),
-        (None, None) if untagging => out.report(&answer, |answer| {
-            super::said::tags("untagged", &id_of, answer)
-        }),
-        (None, None) => out.value(&answer),
+    match (done, wrote, tagged) {
+        (Some(sentence), _, _) => out.report(&answer, |_| sentence),
+        (None, Some(verb), _) => out.report(&answer, |answer| super::said::item(verb, answer)),
+        (None, None, Some((verb, id))) => {
+            out.report(&answer, |answer| super::said::tags(verb, &id, answer))
+        }
+        (None, None, None) => out.value(&answer),
     }
 }
 
@@ -1242,7 +1279,7 @@ fn field_definitions(
 }
 
 fn type_of_item(remote: &Remote, id: &str) -> Option<String> {
-    let answer = remote.json(&get_request(id, None)).ok()?;
+    let answer = remote.json(&get_request(id, &[])).ok()?;
     answer
         .pointer("/item/type")
         .and_then(Value::as_str)

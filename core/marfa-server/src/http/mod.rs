@@ -181,10 +181,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items/tombstones", post(lookup::settle))
         .route("/items/trash", post(trash::trash))
         .route("/items/trash-preview", post(trash::preview))
-        .route(
-            "/items/{id}",
-            get(items::read).patch(items::update),
-        )
+        .route("/items/{id}", get(items::read).patch(items::update))
         .route("/items/{id}/transition", post(trash::transition))
         .route("/items/{id}/versions", get(items::versions))
         .route("/items/{id}/tables", get(tables::list))

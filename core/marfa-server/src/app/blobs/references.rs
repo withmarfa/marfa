@@ -17,7 +17,7 @@ pub enum Row<'a> {
     Edge(i64),
     Extension(i64, &'a str),
     Version(i64, i64),
-    /// The owner's picture, the one row that belongs to no item.
+    /// The owner's avatar, the one row that belongs to no item.
     Owner,
 }
 

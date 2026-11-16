@@ -1124,7 +1124,15 @@ describe("folder syncing from login", () => {
       refuse(
         spawnSync(
           requireBinary(),
-          ["--json", "folders", "watch", "--key-file", path, "--for", "1"],
+          [
+            "--json",
+            "folders",
+            "watch",
+            "--key-file",
+            path,
+            "--for-seconds",
+            "1",
+          ],
           {
             env: {
               ...process.env,
@@ -1192,7 +1200,7 @@ describe("folder syncing from login", () => {
     // `folders watch --key-file` refuses the same files, and ends.
     const watched = spawnSync(
       requireBinary(),
-      ["--json", "folders", "watch", "--key-file", open, "--for", "1"],
+      ["--json", "folders", "watch", "--key-file", open, "--for-seconds", "1"],
       {
         env: {
           ...process.env,
@@ -1207,7 +1215,7 @@ describe("folder syncing from login", () => {
     chmodSync(open, 0o644);
     const loose = spawnSync(
       requireBinary(),
-      ["--json", "folders", "watch", "--key-file", open, "--for", "1"],
+      ["--json", "folders", "watch", "--key-file", open, "--for-seconds", "1"],
       {
         env: {
           ...process.env,

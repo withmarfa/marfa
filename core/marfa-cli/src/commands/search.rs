@@ -13,13 +13,13 @@ pub struct SearchArgs {
     /// What to look for.
     #[arg(allow_hyphen_values = true)]
     pub query: String,
-    /// A type identifier; its subtypes are included.
+    /// A type identifier, with its subtypes; repeat it for more, up to ten.
     #[arg(long = "type", value_name = "TYPE")]
-    pub type_: Option<String>,
-    /// A state to answer; repeat it or separate states with commas. `any` is
+    pub types: Vec<String>,
+    /// A state to answer; repeat it for more. `any` is
     /// every state, and is given alone. Unset answers the active state; the bin
     /// is never searched.
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long)]
     pub state: Vec<StateFilter>,
     /// The source the items were written under.
     #[arg(long)]
@@ -86,7 +86,7 @@ fn parse_sort(text: &str) -> Result<String, String> {
 pub fn request(args: &SearchArgs) -> Result<Request, CliError> {
     Ok(Request::get(&["search"])
         .query("q", args.query.clone())
-        .query_opt("type", args.type_.clone())
+        .query_list("type", &args.types)
         .query_opt("state", state_list(&args.state)?)
         .query_opt("source", args.source.clone())
         .query_opt("tier", args.tier.map(TierFilter::as_str))

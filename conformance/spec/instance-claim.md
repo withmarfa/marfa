@@ -492,25 +492,25 @@ Where control-only mode is enabled, when another process holds the configured pu
 
 ### `instance-claim/profile-owner-unavailable`
 
-While the instance is unclaimed, the server MUST answer the private local command's `PATCH /owner` and `PUT /owner/avatar` with `404 owner_not_found` without creating an owner or storing a picture.
+While the instance is unclaimed, the server MUST answer the private local command's `PATCH /owner` and `PUT /owner/avatar` with `404 owner_not_found` without creating an owner or storing an avatar.
 
 **Reason:** An update or an upload cannot stand in for the claim that creates the owner.
 
-**Tests:** `compliance/profile.test.ts › refuses an owner update and a picture upload from the local command while the instance is unclaimed`.
+**Tests:** `compliance/profile.test.ts › refuses an owner update and an avatar upload from the local command while the instance is unclaimed`.
 
 ### `instance-claim/owner-update`
 
 When the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, `avatar` set to `null`, or any combination of them, the server MUST return the updated owner.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-picture.test.ts › removes the picture through either PATCH door and leaves the other fields as they were`, `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-avatar.test.ts › removes the avatar through either PATCH door and leaves the other fields as they were`, `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
 
 ### `instance-claim/owner-avatar`
 
-When `PATCH /owner` receives `avatar` set to `null`, the server MUST remove the owner's picture and answer `avatar` as `null` at `GET /owner` and `PATCH /owner`.
+When `PATCH /owner` receives `avatar` set to `null`, the server MUST remove the owner's avatar and answer `avatar` as `null` at `GET /owner` and `PATCH /owner`.
 
-**Reason:** A picture is set by sending its bytes, so the one value `avatar` takes in an update is the one that removes it.
+**Reason:** An avatar is set by sending its bytes, so the one value `avatar` takes in an update is the one that removes it.
 
-**Tests:** `compliance/owner-picture.test.ts › removes the picture through either PATCH door and leaves the other fields as they were`.
+**Tests:** `compliance/owner-avatar.test.ts › removes the avatar through either PATCH door and leaves the other fields as they were`.
 
 ### `instance-claim/owner-update-authority`
 
@@ -536,9 +536,9 @@ When `PATCH /owner` changes email, the server MUST store the lowercase address w
 
 If an owner or delegated profile update contains no field, an unknown field, an invalid email address, an empty trimmed name, a name longer than 200 Unicode code points, a name containing a control or bidirectional control character before trimming, or an avatar other than null, a web address included, then the server MUST refuse the whole update with `400 validation_error`.
 
-**Reason:** An address names a picture that lives somewhere else, and the owner's picture is held by the instance.
+**Reason:** An address names an avatar that lives somewhere else, and the owner's avatar is held by the instance.
 
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`, `compliance/owner-picture.test.ts › refuses a web address as the avatar and changes nothing`.
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`, `compliance/owner-avatar.test.ts › refuses a web address as the avatar and changes nothing`.
 
 ### `instance-claim/delegated-profile-update`
 
@@ -552,101 +552,101 @@ If any submitted profile field lacks current write permission when the transacti
 
 **Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
 
-### `instance-claim/owner-picture-upload`
+### `instance-claim/owner-avatar-upload`
 
-When the private local command sends `PUT /owner/avatar` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the updated owner.
+When the private local command sends `PUT /owner/avatar` with the bytes of a PNG, JPEG or WebP avatar, the server MUST store them as the owner's avatar and return the updated owner.
 
-**Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the owner door and returns the owner`, `› stores a picture sent through the private local command`.
+**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent to the owner door and returns the owner`, `› stores an avatar sent through the private local command`.
 
-### `instance-claim/profile-picture-upload`
+### `instance-claim/profile-avatar-upload`
 
-When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP picture, the server MUST store them as the owner's picture and return the profile fields the credential may read, as `GET /profile` answers them.
+When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP avatar, the server MUST store them as the owner's avatar and return the profile fields the credential may read, as `GET /profile` answers them.
 
-**Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the profile door by a credential that may write the avatar`.
+**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent to the profile door by a credential that may write the avatar`.
 
-### `instance-claim/owner-picture-authority`
+### `instance-claim/owner-avatar-authority`
 
-If `PUT /owner/avatar` lacks private local authority, then the server MUST refuse the request and keep the previous picture.
+If `PUT /owner/avatar` lacks private local authority, then the server MUST refuse the request and keep the previous avatar.
 
-**Tests:** `compliance/owner-picture.test.ts › refuses a picture from a caller the door does not admit, and keeps the previous one`.
+**Tests:** `compliance/owner-avatar.test.ts › refuses an avatar from a caller the door does not admit, and keeps the previous one`.
 
-### `instance-claim/profile-picture-authority`
+### `instance-claim/profile-avatar-authority`
 
-If a credential sending `PUT /profile/avatar` lacks current profile write permission for `avatar`, then the server MUST refuse the request with `403 forbidden` and keep the previous picture.
+If a credential sending `PUT /profile/avatar` lacks current profile write permission for `avatar`, then the server MUST refuse the request with `403 forbidden` and keep the previous avatar.
 
-**Tests:** `compliance/owner-picture.test.ts › refuses a picture from a caller the door does not admit, and keeps the previous one`.
+**Tests:** `compliance/owner-avatar.test.ts › refuses an avatar from a caller the door does not admit, and keeps the previous one`.
 
-### `instance-claim/picture-kind-from-bytes`
+### `instance-claim/avatar-kind-from-bytes`
 
-When the server stores a picture, the server MUST decide the picture's kind from the bytes alone, whatever the `Content-Type` and the file name of the request claim.
+When the server stores an avatar, the server MUST decide the avatar's kind from the bytes alone, whatever the `Content-Type` and the file name of the request claim.
 
 **Reason:** A claimed type or name is chosen by the sender, and the kind decides how a browser treats the bytes when it is served.
 
-**Tests:** `compliance/owner-picture.test.ts › decides the kind from the bytes and not from what the request claims`.
+**Tests:** `compliance/owner-avatar.test.ts › decides the kind from the bytes and not from what the request claims`.
 
-### `instance-claim/picture-kind-refused`
+### `instance-claim/avatar-kind-refused`
 
-If the body of a picture upload is not a PNG, a JPEG or a WebP, a GIF, an AVIF, an SVG, a page and a text file included, then the server MUST refuse it with `400 validation_error` and keep the previous picture.
+If the body of an avatar upload is not a PNG, a JPEG or a WebP, a GIF, an AVIF, an SVG, a page and a text file included, then the server MUST refuse it with `400 validation_error` and keep the previous avatar.
 
-**Reason:** An SVG or a page can carry script, and the other kinds are not yet drawn by every app that reads the picture.
+**Reason:** An SVG or a page can carry script, and the other kinds are not yet drawn by every app that reads the avatar.
 
-**Tests:** `compliance/owner-picture.test.ts › refuses a body that is not a PNG, JPEG or WebP, whatever the request claims`.
+**Tests:** `compliance/owner-avatar.test.ts › refuses a body that is not a PNG, JPEG or WebP, whatever the request claims`.
 
-### `instance-claim/picture-empty`
+### `instance-claim/avatar-empty`
 
-If the body of a picture upload is empty, then the server MUST refuse it with `400 validation_error` and keep the previous picture.
+If the body of an avatar upload is empty, then the server MUST refuse it with `400 validation_error` and keep the previous avatar.
 
-**Tests:** `compliance/owner-picture.test.ts › refuses an empty body and a picture cut short, and keeps the previous one`.
+**Tests:** `compliance/owner-avatar.test.ts › refuses an empty body and an avatar cut short, and keeps the previous one`.
 
-### `instance-claim/picture-damaged`
+### `instance-claim/avatar-damaged`
 
-If the body of a picture upload begins as a PNG, a JPEG or a WebP and is cut short or damaged, then the server MUST refuse it with `400 validation_error` and keep the previous picture.
+If the body of an avatar upload begins as a PNG, a JPEG or a WebP and is cut short or damaged, then the server MUST refuse it with `400 validation_error` and keep the previous avatar.
 
-**Reason:** A picture that stops short draws as a broken image on every page that shows it. The server judges a file whole by the marks that end it, not by decoding it: a PNG is a chain of chunks that ends in `IEND` as its last twelve bytes and holds an `IDAT`, a WebP declares in its `RIFF` header a size equal to the file's size less eight, and a JPEG is a baseline, extended sequential or progressive frame whose first scan is followed by the end-of-image marker. A file that has more or less than it declares is damaged.
+**Reason:** An avatar that stops short draws as a broken image on every page that shows it. The server judges a file whole by the marks that end it, not by decoding it: a PNG is a chain of chunks that ends in `IEND` as its last twelve bytes and holds an `IDAT`, a WebP declares in its `RIFF` header a size equal to the file's size less eight, and a JPEG is a baseline, extended sequential or progressive frame whose first scan is followed by the end-of-image marker. A file that has more or less than it declares is damaged.
 
-**Tests:** `compliance/owner-picture.test.ts › refuses an empty body and a picture cut short, and keeps the previous one`.
+**Tests:** `compliance/owner-avatar.test.ts › refuses an empty body and an avatar cut short, and keeps the previous one`.
 
-### `instance-claim/picture-dimensions`
+### `instance-claim/avatar-dimensions`
 
-If the header of a picture gives a width or a height of zero or of more than 4096 pixels, then the server MUST refuse the upload with `400 validation_error` and keep the previous picture.
+If the header of an avatar gives a width or a height of zero or of more than 4096 pixels, then the server MUST refuse the upload with `400 validation_error` and keep the previous avatar.
 
-**Tests:** `compliance/owner-picture.test.ts › accepts 4096 pixels on a side and refuses none and 4097`.
+**Tests:** `compliance/owner-avatar.test.ts › accepts 4096 pixels on a side and refuses none and 4097`.
 
-### `instance-claim/picture-size`
+### `instance-claim/avatar-size`
 
-If the body of a picture upload is larger than 2097152 bytes, then the server MUST refuse it with `413 request_too_large` and keep the previous picture.
+If the body of an avatar upload is larger than 2097152 bytes, then the server MUST refuse it with `413 request_too_large` and keep the previous avatar.
 
-**Reason:** The picture is held in the instance's database and read again on every page that shows it.
+**Reason:** The avatar is held in the instance's database and read again on every page that shows it.
 
-**Tests:** `compliance/owner-picture.test.ts › accepts a picture of exactly 2097152 bytes and refuses one byte more`.
+**Tests:** `compliance/owner-avatar.test.ts › accepts an avatar of exactly 2097152 bytes and refuses one byte more`.
 
-### `instance-claim/picture-size-early`
+### `instance-claim/avatar-size-early`
 
-When the bytes of a picture upload pass 2097152, whether or not the sender declared a length, the server MUST answer `413 request_too_large` before the sender has finished the body.
+When the bytes of an avatar upload pass 2097152, whether or not the sender declared a length, the server MUST answer `413 request_too_large` before the sender has finished the body.
 
 **Reason:** A server that read the rest first would hold, or wait on, a body it has already decided to refuse.
 
-**Tests:** `compliance/owner-picture.test.ts › refuses an oversize body as soon as it passes the limit, declared or not`.
+**Tests:** `compliance/owner-avatar.test.ts › refuses an oversize body as soon as it passes the limit, declared or not`.
 
-### `instance-claim/picture-interrupted`
+### `instance-claim/avatar-interrupted`
 
-If a picture upload ends before its body is whole, then the server MUST store nothing and keep the previous picture.
+If an avatar upload ends before its body is whole, then the server MUST store nothing and keep the previous avatar.
 
-**Tests:** `compliance/owner-picture.test.ts › keeps the previous picture when an upload is cut off, and replaces it when one finishes`.
+**Tests:** `compliance/owner-avatar.test.ts › keeps the previous avatar when an upload is cut off, and replaces it when one finishes`.
 
-### `instance-claim/picture-replace`
+### `instance-claim/avatar-replace`
 
-When the server stores a new picture, the server MUST serve only that picture at `/owner/avatar`, and no earlier one after the new picture is removed.
+When the server stores a new avatar, the server MUST serve only that avatar at `/owner/avatar`, and no earlier one after the new avatar is removed.
 
-**Reason:** The owner has one picture, and a replaced one is never served again.
+**Reason:** The owner has one avatar, and a replaced one is never served again.
 
-**Tests:** `compliance/owner-picture.test.ts › holds one picture, the last one stored`.
+**Tests:** `compliance/owner-avatar.test.ts › holds one avatar, the last one stored`.
 
 ### `instance-claim/owner-avatar-address`
 
-While the owner has a picture, the server MUST answer `avatar` in the owner as the instance's own address followed by `/owner/avatar`, and while the owner has none as `null`.
+While the owner has an avatar, the server MUST answer `avatar` in the owner as the instance's own address followed by `/owner/avatar`, and while the owner has none as `null`.
 
-**Tests:** `compliance/owner-picture.test.ts › stores a picture sent to the owner door and returns the owner`, `› removes the picture through either PATCH door and leaves the other fields as they were`.
+**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent to the owner door and returns the owner`, `› removes the avatar through either PATCH door and leaves the other fields as they were`.
 
 ### `instance-claim/profile-read`
 
@@ -654,47 +654,47 @@ When a credential sends `GET /profile`, the server MUST answer `200` with the ow
 
 **Reason:** An app learns whom it acts for from the profile the owner let it read. `avatar` is the address `instance-claim/owner-avatar-address` names.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-picture.test.ts › gives an app that may read the avatar the picture's address at its profile, and null when there is none`.
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-avatar.test.ts › gives an app that may read the avatar the avatar's address at its profile, and null when there is none`.
 
-### `instance-claim/picture-served`
+### `instance-claim/avatar-served`
 
-When a caller admitted by `instance-claim/picture-read-authority` sends `GET /owner/avatar`, the server MUST return the stored bytes with the `Content-Type` decided when they were stored.
+When a caller admitted by `instance-claim/avatar-read-authority` sends `GET /owner/avatar`, the server MUST return the stored bytes with the `Content-Type` decided when they were stored.
 
-**Tests:** `compliance/owner-picture.test.ts › serves the stored bytes under the kind decided from them`.
+**Tests:** `compliance/owner-avatar.test.ts › serves the stored bytes under the kind decided from them`.
 
-### `instance-claim/picture-served-headers`
+### `instance-claim/avatar-served-headers`
 
-The server MUST send with every answer over HTTP that carries the picture's bytes `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: attachment; filename="picture"` and `Cache-Control: private, no-cache`.
+The server MUST send with every answer over HTTP that carries the avatar's bytes `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: attachment; filename="avatar"` and `Cache-Control: private, no-cache`.
 
-**Reason:** The bytes are chosen by the sender and served from the instance's own origin, so they carry the safeguards of `blobs/download-sandbox`. A cache may keep the picture but must ask again before showing it. The private local socket answers `Cache-Control: no-store`, as it answers everything.
+**Reason:** The bytes are chosen by the sender and served from the instance's own origin, so they carry the safeguards of `blobs/download-sandbox`. A cache may keep the avatar but must ask again before showing it. The private local socket answers `Cache-Control: no-store`, as it answers everything.
 
-**Tests:** `compliance/owner-picture.test.ts › serves the picture with the headers that keep its bytes from running`.
+**Tests:** `compliance/owner-avatar.test.ts › serves the avatar with the headers that keep its bytes from running`.
 
-### `instance-claim/picture-validators`
+### `instance-claim/avatar-validators`
 
-When a caller sends `GET /owner/avatar` with an `If-None-Match` that names the picture's `ETag`, the server MUST answer `304` with no body.
+When a caller sends `GET /owner/avatar` with an `If-None-Match` that names the avatar's `ETag`, the server MUST answer `304` with no body.
 
-**Tests:** `compliance/owner-picture.test.ts › answers 304 to a validator that still matches, and sends the picture when it does not`.
+**Tests:** `compliance/owner-avatar.test.ts › answers 304 to a validator that still matches, and sends the avatar when it does not`.
 
-### `instance-claim/picture-etag`
+### `instance-claim/avatar-etag`
 
-The server MUST send with the picture, as its `ETag`, the quoted SHA-256 of the picture's bytes in lowercase hexadecimal.
+The server MUST send with the avatar, as its `ETag`, the quoted SHA-256 of the avatar's bytes in lowercase hexadecimal.
 
-**Tests:** `compliance/owner-picture.test.ts › answers 304 to a validator that still matches, and sends the picture when it does not`.
+**Tests:** `compliance/owner-avatar.test.ts › answers 304 to a validator that still matches, and sends the avatar when it does not`.
 
-### `instance-claim/picture-read-authority`
+### `instance-claim/avatar-read-authority`
 
 If an authenticated caller of `GET /owner/avatar` is neither the private local command nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
 
-**Reason:** An app sees the owner's picture only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
+**Reason:** An app sees the owner's avatar only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
 
-**Tests:** `compliance/owner-picture.test.ts › serves the picture only to the owner and to a credential that may read the avatar`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
+**Tests:** `compliance/owner-avatar.test.ts › serves the avatar only to the owner and to a credential that may read the avatar`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
-### `instance-claim/picture-none`
+### `instance-claim/avatar-none`
 
-If the owner has no picture, then the server MUST answer `GET /owner/avatar` from an admitted caller with `404 not_found`.
+If the owner has no avatar, then the server MUST answer `GET /owner/avatar` from an admitted caller with `404 not_found`.
 
-**Tests:** `compliance/owner-picture.test.ts › answers 404 when there is no picture, and again after it is removed`.
+**Tests:** `compliance/owner-avatar.test.ts › answers 404 when there is no avatar, and again after it is removed`.
 
 ### `instance-claim/profile-email-owner-only`
 

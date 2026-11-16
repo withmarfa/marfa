@@ -27,10 +27,10 @@ pub struct EventsArgs {
     pub edges: Option<EdgeMode>,
     /// Resume from this cursor, replaying what the log holds after it.
     #[arg(long, value_name = "CURSOR")]
-    pub from: Option<String>,
+    pub cursor: Option<String>,
     /// Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends.
-    #[arg(long, value_name = "SECONDS")]
-    pub r#for: Option<u64>,
+    #[arg(long = "for-seconds", value_name = "SECONDS")]
+    pub for_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -54,7 +54,7 @@ pub fn request(args: &EventsArgs) -> Request {
         .query_opt("edges", args.edges.map(EdgeMode::as_str))
         .header("Accept", "text/event-stream")
         .streamed();
-    if let Some(cursor) = &args.from {
+    if let Some(cursor) = &args.cursor {
         request = request.header("Last-Event-ID", cursor.clone());
     }
     request
@@ -116,7 +116,7 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
     let (sender, frames) = mpsc::channel::<Result<Frame, std::io::Error>>();
     std::thread::spawn(move || read_frames(reader, sender));
     let started = Instant::now();
-    let limit = args.r#for.map(Duration::from_secs);
+    let limit = args.for_seconds.map(Duration::from_secs);
     loop {
         if interrupt::stop().load(Ordering::Relaxed) {
             interrupt::ended_by_interrupt();

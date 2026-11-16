@@ -657,7 +657,7 @@ describe("the instance from the terminal", () => {
         for (const args of [
           ["list"],
           ["rename", id, "--name", "Remote"],
-          ["remove", id],
+          ["delete", id],
           ["add", "--no-browser"],
         ]) {
           const refused = await ordinary.refused([
@@ -671,7 +671,7 @@ describe("the instance from the terminal", () => {
           expect(refused.envelope.error.server).toBeNull();
         }
       }
-      expect(await local.json(["owner", "passkeys", "remove", id])).toEqual({
+      expect(await local.json(["owner", "passkeys", "delete", id])).toEqual({
         ok: true,
       });
       expect(
@@ -679,11 +679,11 @@ describe("the instance from the terminal", () => {
           await local.json<{ data: Passkey[] }>(["owner", "passkeys", "list"])
         ).data.some((row) => row.id === id),
       ).toBe(false);
-      const again = await local.refused(["owner", "passkeys", "remove", id]);
+      const again = await local.refused(["owner", "passkeys", "delete", id]);
       expect(again.envelope.error.server?.status).toBe(404);
       expect(again.envelope.error.server?.code).toBe("passkey_not_found");
     } finally {
-      await local.run(["owner", "passkeys", "remove", id]);
+      await local.run(["owner", "passkeys", "delete", id]);
     }
   });
 
@@ -890,10 +890,10 @@ describe("the instance from the terminal", () => {
     const keyed = [
       ["items", "list"],
       ["export", "--format", "ndjson"],
-      ["items", "tag", id, "socket-witness"],
+      ["items", "tags", "add", id, "socket-witness"],
       bulk("tags", "--add", "socket-witness", "--dry-run"),
-      bulk("transition", "--to", "archived", "--dry-run"),
-      bulk("tier", "--to", "feed", "--dry-run"),
+      bulk("transition", "archived", "--dry-run"),
+      bulk("tier", "feed", "--dry-run"),
       bulk("properties", "--patch", JSON.stringify({ body: "b" }), "--dry-run"),
       bulk("occurred-at", "--occurred-at", "2026-01-02T03:04:05Z", "--dry-run"),
       bulk("purge", "--state", "trashed", "--confirm", "PURGE", "--dry-run"),
@@ -916,7 +916,7 @@ describe("the instance from the terminal", () => {
         "this operation needs a key or a token, which --socket does not carry; run it without --socket",
       );
       expect(refused.envelope.error.message, label).toContain(
-        "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items bin`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one",
+        "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items bin`, `items trash`, `items restore` and `items purge` of one item, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one",
       );
     }
   });
@@ -1035,7 +1035,7 @@ describe("the instance from the terminal", () => {
     }>([
       "webhooks",
       "create",
-      "--to",
+      "--delivery-url",
       "https://hooks.example/in",
       "--event",
       "item.created",
@@ -1073,7 +1073,7 @@ describe("the instance from the terminal", () => {
     const live = await c.cli.json<{ id: string }>([
       "webhooks",
       "create",
-      "--to",
+      "--delivery-url",
       receiver.hookUrl("cli"),
       "--event",
       "item.created",
@@ -1131,7 +1131,7 @@ describe("the instance from the terminal", () => {
       const hook = await c.cli.json<{ id: string; secret: string }>([
         "webhooks",
         "create",
-        "--to",
+        "--delivery-url",
         failing.hookUrl("failed"),
         "--event",
         "item.created",
@@ -1198,7 +1198,7 @@ describe("the instance from the terminal", () => {
         "webhooks",
         "update",
         hook.id,
-        "--to",
+        "--delivery-url",
         receiver.hookUrl("redelivered"),
       ]);
       const queued = await c.cli.json<{

@@ -105,7 +105,7 @@ describe("the instance's archive from the terminal", () => {
       JSON.stringify({ title: binned, body: "b" }),
     ]);
     trackItem(c.ctx, inBin.item.id);
-    const trashed = await c.cli.run(["items", "delete", inBin.item.id]);
+    const trashed = await c.cli.run(["items", "trash", inBin.item.id]);
     expect(trashed.code, trashed.stderr).toBe(0);
 
     const plain = join(dir, "default.tar");

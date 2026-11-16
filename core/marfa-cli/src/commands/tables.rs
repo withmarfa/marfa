@@ -11,6 +11,7 @@ pub enum TablesCommand {
     /// in each and when one last changed.
     List {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
     },
 }

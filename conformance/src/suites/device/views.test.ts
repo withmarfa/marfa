@@ -99,9 +99,9 @@ async function copy(
 async function listed(page: string[] = []): Promise<string[]> {
   const answer = value(
     await harness!.device.attempt(["items", "list", "--view", VIEW, ...page]),
-  ) as { completeness: string; items: Item[] };
+  ) as { completeness: string; data: Item[] };
   expect(answer.completeness).toBe("complete");
-  return answer.items.map((item) => item.id);
+  return answer.data.map((item) => item.id);
 }
 
 async function groups(zone?: string): Promise<Group[]> {
@@ -112,9 +112,9 @@ async function groups(zone?: string): Promise<Group[]> {
       VIEW,
       ...(zone ? ["--time-zone", zone] : []),
     ]),
-  ) as { completeness: string; groups: Group[] };
+  ) as { completeness: string; data: Group[] };
   expect(answer.completeness).toBe("complete");
-  return answer.groups;
+  return answer.data;
 }
 
 it("reads the saved views and their settings offline", async () => {
@@ -122,9 +122,9 @@ it("reads the saved views and their settings offline", async () => {
   const device = await copy([{ item: { id: id(1) } }], settings);
   const requests = harness!.server.requests.length;
   const views = value(await device.attempt(["views", "list"])) as {
-    views: Array<{ id: string }>;
+    data: Array<{ id: string }>;
   };
-  expect(views.views.map((view) => view.id)).toEqual([VIEW]);
+  expect(views.data.map((view) => view.id)).toEqual([VIEW]);
   expect(value(await device.attempt(["views", "get", VIEW]))).toMatchObject({
     id: VIEW,
     state: "active",
@@ -499,7 +499,7 @@ it("accepts --view and refuses the removed --folder option", async () => {
   expect(await listed()).toEqual([id(1)]);
   expect(
     value(await harness!.device.attempt(["search", "body", "--view", VIEW])),
-  ).toMatchObject({ hits: [{ item: { id: id(1) } }] });
+  ).toMatchObject({ data: [{ item: { id: id(1) } }] });
   for (const command of [
     ["items", "list"],
     ["search", "body"],

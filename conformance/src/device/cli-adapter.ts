@@ -226,7 +226,7 @@ export class CliDevice implements DeviceUnderTest {
   ): Promise<Outcome<{ changes: Change[]; report: FollowReport }>> {
     const lines = await this.lines([
       "follow",
-      "--for",
+      "--for-seconds",
       String(seconds),
       ...this.server(),
     ]);
@@ -248,7 +248,9 @@ export class CliDevice implements DeviceUnderTest {
    */
   holdFollow(seconds?: number): HeldCommand {
     return this.hold(
-      seconds === undefined ? ["follow"] : ["follow", "--for", String(seconds)],
+      seconds === undefined
+        ? ["follow"]
+        : ["follow", "--for-seconds", String(seconds)],
     );
   }
 
@@ -260,8 +262,10 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<HydrateReport>([
       "hydrate",
       ...this.server(),
-      "--types",
-      types.join(","),
+      // An empty list reaches the device as one empty type, which it refuses.
+      ...(types.length === 0
+        ? ["--type", ""]
+        : types.flatMap((type) => ["--type", type])),
       "--tier",
       tier,
       ...(options.edgeTypes ?? []).flatMap((type) => ["--edge-type", type]),
@@ -291,11 +295,17 @@ export class CliDevice implements DeviceUnderTest {
     type: string,
     table: string,
   ): Promise<Outcome<{ was_held: boolean }>> {
-    return this.json<{ was_held: boolean }>(["tables", "let-go", type, table]);
+    return this.json<{ was_held: boolean }>(["tables", "forget", type, table]);
   }
 
   async heldTables(): Promise<Outcome<HeldTables>> {
-    return this.json<HeldTables>(["tables", "held"]);
+    return rows(
+      await this.json<{
+        data: HeldTables["tables"];
+        choices: HeldTables["choices"];
+      }>(["tables", "held"]),
+      (answer) => ({ choices: answer.choices, tables: answer.data }),
+    );
   }
 
   async fillTables(): Promise<Outcome<TableFill>> {
@@ -365,7 +375,7 @@ export class CliDevice implements DeviceUnderTest {
     const args = ["items", "list"];
     args.push(...repeated("--type", filters.type));
     args.push(...repeated("--state", filters.state));
-    if (filters.allStates === true) args.push("--all-states");
+    if (filters.allStates === true) args.push("--state", "any");
     if (filters.occurredAfter !== undefined)
       args.push("--occurred-after", filters.occurredAfter);
     if (filters.occurredBefore !== undefined)
@@ -386,7 +396,16 @@ export class CliDevice implements DeviceUnderTest {
       args.push("--limit", String(filters.limit));
     if (filters.filter !== undefined) args.push("--filter", filters.filter);
     if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
-    return this.json<Listing>(args);
+    return this.listing(args);
+  }
+
+  private async listing(args: string[]): Promise<Outcome<Listing>> {
+    return rows(
+      await this.json<{ data: Item[]; completeness: Listing["completeness"] }>(
+        args,
+      ),
+      (answer) => ({ items: answer.data, completeness: answer.completeness }),
+    );
   }
 
   async get(id: string): Promise<Outcome<Item>> {
@@ -423,7 +442,7 @@ export class CliDevice implements DeviceUnderTest {
   ): Promise<Outcome<FolderItem>> {
     return this.json<FolderItem>([
       "folders",
-      "change",
+      "update",
       ...this.server(),
       id,
       "--version",
@@ -476,7 +495,7 @@ export class CliDevice implements DeviceUnderTest {
   ): Promise<Outcome<Found>> {
     const args = ["search", query];
     args.push(...repeated("--state", filters.state));
-    if (filters.allStates === true) args.push("--all-states");
+    if (filters.allStates === true) args.push("--state", "any");
     args.push(...repeated("--type", filters.type));
     if (filters.tier !== undefined) args.push("--tier", filters.tier);
     if (filters.occurredAfter !== undefined)
@@ -487,11 +506,17 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.filter !== undefined) args.push("--filter", filters.filter);
     if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
     if (limit !== undefined) args.push("--limit", String(limit));
-    return this.json<Found>(args);
+    return rows(
+      await this.json<{
+        data: Found["hits"];
+        completeness: Found["completeness"];
+      }>(args),
+      (answer) => ({ hits: answer.data, completeness: answer.completeness }),
+    );
   }
 
   async queue(): Promise<Outcome<QueuedWrite[]>> {
-    return this.json<QueuedWrite[]>(["queue"]);
+    return this.data<QueuedWrite>(["queue"]);
   }
 
   async create(draft: Draft): Promise<Outcome<QueuedWrite>> {
@@ -612,7 +637,7 @@ export class CliDevice implements DeviceUnderTest {
 
   /** The writes the store holds unsent, whichever build made it. */
   async unsent(): Promise<Outcome<UnsentWrite[]>> {
-    return this.json<UnsentWrite[]>(["unsent"]);
+    return this.data<UnsentWrite>(["unsent"]);
   }
 
   /** Reads every page of the store (`device/store-damaged`). */
@@ -626,7 +651,7 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async itemTypes(): Promise<Outcome<ItemType[]>> {
-    return this.json<ItemType[]>(["types", "list"]);
+    return this.data<ItemType>(["types", "list"]);
   }
 
   /** The types this app saves, which the copy checks a write against. */
@@ -643,7 +668,7 @@ export class CliDevice implements DeviceUnderTest {
 
   /** The declarations the copy holds, as they were made. */
   async declaredTypes(): Promise<Outcome<Array<{ id: string }>>> {
-    return this.json<Array<{ id: string }>>(["types", "declared"]);
+    return this.data<{ id: string }>(["types", "declared"]);
   }
 
   async itemType(id: string): Promise<Outcome<ItemType>> {
@@ -651,7 +676,7 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async edgeTypes(): Promise<Outcome<EdgeType[]>> {
-    return this.json<EdgeType[]>(["edge-types", "list"]);
+    return this.data<EdgeType>(["edge-types", "list"]);
   }
 
   async edgeType(id: string): Promise<Outcome<EdgeType>> {
@@ -659,11 +684,11 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async servedItemTypes(): Promise<Outcome<ItemType[]>> {
-    return this.json<ItemType[]>(["types", "served", ...this.server()]);
+    return this.data<ItemType>(["types", "served", ...this.server()]);
   }
 
   async servedEdgeTypes(): Promise<Outcome<EdgeType[]>> {
-    return this.json<EdgeType[]>(["edge-types", "served", ...this.server()]);
+    return this.data<EdgeType>(["edge-types", "served", ...this.server()]);
   }
 
   /**
@@ -875,7 +900,7 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async deleteItem(id: string): Promise<Outcome<QueuedWrite>> {
-    return this.json<QueuedWrite>(["items", "delete", id]);
+    return this.json<QueuedWrite>(["items", "trash", id]);
   }
 
   async purgeItem(
@@ -975,11 +1000,11 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async edgesFrom(item: string): Promise<Outcome<Edge[]>> {
-    return this.json<Edge[]>(["edges", "list", item]);
+    return this.data<Edge>(["edges", "list", item]);
   }
 
   async edgesTo(item: string): Promise<Outcome<Edge[]>> {
-    return this.json<Edge[]>(["edges", "to", item]);
+    return this.data<Edge>(["edges", "to", item]);
   }
 
   async addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>> {
@@ -994,9 +1019,7 @@ export class CliDevice implements DeviceUnderTest {
     item: string,
     tags: string[],
   ): Promise<Outcome<QueuedWrite>> {
-    const args = ["metadata", "replace", item];
-    for (const tag of tags) args.push("--tag", tag);
-    return this.json<QueuedWrite>(args);
+    return this.json<QueuedWrite>(["tags", "replace", item, ...tags]);
   }
 
   async writeExtension(
@@ -1092,7 +1115,7 @@ export class CliDevice implements DeviceUnderTest {
   /** The links in a text, split into their parts and placed in UTF-16
    *  code units (`device/link-parts`). */
   async linkParts(text: string): Promise<Outcome<LinkParts[]>> {
-    return this.json<LinkParts[]>(["items", "link-parts", "--", text]);
+    return this.data<LinkParts>(["items", "link-parts", "--", text]);
   }
 
   /** What each link could name, from the copy alone, read as a link in
@@ -1101,7 +1124,7 @@ export class CliDevice implements DeviceUnderTest {
     targets: string[],
     item?: string,
   ): Promise<Outcome<LinkCandidates[]>> {
-    return this.json<LinkCandidates[]>([
+    return this.data<LinkCandidates>([
       "items",
       "link-candidates",
       ...(item === undefined ? [] : ["--item", item]),
@@ -1126,7 +1149,7 @@ export class CliDevice implements DeviceUnderTest {
     ids: string[],
     options: { includeBin?: boolean } = {},
   ): Promise<Outcome<Listing>> {
-    return this.json<Listing>([
+    return this.listing([
       "items",
       "bulk-get",
       ...(options.includeBin === true ? ["--include-bin"] : []),
@@ -1142,7 +1165,7 @@ export class CliDevice implements DeviceUnderTest {
 
   /** Many edges by id (`device/edge-bulk-get`). */
   async bulkGetEdges(ids: string[]): Promise<Outcome<Edge[]>> {
-    return this.json<Edge[]>(["edges", "bulk-get", "--", ...ids]);
+    return this.data<Edge>(["edges", "bulk-get", "--", ...ids]);
   }
 
   /** What changed in the copy since a cursor (`device/changed-names`). */
@@ -1244,6 +1267,14 @@ export class CliDevice implements DeviceUnderTest {
    * the device refused pass against a device that is simply broken, which is
    * the one way this suite could be green about nothing.
    */
+  /** A list as every list prints it: the rows under `data`, and `next_cursor`. */
+  private async data<T>(args: string[]): Promise<Outcome<T[]>> {
+    return rows(
+      await this.json<{ data: T[]; next_cursor: string | null }>(args),
+      (answer) => answer.data,
+    );
+  }
+
   private async json<T>(args: string[]): Promise<Outcome<T>> {
     return this.invoke<T>([...this.prefix(), ...args]);
   }
@@ -1663,7 +1694,10 @@ export class CliFolder {
 
   /** The folders the registry of this folder's machine lists. */
   async list(): Promise<Outcome<RegisteredFolder[]>> {
-    return this.run<RegisteredFolder[]>(["folders", "list"]);
+    return rows(
+      await this.run<{ data: RegisteredFolder[] }>(["folders", "list"]),
+      (answer) => answer.data,
+    );
   }
 
   /** Where every file stands, read from the folder's own store. */

@@ -111,7 +111,7 @@ describe("stopping a hydration", () => {
       gated = true;
       const hydrating = device.hold([
         "hydrate",
-        "--types",
+        "--type",
         "core.note",
         "--tier",
         "library",
@@ -189,7 +189,7 @@ describe("stopping a hydration", () => {
 
     const hydrating = device.hold([
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -588,7 +588,7 @@ describe("stopping a call that cannot be stopped at once", () => {
     expect((await device.status()).ok).toBe(true);
     const hydrating = device.hold([
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -672,7 +672,7 @@ describe("stopping a call whose first request is not answered", () => {
     await stoppedWhileAsking(
       server,
       device,
-      ["hydrate", "--types", "core.note", "--tier", "library"],
+      ["hydrate", "--type", "core.note", "--tier", "library"],
       "/events",
     );
     const status = await device.status();

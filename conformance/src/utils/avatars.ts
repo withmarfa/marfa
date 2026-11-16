@@ -1,7 +1,7 @@
 import { deflateSync } from "node:zlib";
 
 /**
- * Small picture files for fixtures about the owner's picture. Each header
+ * Small avatar files for fixtures about the owner's avatar. Each header
  * declares the size it is asked for; `png` also carries pixel data, so a
  * browser can draw it.
  */
@@ -65,7 +65,7 @@ export function pngPadded(size: number, width = 8, height = 8): Buffer {
   const whole = png(width, height);
   const end = whole.length - 12;
   const filler = size - whole.length - 12;
-  if (filler < 0) throw new Error("the size is smaller than the picture");
+  if (filler < 0) throw new Error("the size is smaller than the avatar");
   return Buffer.concat([
     whole.subarray(0, end),
     chunk("paDd", Buffer.alloc(filler)),

@@ -959,7 +959,7 @@ CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     PRIMARY KEY (hash, store_id, object)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS owner_picture (
+CREATE TABLE IF NOT EXISTS owner_avatar (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
     hash TEXT NOT NULL CHECK (length(hash) = 71),
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),

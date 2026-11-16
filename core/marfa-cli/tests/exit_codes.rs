@@ -150,7 +150,7 @@ fn an_environment_failure_leaves_by_three() {
         "--db",
         store.to_str().unwrap(),
         "hydrate",
-        "--types",
+        "--type",
         "core.note",
         "--tier",
         "library",

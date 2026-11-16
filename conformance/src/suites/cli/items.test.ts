@@ -79,7 +79,8 @@ describe("items from the terminal", () => {
 
     const tagged = await c.cli.json<{ tags: string[] }>([
       "items",
-      "tag",
+      "tags",
+      "add",
       created.item.id,
       "alpha",
       "beta",
@@ -87,7 +88,8 @@ describe("items from the terminal", () => {
     expect(tagged.tags.sort()).toEqual(["alpha", "beta", "cli"]);
     const untagged = await c.cli.json<{ tags: string[] }>([
       "items",
-      "untag",
+      "tags",
+      "remove",
       created.item.id,
       "alpha",
     ]);
@@ -201,7 +203,7 @@ describe("items from the terminal", () => {
     ]);
     expect(archived.item.state).toBe("archived");
 
-    await c.cli.json(["items", "delete", id]);
+    await c.cli.json(["items", "trash", id]);
     const binned = await c.cli.json<ItemEnvelope>(["items", "get", id]);
     expect(binned.item.id).toBe(id);
     expect(binned.item.state).toBe("trashed");
@@ -212,7 +214,7 @@ describe("items from the terminal", () => {
     const restored = await c.cli.json<ItemEnvelope>(["items", "restore", id]);
     expect(restored.item.state).toBe("active");
 
-    await c.cli.json(["items", "delete", id]);
+    await c.cli.json(["items", "trash", id]);
     // The purge is the one destruction; the file's key holds `items.purge`
     // because it inherited the operator-minted key's whole set. A trashed
     // item could be restored above; a purged one cannot, which is what

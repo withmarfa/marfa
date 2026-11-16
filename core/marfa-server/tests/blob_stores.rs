@@ -1622,7 +1622,7 @@ async fn an_upload_whose_client_goes_away_while_its_record_waits_behind_a_purge_
     );
 }
 
-/// A picture `width` pixels wide, so each width is a different blob.
+/// An avatar `width` pixels wide, so each width is a different blob.
 fn jpeg(width: u8) -> Vec<u8> {
     vec![
         0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0, 8, 0, width, 1, 1, 0x11, 0, 0xff, 0xda, 0x00,
@@ -1646,7 +1646,7 @@ impl Instance {
         instance
     }
 
-    async fn picture(&self, bytes: &[u8]) -> String {
+    async fn avatar(&self, bytes: &[u8]) -> String {
         let request = Request::builder()
             .method(Method::PUT)
             .uri("/owner/avatar")
@@ -1663,11 +1663,11 @@ impl Instance {
 }
 
 #[tokio::test]
-async fn the_owners_picture_is_replicated_and_purged_only_once_replaced() {
+async fn the_owners_avatar_is_replicated_and_purged_only_once_replaced() {
     let s3 = FakeS3::start().await;
     let env = s3.settings(BUCKET, "blobs");
     let instance = Instance::with_owner(&pairs(&env)).await;
-    let first = instance.picture(&jpeg(8)).await;
+    let first = instance.avatar(&jpeg(8)).await;
     instance.run("blob-replicate").await;
     object_key(&s3, "blobs", &first);
     assert_eq!(instance.copies(&first).await.len(), 2);
@@ -1678,7 +1678,7 @@ async fn the_owners_picture_is_replicated_and_purged_only_once_replaced() {
     }
     assert_eq!(instance.blobs_named(&first), 1);
 
-    let second = instance.picture(&jpeg(9)).await;
+    let second = instance.avatar(&jpeg(9)).await;
     instance.run("blob-replicate").await;
     instance.run("blob-orphans").await;
     instance.app.clock.advance(1).unwrap();
@@ -1696,10 +1696,10 @@ async fn the_owners_picture_is_replicated_and_purged_only_once_replaced() {
 }
 
 #[tokio::test]
-async fn a_picture_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
+async fn a_avatar_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
     let instance = Instance::with_owner(&[]).await;
     let bytes = jpeg(10);
-    let picture = instance.stored(&bytes).await;
+    let avatar = instance.stored(&bytes).await;
     let witness = instance.stored(b"named by nothing").await;
     instance.run("blob-orphans").await;
     instance.app.clock.advance(1).unwrap();
@@ -1707,13 +1707,13 @@ async fn a_picture_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
     instance.arm("hold:blob-orphans:purge", None);
     let set = async {
         instance.when_held().await;
-        instance.picture(&bytes).await;
+        instance.avatar(&bytes).await;
         instance.app.faults.clear(Some("hold:blob-orphans:purge"));
     };
     let (run, ()) = tokio::join!(instance.run("blob-orphans"), set);
     assert_eq!(run["purged"], 1, "{run}");
     assert_eq!(instance.blobs_named(&witness), 0);
-    assert_eq!(instance.blobs_named(&picture), 1);
+    assert_eq!(instance.blobs_named(&avatar), 1);
     let served = instance.call(Method::GET, "/owner/avatar", None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.bytes, bytes);

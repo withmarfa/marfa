@@ -106,7 +106,7 @@ describe("attaching a file", () => {
       "blobs",
       "url",
       attached.blob.hash,
-      "--ttl",
+      "--ttl-seconds",
       "120",
     ]);
     expect(link.url).toContain(attached.blob.hash.replace("sha256:", ""));

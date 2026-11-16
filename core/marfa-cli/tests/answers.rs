@@ -255,14 +255,14 @@ fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
             "items",
             "bin",
             "list",
-            "--q",
+            "--query",
             "a b",
         ],
     );
     assert_eq!(ran.code, 1, "{}", ran.stderr);
     assert!(
         ran.stderr.contains(&format!(
-            "marfa --socket {} items bin list --q 'a b'",
+            "marfa --socket {} items bin list --query 'a b'",
             socket.display()
         )),
         "{}",

@@ -1708,7 +1708,7 @@ If the credential a `POST /blobs` or `PUT /profile/avatar` request carries is re
 
 **Reason:** these bodies stream, so the server does not judge the caller again when the body is whole, but it judges the caller in the step that stores the upload, and a caller whose authority has ended is not given the result.
 
-**Tests:** `compliance/public-body.test.ts › is refused 401 and stores no picture when the key was revoked while a profile picture streamed in`, `› is refused 401 when the key was revoked while a blob streamed in`.
+**Tests:** `compliance/public-body.test.ts › is refused 401 and stores no avatar when the key was revoked while a profile avatar streamed in`, `› is refused 401 when the key was revoked while a blob streamed in`.
 
 ### `instance/bodiless-method-body-unread`
 

@@ -7,6 +7,7 @@ use marfa_core::{
     Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, SearchFilters, Sort, TagsWrite,
 };
 
+use crate::commands::StateFilter;
 use crate::error::{CliError, Exit};
 use crate::interrupt::{stop_after, stop_on_interrupt};
 use crate::output::{self, printable};
@@ -57,10 +58,10 @@ pub enum DeviceCommand {
     /// bring the server's edge in place of the one the write was made
     /// against.
     Hydrate {
-        /// Comma-separated type identifiers, such as core.note,core.file, or
-        /// `*` alone for every type but `system.*`, hydrated in one pass
-        /// without reading the catalog first.
-        #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
+        /// A type identifier, repeatable, such as core.note, or `*` alone for
+        /// every type but `system.*`, hydrated in one pass without reading the
+        /// catalog first.
+        #[arg(long = "type", required = true, value_name = "TYPE")]
         types: Vec<String>,
         /// The tier to hold the slice at, or `all` for both.
         #[arg(long)]
@@ -109,7 +110,7 @@ pub enum DeviceCommand {
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
-        #[arg(long = "for", value_name = "SECONDS")]
+        #[arg(long = "for-seconds", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
     /// Hold the store's watch open and print a line for each change, as a
@@ -129,7 +130,7 @@ pub enum DeviceCommand {
     Watch {
         /// Stop after this many seconds; without it, watch until
         /// interrupted.
-        #[arg(long = "for", value_name = "SECONDS")]
+        #[arg(long = "for-seconds", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
     /// Print a line each time another process saves to the store. Opens it
@@ -138,7 +139,7 @@ pub enum DeviceCommand {
     Changes {
         /// Stop after this many seconds; without it, watch until
         /// interrupted.
-        #[arg(long = "for", value_name = "SECONDS")]
+        #[arg(long = "for-seconds", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
     /// The items and edges that changed in the copy since a cursor this
@@ -206,16 +207,12 @@ pub enum DeviceCommand {
         /// phrase.
         #[arg(allow_hyphen_values = true)]
         query: String,
-        /// A state to answer; repeat it or separate states with commas.
-        /// Unset answers the active state.
-        #[arg(long, value_delimiter = ',')]
-        state: Vec<ItemState>,
-        /// Every state, not just the active one.
+        /// A state to answer; repeat it for more. `any` is every state, and is
+        /// given alone. Unset answers the active state.
         #[arg(long)]
-        all_states: bool,
-        /// A type identifier, with its subtypes; repeat it or separate types
-        /// with commas, up to ten.
-        #[arg(long = "type", value_name = "TYPE", value_delimiter = ',')]
+        state: Vec<StateFilter>,
+        /// A type identifier, with its subtypes; repeat it for more, up to ten.
+        #[arg(long = "type", value_name = "TYPE")]
         type_: Vec<String>,
         /// Only hits at this tier.
         #[arg(long)]
@@ -241,7 +238,7 @@ pub enum DeviceCommand {
         limit: usize,
         /// Only what this view's query selects; refused with a reason where
         /// the copy cannot answer the query whole.
-        #[arg(long, value_name = "ID", conflicts_with_all = ["state", "all_states", "type_", "tier", "tags", "occurred_after", "occurred_before", "filter", "beneath"])]
+        #[arg(long, value_name = "ID", conflicts_with_all = ["state", "type_", "tier", "tags", "occurred_after", "occurred_before", "filter", "beneath"])]
         view: Option<String>,
     },
     /// Every queued write, the body it carries and what became of it.
@@ -425,11 +422,6 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: TagsCommand,
     },
-    /// An item's metadata, written whole.
-    Metadata {
-        #[command(subcommand)]
-        command: MetadataCommand,
-    },
     /// An item's extension namespaces, each its own write.
     Extensions {
         #[command(subcommand)]
@@ -528,8 +520,8 @@ pub enum ItemsCommand {
     Create(CreateArgs),
     /// Change an item in the local copy and queue the change.
     Update(UpdateArgs),
-    /// Move an item to the bin locally and queue the delete.
-    Delete {
+    /// Move an item to the bin locally and queue the trash.
+    Trash {
         /// The item id.
         id: String,
     },
@@ -707,11 +699,13 @@ pub enum EdgesCommand {
     /// The edges the copy holds from one item.
     List {
         /// The item the edges start from.
+        #[arg(value_name = "ID")]
         item: String,
     },
     /// The edges the copy holds to one item.
     To {
         /// The item the edges point at.
+        #[arg(value_name = "ID")]
         item: String,
     },
     /// Link two items, and queue the edge.
@@ -843,6 +837,7 @@ pub enum TagsCommand {
     /// Put one tag on an item.
     Add {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The tag.
         tag: String,
@@ -850,20 +845,18 @@ pub enum TagsCommand {
     /// Take one tag off an item.
     Remove {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The tag.
         tag: String,
     },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum MetadataCommand {
-    /// Write the item's tags whole, dropping any not named.
+    /// Write the item's tags whole, dropping any not named; none at all
+    /// clears them.
     Replace {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
-        /// A tag, repeatable.
-        #[arg(long = "tag", value_name = "TAG")]
+        /// The tags the item is to carry.
         tags: Vec<String>,
     },
 }
@@ -873,6 +866,7 @@ pub enum ExtensionsCommand {
     /// Write one extension namespace.
     Write {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The extension namespace.
         namespace: String,
@@ -883,6 +877,7 @@ pub enum ExtensionsCommand {
     /// Remove one extension namespace.
     Delete {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The extension namespace.
         namespace: String,
@@ -1002,17 +997,13 @@ pub struct UpdateArgs {
 
 #[derive(Debug, Args)]
 pub struct ListArgs {
-    /// A type identifier, with its subtypes; repeat it or separate types
-    /// with commas, up to ten.
-    #[arg(long = "type", value_name = "TYPE", value_delimiter = ',')]
+    /// A type identifier, with its subtypes; repeat it for more, up to ten.
+    #[arg(long = "type", value_name = "TYPE")]
     pub type_: Vec<String>,
-    /// A state to answer; repeat it or separate states with commas. Unset
-    /// answers the active state.
-    #[arg(long, value_delimiter = ',')]
-    pub state: Vec<ItemState>,
-    /// Every state, not just the active one.
+    /// A state to answer; repeat it for more. `any` is every state, and is
+    /// given alone. Unset answers the active state.
     #[arg(long)]
-    pub all_states: bool,
+    pub state: Vec<StateFilter>,
     /// Only items at this tier.
     #[arg(long)]
     pub tier: Option<Tier>,
@@ -1063,10 +1054,9 @@ pub struct ListArgs {
     pub view: Option<String>,
 }
 
-const VIEW_SCOPED: [&str; 14] = [
+const VIEW_SCOPED: [&str; 13] = [
     "type_",
     "state",
-    "all_states",
     "tier",
     "tags",
     "occurred_after",
@@ -1093,8 +1083,7 @@ pub enum DeviceTablesCommand {
         table: String,
     },
     /// Stop holding a table, removing the rows the copy holds of it.
-    #[command(name = "let-go")]
-    LetGo {
+    Forget {
         /// The type, as it was held.
         #[arg(value_name = "TYPE")]
         type_id: String,
@@ -1116,6 +1105,7 @@ pub enum DeviceRowsCommand {
     /// holds the table whole, its rows show the batch at once.
     Write {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -1126,6 +1116,7 @@ pub enum DeviceRowsCommand {
     /// puts back reach the copy with its `rows.changed`.
     Undo {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -1135,6 +1126,7 @@ pub enum DeviceRowsCommand {
     /// One row of a table.
     Get {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -1145,6 +1137,7 @@ pub enum DeviceRowsCommand {
     /// names `adds_up`.
     Totals {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -1183,7 +1176,7 @@ pub enum DeviceFoldersCommand {
     /// named one replaced whole.
     /// Omitted settings stay. Every accepted change removes stored properties
     /// the current folder type does not declare.
-    Change(crate::commands::folders::ChangeArgs),
+    Update(crate::commands::folders::UpdateArgs),
     /// Retire a folder's settings through the folder operations, at once. A
     /// revoked folder does not change.
     Revoke {
@@ -1197,6 +1190,23 @@ pub enum DeviceFoldersCommand {
         /// The folder's `system.folder` id.
         id: String,
     },
+}
+
+/// The states a listing names for the core: `any` is every state, and the
+/// core refuses it beside another.
+fn states_of(states: Vec<StateFilter>) -> (Option<Vec<marfa_core::ItemState>>, bool) {
+    let all = states.contains(&StateFilter::Any);
+    let named = states
+        .into_iter()
+        .filter_map(|state| match state {
+            StateFilter::Active => Some(marfa_core::ItemState::Active),
+            StateFilter::Archived => Some(marfa_core::ItemState::Archived),
+            StateFilter::Trashed => Some(marfa_core::ItemState::Trashed),
+            StateFilter::Revoked => Some(marfa_core::ItemState::Revoked),
+            StateFilter::Any => None,
+        })
+        .collect();
+    (given(named), all)
 }
 
 /// A store found damaged part way through a read is named, with what its
@@ -1498,7 +1508,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
             };
             let parts = marfa_core::link_parts(&text);
-            output::report(&parts, json, || output::link_parts(&parts))
+            output::list_report(&parts, None, json, || output::link_parts(&parts))
         }
         DeviceCommand::Items {
             command: ItemsCommand::Purge { id, version },
@@ -1525,10 +1535,11 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                         )
                         .map(|()| Exit::Done);
                     }
+                    let (states, all_states) = states_of(args.state);
                     let filters = ListFilters {
                         types: given(args.type_),
-                        states: given(args.state.into_iter().map(Into::into).collect()),
-                        all_states: args.all_states,
+                        states,
+                        all_states,
                         tier: args.tier.map(Into::into),
                         tags: args.tags,
                         occurred_after: args.occurred_after,
@@ -1596,7 +1607,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     };
                     output::queued_one(&queued, json)
                 }
-                ItemsCommand::Delete { id } => output::queued_one(&core.delete_item(&id)?, json),
+                ItemsCommand::Trash { id } => output::queued_one(&core.delete_item(&id)?, json),
                 ItemsCommand::Purge { .. } | ItemsCommand::Bin { .. } => {
                     unreachable!("answered above, with the server")
                 }
@@ -1661,7 +1672,9 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 ItemsCommand::LinkCandidates { targets, item } => {
                     let answers = core.link_candidates(item.as_deref(), &targets)?;
-                    output::report(&answers, json, || output::link_candidates(&answers))
+                    output::list_report(&answers, None, json, || {
+                        output::link_candidates(&answers)
+                    })
                 }
                 ItemsCommand::Embed { id, file } => {
                     let text = core.embed_text(&id, &file)?;
@@ -1763,7 +1776,6 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
         DeviceCommand::Search {
             query,
             state,
-            all_states,
             type_,
             tier,
             tags,
@@ -1781,8 +1793,9 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 )
                 .map(|()| Exit::Done);
             }
+            let (states, all_states) = states_of(state);
             let filters = SearchFilters {
-                states: given(state.into_iter().map(Into::into).collect()),
+                states,
                 all_states,
                 types: given(type_),
                 tier: tier.map(Into::into),
@@ -1808,20 +1821,25 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     }
                 })
             }
-            DeviceTablesCommand::LetGo { type_id, table } => {
+            DeviceTablesCommand::Forget { type_id, table } => {
                 let was_held = store.open(None)?.let_go_table(&type_id, &table)?;
                 output::report(
                     &serde_json::json!({ "type": type_id, "table": table, "was_held": was_held }),
                     json,
                     || match was_held {
-                        true => format!("let go of {type_id} {table}"),
+                        true => format!("forgot {type_id} {table}"),
                         false => format!("{type_id} {table} was not held"),
                     },
                 )
             }
             DeviceTablesCommand::Held => {
                 let held = store.open(None)?.held_tables()?;
-                output::report(&held, json, || {
+                let answer = serde_json::json!({
+                    "data": held.tables,
+                    "next_cursor": null,
+                    "choices": held.choices,
+                });
+                output::report(&answer, json, || {
                     held.tables
                         .iter()
                         .map(|table| {
@@ -1903,8 +1921,9 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     if !json {
                         output::note_partial(rows.completeness);
                     }
-                    output::report(
-                        &serde_json::json!({"completeness": rows.completeness, "views": rows.rows}),
+                    output::list_report(
+                        &rows.rows,
+                        Some(rows.completeness),
                         json,
                         || rows.rows.iter().map(view_line).collect::<Vec<_>>().join("\n"),
                     )
@@ -1915,8 +1934,9 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 DeviceViewsCommand::Groups { id, time_zone } => {
                     let rows = core.view_groups(&id, time_zone.as_deref())?;
-                    output::report(
-                        &serde_json::json!({"completeness": rows.completeness, "groups": rows.rows}),
+                    output::list_report(
+                        &rows.rows,
+                        Some(rows.completeness),
                         json,
                         || rows.rows.iter().map(|group| {
                             format!("{}: {} item(s)", printable(&group.key.to_string()), group.count)
@@ -1935,7 +1955,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     &args.settings.read()?,
                     args.idempotency.idempotency_key.as_deref(),
                 )?,
-                DeviceFoldersCommand::Change(args) => store.open_with_server(named)?.change_folder(
+                DeviceFoldersCommand::Update(args) => store.open_with_server(named)?.change_folder(
                     &args.id,
                     &args.settings.read()?,
                     args.version,
@@ -2031,14 +2051,11 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
             let queued = match command {
                 TagsCommand::Add { item, tag } => core.add_tag(&item, &tag)?,
                 TagsCommand::Remove { item, tag } => core.remove_tag(&item, &tag)?,
+                TagsCommand::Replace { item, tags } => {
+                    core.replace_tags(&item, &TagsWrite { tags })?
+                }
             };
             output::queued_one(&queued, json)
-        }
-        DeviceCommand::Metadata { command } => {
-            let core = store.open(None)?;
-            let MetadataCommand::Replace { item, tags } = command;
-            let write = TagsWrite { tags };
-            output::queued_one(&core.replace_tags(&item, &write)?, json)
         }
         DeviceCommand::Extensions { command } => {
             let core = store.open(None)?;
@@ -2060,7 +2077,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
         DeviceCommand::Queue => {
             let core = store.open(None)?;
             let queue = core.queue()?;
-            output::queued(&queue, &queue, &core.pending_landings()?, json)
+            output::queue_listing(&queue, &core.pending_landings()?, json)
         }
         DeviceCommand::Forget { ids } => {
             let core = store.open(None)?;
@@ -2190,7 +2207,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
         }
         DeviceCommand::Unsent => {
             let unsent = Core::read_unsent(store.path()?)?;
-            output::report(&unsent, json, || {
+            output::list_report(&unsent, None, json, || {
                 if unsent.is_empty() {
                     return "the store holds no write the server has not taken".into();
                 }
@@ -2260,7 +2277,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
             match command {
                 TypesCommand::Served => {
                     let types = core.server_catalog_until(stop_after(None))?.item_types;
-                    output::report(&types, json, || {
+                    output::list_report(&types, None, json, || {
                         types.iter().map(type_line).collect::<Vec<_>>().join("\n")
                     })
                 }
@@ -2293,7 +2310,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 TypesCommand::Declared => {
                     let declared = core.declared_types()?;
-                    output::report(&declared, json, || {
+                    output::list_report(&declared, None, json, || {
                         declared
                             .iter()
                             .filter_map(|held| held["id"].as_str().map(printable))
@@ -2303,7 +2320,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 TypesCommand::List => {
                     let types = core.item_types()?;
-                    output::report(&types, json, || {
+                    output::list_report(&types, None, json, || {
                         types.iter().map(type_line).collect::<Vec<_>>().join("\n")
                     })
                 }
@@ -2342,7 +2359,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
             match command {
                 CatalogCommand::Served => {
                     let types = core.server_catalog_until(stop_after(None))?.edge_types;
-                    output::report(&types, json, || {
+                    output::list_report(&types, None, json, || {
                         types
                             .iter()
                             .map(edge_type_line)
@@ -2352,7 +2369,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 CatalogCommand::List => {
                     let types = core.edge_types()?;
-                    output::report(&types, json, || {
+                    output::list_report(&types, None, json, || {
                         types
                             .iter()
                             .map(edge_type_line)
@@ -2612,7 +2629,7 @@ fn edge_type_line(held: &marfa_core::EdgeType) -> String {
 }
 
 fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {
-    output::report(&edges, json, || {
+    output::list_report(edges, None, json, || {
         edges.iter().map(edge_line).collect::<Vec<_>>().join("\n")
     })
 }

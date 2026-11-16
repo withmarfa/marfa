@@ -384,8 +384,8 @@ fn a_working_copy_declares_what_it_printed_unchanged() {
     );
     assert_eq!(held.code, 0, "{}", held.stderr);
     let held: Value = serde_json::from_str(&held.stdout).unwrap();
-    assert_eq!(held[0]["id"], "user.recipe");
-    assert_eq!(held[0]["fields"], expected()["fields"]);
+    assert_eq!(held["data"][0]["id"], "user.recipe");
+    assert_eq!(held["data"][0]["fields"], expected()["fields"]);
     // Witness: the same copy refuses a definition the command would not print.
     let refused = marfa(
         &[

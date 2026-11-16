@@ -189,7 +189,7 @@ fn skipped(words: &[String]) -> bool {
         // Remote settings and health commands need no local folder. Other
         // folder commands use a working copy, driven by the device fixtures.
         || (first == Some("folders")
-            && !matches!(words.get(1).map(String::as_str), Some("create" | "change" | "revoke" | "health" | "inventory")))
+            && !matches!(words.get(1).map(String::as_str), Some("create" | "update" | "revoke" | "health" | "inventory")))
         // A browser and the keychain.
         || matches!(first, Some("login" | "logout"))
         // Private transport is exercised independently of this HTTP walk.
@@ -396,7 +396,7 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             "setup open",
             "owner passkeys list",
             "owner passkeys rename",
-            "owner passkeys remove",
+            "owner passkeys delete",
             "owner passkeys add",
             "owner recover",
             "owner update",
@@ -682,10 +682,10 @@ const MISSED: &[&str] = &[
     // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
     "updateOwner",
     // `owner update --avatar` and `profile update --avatar`: the walk gives
-    // each command one option, so it stops at the name's door. Both pictures
+    // each command one option, so it stops at the name's door. Both avatars
     // are driven by cli/profile.test.ts.
-    "replaceOwnerPicture",
-    "replaceProfilePicture",
+    "replaceOwnerAvatar",
+    "replaceProfileAvatar",
     // `apps narrow` reads the grant before sending the guarded update.
     "narrowAppGrant",
     // `setup claim`: secret input is driven by the child-process fixture above.
@@ -842,5 +842,63 @@ fn every_request_a_command_sends_is_one_the_document_publishes() {
         MISSED,
         "{sent} requests reached {} operations",
         reached.len()
+    );
+}
+
+/// The paged operations whose command does not take `--limit`, `--cursor` and
+/// `--all`, each with why.
+const PAGES_ITSELF: &[(&str, &str)] = &[(
+    "emptyTrash",
+    "`items bin empty` sends each batch's cursor back itself, until the server names none",
+)];
+
+#[test]
+fn every_command_for_a_paged_operation_takes_the_same_paging_options() {
+    let document = Document::read();
+    let leaves = every_leaf();
+    let takes = |leaf: &Leaf, flag: &str| {
+        leaf.flags
+            .iter()
+            .any(|held| held.spelling.starts_with(flag))
+    };
+    let mut lacking = Vec::new();
+    let mut checked = 0;
+    for methods in document.0["paths"].as_object().unwrap().values() {
+        for operation in methods.as_object().unwrap().values() {
+            let id = operation["operationId"].as_str().unwrap();
+            let paged_by_query = operation["parameters"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|parameter| document.resolved(parameter))
+                .any(|parameter| parameter["in"] == "query" && parameter["name"] == "cursor");
+            if !paged_by_query || PAGES_ITSELF.iter().any(|(held, _)| *held == id) {
+                continue;
+            }
+            let command = super::operations::OPERATIONS
+                .iter()
+                .find(|operation| operation.id == id)
+                .map(|operation| operation.command);
+            let Some(leaf) = command
+                .and_then(|command| leaves.iter().find(|leaf| leaf.words.join(" ") == command))
+            else {
+                lacking.push(format!("{id}: no command is named for it"));
+                continue;
+            };
+            checked += 1;
+            for flag in ["--limit", "--cursor", "--all"] {
+                if !takes(leaf, flag) {
+                    lacking.push(format!(
+                        "`marfa {}` for {id} takes no {flag}",
+                        leaf.words.join(" ")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(lacking.is_empty(), "{}", lacking.join("\n"));
+    assert!(
+        checked >= 15,
+        "only {checked} paged operations were checked"
     );
 }

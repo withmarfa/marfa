@@ -228,8 +228,11 @@ it("refuses item and edge writes through the private socket with 401 and changes
 it("admits trash, restore and purge of one item through the private socket and answers its summary alone, where the socket still cannot read it", async () => {
   const id = await create("socket bin witness");
   const { version } = await read(id);
-  const through = (method: string, path: string, query = `?version=${version}`) =>
-    controlRequest(server.controlSocket, `${path}${query}`, { method });
+  const through = (
+    method: string,
+    path: string,
+    query = `?version=${version}`,
+  ) => controlRequest(server.controlSocket, `${path}${query}`, { method });
   const summary = ["created_at", "id", "name", "source", "type", "version"];
   const answered = async (
     method: string,
@@ -279,7 +282,7 @@ it("refuses trash, restore and purge through the private socket that name no ver
     });
     expect(refused.status, `${method} ${path}`).toBe(400);
     expect(refused.body, `${method} ${path}`).toMatchObject({
-      error: { code: "validation_error" },
+      error: { code: "missing_required_field", details: { field: "version" } },
     });
   }
   expect((await read(id)).state).toBe("active");

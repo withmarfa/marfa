@@ -2786,7 +2786,7 @@ When the private local command sends `DELETE /items/{id}`, `POST /items/{id}/res
 
 ### `items/owner-trash-version-required`
 
-If the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` without a `version`, then the server MUST answer `400 validation_error` and leave the item.
+If the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` without a `version`, then the server MUST answer `400 missing_required_field` naming `version` and leave the item.
 
 **Reason:** the local command chooses an item by the name a summary shows, so the `version` it read is what makes sure it acts on the item it named.
 
