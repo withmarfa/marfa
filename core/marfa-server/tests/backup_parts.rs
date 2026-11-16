@@ -1415,6 +1415,34 @@ async fn turned_off_is_said_while_something_else_fails_backups(place: Place) {
     for reference in ["turned_off", "store"] {
         assert!(concerns.contains(&reference.to_string()), "{concerns:?}");
     }
+
+    assert_eq!(
+        public_backups(&origin).await,
+        json!({ "status": "off", "reason": "turned_off" })
+    );
+    origin
+        .app
+        .faults
+        .set("fail:backup-folder-write", None)
+        .unwrap();
+    origin
+        .item("core.note", json!({ "title": "unwritten" }))
+        .await;
+    origin.app.clock.advance(1000).unwrap();
+    let failed = origin.local(Method::POST, "/backups", None).await;
+    origin.app.faults.clear(None);
+    assert_eq!(
+        failed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        failed.body
+    );
+    assert_eq!(
+        public_backups(&origin).await,
+        json!({ "status": "failing", "reason": "turned_off" })
+    );
+    let concerns = origin.backup_concerns().await;
+    assert_eq!(concerns, ["turned_off", "run"]);
 }
 
 #[tokio::test]

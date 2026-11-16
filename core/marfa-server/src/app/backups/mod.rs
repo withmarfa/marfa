@@ -1384,8 +1384,8 @@ impl App {
             }
             (Some(_), _, _, Some(_)) => "failing",
             (Some(_), ..) if damage => "failing",
-            (Some(_), true, ..) => "off",
-            (Some(_), false, true, None) => "failing",
+            (Some(_), _, true, None) => "failing",
+            (Some(_), true, false, None) => "off",
             (Some(_), false, false, None) if incomplete => "incomplete",
             (Some(_), false, false, None) => "ok",
         };

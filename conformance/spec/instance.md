@@ -978,9 +978,9 @@ If the object store or the backup folder does not take a backup, then the server
 
 While the last backup run failed, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
 
-**Reason:** a backup that stops working is the failure an owner learns of only when they need the backup.
+**Reason:** a backup that stops working is the failure an owner learns of only when they need the backup. A backup run by hand that failed is failing while scheduled backups are turned off too.
 
-**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`.
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`, `› says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`.
 
 ### `instance/backup-health-lost`
 
@@ -1041,6 +1041,20 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `i
 Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_backup_destination`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
+
+### `instance/backup-health-turned-off`
+
+Where a destination is set and `backup_interval_seconds` is 0, the server MUST answer `GET /health` with `backups.reason` `turned_off`.
+
+**Reason:** the reason stays while a failure or a damaged part makes `backups.status` `failing`, so an owner reads both.
+
+**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`.
+
+### `instance/backup-health-turned-off-status`
+
+Where a destination is set and `backup_interval_seconds` is 0, while the last backup run did not fail, the destination answers and `instance/backup-health-parts-damaged` does not hold, the server MUST answer `GET /health` with `backups.status` `off`.
+
+**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`.
 
 ### `instance/backup-health-store-failing`
 

@@ -698,6 +698,50 @@ describe("a backup folder that lacks a file or its disk", () => {
     });
   });
 
+  it("says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put", async () => {
+    const root = mkdtempSync(join(tmpdir(), "marfa-backup-folder-off-"));
+    const server = await bootFreshServer("backup-folder-off", {
+      ...FOLDER_ONLY,
+      MARFA_BACKUP_PATH: root,
+    });
+    try {
+      const told = async () =>
+        (await attentionOf(server))
+          .filter((concern) => concern.kind === "backup")
+          .map((concern) => concern.reference);
+      // The witness: with nothing failing, an interval of 0 is off.
+      expect((await healthDetail(server)).backups).toMatchObject({
+        status: "off",
+        reason: "turned_off",
+      });
+      await server.setFault("fail:backup-folder-write");
+      try {
+        const run = await ownerOf(server).runBackup();
+        expect(run.status, JSON.stringify(run.data)).toBe(503);
+      } finally {
+        await server.clearFault();
+      }
+      const detail = await healthDetail(server);
+      expect(detail.status).toBe("degraded");
+      expect(detail.backups).toMatchObject({
+        status: "failing",
+        reason: "turned_off",
+        failures: 1,
+      });
+      expect(await told()).toEqual(["turned_off", "run"]);
+      const run = await ownerOf(server).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      expect((await healthDetail(server)).backups).toMatchObject({
+        status: "off",
+        reason: "turned_off",
+      });
+      expect(await told()).toEqual(["turned_off"]);
+    } finally {
+      await server.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses a restore that lacks a file before it reads any file from the folder", async () => {
     await withFolder("backup-folder-first", async (server, root) => {
       const id = await instanceIdOf(server);
