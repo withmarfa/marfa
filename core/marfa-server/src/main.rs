@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -12,7 +13,11 @@ static ALLOCATOR: marfa_allocator::Allocator = marfa_allocator::Allocator;
 /// The Marfa server. It is configured through its environment.
 #[derive(Parser)]
 #[command(version, about)]
-struct Cli {}
+struct Cli {
+    /// Says whether this build opens the database file, reading it only, and ends.
+    #[arg(long, value_name = "FILE")]
+    can_open: Option<PathBuf>,
+}
 
 /// A rule between telemetry settings is asked only when every setting has read.
 fn read_settings() -> Result<(marfa_server::settings::Accepted, Config), Failure> {
@@ -47,11 +52,27 @@ fn start() -> Result<u8, Failure> {
         .block_on(run::run(accepted, telemetry))
 }
 
+fn can_open(file: &std::path::Path) -> ExitCode {
+    match marfa_server::app::updates::inspect(file) {
+        Ok(said) => {
+            println!("{said}");
+            ExitCode::SUCCESS
+        }
+        Err(failure) => {
+            eprintln!("{}", failure.message);
+            ExitCode::from(failure.status)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     marfa_server::private_files::take_umask();
     marfa_allocator::route_sqlite();
     marfa_enrichment::serve_child_if_asked();
-    Cli::parse();
+    let cli = Cli::parse();
+    if let Some(file) = cli.can_open {
+        return can_open(&file);
+    }
     log::init();
     telemetry::install_panic_hook();
     match start() {

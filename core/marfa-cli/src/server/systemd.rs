@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use marfa_rules::environment::SERVICE;
+
 use crate::autostart::{ROOT_ENV, quoted, text};
 use crate::error::CliError;
 use crate::server::account;
@@ -78,6 +80,7 @@ Description=Marfa server {name}
 [Service]
 Type=simple
 ExecStart={exec}
+Environment={SERVICE}=systemd
 Restart=on-failure
 RestartSec=5
 {run_as}
@@ -547,6 +550,7 @@ else cat "$J"; fi
         for line in [
             "ExecStart=\"/usr/local/bin/marfa\" \"server\" \"run\" \"--dir\" \"/var/lib/marfa-server\"",
             "Restart=on-failure",
+            "Environment=MARFA_SERVICE=systemd",
             "WantedBy=default.target",
         ] {
             assert!(text.lines().any(|found| found == line), "{line}\n{text}");
@@ -561,6 +565,7 @@ else cat "$J"; fi
             "User=marfa",
             "Group=marfa",
             "Restart=on-failure",
+            "Environment=MARFA_SERVICE=systemd",
             "NoNewPrivileges=yes",
             "ProtectSystem=strict",
             "ReadWritePaths=\"/var/lib/marfa-server/data\"",

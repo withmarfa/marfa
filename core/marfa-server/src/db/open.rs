@@ -399,6 +399,49 @@ fn move_schema_into_file(conn: &Connection) {
     }
 }
 
+/// What a build makes of a database file it has only read.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Inspection {
+    /// The schema version the file holds; `None` where there is no file.
+    pub schema: Option<u32>,
+    pub standing: Standing,
+}
+
+/// Judges the file as `open` would, with a connection that cannot write, so it is safe beside a
+/// server that has the file open.
+pub fn inspect(path: &Path, migrations: &[Migration]) -> Result<Inspection, Failure> {
+    let label = path.display().to_string();
+    match std::fs::metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Inspection {
+                schema: None,
+                standing: Standing::Unfinished,
+            });
+        }
+        Err(error) => {
+            return Err(Failure::start(format!(
+                "{label} could not be read: {error}"
+            )));
+        }
+    }
+    let flags = OpenFlags::SQLITE_OPEN_URI
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let conn = Connection::open_with_flags(file_uri(path, "mode=ro"), flags)
+        .map_err(|error| refused_open(&label, error))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|error| refused_open(&label, error))?;
+    let standing = migrate::judge(&conn, migrations, &label)?;
+    let schema = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|error| refused_open(&label, error))?;
+    Ok(Inspection {
+        schema: Some(schema),
+        standing,
+    })
+}
+
 /// Nothing is written until the judgment has passed.
 pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Failure> {
     let target = Target::of(&options.path);
