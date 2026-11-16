@@ -222,7 +222,7 @@ describe("The type catalog a working copy holds", () => {
     expect(
       [parent.reverse_name, parent.written_from, parent.shipped],
       "a shipped edge type's reverse name did not reach the caller",
-    ).toEqual(["child-of", "target", true]);
+    ).toEqual(["child-of", "to", true]);
     const collected = edges.find((type) => type.id === "in-collection");
     expect(
       [parent.acyclic, parent.flat, collected?.acyclic, collected?.flat],

@@ -75,9 +75,9 @@ describe("attaching a file", () => {
     }>(["items", "backrefs", created.item.id, "--type", "attached-to"]);
     expect(inbound.data.map((row) => row.from_id)).toContain(attached.item.id);
     const otherType = await c.cli.json<{
-      data: Array<{ source_id: string }>;
+      data: Array<{ from_id: string }>;
     }>(["items", "backrefs", created.item.id, "--type", "references"]);
-    expect(otherType.data.map((row) => row.source_id)).not.toContain(
+    expect(otherType.data.map((row) => row.from_id)).not.toContain(
       attached.item.id,
     );
 

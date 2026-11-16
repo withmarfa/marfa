@@ -577,8 +577,8 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
       detailsOf(refused),
       `${what}: the device's details are not the server's`,
     ).toEqual(
-      details !== undefined && "source_id" in details
-        ? { ...details, source_id: expect.any(String) }
+      details !== undefined && "from_id" in details
+        ? { ...details, from_id: expect.any(String) }
         : details,
     );
   }

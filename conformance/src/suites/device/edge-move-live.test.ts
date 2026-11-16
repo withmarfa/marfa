@@ -374,7 +374,7 @@ it("puts the edge back at its old parent when the server refuses the move for a 
       (row) => row.id === queued.id,
     );
     expect(kept?.body, "the refused move's content was not kept").toMatchObject(
-      { source_id: bottom },
+      { from_id: bottom },
     );
   } finally {
     rmSync(dirname(store), { recursive: true, force: true });
