@@ -369,6 +369,25 @@ describe("a web page's address", () => {
     await expectRefused(origin, server.workingKey);
   });
 
+  it("answers the request that disconnects a page's last grant with its origin allowed, and the next request without", async () => {
+    const origin = "https://disconnecting.web-page-origin.test";
+    const page = await registerPage([`${origin}/callback`]);
+    const { access } = await approve(page);
+    // The witness: the origin is allowed until the delete.
+    await expectAllowed(origin, access);
+    const grant = await grantOf(page);
+    expect(grant, "the page is not listed").toBeDefined();
+    const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
+      method: "DELETE",
+      headers: { origin, authorization: `Bearer ${server.managementKey}` },
+    });
+    await revoked.body?.cancel();
+    expect(revoked.status).toBe(200);
+    expect(revoked.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(await grantOf(page)).toBeUndefined();
+    await expectRefused(origin, server.workingKey);
+  });
+
   it("keeps an origin approved twice until its one grant is disconnected", async () => {
     const origin = "https://twice.web-page-origin.test";
     const page = await registerPage([`${origin}/callback`]);
@@ -639,6 +658,29 @@ describe("a web page's address", () => {
       });
       await asked.body?.cancel();
       expect(crossOrigin(asked), path).toContain("access-control-allow-origin");
+    }
+    // A preflight that names no origin is no browser's preflight, whether the
+    // path takes the method or answers every origin's.
+    for (const path of ["/items", "/oauth/register"]) {
+      const preflightFrom = (headers: Record<string, string>) =>
+        fetch(`${server.apiUrl}${path}`, {
+          method: "OPTIONS",
+          headers: {
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "content-type",
+            ...headers,
+          },
+        });
+      const bare = await preflightFrom({});
+      await bare.body?.cancel();
+      expect(crossOrigin(bare), `OPTIONS ${path}`).toEqual([]);
+      // The witness: the same preflight from an origin is answered in cross-origin headers.
+      const asked = await preflightFrom({ origin: CONFIGURED });
+      await asked.body?.cancel();
+      expect(asked.status, `OPTIONS ${path}`).toBe(204);
+      expect(crossOrigin(asked), `OPTIONS ${path}`).toContain(
+        "access-control-allow-origin",
+      );
     }
   });
 });

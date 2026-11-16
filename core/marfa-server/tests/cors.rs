@@ -408,6 +408,24 @@ async fn a_request_with_no_origin_gets_no_cors_headers() {
             assert!(!reply.headers.contains_key(&name), "{name} on {path}");
         }
     }
+    for path in ["/oauth/register", "/items"] {
+        let reply = send(
+            &router,
+            Method::OPTIONS,
+            path,
+            &[
+                ("access-control-request-method", "POST"),
+                ("access-control-request-headers", "content-type"),
+            ],
+        )
+        .await;
+        let named: Vec<_> = reply
+            .headers
+            .keys()
+            .filter(|name| name.as_str().starts_with("access-control-"))
+            .collect();
+        assert!(named.is_empty(), "{path}: {named:?}");
+    }
     // The witness: the same discovery documents name every origin when asked from one.
     let asked = send(
         &router,
@@ -418,6 +436,21 @@ async fn a_request_with_no_origin_gets_no_cors_headers() {
     .await;
     assert_eq!(allowed_origin(&asked), Some("*"));
     assert!(varies(&asked).contains(&"origin".to_string()));
+    // The witness for the preflights: each one is answered once it names an origin.
+    for (path, origin, allowed) in [("/oauth/register", STRANGER, "*"), ("/items", PAGE, PAGE)] {
+        let asked = send(
+            &router,
+            Method::OPTIONS,
+            path,
+            &[
+                ("origin", origin),
+                ("access-control-request-method", "POST"),
+                ("access-control-request-headers", "content-type"),
+            ],
+        )
+        .await;
+        assert_eq!(allowed_origin(&asked), Some(allowed), "{path}");
+    }
 }
 
 #[tokio::test]
@@ -450,6 +483,7 @@ async fn registration_answers_only_the_preflight_it_serves() {
         &register("DELETE")[..],
         &[][..],
         &[("origin", STRANGER)][..],
+        &[("access-control-request-method", "POST")][..],
     ] {
         let reply = send(&router, Method::OPTIONS, "/oauth/register", headers).await;
         assert_eq!(reply.status, StatusCode::NOT_FOUND, "{headers:?}");

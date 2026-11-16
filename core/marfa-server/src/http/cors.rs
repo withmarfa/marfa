@@ -200,7 +200,7 @@ async fn preflight(pages: &Pages, path: &Path, headers: &HeaderMap) -> Option<Re
     Some(preflight_answer(&pages.app, origin, &path.methods, asked))
 }
 
-/// Allows an origin only while `cors_origins` names it or an approved grant covers it, judged per request.
+/// Allows an origin only while `cors_origins` names it or an approved grant covers it, judged as each request arrives.
 pub async fn pages(State(pages): State<Pages>, request: Request, next: Next) -> Response {
     let uri_path = request.uri().path();
     if AUTHORIZATION_DOORS.contains(&uri_path) {
@@ -218,6 +218,10 @@ pub async fn pages(State(pages): State<Pages>, request: Request, next: Next) -> 
         return answer;
     }
     let origin = named_origin(request.headers()).cloned();
+    let allowed = match &origin {
+        Some(origin) if !is_preflight => approved(&pages.app, origin).await,
+        _ => false,
+    };
     let mut response = next.run(request).await;
     if is_preflight {
         varies_by_preflight(&mut response);
@@ -229,9 +233,7 @@ pub async fn pages(State(pages): State<Pages>, request: Request, next: Next) -> 
     let Some(origin) = origin else {
         return response;
     };
-    if response.headers().contains_key(ACCESS_CONTROL_ALLOW_ORIGIN)
-        || !approved(&pages.app, &origin).await
-    {
+    if !allowed || response.headers().contains_key(ACCESS_CONTROL_ALLOW_ORIGIN) {
         return response;
     }
     let headers = response.headers_mut();
@@ -259,7 +261,7 @@ pub async fn register_preflight(method: Method, asked: HeaderMap) -> Response {
     let posting = asked
         .get(ACCESS_CONTROL_REQUEST_METHOD)
         .is_some_and(|method| method == "POST");
-    if !posting {
+    if !posting || !asked.contains_key(ORIGIN) {
         return super::unmatched(method, asked).await;
     }
     let mut response = StatusCode::NO_CONTENT.into_response();

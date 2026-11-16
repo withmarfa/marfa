@@ -191,6 +191,7 @@ describe("a page that has never been registered", () => {
       { origin },
       {},
       { origin, "access-control-request-method": "DELETE" },
+      { "access-control-request-method": "POST" },
     ];
     for (const headers of notServed) {
       const refused = await fetch(`${server.apiUrl}/oauth/register`, {
