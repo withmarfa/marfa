@@ -1112,7 +1112,7 @@ describe("where backups may go", () => {
       const bytes = bytesOf("kept on the disk", 64);
       const upload = await working.uploadBlob(bytes, "text/plain");
       expect(upload.status, JSON.stringify(upload.error)).toBe(201);
-      const read = await working.downloadBlob(upload.data.hash);
+      const read = await operator.downloadBlob(upload.data.hash);
       expect(new Uint8Array(read.data)).toEqual(bytes);
       expect(existsSync(missing)).toBe(false);
 
