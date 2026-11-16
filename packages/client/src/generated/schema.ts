@@ -3777,6 +3777,23 @@ export interface components {
             };
         };
         /** @description An error response. */
+        InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
@@ -8057,6 +8074,7 @@ export interface operations {
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.
+             *     - `missing_required_field`: you are the private socket, and `version` is missing.
              *     - `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.
              */
             400: {
@@ -8068,7 +8086,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -8939,6 +8957,7 @@ export interface operations {
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `invalid_transition`: the item is not in the trash.
+             *     - `missing_required_field`: you are the private socket, and `version` is missing.
              *     - `validation_error`: `Idempotency-Key` is malformed.
              */
             400: {
@@ -8950,7 +8969,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -9135,6 +9154,7 @@ export interface operations {
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `invalid_transition`: the item is not in the trash.
+             *     - `missing_required_field`: you are the private socket, and `version` is missing.
              *     - `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.
              */
             400: {
@@ -9146,7 +9166,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */

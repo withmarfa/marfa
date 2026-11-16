@@ -3195,6 +3195,44 @@
         ],
         "description": "An error response."
       },
+      "InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_id",
+                  "invalid_transition",
+                  "missing_required_field",
+                  "validation_error"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
@@ -14031,11 +14069,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.\n- `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.\n- `missing_required_field`: you are the private socket, and `version` is missing.\n- `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -15152,11 +15190,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `validation_error`: `Idempotency-Key` is malformed.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `missing_required_field`: you are the private socket, and `version` is missing.\n- `validation_error`: `Idempotency-Key` is malformed.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -15530,11 +15568,11 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `missing_required_field`: you are the private socket, and `version` is missing.\n- `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
