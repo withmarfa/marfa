@@ -569,20 +569,51 @@ fn a_search_sort_is_sent_in_the_servers_spelling_or_refused_before_the_request()
     for (typed, sent) in [
         ("relevance", "relevance"),
         ("created-at", "created_at"),
-        ("occurred_at", "occurred_at"),
+        ("updated-at", "updated_at"),
+        ("occurred-at", "occurred_at"),
+        ("last-activity-at", "last_activity_at"),
         ("properties.due_at", "properties.due_at"),
+        ("properties.due_date", "properties.due_date"),
     ] {
         assert_eq!(sort_of(typed).as_deref(), Ok(sent), "{typed}");
     }
     for bad in [
         "title",
+        "created_at",
+        "occurred_at",
+        "last_activity_at",
         "properties.",
         "properties.Due",
+        "properties.due-date",
         "properties.a.b",
         "",
     ] {
         assert!(sort_of(bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn an_items_sort_takes_one_spelling_and_keeps_a_property_name_as_written() {
+    use crate::values::parse_sort_field;
+    use marfa_rules::query::SortField;
+    for (typed, field) in [
+        ("created-at", SortField::CreatedAt),
+        ("updated-at", SortField::UpdatedAt),
+        ("occurred-at", SortField::OccurredAt),
+        ("last-activity-at", SortField::LastActivityAt),
+        (
+            "properties.due_date",
+            SortField::Property("due_date".into()),
+        ),
+    ] {
+        assert_eq!(parse_sort_field(typed), Ok(field), "{typed}");
+    }
+    for bad in ["created_at", "updated_at", "last_activity_at", "trashed-at"] {
+        let error = parse_sort_field(bad).unwrap_err();
+        assert!(error.contains("`last-activity-at`"), "{bad}: {error}");
+    }
+    // A property name is never rewritten: a hyphen is refused as the server refuses it.
+    assert!(parse_sort_field("properties.due-date").is_err());
 }
 
 #[test]

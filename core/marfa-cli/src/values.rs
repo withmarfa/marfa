@@ -89,17 +89,23 @@ impl From<ItemState> for marfa_core::ItemState {
     }
 }
 
-/// A sort field as the server takes it, typed with hyphens or underscores:
-/// `created-at`, `updated-at`, `occurred-at`, `last-activity-at` or
-/// `properties.<name>`.
+/// A sort field as typed on the command line: `created-at`, `updated-at`,
+/// `occurred-at`, `last-activity-at` or `properties.<name>`, the name kept as written.
 pub fn parse_sort_field(text: &str) -> Result<marfa_rules::query::SortField, String> {
-    let spelled = match text.strip_prefix("properties.") {
-        Some(_) => text.to_owned(),
-        None => text.replace('-', "_"),
-    };
-    spelled
-        .parse()
-        .map_err(|error: marfa_rules::RuleError| error.to_string())
+    use marfa_rules::query::SortField;
+    match text {
+        "created-at" => Ok(SortField::CreatedAt),
+        "updated-at" => Ok(SortField::UpdatedAt),
+        "occurred-at" => Ok(SortField::OccurredAt),
+        "last-activity-at" => Ok(SortField::LastActivityAt),
+        other => match other.strip_prefix("properties.") {
+            Some(name) => SortField::property(name).map_err(|error| error.to_string()),
+            None => Err(format!(
+                "`{other}` is not a sort: use `created-at`, `updated-at`, `occurred-at`, \
+                 `last-activity-at` or `properties.<field>`"
+            )),
+        },
+    }
 }
 
 /// The edges of a create: edge type to the ids of the items they point to.

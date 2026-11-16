@@ -1488,7 +1488,7 @@ marfa search [OPTIONS] <QUERY>
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
 | `--updated-after <TIME>` | Inclusive lower bound on the modification time, RFC 3339. |
 | `--updated-before <TIME>` | Exclusive upper bound on the modification time, RFC 3339. |
-| `--sort <FIELD>` | What to order by: `relevance` (the default), `created-at`, `updated-at`, `occurred-at` or `properties.<field>`. |
+| `--sort <FIELD>` | What to order by: `relevance` (the default), `created-at`, `updated-at`, `occurred-at`, `last-activity-at` or `properties.<field>`. |
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is best match or newest first. One of `asc`, `desc`. |
 | `--include <NAME>` | Extra to include: `system` also returns `system.*` items, which are left out by default. |
 | `--limit <LIMIT>` | How many at most. |

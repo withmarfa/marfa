@@ -386,9 +386,14 @@ export class CliDevice implements DeviceUnderTest {
       args.push("--updated-after", filters.updatedAfter);
     if (filters.updatedBefore !== undefined)
       args.push("--updated-before", filters.updatedBefore);
-    // The three times are spelled with a hyphen on the command line.
+    // A built-in field is spelled with hyphens on the command line; a property keeps its name.
     if (filters.sort !== undefined)
-      args.push("--sort", filters.sort.replace(/^(\w+)_at$/, "$1-at"));
+      args.push(
+        "--sort",
+        filters.sort.startsWith("properties.")
+          ? filters.sort
+          : filters.sort.replaceAll("_", "-"),
+      );
     if (filters.direction !== undefined)
       args.push("--direction", filters.direction);
     for (const tag of filters.tags ?? []) args.push("--tag", tag);

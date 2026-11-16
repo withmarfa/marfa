@@ -5,7 +5,7 @@ use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
-use crate::values::SortDirection;
+use crate::values::{SortDirection, parse_sort_field};
 
 /// Full-text search on the server, best match first unless a sort is given.
 #[derive(Debug, Default, Args)]
@@ -46,7 +46,7 @@ pub struct SearchArgs {
     #[arg(long, value_name = "TIME")]
     pub updated_before: Option<String>,
     /// What to order by: `relevance` (the default), `created-at`, `updated-at`,
-    /// `occurred-at` or `properties.<field>`.
+    /// `occurred-at`, `last-activity-at` or `properties.<field>`.
     #[arg(long, value_name = "FIELD", value_parser = parse_sort)]
     pub sort: Option<String>,
     /// `asc` or `desc`; the server's default is best match or newest first.
@@ -60,27 +60,14 @@ pub struct SearchArgs {
     pub page: PageArgs,
 }
 
-/// A sort as typed, in the server's spelling: the kebab names of the times
-/// that `items list` takes are accepted too, and a property keeps its field.
+/// A search sort as the server takes it: `relevance`, or any sort `items list` takes.
 fn parse_sort(text: &str) -> Result<String, String> {
-    match text {
-        "relevance" | "created_at" | "updated_at" | "occurred_at" => Ok(text.to_owned()),
-        "created-at" | "updated-at" | "occurred-at" => Ok(text.replace('-', "_")),
-        other => match other.strip_prefix("properties.") {
-            Some(field)
-                if !field.is_empty()
-                    && field
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') =>
-            {
-                Ok(other.to_owned())
-            }
-            _ => Err(format!(
-                "`{other}` is not a sort: use `relevance`, `created-at`, `updated-at`, \
-                 `occurred-at` or `properties.<field>` with a lowercase field name"
-            )),
-        },
+    if text == "relevance" {
+        return Ok(text.to_owned());
     }
+    parse_sort_field(text)
+        .map(|field| field.to_string())
+        .map_err(|error| format!("{error}, or `relevance`"))
 }
 
 pub fn request(args: &SearchArgs) -> Result<Request, CliError> {
