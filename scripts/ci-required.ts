@@ -559,6 +559,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-server\/src\/db\/reader\.rs$/,
     ["core-checks", "core-checks-linux", ...RUST_SERVER],
   ],
+  // A backup folder file's stamp takes its birth time, which only a Mac's
+  // test can set.
+  [
+    /^core\/marfa-server\/src\/app\/blobs\/folder\.rs$/,
+    ["core-checks", "core-checks-linux", ...RUST_SERVER],
+  ],
   // The settings are what the Dockerfile's environment names.
   [
     /^core\/marfa-server\/src\/settings\//,

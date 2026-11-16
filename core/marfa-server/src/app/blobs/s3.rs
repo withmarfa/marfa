@@ -43,6 +43,11 @@ pub struct S3 {
     client: AmazonS3,
 }
 
+/// An ETag as a listing and an upload's answer both give it, without the quotes some stores add.
+fn etag(raw: &str) -> String {
+    raw.trim_start_matches("W/").trim_matches('"').to_string()
+}
+
 fn failed(error: object_store::Error) -> io::Error {
     io::Error::from(error)
 }
@@ -378,14 +383,15 @@ impl S3 {
             .map(|_| ())
     }
 
-    /// Appears whole or not at all; fails once it outlasts `limit`.
+    /// Appears whole or not at all; fails once it outlasts `limit`. Answers the size and the
+    /// ETag the store gave the object, when it gave one.
     pub async fn put_whole(
         &self,
         key: &str,
         content_type: &str,
         bytes: BoxStream<'static, io::Result<Bytes>>,
         limit: Duration,
-    ) -> io::Result<u64> {
+    ) -> io::Result<(u64, Option<String>)> {
         let deadline = Instant::now() + limit;
         let mut attributes = Attributes::new();
         attributes.insert(Attribute::ContentType, content_type.to_string().into());
@@ -402,7 +408,7 @@ impl S3 {
         mut bytes: BoxStream<'static, io::Result<Bytes>>,
         deadline: Instant,
         mut checked: Checked<'_>,
-    ) -> io::Result<u64> {
+    ) -> io::Result<(u64, Option<String>)> {
         let mut first: Vec<Bytes> = Vec::new();
         let mut held = 0u64;
         let mut ended = false;
@@ -433,8 +439,8 @@ impl S3 {
             let put = self
                 .client
                 .put_opts(&location, PutPayload::from_iter(first), options);
-            within_deadline(deadline, async { put.await.map_err(failed) }).await?;
-            return Ok(held);
+            let put = within_deadline(deadline, async { put.await.map_err(failed) }).await?;
+            return Ok((held, put.e_tag.as_deref().map(etag)));
         }
         let options = PutMultipartOptions {
             attributes,
@@ -459,7 +465,7 @@ impl S3 {
         })
         .await;
         match sent {
-            Ok(_) => Ok(held),
+            Ok(put) => Ok((held, put.e_tag.as_deref().map(etag))),
             Err(error) => {
                 parts.tasks.shutdown().await;
                 abort(upload.as_mut()).await;
@@ -468,8 +474,8 @@ impl S3 {
         }
     }
 
-    /// The objects directly under `folder`, by name within it, with their sizes.
-    pub async fn list_in(&self, folder: &str) -> io::Result<Vec<(String, u64)>> {
+    /// The objects directly under `folder`, by name within it, with their sizes and ETags.
+    pub async fn list_in(&self, folder: &str) -> io::Result<Vec<(String, u64, Option<String>)>> {
         let under = self.path_of(folder);
         let listed = self
             .client
@@ -482,7 +488,8 @@ impl S3 {
             .filter_map(|meta| {
                 let mut parts = meta.location.prefix_match(&under)?;
                 let name = parts.next()?.as_ref().to_string();
-                parts.next().is_none().then_some((name, meta.size))
+                let tag = meta.e_tag.as_deref().map(etag);
+                parts.next().is_none().then_some((name, meta.size, tag))
             })
             .collect())
     }
@@ -505,15 +512,21 @@ impl S3 {
             .map_err(failed)
     }
 
-    /// The whole object at `key` and its size, or `None` where the store holds none.
+    /// The whole object at `key`, its size and the ETag of the bytes it answers, or `None` where
+    /// the store holds none.
     pub async fn get_whole(
         &self,
         key: &str,
-    ) -> io::Result<Option<(u64, BoxStream<'static, io::Result<Bytes>>)>> {
+    ) -> io::Result<Option<(u64, Option<String>, BoxStream<'static, io::Result<Bytes>>)>> {
         match self.client.get(&self.path_of(key)).await {
             Ok(found) => {
                 let size = found.meta.size;
-                Ok(Some((size, found.into_stream().map_err(failed).boxed())))
+                let tag = found.meta.e_tag.as_deref().map(etag);
+                Ok(Some((
+                    size,
+                    tag,
+                    found.into_stream().map_err(failed).boxed(),
+                )))
             }
             Err(error) if is_missing(&error) => Ok(None),
             Err(error) => Err(failed(error)),

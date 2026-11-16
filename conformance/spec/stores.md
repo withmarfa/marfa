@@ -238,9 +238,9 @@ While an attached object store does not answer with the `.marfa-store` marker of
 
 Where an object store is attached, the server MUST keep each copy's object and the store's `.marfa-store` marker under `<S3_PREFIX>/blobs/`.
 
-**Reason:** a prefix holds one instance: its files under `blobs/` and its backups under `backups/` (`instance/backup-object`), so each can take a lifecycle rule of its own.
+**Reason:** a prefix holds one instance: its files under `blobs/`, and its backups under `backups/` and `backup-parts/` (`instance/backup-object`, `instance/backup-part-named`), so each can take a lifecycle rule of its own.
 
-**Tests:** `compliance/bucket-sharing.test.ts › keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups folder`.
+**Tests:** `compliance/bucket-sharing.test.ts › keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups and backup-parts folders`.
 
 ### `stores/object-layout-root-ignored`
 

@@ -222,19 +222,19 @@ If an answer to a command other than `status` and `whoami` names a contract othe
 
 **Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read. `status` and `whoami` exist to say which contract a server speaks, so they report it and exit 0 (`cli/status-other-contract`, `cli/whoami-other-contract`).
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds both app narrowing responses to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds both app narrowing responses to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile avatar upload to the contract through its ordinary credential`, `› holds the owner avatar upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
 
 ### `cli/command-mismatch-prints-nothing`
 
 When the CLI refuses an answer for its contract, the CLI MUST print nothing of the answer.
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile avatar upload to the contract through its ordinary credential`, `› holds the owner avatar upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
 
 ### `cli/command-unnamed-success`
 
 If a success names no contract, then the CLI MUST refuse it `contract_mismatch` with exit 1.
 
-**Tests:** `device/contract.test.ts › refuses a success that names no contract`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › refuses a success that names no contract`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile avatar upload to the contract through its ordinary credential`, `› holds the owner avatar upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
 
 ### `cli/command-contract-twice`
 
@@ -420,7 +420,7 @@ If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with 
 
 When the CLI sends a call other than a mint, `status` or `whoami`, the CLI MUST send that call alone, with no read of the server's root before it.
 
-**Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile avatar upload to the contract through its ordinary credential`, `› holds the owner avatar upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
 
 ### `cli/command-mint-root-first`
 
@@ -566,7 +566,7 @@ If the server answers `401` to a request that a command sent through `--socket P
 
 ### `cli/local-socket-names-key-needs`
 
-If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST say that item properties, edges, tags, search, counts, events and exports need a key, and that `items summaries`, `items bin`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through `--socket` without one.
+If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST say that item properties, edges, tags, search, counts, events and exports need a key, and that `items summaries`, `items bin`, `items trash`, `items restore` and `items purge` of one item, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through `--socket` without one.
 
 **Reason:** a person who ran a command that needs a key through the socket needs to know which commands the socket reaches before choosing a key, as `items/local-authority-content` and `search-and-filters/owner-read-boundary` set.
 
@@ -582,7 +582,7 @@ When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /
 
 ### `cli/credential-lock-unsafe`
 
-If the CLI's credential lock is not safe to use, then the CLI MUST refuse `invalid`, naming the credential lock, before it sends anything.
+If the file the CLI keeps as a server's credential lock can be read or written by another user, then the CLI MUST refuse `invalid`, naming the credential lock, before it sends anything.
 
 **Tests:** `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`, `› refuses to keep a key under an unsafe credential lock, keeping nothing and sending nothing`, `› refuses a sign-in under an unsafe credential lock before asking for a code`.
 
@@ -1502,7 +1502,7 @@ Where the CLI prints what a key or an app holds in its readable output, the CLI 
 
 ### `cli/owner-trash-cli`
 
-When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
+When a caller runs `marfa --socket PATH items bin list` or `items bin empty`, or `items trash`, `items restore` or `items purge` with the item and its `--version`, the CLI MUST use the corresponding operation through private local authority.
 
 **Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every bin command to the contract through its private socket`.
 

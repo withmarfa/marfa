@@ -48,7 +48,7 @@ it("tells a never-hydrated reader about a concurrent save without a hydration wa
     const status = await device.status();
     expect(status.ok && status.value.hydration).toBe("never");
     const before = contacts;
-    const args = ["device", "--db", store, "watch", "--for", "20"];
+    const args = ["device", "--db", store, "watch", "--for-seconds", "20"];
     const writer = device.hold(args, "text");
     try {
       await vi.waitFor(() =>
@@ -58,7 +58,7 @@ it("tells a never-hydrated reader about a concurrent save without a hydration wa
       await writer.stop();
     }
     const reader = device.hold(
-      ["device", "--db", store, "--reader", "watch", "--for", "20"],
+      ["device", "--db", store, "--reader", "watch", "--for-seconds", "20"],
       "text",
     );
     try {

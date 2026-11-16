@@ -39,7 +39,7 @@ beforeAll(async () => {
         published.push(operation.operationId);
     }
   }
-  rows = await cli.json<Row[]>(["operations"]);
+  rows = (await cli.json<{ data: Row[] }>(["operations"])).data;
 });
 
 describe("every published operation is reached", () => {

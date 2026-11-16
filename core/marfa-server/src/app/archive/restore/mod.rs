@@ -1,7 +1,6 @@
 //! `POST /restore`: reads and checks the body as it arrives, then one write records everything or nothing.
 
 pub mod intake;
-pub mod named;
 mod untar;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -9,7 +8,7 @@ use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
 use bytes::Bytes;
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -76,23 +75,32 @@ fn previous_instance(app: &App, id: &str) -> Value {
     let start = &app.settings.start;
     let (destination, kept, message) = match (&start.object_store, &start.backup_path) {
         (Some(bucket), _) => {
-            let backups = format!("{}/{}/{id}", bucket.prefix, crate::app::backups::FOLDER);
+            let kept: Vec<String> = [crate::app::backups::FOLDER, crate::app::backups::PARTS]
+                .iter()
+                .map(|folder| format!("{}/{folder}/{id}", bucket.prefix))
+                .collect();
             let message = format!(
                 "Instance {id} wrote this archive. If it took backups to this object store, they \
-                 are under {backups}. {WHEN} The file copies under {}/{}/ are shared with this \
+                 are under {} and {}. {WHEN} The file copies under {}/{}/ are shared with this \
                  instance, so keep them.",
+                kept[0],
+                kept[1],
                 bucket.prefix,
                 crate::app::blobs::s3::BLOBS,
             );
-            (json!("bucket"), vec![backups], message)
+            (json!("bucket"), kept, message)
         }
         (None, Some(_)) => {
-            use crate::app::blobs::folder::{BACKUPS, FILES};
-            let kept = vec![format!("{BACKUPS}/{id}"), format!("{FILES}/{id}")];
+            use crate::app::blobs::folder::{BACKUPS, FILES, PARTS};
+            let kept = vec![
+                format!("{BACKUPS}/{id}"),
+                format!("{PARTS}/{id}"),
+                format!("{FILES}/{id}"),
+            ];
             let message = format!(
                 "Instance {id} wrote this archive. If it took backups to this backup folder, its \
-                 backups and file copies are in {} and {}. {WHEN}",
-                kept[0], kept[1],
+                 backups, their parts and its file copies are in {}, {} and {}. {WHEN}",
+                kept[0], kept[1], kept[2],
             );
             (json!("folder"), kept, message)
         }
@@ -141,7 +149,7 @@ pub(crate) fn files_missing(lacking: Vec<String>) -> Refusal {
         format!(
             "Nothing was restored: the backup names {count} that neither this instance nor the \
              backup folder holds whole: {shown}. Put them back in the backup folder, or restore \
-             the backup's archive file with `marfa restore` to leave them out."
+             the backup with `marfa backups restore --allow-missing-files` to leave them out."
         ),
     )
     .with_detail("missing_blobs", lacking)
@@ -210,7 +218,8 @@ fn lines(scratch: &Scratch) -> Result<impl Iterator<Item = Result<Value>>> {
     let file = scratch
         .reopen()
         .map_err(|error| Refusal::internal(&format!("a restore's spool did not open: {error}")))?;
-    let mut reader = BufReader::with_capacity(256 * 1024, GzDecoder::new(BufReader::new(file)));
+    let mut reader =
+        BufReader::with_capacity(256 * 1024, MultiGzDecoder::new(BufReader::new(file)));
     let mut buffer = Vec::new();
     Ok(std::iter::from_fn(move || {
         loop {

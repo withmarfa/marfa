@@ -360,31 +360,31 @@ While a `POST /items/bulk` or `POST /edges/bulk` page holds the write lock and w
 
 ### `errors/contention-read`
 
-When an otherwise permitted read uses a valid API key while another writer holds the write lock, the server MUST serve the read without waiting for the write that records the key's use.
+While writes are held up behind another writer, when an otherwise permitted read uses a valid API key, the server MUST serve the read without waiting for the writes to proceed.
 
-**Reason:** Usage bookkeeping does not establish authority; waiting for it would make a long restore deny reads to every key whose usage record is due.
+**Reason:** Recording a key's use does not establish authority; waiting for it would make a long restore deny reads to every key whose use is due to be recorded.
 
 **Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-stamp-retry`
 
-When an API key authenticates another request more than one second after its usage write failed, the store accepts writes and usage recording is not overloaded, the server MUST retry recording that use asynchronously.
+When writes proceed again and an API key is used more than one second after a use of it went unrecorded because writes were held up, the server MUST set the key's `last_used_at`.
 
 **Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-stamp-once`
 
-When the server has set a key's `last_used_at` in an hour and has not restarted since, the server MUST serve the key's later reads in that hour while another writer holds the write lock.
+When a key's `last_used_at` was set less than an hour ago, the server MUST serve the key's reads while writes are held up behind another writer.
 
-**Reason:** A recorded use is coalesced for one hour; neither a cold nor a warm usage record determines whether a read succeeds.
+**Reason:** A key's use is recorded at most once an hour; neither a key never used nor one used recently has its read decided by whether its use can be recorded.
 
 **Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-session-use`
 
-When an otherwise permitted read uses a live browser session while another writer holds the write lock, the server MUST serve the read without waiting for the session's usage renewal.
+While writes are held up behind another writer, when an otherwise permitted read uses a live browser session, the server MUST serve the read without waiting for the writes to proceed.
 
-**Reason:** A failed renewal leaves the stored expiry unchanged, so contention cannot extend a session's authority or make a readable request depend on a usage write.
+**Reason:** Contention cannot extend a session's authority, and a readable request does not depend on recording the session's use.
 
 **Tests:** `compliance/write-contention.test.ts › serves a session read without waiting for renewal and keeps its durable idle expiry`.
 
@@ -814,7 +814,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `edge_type_not_permitted`            | 403                 | The credential lacks the edge-type permission the operation needs.                                                                                                                                        |
 | `forbidden`                          | 403                 | The credential is valid but lacks a standing permission, reach or origin the operation needs.                                                                                                             |
 | `type_not_permitted`                 | 403                 | The credential holds no grant on the type at the level the operation asks for.                                                                                                                            |
-| `backup_not_found`                   | 404                 | The object store holds no backup by this name from this instance id.                                                                                                                                      |
+| `backup_not_found`                   | 404                 | The backup destination holds no backup by this name from this instance id.                                                                                                                                |
 | `batch_not_found`                    | 404                 | The change log of the item's table holds no batch with this id: it belongs to another table, never existed or is older than `row_log_retention_days`.                                                     |
 | `blob_copy_not_found`                | 404                 | The named store holds no copy of the blob, or is not attached.                                                                                                                                            |
 | `blob_not_found`                     | 404                 | No blob the caller may read has this hash, or no attached store holds its bytes. On a write of a file item, no blob the caller uploaded or may read has the hash its `blob_ref` names.                    |
@@ -837,9 +837,10 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `table_not_found`                    | 404                 | The item's type declares no table of this name.                                                                                                                                                           |
 | `type_not_found`                     | 404                 | No registered type has this identifier.                                                                                                                                                                   |
 | `webhook_not_found`                  | 404                 | No webhook subscription the caller can reach has this id.                                                                                                                                                 |
-| `request_timeout`                    | 408                 | A body did not arrive in time: a body read whole was not whole by its deadline, or a delivery, a restore, a blob upload or a picture received no bytes for its idle limit.                                |
+| `request_timeout`                    | 408                 | A body did not arrive in time: a body read whole was not whole by its deadline, or a delivery, a restore, a blob upload or an avatar received no bytes for its idle limit.                                |
 | `ancestor_unavailable`               | 409                 | The write names a version that has no snapshot the caller may merge against.                                                                                                                              |
-| `backup_files_missing`               | 409                 | A restore from the backup folder names files that neither the folder nor the instance holds whole, and that the backup does not record as lost. Nothing is restored. `details.missing_blobs` names them.  |
+| `backup_files_missing`               | 409                 | A restore of a backup names files that neither the backup destination nor the instance holds whole, and that the backup does not record as lost. Nothing is restored. `details.missing_blobs` names them. |
+| `backup_parts_missing`               | 409                 | A restore of a backup names parts that are missing where backups go, or whose size or SHA-256 differs from what the backup recorded. Nothing is restored. `details.missing_parts` names them.             |
 | `conflict`                           | 409                 | The request collides with the current state in a way that no other code names.                                                                                                                            |
 | `connector_held`                     | 409                 | Another process holds the connector's registration until `details.expires_at`.                                                                                                                            |
 | `copies_below_minimum`               | 409                 | Dropping the copy would leave fewer live copies than the instance's minimum.                                                                                                                              |

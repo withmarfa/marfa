@@ -1,7 +1,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
-use super::{Note, Visit, limits, note, password, picture, session};
+use super::{Note, Visit, avatar, limits, note, password, session};
 use crate::app::access::{Caller, Level};
 use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -17,12 +17,12 @@ pub struct Owner {
     pub email: String,
     pub name: String,
     pub created_at: Stamp,
-    /// Whether the owner holds a picture, which `GET /owner/avatar` serves.
+    /// Whether the owner holds an avatar, which `GET /owner/avatar` serves.
     pub avatar: bool,
 }
 
 impl Owner {
-    /// The owner as answered, with the instance's own `origin` to address the picture by.
+    /// The owner as answered, with the instance's own `origin` to address the avatar by.
     pub fn to_json(&self, origin: &str) -> Value {
         json!({
             "id": self.id,
@@ -58,7 +58,7 @@ pub fn read(tx: &Transaction<'_>) -> Result<Option<Owner>> {
     owner
         .map(|owner| {
             Ok(Owner {
-                avatar: picture::exists(tx)?,
+                avatar: avatar::exists(tx)?,
                 ..owner
             })
         })
@@ -235,7 +235,7 @@ impl Update {
             Some(_) => Err(invalid(field, "Must be a string.")),
         };
         if body.get("avatar").is_some_and(|avatar| !avatar.is_null()) {
-            return Err(invalid("avatar", "Only null clears the picture here."));
+            return Err(invalid("avatar", "Only null clears the avatar here."));
         }
         let name = text("name")?
             .map(|name| checked_name(name)?.ok_or_else(|| invalid("name", "Enter a name.")))
@@ -260,7 +260,7 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
             owner.name = name;
         }
         if update.clear_avatar {
-            picture::remove(unit.tx())?;
+            avatar::remove(unit.tx())?;
             owner.avatar = false;
         }
         unit.tx().execute(
@@ -320,7 +320,7 @@ impl ProfileUpdate {
             return Err(Refusal::validation("Name at least one field to change."));
         }
         if body.get("avatar").is_some_and(|avatar| !avatar.is_null()) {
-            return Err(invalid("avatar", "Only null clears the picture here."));
+            return Err(invalid("avatar", "Only null clears the avatar here."));
         }
         let name = match body.get("name") {
             None => None,
@@ -364,7 +364,7 @@ pub async fn update_profile(
             )?;
         }
         if update.clear_avatar {
-            picture::remove(unit.tx())?;
+            avatar::remove(unit.tx())?;
         }
         note(
             unit.tx(),

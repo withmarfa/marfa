@@ -356,66 +356,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/items/summaries/{id}/trash": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Trash an item by summary
-         * @description Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing. Only the private local command can call this operation.
-         */
-        post: operations["trashItemSummary"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/items/summaries/{id}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Restore an item by summary
-         * @description Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing. Only the private local command can call this operation.
-         */
-        post: operations["restoreItemSummary"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/items/summaries/{id}/purge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Purge an item by summary
-         * @description Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary. Only the private local command can call this operation.
-         */
-        post: operations["purgeItemSummary"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/trash/empty": {
         parameters: {
             query?: never;
@@ -2003,7 +1943,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner
-         * @description Updates the owner's email or name, or removes the picture. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.
+         * @description Updates the owner's email or name, or removes the avatar. Requires the private local command. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.
          */
         patch: operations["updateOwner"];
         trace?: never;
@@ -2027,7 +1967,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner's profile
-         * @description Updates the owner's name or removes the picture and returns the profile fields you can read. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.
+         * @description Updates the owner's name or removes the avatar and returns the profile fields you can read. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.
          */
         patch: operations["updateProfile"];
         trace?: never;
@@ -2040,15 +1980,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get the owner's picture
-         * @description Returns the owner's picture as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.
+         * Get the owner's avatar
+         * @description Returns the owner's avatar as an image download. Requires the private local command or a credential with profile read permission for the avatar. Send `If-None-Match` to revalidate.
          */
-        get: operations["getOwnerPicture"];
+        get: operations["getOwnerAvatar"];
         /**
-         * Replace the owner's picture
-         * @description Stores the request body as the owner's picture and returns the owner. Requires the private local command.
+         * Replace the owner's avatar
+         * @description Stores the request body as the owner's avatar and returns the owner. Requires the private local command.
          */
-        put: operations["replaceOwnerPicture"];
+        put: operations["replaceOwnerAvatar"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2065,10 +2005,10 @@ export interface paths {
         };
         get?: never;
         /**
-         * Replace the picture as an app
-         * @description Stores the request body as the owner's picture and returns the profile fields you can read. Requires profile write permission for the avatar.
+         * Replace the avatar as an app
+         * @description Stores the request body as the owner's avatar and returns the profile fields you can read. Requires profile write permission for the avatar.
          */
-        put: operations["replaceProfilePicture"];
+        put: operations["replaceProfileAvatar"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2629,7 +2569,7 @@ export interface components {
              */
             email?: "read";
             /**
-             * @description Access to the owner's profile picture.
+             * @description Access to the owner's profile avatar.
              * @enum {string}
              */
             avatar?: "read" | "write";
@@ -3173,7 +3113,17 @@ export interface components {
          *         }
          *       },
          *       "backups": {
-         *         "status": "ok"
+         *         "status": "ok",
+         *         "destination": "folder",
+         *         "last_backup": "20261109T101530.250Z.json",
+         *         "last_backup_at": "2026-11-09T10:15:30.250Z",
+         *         "failures": 0,
+         *         "last_error": null,
+         *         "last_failed_at": null,
+         *         "copies_waiting": 0,
+         *         "last_backup_files_waiting": 0,
+         *         "store_error": null,
+         *         "damaged_parts": 0
          *       }
          *     }
          */
@@ -3248,12 +3198,12 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: on schedule, and the last backup is whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups.
+                 * @description `ok`: on schedule, with the last backup whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, a store refuses copies, or a part is damaged, so overall `status` is at least `degraded`. `off`: none scheduled.
                  * @enum {string}
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off`: `no_backup_destination` when the instance has nowhere to put them, with neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` set, `turned_off` when `backup_interval_seconds` is 0.
+                 * @description Why backups are `off`: `no_backup_destination` when neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` is set, or `turned_off` when `backup_interval_seconds` is 0, which is also given beside `failing`.
                  * @enum {string}
                  */
                 reason?: "no_backup_destination" | "turned_off";
@@ -3262,7 +3212,10 @@ export interface components {
                  * @enum {string}
                  */
                 destination?: "folder" | "bucket";
-                /** @description The name of the last backup Marfa put. Present only for a caller that holds `instance.read`. */
+                /**
+                 * @description The name of the last backup Marfa put. Present only for a caller that holds `instance.read`.
+                 * @example 20261109T101530.250Z.json
+                 */
                 last_backup?: string | null;
                 /**
                  * Format: date-time
@@ -3270,7 +3223,10 @@ export interface components {
                  * @example 2026-10-05T14:12:08.000Z
                  */
                 last_backup_at?: string | null;
-                /** @description How many backup runs in a row have failed or lost files. Present only for a caller that holds `instance.read`. */
+                /**
+                 * @description How many backup runs in a row have failed or lost files. Present only for a caller that holds `instance.read`.
+                 * @example 0
+                 */
                 failures?: number;
                 /** @description What went wrong in the last failed run, or which files the last backup was put without. Present only for a caller that holds `instance.read`. */
                 last_error?: string | null;
@@ -3280,12 +3236,23 @@ export interface components {
                  * @example 2026-10-05T14:12:08.000Z
                  */
                 last_failed_at?: string | null;
-                /** @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                /**
+                 * @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set.
+                 * @example 0
+                 */
                 copies_waiting?: number;
-                /** @description How many files the last backup names with no recorded copy in the destination, or `null` when unknown. `blob-integrity` keeps the record true. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                /**
+                 * @description How many files the last backup names with no recorded copy in the destination, or `null` when unknown. `blob-integrity` keeps the record true. Present only for a caller that holds `instance.read`, and only when a destination is set.
+                 * @example 0
+                 */
                 last_backup_files_waiting?: number | null;
                 /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 store_error?: string | null;
+                /**
+                 * @description How many parts a check found altered or, in a backup folder, unreadable, and not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set.
+                 * @example 0
+                 */
+                damaged_parts?: number | null;
             };
             /** @description What needs attention in the background work. Present only for a caller that holds `instance.read`. */
             housekeeping?: {
@@ -3773,7 +3740,7 @@ export interface components {
             email?: string;
             /**
              * Format: uri
-             * @description The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`.
+             * @description The address of the owner's avatar, or `null` when there is none. Present with `profile.avatar:read`.
              */
             avatar?: string | null;
         };
@@ -3926,6 +3893,23 @@ export interface components {
                  * @enum {string}
                  */
                 code: "invalid_id" | "invalid_transition" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -5823,21 +5807,36 @@ export interface components {
         /**
          * @description The current attention inventory, without pagination.
          * @example {
-         *       "data": []
+         *       "data": [
+         *         {
+         *           "kind": "backup",
+         *           "reference": "parts_damaged",
+         *           "title": "Parts of backups are damaged",
+         *           "description": "1 part in the backup folder does not hold the bytes its name gives or cannot be read. A restore of a backup that names one is refused. The next backup stores again each damaged part it names; `marfa backups run` takes one now. A part that only older backups name stays damaged until those backups are gone."
+         *         }
+         *       ]
          *     }
          */
         AttentionPage: {
             /** @description Every known concern and unavailable check; empty when all checks report no concerns. */
             data: components["schemas"]["AttentionConcern"][];
         };
-        /** @description One known concern or unavailable check. */
+        /**
+         * @description One known concern or unavailable check.
+         * @example {
+         *       "kind": "backup",
+         *       "reference": "parts_damaged",
+         *       "title": "Parts of backups are damaged",
+         *       "description": "1 part in the backup folder does not hold the bytes its name gives or cannot be read. A restore of a backup that names one is refused. The next backup stores again each damaged part it names; `marfa backups run` takes one now. A part that only older backups name stays damaged until those backups are gone."
+         *     }
+         */
         AttentionConcern: {
             /**
-             * @description health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; clock: ahead or behind; unavailable: no answer.
+             * @description health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off, failing, incomplete, or folder unlocked; clock: ahead or behind; unavailable: no answer.
              * @enum {string}
              */
             kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "clock" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, the name of the check that could not answer, for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`, or for a clock concern `clock_ahead` or `clock_behind`. */
+            /** @description The component, job, connector, folder, or key ID, the check that could not answer, a backup concern such as `no_backup_destination`, `run`, `incomplete`, `parts_damaged`, or `folder_unlocked`, or a clock concern `clock_ahead` or `clock_behind`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
@@ -6391,7 +6390,7 @@ export interface components {
             email: string;
             /** @description Display name of the owner. */
             name: string;
-            /** @description The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`. */
+            /** @description The address of the owner's avatar on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`. */
             avatar: string | null;
             /**
              * @description When the owner was created, in UTC.
@@ -7305,11 +7304,29 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        BackupPartsMissingRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "backup_parts_missing";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description Names the parts the restore could not read whole. */
+                details?: {
+                    /** @description The name of each part the backup's manifest names that the destination lacks, or holds with another size or SHA-256 than the manifest records. */
+                    missing_parts: string[];
+                };
+            };
+        };
         /** @description A backup in the instance's backup folder or object store. */
         Backup: {
             /**
-             * @description The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.tar`.
-             * @example 20261109T101530.250Z.tar
+             * @description The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.json`.
+             * @example 20261109T101530.250Z.json
              */
             name: string;
             /**
@@ -7324,7 +7341,10 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             created_at: string;
-            /** @description The backup's size, in bytes. */
+            /**
+             * @description The bytes the backup takes: its manifest and every part it names, a part another backup shares included.
+             * @example 8192
+             */
             size_bytes: number;
         };
         /** @description An error response. */
@@ -7823,7 +7843,7 @@ export interface components {
              * @enum {string|null}
              */
             destination: "folder" | "bucket" | null;
-            /** @description Its `backups/<id>` and `files/<id>` folders in a backup folder, or only `<prefix>/backups/<id>` in a bucket, whose `<prefix>/blobs/` is shared. Empty with none. Delete only once that instance no longer runs and nothing else restores from them. */
+            /** @description Its `backups/<id>`, `backup-parts/<id>` and `files/<id>` folders in a backup folder, or only `<prefix>/backups/<id>` and `<prefix>/backup-parts/<id>` in a bucket. Empty with none. Delete only once that instance no longer runs. */
             kept_by_previous_instance: string[];
             /** @description A sentence naming that instance and what it keeps, and saying to delete it only once that instance no longer runs and nothing else restores from it. */
             message: string;
@@ -8652,7 +8672,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns `{ "ok": true }`. An item that a cascading edge took into the trash has `trashed_by_cascade`, and `trashed_with` names this item if you can read its type. */
+            /** @description Returns `{ "ok": true }`. An item that a cascading edge took into the trash has `trashed_by_cascade`, and `trashed_with` names this item if you can read its type. The private local command must name `version` and gets the item's summary in place of this, with no content: `id`, `type`, `version`, `name`, `source` and `created_at`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8666,12 +8686,13 @@ export interface operations {
                      *       "ok": true
                      *     }
                      */
-                    "application/json": components["schemas"]["Ok"];
+                    "application/json": components["schemas"]["Ok"] | components["schemas"]["ItemSummary"];
                 };
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.
+             *     - `missing_required_field`: you are the private socket, and `version` is missing.
              *     - `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.
              */
             400: {
@@ -8683,7 +8704,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -9587,7 +9608,10 @@ export interface operations {
     };
     restoreItem: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The version you read. If the item has changed since, nothing is restored. Leave it out to restore the item as it is. */
+                version?: number;
+            };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -9602,7 +9626,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the restored item and its metadata. */
+            /** @description Returns the restored item and its metadata. The private local command must name `version` and gets the item's summary in place of this, with no content: `id`, `type`, `version`, `name`, `source` and `created_at`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9639,12 +9663,13 @@ export interface operations {
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["ItemWithMetadata"];
+                    "application/json": components["schemas"]["ItemWithMetadata"] | components["schemas"]["ItemSummary"];
                 };
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `invalid_transition`: the item is not in the trash.
+             *     - `missing_required_field`: you are the private socket, and `version` is missing.
              *     - `validation_error`: `Idempotency-Key` is malformed.
              */
             400: {
@@ -9656,7 +9681,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -9826,7 +9851,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns `{ "ok": true }`. Marfa announces each edge it deletes as `edge.deleted`, with `purged_with` naming this item. */
+            /** @description Returns `{ "ok": true }`. Marfa announces each edge it deletes as `edge.deleted`, with `purged_with` naming this item. The private local command must name `version` and gets the item's summary in place of this, with no content: `id`, `type`, `version`, `name`, `source` and `created_at`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9840,12 +9865,13 @@ export interface operations {
                      *       "ok": true
                      *     }
                      */
-                    "application/json": components["schemas"]["Ok"];
+                    "application/json": components["schemas"]["Ok"] | components["schemas"]["ItemSummary"];
                 };
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `invalid_transition`: the item is not in the trash.
+             *     - `missing_required_field`: you are the private socket, and `version` is missing.
              *     - `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.
              */
             400: {
@@ -9857,7 +9883,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -12150,546 +12176,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    trashItemSummary: {
-        parameters: {
-            query: {
-                /** @description The item version from the summary listing. If it differs, nothing changes. */
-                version: number;
-            };
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path: {
-                /** @description The ID of the item. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The action completed. Returns only the item summary. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
-                     *       "type": "acme.contact",
-                     *       "version": 1,
-                     *       "name": "Casey Sample",
-                     *       "source": "crm",
-                     *       "created_at": "2026-10-03T09:44:15.777Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ItemSummary"];
-                };
-            };
-            /**
-             * @description - `invalid_id`: the item ID is invalid.
-             *     - `validation_error`: the version is invalid or a live connection prevents the change.
-             *     - `invalid_transition`: the item is no longer in the required state.
-             *     - `edge_constraint_violation`: a cascading edge blocks the change.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description `item_not_found`: the item is absent or not in the owner's item listing. */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
-                };
-            };
-            /** @description `version_conflict`: the item changed. The current value is a summary, without content. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemSummaryConflict"] | components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    restoreItemSummary: {
-        parameters: {
-            query: {
-                /** @description The item version from the summary listing. If it differs, nothing changes. */
-                version: number;
-            };
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path: {
-                /** @description The ID of the item. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The action completed. Returns only the item summary. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
-                     *       "type": "acme.contact",
-                     *       "version": 1,
-                     *       "name": "Casey Sample",
-                     *       "source": "crm",
-                     *       "created_at": "2026-10-03T09:44:15.777Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ItemSummary"];
-                };
-            };
-            /**
-             * @description - `invalid_id`: the item ID is invalid.
-             *     - `validation_error`: the version is invalid or a live connection prevents the change.
-             *     - `invalid_transition`: the item is no longer in the required state.
-             *     - `edge_constraint_violation`: a cascading edge blocks the change.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description `item_not_found`: the item is absent or not in the owner's item listing. */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
-                };
-            };
-            /** @description `version_conflict`: the item changed. The current value is a summary, without content. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemSummaryConflict"] | components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
-            429: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RateLimitedRefusal"];
-                };
-            };
-            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
-            500: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InternalErrorRefusal"];
-                };
-            };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
-            503: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    "Retry-After": components["headers"]["Retry-After"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
-                };
-            };
-            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
-            507: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
-                };
-            };
-        };
-    };
-    purgeItemSummary: {
-        parameters: {
-            query: {
-                /** @description The item version from the summary listing. If it differs, nothing changes. */
-                version: number;
-            };
-            header?: {
-                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
-                "X-Marfa-Instance-Id"?: string;
-            };
-            path: {
-                /** @description The ID of the item. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The action completed. Returns only the item summary. */
-            200: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "id": "01a1011d-1ee0-7792-bbc3-cef7e3884fde",
-                     *       "type": "acme.contact",
-                     *       "version": 1,
-                     *       "name": "Robin Sample",
-                     *       "source": "crm",
-                     *       "created_at": "2026-10-03T09:47:40.831Z"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["ItemSummary"];
-                };
-            };
-            /**
-             * @description - `invalid_id`: the item ID is invalid.
-             *     - `validation_error`: the version is invalid or a live connection prevents the change.
-             *     - `invalid_transition`: the item is no longer in the required state.
-             *     - `edge_constraint_violation`: a cascading edge blocks the change.
-             */
-            400: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
-                };
-            };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
-            401: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
-                };
-            };
-            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
-            403: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
-                };
-            };
-            /** @description `item_not_found`: the item is absent or not in the owner's item listing. */
-            404: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
-                };
-            };
-            /** @description `version_conflict`: the item changed. The current value is a summary, without content. */
-            409: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ItemSummaryConflict"] | components["schemas"]["InstanceChangedRefusal"];
-                };
-            };
-            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
-            412: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ContractMismatchRefusal"];
-                };
-            };
-            /** @description `request_too_large`: the request body is larger than this instance accepts. */
-            413: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -32361,7 +31847,7 @@ export interface operations {
                     email?: string;
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
-                    /** @description Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`. */
+                    /** @description Set `avatar` to `null` to remove the owner's avatar, or omit it to leave it unchanged. To set an avatar, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`. */
                     avatar?: null;
                 };
             };
@@ -32677,7 +32163,7 @@ export interface operations {
                 "application/json": {
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
-                    /** @description Set `avatar` to `null` to remove the owner's picture, or omit it to leave it unchanged. To set a picture, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`. */
+                    /** @description Set `avatar` to `null` to remove the owner's avatar, or omit it to leave it unchanged. To set an avatar, send its bytes to `PUT /owner/avatar` or `PUT /profile/avatar`. */
                     avatar?: null;
                 };
             };
@@ -32849,7 +32335,7 @@ export interface operations {
             };
         };
     };
-    getOwnerPicture: {
+    getOwnerAvatar: {
         parameters: {
             query?: never;
             header?: never;
@@ -32858,12 +32344,12 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the picture's bytes. */
+            /** @description Returns the avatar's bytes. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    /** @description The quoted SHA-256 of the picture's bytes. */
+                    /** @description The quoted SHA-256 of the avatar's bytes. */
                     ETag?: string;
                     [name: string]: unknown;
                 };
@@ -32873,12 +32359,12 @@ export interface operations {
                     "image/webp": string;
                 };
             };
-            /** @description The picture still matches the `If-None-Match` value. */
+            /** @description The avatar still matches the `If-None-Match` value. */
             304: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    /** @description The quoted SHA-256 of the picture's bytes. */
+                    /** @description The quoted SHA-256 of the avatar's bytes. */
                     ETag?: string;
                     [name: string]: unknown;
                 };
@@ -32920,7 +32406,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description No picture is set. */
+            /** @description No avatar is set. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -32996,7 +32482,7 @@ export interface operations {
             };
         };
     };
-    replaceOwnerPicture: {
+    replaceOwnerAvatar: {
         parameters: {
             query?: never;
             header?: {
@@ -33006,14 +32492,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The picture's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side. */
+        /** @description The avatar's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side. */
         requestBody: {
             content: {
                 "application/octet-stream": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {
-            /** @description The updated owner, whose `avatar` is the picture's address. */
+            /** @description The updated owner, whose `avatar` is the avatar's address. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -33181,7 +32667,7 @@ export interface operations {
             };
         };
     };
-    replaceProfilePicture: {
+    replaceProfileAvatar: {
         parameters: {
             query?: never;
             header?: {
@@ -33191,14 +32677,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The picture's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side. */
+        /** @description The avatar's bytes, sent as they are, not as `multipart/form-data`. Marfa decides the kind from the bytes and ignores `Content-Type` and any file name. A PNG, JPEG or WebP of 2 MiB or less, 1 to 4096 pixels on each side. */
         requestBody: {
             content: {
                 "application/octet-stream": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {
-            /** @description Returns the profile fields you can read. The picture was stored. */
+            /** @description Returns the profile fields you can read. The avatar was stored. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -35683,9 +35169,9 @@ export interface operations {
                      *       "data": [
                      *         {
                      *           "kind": "backup",
-                     *           "reference": "no_backup_destination",
-                     *           "title": "No backups are kept",
-                     *           "description": "This instance has nowhere to put them. Set MARFA_BACKUP_PATH to a folder on another disk, or S3_BUCKET to an object store, in the server's settings (`marfa.env` for an install made by `marfa server install`), then run `marfa server restart`."
+                     *           "reference": "parts_damaged",
+                     *           "title": "Parts of backups are damaged",
+                     *           "description": "1 part in the backup folder does not hold the bytes its name gives or cannot be read. A restore of a backup that names one is refused. The next backup stores again each damaged part it names; `marfa backups run` takes one now. A part that only older backups name stays damaged until those backups are gone."
                      *         }
                      *       ]
                      *     }
@@ -36752,7 +36238,17 @@ export interface operations {
                      *           "kind": "keys",
                      *           "message": "Keys are not restored. Make new keys on this instance."
                      *         }
-                     *       ]
+                     *       ],
+                     *       "previous_instance": {
+                     *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8",
+                     *         "destination": "folder",
+                     *         "kept_by_previous_instance": [
+                     *           "backups/01a10128-f3e1-7ab1-b58c-a89836a748a8",
+                     *           "backup-parts/01a10128-f3e1-7ab1-b58c-a89836a748a8",
+                     *           "files/01a10128-f3e1-7ab1-b58c-a89836a748a8"
+                     *         ],
+                     *         "message": "Instance 01a10128-f3e1-7ab1-b58c-a89836a748a8 wrote this archive. If it took backups to this backup folder, its backups, their parts and its file copies are in backups/01a10128-f3e1-7ab1-b58c-a89836a748a8, backup-parts/01a10128-f3e1-7ab1-b58c-a89836a748a8 and files/01a10128-f3e1-7ab1-b58c-a89836a748a8. Delete them only once that instance no longer runs and nothing else restores from them."
+                     *       }
                      *     }
                      */
                     "application/json": {
@@ -36997,7 +36493,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds. */
+            /** @description Returns every backup, in one page. A backup is a manifest and the parts it names, which together make an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds. A part an earlier backup stored unchanged is stored once. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -37009,7 +36505,7 @@ export interface operations {
                      * @example {
                      *       "data": [
                      *         {
-                     *           "name": "20261003T102400.836Z.tar",
+                     *           "name": "20261003T102400.836Z.json",
                      *           "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8",
                      *           "created_at": "2026-10-03T10:24:00.836Z",
                      *           "size_bytes": 8192
@@ -37146,7 +36642,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the backup Marfa put, how many old backups it deleted, and the files it lost. */
+            /** @description Returns the backup Marfa put, the bytes it sent, how many old backups it deleted, and the files it lost. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -37158,11 +36654,12 @@ export interface operations {
                      * @example {
                      *       "outcome": "put",
                      *       "backup": {
-                     *         "name": "20261003T102400.836Z.tar",
+                     *         "name": "20261003T102400.836Z.json",
                      *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8",
                      *         "created_at": "2026-10-03T10:24:00.836Z",
                      *         "size_bytes": 8192
                      *       },
+                     *       "sent_bytes": 4096,
                      *       "removed": 0,
                      *       "unremoved": 0,
                      *       "blobs_lost": [],
@@ -37176,6 +36673,11 @@ export interface operations {
                          */
                         outcome: "put";
                         backup: components["schemas"]["Backup"];
+                        /**
+                         * @description How many bytes of parts Marfa stored for the backup that the destination didn't already hold. A backup of an instance that hasn't changed since the last one stores only its manifest, and this is `0`.
+                         * @example 4096
+                         */
+                        sent_bytes: number;
                         /** @description How many old backups Marfa deleted. */
                         removed: number;
                         /** @description How many old backups Marfa tried to delete and couldn't. It tries again after the next backup. */
@@ -37463,7 +36965,10 @@ export interface operations {
     };
     restoreBackup: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `true` to restore without the files that neither the destination nor this instance holds whole, naming them in `blobs_missing`. Absent or `false`, the restore refuses with `backup_files_missing`. Any other value is a `validation_error`. */
+                allow_missing_files?: boolean;
+            };
             header?: never;
             path: {
                 /** @description The ID of the instance that took the backup, as `GET /backups` lists it. */
@@ -37527,7 +37032,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "backup": {
-                     *         "name": "20261003T102400.836Z.tar",
+                     *         "name": "20261003T102400.836Z.json",
                      *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
                      *       }
                      *     }
@@ -37619,7 +37124,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
+             * @description - `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -37671,7 +37176,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `backup_files_missing`: neither the destination nor this instance holds files it needs, in `details.missing_blobs`. Nothing was restored.
+             * @description - `backup_files_missing`, `backup_parts_missing`: files in `details.missing_blobs` or parts in `details.missing_parts` are absent or altered.
              *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
              *     - `link_taken`: the archive's type names a `link_field` two items share.
              *     - `no_backup_destination`: there is nowhere to put backups.
@@ -37684,7 +37189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BackupFilesMissingRefusal"] | components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["BackupFilesMissingRefusal"] | components["schemas"]["BackupPartsMissingRefusal"] | components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

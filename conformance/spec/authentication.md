@@ -162,7 +162,7 @@ When an authorized caller renames or removes a missing, foreign, or removed pass
 
 ### `authentication/passkey-management-atomic`
 
-When the server renames or removes a passkey, the server MUST check ownership and commit only that credential change with its audit record in one transaction.
+When the owner renames or removes a passkey, the server MUST leave every other passkey as it was.
 
 **Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
 

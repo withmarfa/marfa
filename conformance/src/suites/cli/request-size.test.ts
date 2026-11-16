@@ -315,7 +315,7 @@ it(
     const hydrated = await cli.run([
       ...device,
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",

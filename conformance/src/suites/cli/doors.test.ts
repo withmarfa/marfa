@@ -196,18 +196,18 @@ describe("metadata and extensions", () => {
   it("replaces and adds tags, lists the tags in use, and writes and removes a namespace", async () => {
     const id = await note(unique("cli-metadata"));
     const replaced = await c.cli.json<{ tags: string[] }>([
-      "metadata",
+      "items",
+      "tags",
       "replace",
       id,
-      "--tag",
       "one",
-      "--tag",
       "two",
     ]);
     expect(replaced.tags.sort()).toEqual(["one", "two"]);
     const added = await c.cli.json<{ tags: string[] }>([
       "items",
-      "tag",
+      "tags",
+      "add",
       id,
       "three",
     ]);
@@ -218,7 +218,7 @@ describe("metadata and extensions", () => {
       id,
     ]);
     expect(read.metadata.tags.sort()).toEqual(["one", "three", "two"]);
-    const inUse = await c.cli.json<unknown>(["metadata", "tags"]);
+    const inUse = await c.cli.json<unknown>(["tags"]);
     expect(JSON.stringify(inUse)).toContain("three");
 
     const written = await c.cli.json<{
@@ -435,7 +435,7 @@ describe("links and tombstones", () => {
     ]);
     expect(byKey.data.map((row) => row.id)).toEqual([created.item.id]);
 
-    await c.cli.json(["items", "delete", created.item.id]);
+    await c.cli.json(["items", "trash", created.item.id]);
     await c.cli.json(["items", "purge", created.item.id]);
     const purged = await c.cli.json<{
       data: unknown[];
@@ -465,7 +465,13 @@ describe("links and tombstones", () => {
 
 describe("the event stream", () => {
   it("delivers a write made while the stream is open, one frame per line", async () => {
-    const stream = c.cli.hold(["events", "--type", "core.note", "--for", "6"]);
+    const stream = c.cli.hold([
+      "events",
+      "--type",
+      "core.note",
+      "--for-seconds",
+      "6",
+    ]);
     let stdout = "";
     let stderr = "";
     stream.stdout!.on("data", (chunk: Buffer) => {

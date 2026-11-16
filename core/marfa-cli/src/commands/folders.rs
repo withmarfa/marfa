@@ -131,7 +131,7 @@ pub struct CreateArgs {
 }
 
 #[derive(Debug, Default, Args)]
-pub struct ChangeArgs {
+pub struct UpdateArgs {
     /// The folder's `system.folder` id.
     pub id: String,
     /// The version the change was based on.
@@ -150,7 +150,7 @@ pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {
         .apply(Request::post(&["folders"]).json(Value::Object(body))))
 }
 
-pub fn change_request(args: &ChangeArgs) -> Result<Request, CliError> {
+pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     let mut body = args.settings.read()?;
     body.insert("version".into(), Value::from(args.version));
     Ok(args

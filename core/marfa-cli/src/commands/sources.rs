@@ -16,13 +16,13 @@ pub enum SourcesCommand {
         /// The source code, as items carry it in `source`.
         source: String,
     },
-    /// Set the name or mark a source is shown by. A key can set its own
+    /// Change the name or mark a source is shown by. A key can change its own
     /// source and the sources it claims; any other needs keys.manage.
     ///
     /// The mark is an Iconify icon ID from the sets a type's icon uses:
     /// `lucide`, such as `lucide:book-open`, or `simple-icons` for brand
     /// marks, such as `simple-icons:github`.
-    Set {
+    Update {
         /// The source code, as items carry it in `source`.
         source: String,
         /// The name to show, such as `GitHub`.
@@ -34,7 +34,7 @@ pub enum SourcesCommand {
     },
     /// Clear a source's name or mark, so the name falls back to the app's
     /// sign-in name, the key's label or the code. Needs the same access as
-    /// `set`.
+    /// `update`.
     Clear {
         /// The source code, as items carry it in `source`.
         source: String,
@@ -71,7 +71,7 @@ pub fn request(command: &SourcesCommand) -> Request {
     match command {
         SourcesCommand::List => list_request(),
         SourcesCommand::Get { source } => get_request(source),
-        SourcesCommand::Set { source, name, mark } => update_request(
+        SourcesCommand::Update { source, name, mark } => update_request(
             source,
             name.clone().map(Value::String),
             mark.clone().map(Value::String),
@@ -100,7 +100,7 @@ fn described(answer: &Value) -> String {
 pub fn run(command: SourcesCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let answer = remote.json(&request(&command))?;
     match &command {
-        SourcesCommand::Set { source, .. } => out.report(&answer, |answer| {
+        SourcesCommand::Update { source, .. } => out.report(&answer, |answer| {
             format!("updated the source {source}: {}", described(answer))
         }),
         SourcesCommand::Clear { source, .. } => out.report(&answer, |answer| {
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn sets_only_the_fields_named() {
-        let req = request(&SourcesCommand::Set {
+        let req = request(&SourcesCommand::Update {
             source: "github".into(),
             name: None,
             mark: Some("simple-icons:github".into()),

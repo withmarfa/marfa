@@ -156,11 +156,11 @@ If the bytes `GET /export?format=archive` reads for a blob do not hash to the bl
 
 ### `archive/archive-bytes-struck`
 
-If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when it is read again under the blob's upload lock, then the server MUST strike that copy from the copy record.
+If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when the server reads it again, then the server MUST remove that copy from the copies `GET /blobs/{hash}/copies` lists.
 
-**Reason:** the next export then reads the blob from another store that holds it, or names it as `not_carried`, as it does once `blob-integrity` has struck the copy. The first read is made without the lock, so the copy is read again before it is struck, in case it was put right in between.
+**Reason:** the next export then reads the blob from another store that holds it, or names it as `not_carried`, as it does once `blob-integrity` has struck the copy. The first read is not held against a replacement of the copy, so the copy is read again before it is removed: a copy put right in between is kept.
 
-**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`.
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`, `› keeps a copy that hashes to the blob's name when the export reads it again, though its first read did not`.
 
 ### `archive/archive-read-fault-kept`
 
@@ -630,15 +630,15 @@ When `POST /restore` succeeds with an archive whose manifest names an `instance_
 
 ### `archive/restore-previous-folder`
 
-Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
+Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>`, `backup-parts/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
 
-**Reason:** the backup folder keeps each instance's backups and its copy of each file in folders of that instance's own (`instance/backup-object`).
+**Reason:** the backup folder keeps each instance's backups, their parts and its copy of each file in folders of that instance's own (`instance/backup-folder-file`, `instance/backup-part-named`).
 
 **Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`.
 
 ### `archive/restore-previous-bucket`
 
-Where `S3_BUCKET` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<S3_PREFIX>/backups/<instance id>` in `kept_by_previous_instance`.
+Where `S3_BUCKET` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<S3_PREFIX>/backups/<instance id>` and `<S3_PREFIX>/backup-parts/<instance id>` in `kept_by_previous_instance`.
 
 **Reason:** the object store keeps every instance's file copies under `<S3_PREFIX>/blobs/`, shared with this instance, so no file copy belongs to the old instance alone.
 

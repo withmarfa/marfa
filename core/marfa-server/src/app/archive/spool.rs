@@ -5,6 +5,7 @@ use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use sha2::{Digest, Sha256};
 
 use crate::app::blobs::{Room, Scratch, out_of_room};
 use crate::app::refusal::{Refusal, Result};
@@ -16,12 +17,14 @@ const CHUNK: usize = 256 * 1024;
 struct Counted<W> {
     inner: W,
     written: u64,
+    digest: Sha256,
 }
 
 impl<W: Write> Write for Counted<W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let count = self.inner.write(bytes)?;
         self.written += count as u64;
+        self.digest.update(&bytes[..count]);
         Ok(count)
     }
 
@@ -53,6 +56,7 @@ impl<N: Default> Lines<N> {
         let counted = Counted {
             inner: BufWriter::with_capacity(CHUNK, file),
             written: 0,
+            digest: Sha256::new(),
         };
         Ok(Lines {
             scratch,
@@ -102,6 +106,7 @@ impl<N: Default> Lines<N> {
         Ok(Spooled {
             scratch: self.scratch,
             size,
+            sha256: hex::encode(counted.digest.finalize()),
             segments: self.segments,
             lines: self.lines,
         })
@@ -112,11 +117,39 @@ impl<N: Default> Lines<N> {
 pub struct Spooled<N> {
     scratch: Scratch,
     pub size: u64,
+    /// The SHA-256 of its bytes, in hex.
+    pub sha256: String,
     pub segments: Vec<(u64, N)>,
     pub lines: u64,
 }
 
 impl<N> Spooled<N> {
+    /// Opens the file for reading from the start. It blocks.
+    pub fn open(&self) -> io::Result<File> {
+        let mut file = self.scratch.reopen()?;
+        file.seek(SeekFrom::Start(0))?;
+        Ok(file)
+    }
+
+    pub fn sealed(self) -> Sealed {
+        Sealed {
+            scratch: self.scratch,
+            size: self.size,
+            sha256: self.sha256,
+            lines: self.lines,
+        }
+    }
+}
+
+/// A finished line file that no credential reads a segment of, as a backup's part is.
+pub struct Sealed {
+    scratch: Scratch,
+    pub size: u64,
+    pub sha256: String,
+    pub lines: u64,
+}
+
+impl Sealed {
     /// Opens the file for reading from the start. It blocks.
     pub fn open(&self) -> io::Result<File> {
         let mut file = self.scratch.reopen()?;
@@ -199,6 +232,34 @@ mod tests {
             .unwrap();
         assert_eq!(whole.lines().count(), 7);
         assert!(whole.ends_with('\n'));
+    }
+
+    #[test]
+    fn the_same_lines_spool_to_the_same_bytes_and_their_hash_is_the_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = |name: &str| {
+            let mut lines: Lines<()> = Lines::new(
+                Scratch::at(dir.path().join(name)).unwrap(),
+                unreserved(dir.path()),
+            )
+            .unwrap();
+            for at in 0..3000 {
+                lines
+                    .push(
+                        &format!("{{\"line\":{at},\"pad\":\"{}\"}}", "y".repeat(900)),
+                        |_| (),
+                    )
+                    .unwrap();
+            }
+            lines.finish().unwrap().sealed()
+        };
+        let (first, second) = (spool("first"), spool("second"));
+        let mut bytes = Vec::new();
+        first.open().unwrap().read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes.len() as u64, first.size);
+        assert_eq!(first.sha256, hex::encode(Sha256::digest(&bytes)));
+        assert_eq!((first.sha256, first.size), (second.sha256, second.size));
+        assert_eq!(first.lines, 3000);
     }
 
     #[test]

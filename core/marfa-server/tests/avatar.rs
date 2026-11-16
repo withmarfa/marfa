@@ -1,4 +1,4 @@
-//! The owner's picture: what is kept, what is refused, and what stays when a send fails.
+//! The owner's avatar: what is kept, what is refused, and what stays when a send fails.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -233,8 +233,8 @@ impl Instance {
 
     async fn key(&self, profile: Value) -> String {
         let body = json!({
-            "label": "Picture",
-            "source": format!("picture-{profile}"),
+            "label": "Avatar",
+            "source": format!("avatar-{profile}"),
             "profile_permissions": profile,
         });
         let minted = self.json(&self.control, Method::POST, "/keys", &body).await;
@@ -256,8 +256,8 @@ impl Instance {
         send(&self.public, built).await
     }
 
-    fn pictures(&self) -> i64 {
-        self.count("SELECT count(*) FROM owner_picture")
+    fn avatars(&self) -> i64 {
+        self.count("SELECT count(*) FROM owner_avatar")
     }
 
     fn count(&self, sql: &'static str) -> i64 {
@@ -268,7 +268,7 @@ impl Instance {
 }
 
 #[tokio::test]
-async fn a_picture_is_kept_served_replaced_and_removed() {
+async fn a_avatar_is_kept_served_replaced_and_removed() {
     let instance = Instance::start(true).await;
     assert!(instance.owner().await["avatar"].is_null());
     assert_eq!(instance.served().await.code(), "not_found");
@@ -292,7 +292,7 @@ async fn a_picture_is_kept_served_replaced_and_removed() {
     let served = instance.served().await;
     assert_eq!(served.bytes, second);
     assert_eq!(served.headers[header::CONTENT_TYPE], "image/jpeg");
-    assert_eq!(instance.pictures(), 1);
+    assert_eq!(instance.avatars(), 1);
 
     let removed = instance
         .json(
@@ -305,11 +305,11 @@ async fn a_picture_is_kept_served_replaced_and_removed() {
     assert_eq!(removed.status, StatusCode::OK);
     assert!(removed.json()["avatar"].is_null());
     assert_eq!(instance.served().await.code(), "not_found");
-    assert_eq!(instance.pictures(), 0);
+    assert_eq!(instance.avatars(), 0);
 }
 
 #[tokio::test]
-async fn a_refused_picture_stores_nothing_and_keeps_the_previous_one() {
+async fn a_refused_avatar_stores_nothing_and_keeps_the_previous_one() {
     let instance = Instance::start(true).await;
     let kept = png(2);
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
@@ -407,7 +407,7 @@ async fn a_body_past_the_limit_is_refused_before_its_end_arrives() {
 }
 
 #[tokio::test]
-async fn two_pictures_sent_at_once_leave_one_whole() {
+async fn two_avatars_sent_at_once_leave_one_whole() {
     let instance = Instance::start(true).await;
     let (one, two) = (png(7), jpeg());
     let (first, second) = tokio::join!(instance.put_local(&one), instance.put_local(&two));
@@ -425,7 +425,7 @@ async fn two_pictures_sent_at_once_leave_one_whole() {
         served.headers[header::ETAG],
         etag_of(&served.bytes).as_str()
     );
-    assert_eq!(instance.pictures(), 1);
+    assert_eq!(instance.avatars(), 1);
 }
 
 #[tokio::test]
@@ -434,7 +434,7 @@ async fn an_unavailable_owner_is_refused_and_nothing_is_stored() {
     let reply = instance.put_local(&png(8)).await;
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
     assert_eq!(reply.code(), "owner_not_found");
-    assert_eq!(instance.pictures(), 0);
+    assert_eq!(instance.avatars(), 0);
     assert_eq!(instance.count("SELECT count(*) FROM blobs"), 0);
     let _ = &instance.app;
 }
@@ -458,7 +458,7 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
         send(&instance.public, signed_in(&kept)).await.status,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(instance.pictures(), 0);
+    assert_eq!(instance.avatars(), 0);
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
 
     let writer = instance.key(json!({ "avatar": "write" })).await;
@@ -482,7 +482,7 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
     );
     assert_eq!(
         over_http.headers[header::CONTENT_DISPOSITION],
-        "attachment; filename=\"picture\""
+        "attachment; filename=\"avatar\""
     );
     let reader = instance.key(json!({ "avatar": "read" })).await;
     let named = instance.key(json!({ "name": "write" })).await;
@@ -506,7 +506,7 @@ async fn the_owner_door_takes_the_local_command_and_the_profile_door_a_key_that_
 }
 
 #[tokio::test]
-async fn the_profile_door_removes_the_picture_and_changes_the_name_in_one_step() {
+async fn the_profile_door_removes_the_avatar_and_changes_the_name_in_one_step() {
     let instance = Instance::start(true).await;
     let kept = png(10);
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);
@@ -559,7 +559,7 @@ async fn the_profile_door_removes_the_picture_and_changes_the_name_in_one_step()
 }
 
 #[tokio::test]
-async fn a_validator_that_still_matches_gets_304_and_a_stale_one_gets_the_picture() {
+async fn a_validator_that_still_matches_gets_304_and_a_stale_one_gets_the_avatar() {
     let instance = Instance::start(true).await;
     let file = png(11);
     assert_eq!(instance.put_local(&file).await.status, StatusCode::OK);
@@ -614,7 +614,7 @@ impl Instance {
 }
 
 #[tokio::test]
-async fn the_picture_is_a_row_of_the_reference_index_that_follows_it_and_lends_nothing() {
+async fn the_avatar_is_a_row_of_the_reference_index_that_follows_it_and_lends_nothing() {
     let instance = Instance::start(true).await;
     assert!(instance.references().is_empty());
 
@@ -673,7 +673,7 @@ async fn the_picture_is_a_row_of_the_reference_index_that_follows_it_and_lends_n
 }
 
 #[tokio::test]
-async fn a_key_holding_every_type_reads_the_picture_blob_only_where_another_row_lends_it() {
+async fn a_key_holding_every_type_reads_the_avatar_blob_only_where_another_row_lends_it() {
     let instance = Instance::start(true).await;
     let kept = png(21);
     assert_eq!(instance.put_local(&kept).await.status, StatusCode::OK);

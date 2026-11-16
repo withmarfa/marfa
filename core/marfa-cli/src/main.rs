@@ -36,9 +36,9 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
-    export, extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations,
-    overview, owner, profile, restore, rows, search, sign_ins, sources, status, tables, types,
-    views, webhooks, whoami,
+    export, extensions, housekeeping, items, keys, login, logout, metrics, operations, overview,
+    owner, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types, views,
+    webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -122,8 +122,8 @@ struct Cli {
 
     /// Use private local process authority through this Unix socket, without a keychain.
     /// Item properties, edges, tags, search, counts, events and exports still need a key.
-    /// `items summaries`, `items bin`, the `blobs` commands and bulk-action job status and
-    /// cancel do not.
+    /// `items summaries`, `items bin`, `items trash`, `items restore` and `items purge` of
+    /// one item, the `blobs` commands and bulk-action job status and cancel do not.
     #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key", "profile"], help_heading = "Server")]
     socket: Option<std::path::PathBuf>,
 
@@ -175,12 +175,12 @@ enum Command {
         #[command(subcommand)]
         command: owner::OwnerCommand,
     },
-    /// The owner's name and picture, changed with a key or app's profile write permission.
+    /// The owner's name and avatar, changed with a key or app's profile write permission.
     Profile {
         #[command(subcommand)]
         command: profile::ProfileCommand,
     },
-    /// List, narrow or disconnect approved apps.
+    /// List, narrow or revoke approved apps.
     Apps {
         #[command(subcommand)]
         command: apps::AppsCommand,
@@ -215,11 +215,9 @@ enum Command {
     },
     /// Full-text search on the server, best match first unless a sort is given.
     Search(search::SearchArgs),
-    /// An item's tags and the namespaces it carries, and every tag in use.
-    Metadata {
-        #[command(subcommand)]
-        command: metadata::MetadataCommand,
-    },
+    /// Every distinct tag in use on the instance. An item's own tags are under
+    /// `items tags`.
+    Tags,
     /// An item's extension namespaces.
     Extensions {
         #[command(subcommand)]
@@ -704,7 +702,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::EdgeTypes { command } => edge_types::run(command, &remote()?, &out),
         Command::Types { command } => types::run(command, remote, &out),
         Command::Search(args) => search::run(args, &remote()?, &out),
-        Command::Metadata { command } => metadata::run(command, &remote()?, &out),
+        Command::Tags => tags::run(&remote()?, &out),
         Command::Extensions { command } => extensions::run(command, &remote()?, &out),
         Command::Tables { command } => tables::run(command, &remote()?, &out),
         Command::Rows { command } => rows::run(command, &remote()?, &out),
@@ -898,7 +896,7 @@ mod tests {
             "key-witness",
             "webhooks",
             "create",
-            "--to",
+            "--delivery-url",
             "https://receiver.example/hook",
             "--event",
             "item.created",

@@ -47,7 +47,7 @@ export async function device(): Promise<void> {
       db,
       "--json",
       "hydrate",
-      "--types",
+      "--type",
       "*",
       "--tier",
       "all",

@@ -128,7 +128,7 @@ it.each([
   },
 );
 
-it.each(["create", "change"])(
+it.each(["create", "update"])(
   "names only --query in folders %s and refuses --search",
   async (command) => {
     const binary = requireBinary();
@@ -155,7 +155,7 @@ it.each(["create", "change"])(
       .rootReport([
         "folders",
         command,
-        ...(command === "change"
+        ...(command === "update"
           ? [harness.settings.id, "--version", "1"]
           : ["--title", "Query"]),
         "--query",
@@ -171,7 +171,7 @@ it.each(["create", "change"])(
       [
         "folders",
         command,
-        ...(command === "change"
+        ...(command === "update"
           ? ["01a00000-0000-7000-8000-000000000f03"]
           : []),
         "--search",

@@ -169,8 +169,8 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
     instance.write(Method::POST, "/edges", edge).await;
     for _ in 0..2 {
         let binned = instance.note("binned").await;
-        let path = format!("/items/summaries/{binned}/trash?version=1");
-        let moved = send(&instance.control, None, Method::POST, &path, None).await;
+        let path = format!("/items/{binned}?version=1");
+        let moved = send(&instance.control, None, Method::DELETE, &path, None).await;
         assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
     }
     for title in ["one", "two"] {

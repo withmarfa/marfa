@@ -37,7 +37,7 @@ it("lists and searches names through local authority without item content", asyn
     "summaries",
     "--type",
     "core.note",
-    "--q",
+    "--query",
     "chosen",
     "--limit",
     "1",
@@ -53,7 +53,7 @@ it("lists and searches names through local authority without item content", asyn
     "summaries",
     "--type",
     "core.note",
-    "--q",
+    "--query",
     "chosen",
     "--limit",
     "1",
@@ -85,10 +85,9 @@ it("manages trash through local authority with summary responses", async () => {
   const local = cli.viaSocket(server.controlSocket);
   const id = created.item.id;
   const version = String(created.item.version);
-  for (const action of ["move", "restore", "move"]) {
+  for (const action of ["trash", "restore", "trash"]) {
     const result = await local.json([
       "items",
-      "bin",
       action,
       id,
       "--version",
@@ -100,7 +99,7 @@ it("manages trash through local authority with summary responses", async () => {
     data: { id: string; trashed_by: { kind: string } }[];
   }>(["items", "bin", "list"]);
   expect(page.data.find((row) => row.id === id)?.trashed_by.kind).toBe("local");
-  await local.json(["items", "bin", "purge", id, "--version", version]);
+  await local.json(["items", "purge", id, "--version", version]);
   const result = await local.json<{ purged: number; failures: unknown[] }>([
     "items",
     "bin",
@@ -124,14 +123,7 @@ it("stops an uncertain bin emptying and exposes its outcome through the real soc
       JSON.stringify({ title, body: "private-body-witness" }),
     ]);
     ids.push(created.item.id);
-    await local.json([
-      "items",
-      "bin",
-      "move",
-      created.item.id,
-      "--version",
-      "1",
-    ]);
+    await local.json(["items", "trash", created.item.id, "--version", "1"]);
   }
   await server.setFault("fail:commit=item.purge");
   try {
@@ -179,7 +171,6 @@ it("stops an uncertain bin emptying and exposes its outcome through the real soc
   try {
     const single = await local.run([
       "items",
-      "bin",
       "purge",
       ids[0]!,
       "--version",

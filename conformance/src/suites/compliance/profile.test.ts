@@ -11,7 +11,7 @@ import {
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { png } from "../../utils/pictures.js";
+import { png } from "../../utils/avatars.js";
 import {
   bootUnclaimedServer,
   stopServer,
@@ -102,7 +102,7 @@ describe("owner and delegated profile changes", () => {
       { name: "\u200fInvalid" },
       { name: " " },
       { email: "invalid" },
-      { avatar: "file:///picture" },
+      { avatar: "file:///avatar" },
       { avatar: "https://example.test/portrait.png" },
     ])
       expect((await owner(body)).status).toBe(400);
@@ -142,7 +142,7 @@ describe("owner and delegated profile changes", () => {
       {},
       { email: "app@example.test" },
       { name: "No", email: "app@example.test" },
-      { avatar: "file:///picture" },
+      { avatar: "file:///avatar" },
       { avatar: "https://example.test/portrait.png" },
     ])
       expect((await profile(body)).status).toBe(400);
@@ -151,6 +151,45 @@ describe("owner and delegated profile changes", () => {
     expect(result).toMatchObject({ name: "Final" });
     expect(result).not.toHaveProperty("ok");
     await expectMatchesSchema("PATCH", "/profile", 200, result);
+  });
+  it("refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not", async () => {
+    const made = await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "Profile name lost",
+        source: "profile-name-lost",
+        profile_permissions: { name: "write" },
+      },
+    });
+    expect(made.status).toBe(201);
+    const key = made.body.key as string;
+    const name = async () =>
+      (await controlRequest(server.controlSocket, "/owner")).body.name;
+
+    // The request waits after it was admitted, while `change` is made.
+    const held = async (target: string, change: boolean) => {
+      await server.setFault("hold:write=profile.update@1");
+      const pending = profile({ name: target }, key);
+      await server.waitForHold("hold:write");
+      if (change) {
+        const narrowed = await controlRequest(
+          server.controlSocket,
+          `/keys/${String(made.body.id)}`,
+          { method: "PATCH", body: { profile_permissions: {} } },
+        );
+        expect(narrowed.status).toBe(200);
+      }
+      await server.clearFault("hold:write");
+      return pending;
+    };
+
+    // The witness: held the same way and left alone, the change lands.
+    expect((await held("Kept while held", false)).status).toBe(200);
+    expect(await name()).toBe("Kept while held");
+
+    const before = await name();
+    expect((await held("Lost while held", true)).status).toBe(403);
+    expect(await name()).toBe(before);
   });
   it("requires the private local command and refuses explicit email-write grants", async () => {
     for (const path of ["/owner", "/profile"]) {
@@ -200,7 +239,7 @@ describe("owner and delegated profile changes", () => {
   });
 
   it(
-    "refuses an owner update and a picture upload from the local command while the instance is unclaimed",
+    "refuses an owner update and an avatar upload from the local command while the instance is unclaimed",
     async () => {
       const state = await mkdtemp(join(tmpdir(), "marfa-profile-unclaimed-"));
       try {
@@ -227,19 +266,19 @@ describe("owner and delegated profile changes", () => {
         await expectMatchesSchema("PATCH", "/owner", 404, ownerRefused.body);
         await assertStillUnclaimed();
 
-        const pictureRefused = await local("/owner/avatar", {
+        const avatarRefused = await local("/owner/avatar", {
           method: "PUT",
           body: png(8, 8),
         });
-        expect(pictureRefused.status).toBe(404);
-        expect(pictureRefused.body).toMatchObject({
+        expect(avatarRefused.status).toBe(404);
+        expect(avatarRefused.body).toMatchObject({
           error: { code: "owner_not_found" },
         });
         await expectMatchesSchema(
           "PUT",
           "/owner/avatar",
           404,
-          pictureRefused.body,
+          avatarRefused.body,
         );
         await assertStillUnclaimed();
       } finally {

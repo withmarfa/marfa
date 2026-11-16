@@ -92,7 +92,7 @@ If saved folder settings contain a refused default tag, a refused default proper
 
 ### `folder-setup/settings-name-guidance`
 
-If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST name the setting, explain the refusal and identify `marfa folders change` as the command that changes it.
+If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST name the setting, explain the refusal and identify `marfa folders update` as the command that changes it.
 
 **Tests:** `device/folder-names.test.ts › says which setting, what is wrong with it and how to change it`, `device/folders-contract-c.test.ts › names each refused default and explains how to change it`.
 
@@ -408,7 +408,7 @@ A folder's store holds a copy of the server's items, the writes still to be sent
 
 ### `folder-setup/refused-store-replaced`
 
-While a device holds a folder's writer role, when it refuses the folder's store `wrong_schema` and the store names the folder, holds no write still to be sent, holds no answer the folder has yet to record, and holds the folder's record of its files in this build's shape, a device MUST replace the store with one of this build's shape and go on with the command.
+While a device holds a folder's writer role, when it refuses the folder's store `wrong_schema` and the store names the folder, holds no write still to be sent, holds no answer the folder has yet to record, and holds a record of the folder's files that this build can read, a device MUST replace the store with one of this build's shape and go on with the command.
 
 **Reason:** a release that changes the store's shape would otherwise leave every folder unusable until the person removed it and added it again.
 
@@ -520,7 +520,7 @@ If a device refuses a folder's store `wrong_schema` and the store holds a write 
 
 ### `folder-setup/refused-store-uncarried`
 
-If a device refuses a folder's store `wrong_schema` and the store holds the folder's record of its files in a shape other than this build's, then a device MUST refuse the command `wrong_schema` rather than replace the store.
+If a device refuses a folder's store `wrong_schema` and the store holds a record of the folder's files that this build cannot read, then a device MUST refuse the command `wrong_schema` rather than replace the store.
 
 **Reason:** a replacement that left the record behind would write back files deleted while the store was refused and send files of items put in the bin as new items.
 
@@ -554,7 +554,7 @@ When a device refuses a folder's store `wrong_schema` because its writes cannot 
 
 ### `folder-setup/refused-store-uncarried-advice`
 
-When a device refuses a folder's store `wrong_schema` because it holds the folder's record of its files in a shape other than this build's, a device MUST say to remove the folder with the build that made the store, then add it again.
+When a device refuses a folder's store `wrong_schema` because it holds a record of the folder's files that this build cannot read, a device MUST say to remove the folder with the build that made the store, then add it again.
 
 **Tests:** `device/folders-refused-store-live.test.ts › leaves a refused store whose record of its files is of another shape, and says to remove the folder with the build that made it`.
 
@@ -762,13 +762,13 @@ If a settings-file edit names `search` or a query tier other than `library`, `fe
 
 ### `folder-setup/query-cli-flag`
 
-The CLI MUST take the folder query through `--query` on `marfa folders create` and `marfa folders change`.
+The CLI MUST take the folder query through `--query` on `marfa folders create` and `marfa folders update`.
 
 **Tests:** `device/folders-query.test.ts › names only --query in folders %s and refuses --search`.
 
 ### `folder-setup/query-cli-search-refused`
 
-If `marfa folders create` or `marfa folders change` names `--search`, then the CLI MUST refuse it as an unexpected argument.
+If `marfa folders create` or `marfa folders update` names `--search`, then the CLI MUST refuse it as an unexpected argument.
 
 **Tests:** `device/folders-query.test.ts › names only --query in folders %s and refuses --search`.
 

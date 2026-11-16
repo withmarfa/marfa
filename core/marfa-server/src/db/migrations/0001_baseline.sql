@@ -959,7 +959,7 @@ CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     PRIMARY KEY (hash, store_id, object)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS owner_picture (
+CREATE TABLE IF NOT EXISTS owner_avatar (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
     hash TEXT NOT NULL CHECK (length(hash) = 71),
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
@@ -1253,6 +1253,28 @@ CREATE TABLE IF NOT EXISTS found_backup_files (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS found_backup_files_hash ON found_backup_files (hash);
+
+CREATE TABLE IF NOT EXISTS found_backup_parts (
+    seq INTEGER NOT NULL REFERENCES found_backups (seq),
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (seq, sha256)
+) STRICT, WITHOUT ROWID;
+
+-- The parts of this instance's backups the server stored or checked in a store. `tag` is
+-- what the store gave the part when the server stored or last hashed it: an object store's
+-- ETag, or a backup folder's size, modified time, inode and birth time. `hashed_at` is when
+-- the server last stored or hashed it. `damaged` is set once a check found the part does not
+-- hold the bytes its name gives, or a backup folder could not give them, until the server
+-- stores it again or a hash shows it whole. A damaged part's `tag` is the one it had when
+-- found damaged, and is empty where the read failed.
+CREATE TABLE IF NOT EXISTS backup_parts (
+    store_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    tag TEXT,
+    hashed_at TEXT,
+    damaged INTEGER NOT NULL DEFAULT 0 CHECK (damaged IN (0, 1)),
+    PRIMARY KEY (store_id, sha256)
+) STRICT, WITHOUT ROWID;
 
 CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;

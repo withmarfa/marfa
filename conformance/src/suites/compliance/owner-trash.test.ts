@@ -43,9 +43,10 @@ async function note(title: string) {
   return ((await r.json()) as { item: { id: string; version: number } }).item;
 }
 const act = (id: string, action: string, version = 1) =>
-  owner(`/items/summaries/${id}/${action}?version=${String(version)}`, {
-    method: "POST",
-  });
+  owner(
+    `/items/${id}${action === "trash" ? "" : `/${action}`}?version=${String(version)}`,
+    { method: action === "trash" ? "DELETE" : "POST" },
+  );
 interface BinRow {
   id: string;
   type: string;
@@ -290,21 +291,21 @@ it("answers a move to the bin, a restore and a purge with the item's summary", a
     return body;
   };
   await expectMatchesSchema(
-    "POST",
-    "/items/summaries/{id}/trash",
+    "DELETE",
+    "/items/{id}",
     200,
     await answered("trash"),
   );
   await expectMatchesSchema(
     "POST",
-    "/items/summaries/{id}/restore",
+    "/items/{id}/restore",
     200,
     await answered("restore"),
   );
   await answered("trash");
   await expectMatchesSchema(
     "POST",
-    "/items/summaries/{id}/purge",
+    "/items/{id}/purge",
     200,
     await answered("purge"),
   );
@@ -463,12 +464,8 @@ it("answers a stale version with 409 version_conflict and the item's current sum
 });
 
 it("refuses a key every owner trash door, naming the local command it needs", async () => {
-  const item = await note("Owner key refused");
   for (const [path, body] of [
     ["/trash", undefined],
-    [`/items/summaries/${item.id}/trash?version=1`, {}],
-    [`/items/summaries/${item.id}/restore?version=1`, {}],
-    [`/items/summaries/${item.id}/purge?version=1`, {}],
     ["/trash/empty", {}],
   ] as const) {
     const refused = await key(path, body);

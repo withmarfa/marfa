@@ -209,7 +209,6 @@ it("refuses item and edge writes through the private socket with 401 and changes
       path: `/items/${kept}/transition`,
       body: { state: "archived" },
     },
-    { method: "DELETE", path: `/items/${kept}` },
   ];
   for (const door of changes) await expectRefusedWithoutKey(door);
   expect(await read(kept)).toEqual(before);
@@ -226,21 +225,67 @@ it("refuses item and edge writes through the private socket with 401 and changes
   }
 });
 
-it("refuses restore and purge of a binned item through the private socket with 401 on the item doors, where the working key restores", async () => {
-  const binned = await create("binned");
-  const trashed = await keyed({ method: "DELETE", path: `/items/${binned}` });
-  expect(trashed.status).toBe(200);
-  for (const door of [
-    { method: "POST", path: `/items/${binned}/restore` },
-    { method: "POST", path: `/items/${binned}/purge` },
-  ])
-    await expectRefusedWithoutKey(door);
-  const restored = await keyed({
+it("admits trash, restore and purge of one item through the private socket and answers its summary alone, where the socket still cannot read it", async () => {
+  const id = await create("socket bin witness");
+  const { version } = await read(id);
+  const through = (
+    method: string,
+    path: string,
+    query = `?version=${version}`,
+  ) => controlRequest(server.controlSocket, `${path}${query}`, { method });
+  const summary = ["created_at", "id", "name", "source", "type", "version"];
+  const answered = async (
+    method: string,
+    path: string,
+  ): Promise<Record<string, unknown>> => {
+    const done = await through(method, path);
+    expect(done.status, `${method} ${path}`).toBe(200);
+    expect(Object.keys(done.body).sort(), `${method} ${path}`).toEqual(summary);
+    expect(done.body.id).toBe(id);
+    return done.body;
+  };
+  await answered("DELETE", `/items/${id}`);
+  const binned = await keyed({ method: "GET", path: `/items/${id}` });
+  expect(binned.status).toBe(404);
+  await binned.arrayBuffer();
+  await answered("POST", `/items/${id}/restore`);
+  expect((await read(id)).state).toBe("active");
+  await answered("DELETE", `/items/${id}`);
+  await answered("POST", `/items/${id}/purge`);
+  const gone = await keyed({ method: "GET", path: `/items/${id}` });
+  expect(gone.status).toBe(404);
+  await gone.arrayBuffer();
+
+  // The socket still reads and edits no content.
+  await expectRefusedWithoutKey({ method: "GET", path: `/items/${kept}` });
+  await expectRefusedWithoutKey({
     method: "POST",
-    path: `/items/${binned}/restore`,
+    path: `/items/${kept}/transition`,
+    body: { state: "trashed" },
   });
-  expect(restored.status).toBe(200);
-  expect((await read(binned)).state).toBe("active");
+  await expectRefusedWithoutKey({
+    method: "POST",
+    path: "/items/trash",
+    body: { ids: [kept] },
+  });
+});
+
+it("refuses trash, restore and purge through the private socket that name no version, and changes nothing", async () => {
+  const id = await create("socket bin no version");
+  for (const [method, path] of [
+    ["DELETE", `/items/${id}`],
+    ["POST", `/items/${id}/restore`],
+    ["POST", `/items/${id}/purge`],
+  ] as const) {
+    const refused = await controlRequest(server.controlSocket, path, {
+      method,
+    });
+    expect(refused.status, `${method} ${path}`).toBe(400);
+    expect(refused.body, `${method} ${path}`).toMatchObject({
+      error: { code: "missing_required_field", details: { field: "version" } },
+    });
+  }
+  expect((await read(id)).state).toBe("active");
 });
 
 it("refuses every bulk action through the private socket with 401, purge included, where the working key is admitted", async () => {

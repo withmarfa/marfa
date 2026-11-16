@@ -16,8 +16,8 @@ pub enum PasskeysCommand {
         #[arg(long, allow_hyphen_values = true)]
         name: String,
     },
-    /// Remove one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
-    Remove {
+    /// Delete one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
+    Delete {
         /// The passkey's ID.
         id: String,
     },
@@ -44,7 +44,7 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
             &remote
                 .json(&Request::patch(&["owner", "passkeys", &id]).json(json!({"name":name})))?,
         ),
-        PasskeysCommand::Remove { id } => {
+        PasskeysCommand::Delete { id } => {
             out.value(&remote.json(&Request::delete(&["owner", "passkeys", &id]))?)
         }
         PasskeysCommand::Add { no_browser } => {

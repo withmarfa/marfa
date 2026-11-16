@@ -408,6 +408,7 @@ export interface BackupRow {
 export interface BackupRun {
   outcome: "put";
   backup: BackupRow;
+  sent_bytes: number;
   removed: number;
   unremoved: number;
   blobs_lost: string[];

@@ -1,8 +1,10 @@
-//! The backup folder the owner names: each backup under `backups/<instance id>/`, and a copy of
-//! each file under `files/<instance id>/`, a disk store of its own.
+//! The backup folder the owner names: each backup's manifest under `backups/<instance id>/`, the
+//! parts manifests name under `backup-parts/<instance id>/`, and a copy of each file under
+//! `files/<instance id>/`, a disk store of its own.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write as _};
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::SystemTime;
@@ -20,8 +22,25 @@ use crate::db::Db;
 use crate::failure::Failure;
 
 pub const BACKUPS: &str = "backups";
+pub const PARTS: &str = "backup-parts";
 pub const FILES: &str = "files";
 const PARTIAL: &str = ".partial";
+
+/// The two folders per instance a backup is written to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Area {
+    Backups,
+    Parts,
+}
+
+impl Area {
+    pub fn name(self) -> &'static str {
+        match self {
+            Area::Backups => BACKUPS,
+            Area::Parts => PARTS,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Folder {
@@ -220,14 +239,15 @@ impl Folder {
         ))
     }
 
-    fn folder_of(&self, instance: &str) -> PathBuf {
-        self.root.join(BACKUPS).join(instance)
+    fn folder_of(&self, area: Area, instance: &str) -> PathBuf {
+        self.root.join(area.name()).join(instance)
     }
 
-    /// The backups directly in `instance`'s folder, by name and size. It blocks.
-    pub fn list_in(&self, instance: &str) -> io::Result<Vec<(String, u64)>> {
+    /// The files directly in `instance`'s folder of `area`, by name, with each one's size and
+    /// stamp. It blocks.
+    pub fn list_in(&self, area: Area, instance: &str) -> io::Result<Vec<(String, u64, String)>> {
         self.checked()?;
-        listed(&self.folder_of(instance))
+        listed(&self.folder_of(area, instance))
     }
 
     /// Every backup in an instance's folder, as its folder and name, and its size. It blocks.
@@ -245,20 +265,26 @@ impl Folder {
                 continue;
             }
             let instance = entry.file_name().to_string_lossy().into_owned();
-            for (name, size) in listed(&entry.path())? {
+            for (name, size, _) in listed(&entry.path())? {
                 found.push((vec![instance.clone(), name], size));
             }
         }
         Ok(found)
     }
 
-    /// The backup `name` of `instance`, with its size, where the folder holds it. It blocks.
-    pub fn open_backup(&self, instance: &str, name: &str) -> io::Result<Option<(u64, File)>> {
+    /// The file `name` in `instance`'s folder of `area`, with its size and stamp as it was
+    /// opened, where the folder holds it. It blocks.
+    pub fn open_in(
+        &self,
+        area: Area,
+        instance: &str,
+        name: &str,
+    ) -> io::Result<Option<(u64, String, File)>> {
         self.checked()?;
-        match File::open(self.folder_of(instance).join(name)) {
+        match File::open(self.folder_of(area, instance).join(name)) {
             Ok(file) => {
                 let meta = file.metadata()?;
-                Ok(meta.is_file().then_some((meta.len(), file)))
+                Ok(meta.is_file().then(|| (meta.len(), stamp(&meta), file)))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
@@ -289,10 +315,11 @@ impl Folder {
             .transpose()
     }
 
-    /// Deletes this instance's backup `name`; one not there is already gone. It blocks.
-    pub fn delete(&self, name: &str) -> io::Result<()> {
+    /// Deletes `name` from this instance's folder of `area`; one not there is already gone. It
+    /// blocks.
+    pub fn delete(&self, area: Area, name: &str) -> io::Result<()> {
         self.checked()?;
-        let own = self.folder_of(&self.instance);
+        let own = self.folder_of(area, &self.instance);
         match fs::remove_file(own.join(name)) {
             Ok(()) => File::open(&own)?.sync_all(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -301,45 +328,23 @@ impl Folder {
     }
 
     /// Removes what a backup or a copy left half written when its process ended. Only one backup
-    /// runs at a time, so every partial backup in this instance's folder is a leftover. It
-    /// blocks.
+    /// runs at a time, so every partial file in this instance's folders is a leftover. It blocks.
     pub fn clear_leftovers(&self) -> io::Result<usize> {
         self.checked()?;
-        let own = self.folder_of(&self.instance);
         let mut cleared = self.files().clear_tmp_before(self.started)?;
-        let entries = match fs::read_dir(&own) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(cleared),
-            Err(error) => return Err(error),
-        };
-        let mut removed = false;
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') && name.ends_with(PARTIAL) {
-                match fs::remove_file(entry.path()) {
-                    Ok(()) => {
-                        cleared += 1;
-                        removed = true;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-            }
-        }
-        if removed {
-            File::open(&own)?.sync_all()?;
+        for area in [Area::Backups, Area::Parts] {
+            cleared += clear_partials(&self.folder_of(area, &self.instance))?;
         }
         Ok(cleared)
     }
 
-    /// A temporary file beside `name` in this instance's folder, made with the folders above it
-    /// inside the named folder. It blocks.
-    fn partial(&self, name: &str) -> io::Result<Partial> {
+    /// A temporary file beside `name` in this instance's folder of `area`, made with the folders
+    /// above it inside the named folder. It blocks.
+    fn partial(&self, area: Area, name: &str) -> io::Result<Partial> {
         self.checked()?;
-        let backups = self.root.join(BACKUPS);
-        make_inside(&backups)?;
-        let own = backups.join(&self.instance);
+        let above = self.root.join(area.name());
+        make_inside(&above)?;
+        let own = above.join(&self.instance);
         make_inside(&own)?;
         let path = own.join(format!(".{name}.{}{PARTIAL}", Uuid::now_v7()));
         let file = OpenOptions::new()
@@ -356,6 +361,31 @@ impl Folder {
     }
 }
 
+/// Removes the partial files in `own`. It blocks.
+fn clear_partials(own: &Path) -> io::Result<usize> {
+    let entries = match fs::read_dir(own) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut cleared = 0;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') && name.ends_with(PARTIAL) {
+            match fs::remove_file(entry.path()) {
+                Ok(()) => cleared += 1,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    if cleared > 0 {
+        File::open(own)?.sync_all()?;
+    }
+    Ok(cleared)
+}
+
 /// Makes one folder whose parent must exist; one already there is kept.
 fn make_inside(path: &Path) -> io::Result<()> {
     match fs::create_dir(path) {
@@ -370,8 +400,29 @@ fn make_inside(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Files directly in `folder` whose names a listing may read, by name and size.
-fn listed(folder: &Path) -> io::Result<Vec<(String, u64)>> {
+/// A file's size, modified time, inode and, where the file system records one, birth time. A
+/// disk's decay, or a write in place that sets the time back, keeps it. The change time is left
+/// out, since a rename changes it on some file systems.
+pub fn stamp(meta: &Metadata) -> String {
+    let mut stamp = format!(
+        "{}-{}.{:09}-{}",
+        meta.len(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+        meta.ino()
+    );
+    if let Some(born) = meta
+        .created()
+        .ok()
+        .and_then(|at| at.duration_since(SystemTime::UNIX_EPOCH).ok())
+    {
+        stamp.push_str(&format!("-{}.{:09}", born.as_secs(), born.subsec_nanos()));
+    }
+    stamp
+}
+
+/// Files directly in `folder` whose names a listing may read, by name, size and stamp.
+fn listed(folder: &Path) -> io::Result<Vec<(String, u64, String)>> {
     let entries = match fs::read_dir(folder) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -385,7 +436,7 @@ fn listed(folder: &Path) -> io::Result<Vec<(String, u64)>> {
             continue;
         }
         match entry.metadata() {
-            Ok(meta) if meta.is_file() => found.push((name, meta.len())),
+            Ok(meta) if meta.is_file() => found.push((name, meta.len(), stamp(&meta))),
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
@@ -394,7 +445,7 @@ fn listed(folder: &Path) -> io::Result<Vec<(String, u64)>> {
     Ok(found)
 }
 
-/// A backup being written; it goes when this does, unless it was given its name.
+/// A file of a backup being written; it goes when this does, unless it was given its name.
 struct Partial {
     target: PathBuf,
     folder: PathBuf,
@@ -412,15 +463,18 @@ impl Partial {
     }
 
     /// Syncs the bytes, gives them the backup's name and syncs the folder that names them.
-    fn place(&mut self) -> io::Result<()> {
+    /// Answers the file's stamp under its name.
+    fn place(&mut self) -> io::Result<String> {
         let Some(file) = self.file.take() else {
             return Err(io::Error::other("a partial backup was closed"));
         };
         file.sync_all()?;
-        drop(file);
         fs::rename(&self.path, &self.target)?;
         self.placed = true;
-        File::open(&self.folder)?.sync_all()
+        let stamped = stamp(&file.metadata()?);
+        drop(file);
+        File::open(&self.folder)?.sync_all()?;
+        Ok(stamped)
     }
 }
 
@@ -433,31 +487,33 @@ impl Drop for Partial {
     }
 }
 
-/// A backup written whole under a temporary name, which no listing reads until it is placed.
+/// A file of a backup written whole under a temporary name, which no listing reads until it is
+/// placed.
 pub struct Written {
     partial: Partial,
     pub size: u64,
 }
 
 impl Written {
-    /// Gives the backup its name, so it is listed whole or not at all.
-    pub async fn place(self) -> io::Result<u64> {
+    /// Gives the file its name, so it is listed whole or not at all. Answers its size and stamp.
+    pub async fn place(self) -> io::Result<(u64, String)> {
         let Written { mut partial, size } = self;
-        tokio::task::spawn_blocking(move || partial.place())
+        let stamped = tokio::task::spawn_blocking(move || partial.place())
             .await
             .map_err(io::Error::other)??;
-        Ok(size)
+        Ok((size, stamped))
     }
 }
 
-/// Writes a backup to a temporary name in this instance's folder.
+/// Writes a file of a backup to a temporary name in this instance's folder of `area`.
 pub async fn write(
     folder: Arc<Folder>,
+    area: Area,
     name: String,
     mut bytes: ByteStream,
     faults: Arc<Faults>,
 ) -> io::Result<Written> {
-    let mut partial = tokio::task::spawn_blocking(move || folder.partial(&name))
+    let mut partial = tokio::task::spawn_blocking(move || folder.partial(area, &name))
         .await
         .map_err(io::Error::other)??;
     let mut size = 0u64;
@@ -528,18 +584,38 @@ mod tests {
         let faults = Arc::new(Faults::default());
         let written = write(
             folder.clone(),
-            "a.tar".into(),
+            Area::Backups,
+            "a.json".into(),
             chunks(&[b"one", b"two"]),
             faults.clone(),
         )
         .await
         .unwrap();
-        assert!(folder.list_in("instance").unwrap().is_empty());
-        assert_eq!(written.place().await.unwrap(), 6);
-        assert_eq!(folder.list_in("instance").unwrap(), [("a.tar".into(), 6)]);
+        assert!(
+            folder
+                .list_in(Area::Backups, "instance")
+                .unwrap()
+                .is_empty()
+        );
+        let (size, placed) = written.place().await.unwrap();
+        assert_eq!(size, 6);
+        assert_eq!(
+            folder.list_in(Area::Backups, "instance").unwrap(),
+            [("a.json".into(), 6, placed.clone())]
+        );
+        let (_, opened, _) = folder
+            .open_in(Area::Backups, "instance", "a.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(opened, placed);
+        let path = dir.path().join(BACKUPS).join("instance").join("a.json");
+        fs::write(&path, b"onetwo").unwrap();
+        let (_, _, rewritten) = folder.list_in(Area::Backups, "instance").unwrap().remove(0);
+        assert_ne!(rewritten, placed);
         let dropped = write(
             folder.clone(),
-            "c.tar".into(),
+            Area::Backups,
+            "c.json".into(),
             chunks(&[b"never placed"]),
             faults.clone(),
         )
@@ -553,9 +629,15 @@ mod tests {
         ])
         .boxed();
         assert!(
-            write(folder.clone(), "b.tar".into(), broken, faults)
-                .await
-                .is_err()
+            write(
+                folder.clone(),
+                Area::Backups,
+                "b.json".into(),
+                broken,
+                faults
+            )
+            .await
+            .is_err()
         );
         let own = dir.path().join(BACKUPS).join("instance");
         let mut names: Vec<String> = fs::read_dir(&own)
@@ -563,7 +645,35 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        assert_eq!(names, ["a.tar"]);
+        assert_eq!(names, ["a.json"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_given_another_birth_time_with_its_size_time_and_inode_kept_is_stamped_anew() {
+        use std::os::darwin::fs::FileTimesExt as _;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("p.ndjson.gz");
+        fs::write(&path, b"part").unwrap();
+        let before = fs::metadata(&path).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(before.modified().unwrap())
+                    .set_created(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(86_400)),
+            )
+            .unwrap();
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(
+            (after.len(), after.modified().unwrap(), after.ino()),
+            (before.len(), before.modified().unwrap(), before.ino())
+        );
+        assert_ne!(after.created().unwrap(), before.created().unwrap());
+        assert_ne!(stamp(&after), stamp(&before));
     }
 
     #[test]
@@ -571,16 +681,28 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let folder = opened(dir.path());
         let own = dir.path().join(BACKUPS).join("instance");
+        let parts = dir.path().join(PARTS).join("instance");
         fs::create_dir_all(&own).unwrap();
-        fs::write(own.join(".x.tar.0190.partial"), b"half").unwrap();
-        fs::write(own.join("kept.tar"), b"whole").unwrap();
-        assert_eq!(
-            folder.list_in("instance").unwrap(),
-            [("kept.tar".into(), 5)]
-        );
-        assert_eq!(folder.clear_leftovers().unwrap(), 1);
-        assert!(own.join("kept.tar").exists());
-        assert!(!own.join(".x.tar.0190.partial").exists());
+        fs::create_dir_all(&parts).unwrap();
+        fs::write(own.join(".x.json.0190.partial"), b"half").unwrap();
+        fs::write(own.join("kept.json"), b"whole").unwrap();
+        fs::write(parts.join(".p.ndjson.gz.0190.partial"), b"half").unwrap();
+        fs::write(parts.join("p.ndjson.gz"), b"part").unwrap();
+        let sized = |area| -> Vec<(String, u64)> {
+            folder
+                .list_in(area, "instance")
+                .unwrap()
+                .into_iter()
+                .map(|(name, size, _)| (name, size))
+                .collect()
+        };
+        assert_eq!(sized(Area::Backups), [("kept.json".into(), 5)]);
+        assert_eq!(sized(Area::Parts), [("p.ndjson.gz".into(), 4)]);
+        assert_eq!(folder.clear_leftovers().unwrap(), 2);
+        assert!(own.join("kept.json").exists());
+        assert!(parts.join("p.ndjson.gz").exists());
+        assert!(!own.join(".x.json.0190.partial").exists());
+        assert!(!parts.join(".p.ndjson.gz.0190.partial").exists());
     }
 
     #[test]
@@ -590,12 +712,13 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let folder = opened(&root);
         fs::remove_dir_all(&root).unwrap();
-        assert!(folder.list_in("instance").is_err());
-        assert!(folder.partial("a.tar").is_err());
+        assert!(folder.list_in(Area::Backups, "instance").is_err());
+        assert!(folder.partial(Area::Backups, "a.json").is_err());
+        assert!(folder.partial(Area::Parts, "p.ndjson.gz").is_err());
         assert!(folder.clear_leftovers().is_err());
         assert!(!root.exists());
         fs::create_dir(&root).unwrap();
-        assert!(folder.partial("a.tar").is_err());
+        assert!(folder.partial(Area::Parts, "p.ndjson.gz").is_err());
         assert!(fs::read_dir(&root).unwrap().next().is_none());
     }
 

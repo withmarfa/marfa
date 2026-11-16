@@ -276,7 +276,7 @@ impl Settings {
                 violation.message
             } else {
                 format!(
-                    "the folder's {} is refused: {}. Change it with `marfa folders change`",
+                    "the folder's {} is refused: {}. Change it with `marfa folders update`",
                     violation.path,
                     violation.message.trim_end_matches('.')
                 )
@@ -595,7 +595,7 @@ mod tests {
             filter.contains("Null is not a value to compare with"),
             "{filter}"
         );
-        assert!(filter.contains("marfa folders change"), "{filter}");
+        assert!(filter.contains("marfa folders update"), "{filter}");
         for (properties, setting) in [
             (json!({ "defaults": { "tags": [""] } }), "defaults.tags"),
             (
@@ -613,7 +613,7 @@ mod tests {
         ] {
             let message = refused(properties);
             assert!(message.contains(setting), "{message}");
-            assert!(message.contains("marfa folders change"), "{message}");
+            assert!(message.contains("marfa folders update"), "{message}");
         }
         // The witness: defaults at the bound are taken.
         assert!(

@@ -135,8 +135,8 @@ it("returns the same items in the same order as the server for each shared sort"
             "--offset",
             String(offset),
           ]),
-        ) as { items: Item[] };
-        local.push(...page.items.map((item) => item.id));
+        ) as { data: Item[] };
+        local.push(...page.data.map((item) => item.id));
       }
       expect(local, `${sort} ${direction}`).toEqual(remote);
     }

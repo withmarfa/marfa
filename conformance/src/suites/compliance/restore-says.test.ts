@@ -20,10 +20,11 @@ import {
 } from "../../utils/own-blob-server.js";
 import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 import { v7 as uuidv7 } from "uuid";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { backupInFolder } from "../../utils/backups.js";
 
 /**
  * What a restore says about itself: the enforcement settings an archive
@@ -217,15 +218,10 @@ describe("what a restore says", () => {
 
       const run = await localOf(spoiled).runBackup();
       expect(run.status, JSON.stringify(run.error)).toBe(200);
-      const backup = new Uint8Array(
-        readFileSync(
-          join(
-            folder,
-            "backups",
-            run.data.backup.instance_id,
-            run.data.backup.name,
-          ),
-        ),
+      const { archive: backup } = await backupInFolder(
+        folder,
+        run.data.backup.instance_id,
+        run.data.backup.name,
       );
       const manifest = archiveManifest(backup);
       expect(manifest.item_count).toBe(witness.item_count);
@@ -256,7 +252,11 @@ describe("what a restore says", () => {
     expect(restored.data.previous_instance).toEqual({
       instance_id: originId,
       destination: "folder",
-      kept_by_previous_instance: [`backups/${originId}`, `files/${originId}`],
+      kept_by_previous_instance: [
+        `backups/${originId}`,
+        `backup-parts/${originId}`,
+        `files/${originId}`,
+      ],
       message: expect.stringContaining("no longer runs"),
     });
     expect(JSON.stringify(restored.data)).not.toContain("safe");

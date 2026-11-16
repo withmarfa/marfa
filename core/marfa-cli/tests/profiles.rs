@@ -396,7 +396,7 @@ fn a_write_names_its_server_and_profile_first_and_a_read_does_not() {
             shown(&output)
         );
     }
-    let output = home.run(&["--profile", "demo", "items", "delete", "i1"], &env);
+    let output = home.run(&["--profile", "demo", "items", "trash", "i1"], &env);
     assert_eq!(output.status.code(), Some(1), "{}", shown(&output));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(stderr.lines().next(), Some(line.as_str()), "{stderr}");
@@ -413,7 +413,7 @@ fn a_write_names_its_server_and_profile_first_and_a_read_does_not() {
 
     // Without a profile, the line names the server alone.
     let output = home.run(
-        &["--url", &profiled.url, "items", "delete", "i1"],
+        &["--url", &profiled.url, "items", "trash", "i1"],
         &[("MARFA_NO_KEYCHAIN", "1"), ("MARFA_API_KEY", OUTSIDE_KEY)],
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -424,7 +424,7 @@ fn a_write_names_its_server_and_profile_first_and_a_read_does_not() {
     );
     // Under --json the line is printed too, and the refusal is the last line.
     let output = home.run(
-        &["--json", "--profile", "demo", "items", "delete", "i1"],
+        &["--json", "--profile", "demo", "items", "trash", "i1"],
         &env,
     );
     assert!(output.stdout.is_empty(), "{}", shown(&output));

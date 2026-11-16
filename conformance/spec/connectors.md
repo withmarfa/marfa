@@ -1388,9 +1388,11 @@ When `GET /connectors`, `GET /connectors/{id}`, `POST /connectors` or `GET /conn
 
 ### `connectors/problems-state-write`
 
-When the connector's own key sends `PUT /connectors/{id}/state` with a valid `problems` map under its process's live hold, the server MUST replace the source's state document and current problems together, so that a reader sees both or neither.
+When the connector's own key sends `PUT /connectors/{id}/state` with a valid `problems` map under its process's live hold, the server MUST answer `200` and then answer both the state document and the problems it sent at `GET /connectors/{id}/state`.
 
-**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
+**Reason:** a refused write leaves both as they were (`connectors/problems-refused-unchanged`), so a reader never finds the new problems beside the old state.
+
+**Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`, `› refuses a write whose key is revoked or expires while the write waits for the database`.
 
 ### `connectors/problems-omitted`
 
@@ -1442,7 +1444,7 @@ If `PUT /connectors/{id}/state` is refused, then the server MUST preserve the so
 
 ### `connectors/fence-current-key`
 
-When a process writes state, problems or agreements, the server MUST accept the write only if the registration's owning key is still unrevoked and unexpired at the moment the write takes effect.
+If the registration's owning key is revoked or expired when a process's write of state, problems or agreements takes effect, then the server MUST refuse the write with `401` and leave what the source holds as it was.
 
 **Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`, `› refuses a write whose key is revoked or expires while the write waits for the database`.
 

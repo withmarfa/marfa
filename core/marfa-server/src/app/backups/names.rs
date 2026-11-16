@@ -1,4 +1,5 @@
-//! A backup's name is its instant in ISO 8601 basic format, which FAT and exFAT accept.
+//! A backup's name, its manifest's, is its instant in ISO 8601 basic format, which FAT and
+//! exFAT accept.
 
 use std::collections::HashSet;
 
@@ -6,7 +7,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 
 use crate::app::clock::Stamp;
 
-const SUFFIX: &str = ".tar";
+const SUFFIX: &str = ".json";
 /// The newest backup of each of this many days, the most recent that hold one, is kept.
 const DAYS_KEPT: usize = 31;
 
@@ -138,7 +139,7 @@ mod tests {
     #[test]
     fn a_name_is_the_instant_and_reads_back_as_it() {
         let name = name_of(at("2026-11-09T10:15:30.250Z"));
-        assert_eq!(name, "20261109T101530.250Z.tar");
+        assert_eq!(name, "20261109T101530.250Z.json");
         assert_eq!(parse(&name), Some(at("2026-11-09T10:15:30.250Z")));
     }
 
@@ -170,16 +171,17 @@ mod tests {
     fn only_a_name_written_exactly_as_a_backup_reads() {
         for stray in [
             "20261109T101530.250Z",
-            "20261109T101530.250Z.tar.partial",
-            ".20261109T101530.250Z.tar.0190a1b2.partial",
-            "20261109T101530Z.tar",
-            "20261109T101530.250+0000.tar",
-            "20261109t101530.250Z.tar",
-            "20261309T101530.250Z.tar",
-            "20261109T246030.250Z.tar",
-            "2026-11-09T10:15:30.250Z.tar",
-            "2026110９T101530.250Z.tar",
-            "notes.tar",
+            "20261109T101530.250Z.json.partial",
+            ".20261109T101530.250Z.json.0190a1b2.partial",
+            "20261109T101530Z.json",
+            "20261109T101530.250+0000.json",
+            "20261109t101530.250Z.json",
+            "20261309T101530.250Z.json",
+            "20261109T246030.250Z.json",
+            "2026-11-09T10:15:30.250Z.json",
+            "2026110９T101530.250Z.json",
+            "notes.json",
+            "20261109T101530.250Z.tar",
             ".marfa-store",
             "",
         ] {
@@ -218,7 +220,7 @@ mod tests {
         ]
         .map(|text| name_of(at(text)));
         let mut listed = names.to_vec();
-        listed.push("notes.tar".into());
+        listed.push("notes.json".into());
         assert_eq!(
             sorted(doomed(&listed, taken)),
             [&names[6], &names[4]].map(String::clone)
@@ -356,7 +358,7 @@ mod tests {
         assert!(!Listing::of(&[]).would_thin(&name, a_day_on));
         let after_them = missing.plus_ms(42 * 86_400_000).unwrap();
         assert!(Listing::of(&ahead).would_thin(&name, after_them));
-        assert!(!Listing::of(&ahead).would_thin("notes.tar", after_them));
+        assert!(!Listing::of(&ahead).would_thin("notes.json", after_them));
     }
 
     #[test]

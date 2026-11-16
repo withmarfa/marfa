@@ -107,6 +107,8 @@ The `native` feature is off by default, so `cargo check --workspace` needs no ex
 
 `native/pdfium-libraries.txt` names the built PDFium library for each target by hash. A saved library, which a cache may hold, is installed only when its hash is the one named for its target, and the run stops otherwise. After a change to PDFium's pins, patches or scripts, a build stops on its new library and prints the line to commit; `MARFA_PDFIUM_UNPINNED=1` builds anyway on a developer's machine.
 
+The hash of `aarch64-apple-darwin` holds only for the Xcode the release builds with, which `release.yml` selects by name (`XCODE_VERSION`), because PDFium is built against the system C++ library and `libpdfium.a` holds the macOS SDK's version and paths. Moving Xcode means moving the pin through the `move-pdfium` skill. A Mac with another Xcode builds a different library, so build there with `MARFA_PDFIUM_UNPINNED=1`, and never for a release.
+
 ```sh
 MARFA_NATIVE_ROOT=/path/to/cache native/release.sh aarch64-apple-darwin
 MARFA_NATIVE_ROOT=/path/to/cache native/release.sh x86_64-unknown-linux-musl --full

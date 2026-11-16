@@ -234,14 +234,11 @@ fn copy_of(folder: &Path, instance: &str, hash: &str) -> PathBuf {
     area.join(&hex[0..4]).join(hex)
 }
 
-/// The manifest of the backup file at `path`, its tar's first entry.
+/// The archive manifest a backup's manifest file at `path` carries.
 fn manifest_of(path: &Path) -> Value {
-    let tar = fs::read(path).unwrap();
-    assert_eq!(&tar[..13], b"manifest.json");
-    let octal = String::from_utf8_lossy(&tar[124..136]);
-    let size =
-        usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
-    serde_json::from_slice(&tar[512..512 + size]).unwrap()
+    let backup: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(backup["format"], "marfa-backup", "{backup}");
+    backup["archive"].clone()
 }
 
 fn names_in(folder: &Path) -> Vec<String> {
@@ -475,9 +472,17 @@ async fn a_backup_being_written_is_never_listed_until_it_is_whole() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     let own = folder.path().join("backups").join(instance.id());
-    let written = names_in(&own);
-    assert_eq!(written.len(), 1, "{written:?}");
-    assert!(written[0].starts_with('.'), "{written:?}");
+    let parts = folder.path().join("backup-parts").join(instance.id());
+    assert!(names_in(&own).is_empty(), "{:?}", names_in(&own));
+    let (writing, stored): (Vec<String>, Vec<String>) = names_in(&parts)
+        .into_iter()
+        .partition(|name| name.starts_with('.'));
+    assert!(!stored.is_empty());
+    assert!(
+        stored.iter().all(|name| name.ends_with(".ndjson.gz")),
+        "{stored:?}"
+    );
+    assert_eq!(writing.len(), 1, "{writing:?}");
     let (status, listed) = instance.local(Method::GET, "/backups", None).await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     assert_eq!(listed["data"], json!([]), "{listed}");
@@ -660,7 +665,7 @@ async fn a_file_no_store_can_read_is_recorded_lost_and_the_backup_still_goes_ahe
     let file = folder.path().join("backups").join(origin.id()).join(&name);
     let manifest = manifest_of(&file);
     assert_eq!(manifest["file_count"], 2, "{manifest}");
-    let files = files_listed(&fs::read(&file).unwrap());
+    let files = files_listed(folder.path(), &origin.id(), &file);
     assert_eq!(listed(&files, &lost)["state"], "lost", "{files:?}");
     assert_eq!(listed(&files, &kept)["state"], "not_carried", "{files:?}");
     assert!(copy_of(folder.path(), &origin.id(), &kept).is_file());
@@ -865,6 +870,7 @@ async fn an_archive_that_would_leave_less_than_the_reserve_on_the_servers_volume
     let instance = Instance::start(folder.path()).await;
     instance.note("a note").await;
     let own = folder.path().join("backups").join(instance.id());
+    let parts = folder.path().join("backup-parts").join(instance.id());
     instance
         .app
         .faults
@@ -880,7 +886,8 @@ async fn an_archive_that_would_leave_less_than_the_reserve_on_the_servers_volume
         "{told}"
     );
     assert!(names_in(&own).is_empty(), "{:?}", names_in(&own));
-    // The refusal comes before the archive's files are spooled, and what was read is removed.
+    assert!(names_in(&parts).is_empty(), "{:?}", names_in(&parts));
+    // The refusal comes before any part is stored, and what was read is removed.
     let tmp = instance.data.path().join("blobs").join("tmp");
     for _ in 0..250 {
         if names_in(&tmp).is_empty() {
@@ -899,6 +906,7 @@ async fn an_archive_that_would_leave_less_than_the_reserve_on_the_servers_volume
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(names_in(&own).len(), 1);
+    assert!(!names_in(&parts).is_empty());
 }
 
 #[tokio::test]
@@ -1311,30 +1319,30 @@ async fn backups_turned_off_by_interval_are_told_apart_from_having_no_destinatio
 }
 
 /// The lines of the archive's `files.ndjson.gz`, which follows its manifest.
-fn files_listed(tar: &[u8]) -> Vec<Value> {
+/// The lines of the files part the backup whose manifest file is at `path` names.
+fn files_listed(folder: &Path, instance: &str, path: &Path) -> Vec<Value> {
     use std::io::Read;
-    let mut at = 0;
-    loop {
-        let block = &tar[at..at + 512];
-        let end = block[..100]
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(100);
-        let octal = String::from_utf8_lossy(&block[124..136]);
-        let size =
-            usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
-        if &block[..end] == b"files.ndjson.gz" {
-            let mut text = String::new();
-            flate2::read::GzDecoder::new(&tar[at + 512..at + 512 + size])
-                .read_to_string(&mut text)
-                .unwrap();
-            return text
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect();
-        }
-        at += 512 + size.div_ceil(512) * 512;
-    }
+    let backup: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let part = backup["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|part| part["entry"] == "files.ndjson.gz")
+        .unwrap();
+    let bytes = fs::read(
+        folder
+            .join("backup-parts")
+            .join(instance)
+            .join(format!("{}.ndjson.gz", part["sha256"].as_str().unwrap())),
+    )
+    .unwrap();
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(&bytes[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    text.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 fn listed<'a>(files: &'a [Value], hash: &str) -> &'a Value {

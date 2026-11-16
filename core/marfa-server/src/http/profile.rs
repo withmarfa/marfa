@@ -1,4 +1,4 @@
-//! The owner's profile and picture, for the owner and for a key or an app that may change it.
+//! The owner's profile and avatar, for the owner and for a key or an app that may change it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,32 +16,31 @@ use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::auth::Visit;
+use crate::app::auth::avatar::{Door, MAX_BYTES};
 use crate::app::auth::owner::{self, Owner, PROFILE_FIELDS, ProfileUpdate};
-use crate::app::auth::picture::{Door, MAX_BYTES};
 use crate::app::refusal::{Code, Refusal};
 
-const OWNER_PICTURE: &str = "/owner/avatar";
-const PROFILE_PICTURE: &str = "/profile/avatar";
+const OWNER_AVATAR: &str = "/owner/avatar";
+const PROFILE_AVATAR: &str = "/profile/avatar";
 
-/// A picture's body is read by its own door, under its own cap.
-pub fn is_picture(request: &Request) -> bool {
+/// An avatar's body is read by its own door, under its own cap.
+pub fn is_avatar(request: &Request) -> bool {
     let path = request.uri().path();
-    request.method() == axum::http::Method::PUT
-        && (path == OWNER_PICTURE || path == PROFILE_PICTURE)
+    request.method() == axum::http::Method::PUT && (path == OWNER_AVATAR || path == PROFILE_AVATAR)
 }
 
 /// A body the general cap and deadline leave to the door that reads it.
 pub fn reads_own_body(request: &Request) -> bool {
     super::blobs::is_upload(request)
         || super::restore::is_restore(request)
-        || is_picture(request)
+        || is_avatar(request)
         || super::inbound::is_delivery(request)
 }
 
 fn too_large() -> Refusal {
     Refusal::new(
         Code::RequestTooLarge,
-        format!("A picture is at most {MAX_BYTES} bytes."),
+        format!("An avatar is at most {MAX_BYTES} bytes."),
     )
 }
 
@@ -92,7 +91,7 @@ async fn put(
     request: Request,
     door: Door,
 ) -> Result<Owner, Stopped> {
-    app.admit_picture(caller, door)?;
+    app.admit_avatar(caller, door)?;
     query::only(request.uri(), &[])?;
     let (parts, mut body) = request.into_parts();
     let bytes = arrived(
@@ -101,7 +100,7 @@ async fn put(
         app.upload_idle(),
     )
     .await?;
-    Ok(app.put_picture(caller, door, bytes, visit).await?)
+    Ok(app.put_avatar(caller, door, bytes, visit).await?)
 }
 
 pub async fn put_owner(
@@ -168,10 +167,10 @@ pub async fn read(
 ) -> Answer {
     caller.require_profile("avatar", Level::Read)?;
     query::only(&uri, &[])?;
-    let Some((picture, found)) = app.owner_picture().await? else {
-        return Err(Refusal::new(Code::NotFound, "The owner has no picture.").into());
+    let Some((avatar, found)) = app.owner_avatar().await? else {
+        return Err(Refusal::new(Code::NotFound, "The owner has no avatar.").into());
     };
-    let etag = format!("\"{}\"", picture.hash.hex());
+    let etag = format!("\"{}\"", avatar.hash.hex());
     let size = found.blob.size_bytes;
     let unchanged = names(&headers, &etag);
     let body = if unchanged {
@@ -200,12 +199,12 @@ pub async fn read(
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_static("attachment; filename=\"picture\""),
+        HeaderValue::from_static("attachment; filename=\"avatar\""),
     );
     if unchanged {
         *response.status_mut() = StatusCode::NOT_MODIFIED;
     } else {
-        headers.insert(header::CONTENT_TYPE, header_of(&picture.mime_type));
+        headers.insert(header::CONTENT_TYPE, header_of(&avatar.mime_type));
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
     }
     Ok(response)

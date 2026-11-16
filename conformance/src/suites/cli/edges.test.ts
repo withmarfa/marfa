@@ -179,7 +179,7 @@ describe("edges from the terminal", () => {
     expect(removed.code, removed.stderr).toBe(0);
     expect(removed.stdout).toBe(`removed edge ${edgeId}\n`);
 
-    const trashed = await c.cli.run(["items", "delete", b]);
+    const trashed = await c.cli.run(["items", "trash", b]);
     expect(trashed.code, trashed.stderr).toBe(0);
     expect(trashed.stdout).toBe(`moved ${b} to the bin\n`);
   });
@@ -208,7 +208,7 @@ describe("a conflicted copy from the terminal", () => {
     await c.cli.json([
       ...device,
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -249,13 +249,23 @@ describe("a conflicted copy from the terminal", () => {
     // Each command below opens the store again, so the copy answers the link
     // from what it saved, not from the process that caught up.
     await c.cli.json([...device, "catch-up"]);
-    const from = await c.cli.json<Edge[]>([...device, "edges", "list", copy]);
+    const from = await c.cli.json<{ data: Edge[] }>([
+      ...device,
+      "edges",
+      "list",
+      copy,
+    ]);
     expect(
-      from.map((edge) => `${edge.edge_type} ${edge.to_id}`),
+      from.data.map((edge) => `${edge.edge_type} ${edge.to_id}`),
       "the copy holds the conflicted copy and not its link to the original",
     ).toEqual([`derived-from ${id}`]);
-    const to = await c.cli.json<Edge[]>([...device, "edges", "to", id]);
-    expect(to.map((edge) => edge.from_id)).toContain(copy);
+    const to = await c.cli.json<{ data: Edge[] }>([
+      ...device,
+      "edges",
+      "to",
+      id,
+    ]);
+    expect(to.data.map((edge) => edge.from_id)).toContain(copy);
     const held = await c.cli.json<{ tags: string[] }>([
       ...device,
       "items",

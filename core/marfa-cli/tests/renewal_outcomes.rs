@@ -28,7 +28,7 @@ fn hydrate(keychain: &Isolated, origin: &str, code: &str, exit: i32) {
             "--db",
             store.to_str().unwrap(),
             "hydrate",
-            "--types",
+            "--type",
             "core.note",
             "--tier",
             "library",

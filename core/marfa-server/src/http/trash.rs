@@ -61,8 +61,12 @@ pub async fn delete(
     State(app): State<Arc<App>>,
     caller: Caller,
     Named(id): Named<String>,
+    uri: Uri,
     sent: Sent,
 ) -> Answer {
+    if caller.is_local() {
+        return Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Trash).await?);
+    }
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, _| async move {
         let version = named_version(&uri)?;
@@ -76,8 +80,12 @@ pub async fn restore(
     State(app): State<Arc<App>>,
     caller: Caller,
     Named(id): Named<String>,
+    uri: Uri,
     sent: Sent,
 ) -> Answer {
+    if caller.is_local() {
+        return Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Restore).await?);
+    }
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, _| async move {
         let version = named_version(&uri)?;
@@ -91,8 +99,12 @@ pub async fn purge(
     State(app): State<Arc<App>>,
     caller: Caller,
     Named(id): Named<String>,
+    uri: Uri,
     sent: Sent,
 ) -> Answer {
+    if caller.is_local() {
+        return Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Purge).await?);
+    }
     caller.require(Permission::ItemsPurge)?;
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, _| async move {
@@ -279,33 +291,6 @@ async fn owner_act(
         Ok(done) => Ok(finished(done)),
         Err(refusal) => Err(safe(refusal)),
     }
-}
-
-pub async fn owner_trash(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Named(id): Named<String>,
-    uri: Uri,
-) -> Answer {
-    Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Trash).await?)
-}
-
-pub async fn owner_restore(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Named(id): Named<String>,
-    uri: Uri,
-) -> Answer {
-    Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Restore).await?)
-}
-
-pub async fn owner_purge(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Named(id): Named<String>,
-    uri: Uri,
-) -> Answer {
-    Ok(owner_act(&app, &caller, id, &uri, OwnerAct::Purge).await?)
 }
 
 /// Each row is purged at the version the page read, in a write of its own so that other
