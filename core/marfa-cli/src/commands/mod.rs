@@ -34,6 +34,7 @@ pub mod status;
 pub mod tables;
 pub mod tags;
 pub mod types;
+pub mod update;
 pub mod views;
 pub mod webhooks;
 pub mod whoami;
