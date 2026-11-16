@@ -590,7 +590,7 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
 }
 
 /// Asks a sign-in address the write would move to whether it answers as this instance, after
-/// the refusals the write would give first. Names the address that answered.
+/// the refusals the write gives first, in its order. Names the address that answered.
 async fn check_sign_in(
     app: &Arc<App>,
     caller: &Caller,
@@ -603,19 +603,28 @@ async fn check_sign_in(
         ));
     }
     let reading = app.clone();
-    let (request, moved) = app
+    let (request, private_change, moved) = app
         .db
         .read(move |tx| {
             let plan = Plan::of(&request, rows_of(stored::rows(tx)?));
-            plan.judge(&reading)?;
-            let moved = plan.addresses_at(&reading, tx)?;
-            Ok((request, moved))
+            let private_change = plan.private_addresses_change(&reading);
+            let moved = plan
+                .judge(&reading)
+                .and_then(|()| plan.addresses_at(&reading, tx));
+            Ok((request, private_change, moved))
         })
         .await?;
+    let at = app.clock.stamp();
+    if private_change {
+        caller.require_step_up(Permission::ConfigManage, &at)?;
+    }
+    let moved = moved?;
+    if moved.sign_in_moves {
+        caller.require_step_up(Permission::ConfigManage, &at)?;
+    }
     if !moved.confirm {
         return Ok((request, None));
     }
-    caller.require_step_up(Permission::ConfigManage, &app.clock.stamp())?;
     if !request.confirmed {
         return Err(confirmation_needed(&moved));
     }

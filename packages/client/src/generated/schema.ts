@@ -34354,10 +34354,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: the configuration changed while the new sign-in address was checked. Nothing is written; send the change again.
-             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
-             *     - `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.
-             *     - `sign_in_address_check_failed`: the new sign-in address did not answer `GET /` as this instance. `details.reason` says why. Nothing is written.
+             * @description - `conflict`: the settings changed during the address check. Send it again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
+             *     - `sign_in_address_check_failed`: the new sign-in address did not answer as this instance. `details.reason` says why.
              */
             409: {
                 headers: {
@@ -34626,10 +34626,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: the configuration changed while the new sign-in address was checked. Nothing is written; send the change again.
-             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
-             *     - `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.
-             *     - `sign_in_address_check_failed`: the new sign-in address did not answer `GET /` as this instance. `details.reason` says why. Nothing is written.
+             * @description - `conflict`: the settings changed during the address check. Send it again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
+             *     - `sign_in_address_check_failed`: the new sign-in address did not answer as this instance. `details.reason` says why.
              */
             409: {
                 headers: {

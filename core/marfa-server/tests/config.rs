@@ -428,6 +428,7 @@ async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling
         .patch(json!({
             "sign_in_address": "https://b.example",
             "confirm_sign_in_address_change": true,
+            "skip_sign_in_address_check": true,
         }))
         .await;
     assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.text);

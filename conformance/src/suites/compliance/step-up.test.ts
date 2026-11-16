@@ -993,7 +993,9 @@ describe("the check that the new sign-in address answers as this instance", () =
         confirm_sign_in_address_change: true,
       });
       expect(unchecked.status, JSON.stringify(unchecked.body)).toBe(409);
-      expect(unchecked.body.error.code).toBe("sign_in_address_check_failed");
+      expect((unchecked.body as { error: { code: string } }).error.code).toBe(
+        "sign_in_address_check_failed",
+      );
       const back = await local("PATCH", "/config", {
         sign_in_address: origin,
         confirm_sign_in_address_change: true,
