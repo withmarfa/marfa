@@ -2385,7 +2385,7 @@ A web page connects as an app does, registered as a web client, whose redirect U
 
 ### `keys-and-oauth/page-origin-allowed`
 
-While `GET /grants` lists a grant to a web client, the server MUST answer each request whose `Origin` is the origin of a redirect URI the client registered, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
+While `GET /grants` lists a grant to a web client, the server MUST answer each request whose `Origin` is the origin of a redirect URI the client registered, a preflight that `keys-and-oauth/preflight-takes` answers included, with `Access-Control-Allow-Origin` naming that origin.
 
 **Reason:** The address is the one the page registered and the approval page showed, never the `Origin` a browser reports, because registration takes no credential and only the owner's approval makes an address trusted. It lasts as long as some listed grant names it, so two pages on one address keep it until the last is disconnected.
 
@@ -2393,11 +2393,11 @@ While `GET /grants` lists a grant to a web client, the server MUST answer each r
 
 ### `keys-and-oauth/page-origin-refused`
 
-If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is off the loopback, that `cors_origins` does not name, and that is the origin of no redirect URI of a web client `GET /grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
+If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that `cors_origins` does not name and that is the origin of no redirect URI of a web client `GET /grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
 
-**Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, and a native app's redirect URI, which is where a program on a device listens rather than a page, are all refused.
+**Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, a native app's redirect URI, which is where a program on a device listens rather than a page, and a page on the loopback, which is no more the owner's than one elsewhere, are all refused. Taking the setting or the grant away takes effect on the next request.
 
-**Tests:** `compliance/web-page-origin.test.ts › refuses a page's origin before approval, after a denial, and for another origin`, `› allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› allows no origin for a native app's redirect URI`, `› allows a configured origin, and refuses an unapproved one beside it`, `› names the page's origin on the device approval page, and allows it once approved there`, `compliance/web-page-register.test.ts › still refuses that origin on a data operation and at the token endpoint before approval`.
+**Tests:** `compliance/web-page-origin.test.ts › refuses a page's origin before approval, after a denial, and for another origin`, `› allows a page's origin once the owner approves it, on a preflight and on a request`, `› keeps allowing the page across a restart`, `› keeps an origin two pages share until the last of them is disconnected`, `› keeps an origin approved twice until its one grant is disconnected`, `› allows no origin for a native app's redirect URI`, `› allows a configured origin, and refuses an unapproved one beside it`, `› refuses a loopback origin that nothing names, and allows one cors_origins names`, `› takes an origin off the next request once cors_origins stops naming it`, `› names the page's origin on the device approval page, and allows it once approved there`, `compliance/web-page-register.test.ts › still refuses that origin on a data operation and at the token endpoint before approval`.
 
 ### `keys-and-oauth/origin-no-credentials`
 
@@ -2437,9 +2437,49 @@ The server MUST take the origin of a redirect URI as its scheme, its host in low
 
 ### `keys-and-oauth/origin-configured`
 
-When a request carries an `Origin` that `cors_origins` names, the server MUST answer it, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
+When a request carries an `Origin` that `cors_origins` names, the server MUST answer it, a preflight that `keys-and-oauth/preflight-takes` answers included, with `Access-Control-Allow-Origin` naming that origin.
 
-**Tests:** `compliance/web-page-origin.test.ts › allows a configured origin, and refuses an unapproved one beside it`, `compliance/contract-header.test.ts › sends its contract version on a preflight from an origin the instance allows`.
+**Tests:** `compliance/web-page-origin.test.ts › allows a configured origin, and refuses an unapproved one beside it`, `› refuses a loopback origin that nothing names, and allows one cors_origins names`, `› takes an origin off the next request once cors_origins stops naming it`, `compliance/contract-header.test.ts › sends its contract version on a preflight from an origin the instance allows`.
+
+### `keys-and-oauth/preflight-takes`
+
+When a preflight from an origin that `keys-and-oauth/page-origin-allowed` or `keys-and-oauth/origin-configured` allows asks to send a method that an operation at its path takes, `HEAD` counting wherever `GET` is taken, and names as request headers only header names, the server MUST answer it `204` with `Access-Control-Allow-Origin` naming that origin, `Access-Control-Allow-Methods` naming each method an operation at that path takes and `Access-Control-Allow-Headers` naming the request headers it asked to send.
+
+**Reason:** A browser sends nothing it was not told it may, so a preflight that lists a method nobody takes at the path would promise a request that can only fail. Which request headers a page may send is the credential's business, not the origin's, so the headers asked are the headers allowed.
+
+**Tests:** `compliance/web-page-origin.test.ts › answers a preflight for a method an operation at its path takes, naming the methods and headers`, `› refuses a preflight for a method no operation at its path takes, for a path none serves, and for a header that is no name`, `compliance/contract-header.test.ts › allows a request header naming the contract in a preflight from an origin the instance allows`.
+
+### `keys-and-oauth/origin-exact`
+
+If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is not written as a browser writes an origin, with the scheme and host in lowercase, the default port left out and no path, `null` included, or carries more than one `Origin` header, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`, whatever `cors_origins` names and the grants list.
+
+**Reason:** A browser writes the origin of the page it runs, so an origin written another way came from a program that guessed, and answering a guess would hand an address the owner approved to anyone who spells it. `null` is the origin of a sandboxed frame and of a local file, which any page can make.
+
+**Tests:** `compliance/web-page-origin.test.ts › judges an origin only as a browser writes it, and no origin where a request names two`.
+
+### `keys-and-oauth/origin-vary`
+
+The server MUST name `Origin` in the `Vary` header of every answer, a refusal and a preflight included, except an answer at `/oauth/authorize`, `/auth/consent` or `/auth/device/consent`.
+
+**Reason:** Whether an answer carries `Access-Control-Allow-Origin`, and which origin it names, depends on the request's `Origin`, so a cache that serves one page's answer to another page would hand it the first page's allowance or take the second's away. The three pages that approve an app carry no cross-origin header (RFC 9700 section 2.6) and so depend on no origin.
+
+**Tests:** `compliance/web-page-origin.test.ts › names Origin in Vary on every answer, and a preflight's request headers in Vary on its answer`.
+
+### `keys-and-oauth/preflight-vary`
+
+When a request is a preflight, the server MUST name `Origin`, `Access-Control-Request-Method` and `Access-Control-Request-Headers` in the `Vary` header of its answer.
+
+**Reason:** The answer to a preflight depends on all three: whether the origin is allowed, whether the path takes the method, and which headers are allowed back.
+
+**Tests:** `compliance/web-page-origin.test.ts › names Origin in Vary on every answer, and a preflight's request headers in Vary on its answer`.
+
+### `keys-and-oauth/no-origin-no-cors`
+
+If a request carries no `Origin`, then the server MUST NOT answer it with any header that begins `Access-Control-`.
+
+**Reason:** A request without an `Origin` is no browser's cross-origin request, so an allowance in its answer would be one nothing asked for, and a cache would keep it for the page that did.
+
+**Tests:** `compliance/web-page-origin.test.ts › answers no cross-origin header to a request that names no origin`.
 
 ## The device grant
 

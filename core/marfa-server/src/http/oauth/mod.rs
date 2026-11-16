@@ -2,23 +2,20 @@ mod authorize;
 mod device;
 mod discovery;
 mod grants;
-mod origins;
 mod token;
 
 use std::sync::Arc;
 
-use axum::extract::{FromRequestParts, Request};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
-use axum::middleware::{Next, from_fn};
-use axum::response::Response;
-
-pub(super) use origins::page_origins;
+use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::from_fn;
 
 use super::Routes;
 use super::answer::{Answer, Stopped, json_answer};
 use super::auth::origin::{self, Source};
 use super::caller::browser_owner;
+use super::cors;
 use super::doors::{Asks, Doors, get, patch, post};
 use super::no_store;
 use crate::app::App;
@@ -83,18 +80,6 @@ impl Fields {
     }
 }
 
-async fn any_origin(request: Request, next: Next) -> Response {
-    let preflight = request.method() == Method::OPTIONS;
-    let mut response = next.run(request).await;
-    if !preflight {
-        response.headers_mut().insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        );
-    }
-    response
-}
-
 pub fn grant_doors() -> Routes {
     Doors::new()
         .route("/grants", get(grants::list))
@@ -122,7 +107,7 @@ pub fn doors() -> Routes {
         .route(
             "/oauth/register",
             post(token::register)
-                .options(token::register_preflight)
+                .options(cors::register_preflight)
                 .layer(from_fn(no_store)),
         )
         .route(
@@ -137,6 +122,6 @@ pub fn doors() -> Routes {
             "/.well-known/oauth-protected-resource/{*path}",
             get(discovery::protected_resource_at),
         )
-        .route_layer(from_fn(any_origin));
+        .route_layer(from_fn(cors::every_origin));
     held.merge(open).asking(Asks::Nothing)
 }

@@ -1,6 +1,6 @@
 //! Every served door is recorded here.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -239,6 +239,18 @@ impl Doors {
     {
         self.router = self.router.route_layer(layer);
         self
+    }
+
+    /// The methods each path is served under.
+    pub(super) fn methods_by_path(&self) -> BTreeMap<&'static str, Vec<Method>> {
+        let mut by_path: BTreeMap<&'static str, Vec<Method>> = BTreeMap::new();
+        for door in &self.served {
+            by_path
+                .entry(door.path)
+                .or_default()
+                .push(door.method.clone());
+        }
+        by_path
     }
 
     /// Every method and path this table routes, in a stable order.

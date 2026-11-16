@@ -17,6 +17,7 @@ mod config;
 mod connections;
 mod connectors;
 mod control;
+mod cors;
 #[cfg(test)]
 mod document;
 mod doors;
@@ -427,9 +428,14 @@ fn public_doors(app: Arc<App>) -> Routes {
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
     let deadline = app.settings.start.tuning.body_deadline;
-    finished(public_doors(app.clone()), app.clone(), listener)
-        .layer(from_fn_with_state(app, oauth::page_origins))
+    let routes = public_doors(app.clone());
+    let pages = cors::Pages {
+        app: app.clone(),
+        served: Arc::new(cors::Served::of(&routes)),
+    };
+    finished(routes, app.clone(), listener)
         .layer(from_fn_with_state(deadline, body::due_within))
+        .layer(from_fn_with_state(pages, cors::pages))
 }
 
 pub(crate) async fn no_store(request: Request, next: Next) -> Response {
