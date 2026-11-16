@@ -758,7 +758,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                     .collect();
                 return lines(&all, map);
             }
-            // `{counts, results}` and `{items, metadata}`.
+            // `{counts, results}`.
             if map.len() <= 2
                 && let Some((_, Value::Array(rows))) =
                     map.iter().find(|(_, value)| value.is_array())
@@ -1362,7 +1362,7 @@ pub fn other_end(edge: &Value, inbound: bool) -> &str {
 
 pub fn titles(answer: &Value) -> impl Iterator<Item = (String, String)> + '_ {
     answer
-        .get("items")
+        .get("data")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()

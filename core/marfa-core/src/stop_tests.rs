@@ -428,9 +428,9 @@ type Queues = dyn Fn(&Core) -> crate::QueuedWrite;
 #[test]
 fn a_stopped_drain_leaves_a_tag_metadata_or_extension_write_in_flight_for_the_next_drain() {
     let replace = |core: &Core| {
-        core.replace_metadata(
+        core.replace_tags(
             "a",
-            &crate::MetadataWrite {
+            &crate::TagsWrite {
                 tags: vec!["y".into()],
             },
         )

@@ -43,7 +43,7 @@ pub fn run(command: MetadataCommand, remote: &Remote, out: &Printer) -> Result<(
     let answer = remote.json(&request)?;
     match &command {
         MetadataCommand::Replace { id, .. } => out.report(&answer, |answer| {
-            super::said::replaced_tags("set the tags of", id, answer)
+            super::said::tags("set the tags of", id, answer)
         }),
         _ => out.value(&answer),
     }

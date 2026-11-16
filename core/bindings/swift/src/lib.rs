@@ -823,7 +823,7 @@ pub enum WriteKind {
     CreateEdge,
     UpdateEdge,
     DeleteEdge,
-    ReplaceMetadata,
+    ReplaceTags,
     AddTag,
     RemoveTag,
     WriteExtension,
@@ -2058,7 +2058,7 @@ impl From<marfa_core::WriteKind> for WriteKind {
             K::CreateEdge => WriteKind::CreateEdge,
             K::UpdateEdge => WriteKind::UpdateEdge,
             K::DeleteEdge => WriteKind::DeleteEdge,
-            K::ReplaceMetadata => WriteKind::ReplaceMetadata,
+            K::ReplaceTags => WriteKind::ReplaceTags,
             K::AddTag => WriteKind::AddTag,
             K::RemoveTag => WriteKind::RemoveTag,
             K::WriteExtension => WriteKind::WriteExtension,
@@ -3016,13 +3016,13 @@ impl Core {
     }
 
     /// Writes the item's tags whole, dropping any not named.
-    pub fn replace_metadata(
+    pub fn replace_tags(
         &self,
         id: String,
         tags: Vec<String>,
     ) -> Result<QueuedWrite, MarfaError> {
-        let write = marfa_core::MetadataWrite { tags };
-        queued(self.inner.replace_metadata(&id, &write)?)
+        let write = marfa_core::TagsWrite { tags };
+        queued(self.inner.replace_tags(&id, &write)?)
     }
 
     /// Writes one extension namespace, as its own write.

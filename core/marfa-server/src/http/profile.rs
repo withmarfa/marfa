@@ -8,7 +8,6 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
-use serde_json::json;
 
 use super::answer::{Answer, Stopped, json_answer};
 use super::blobs::{SANDBOX, header_of, stream};
@@ -124,8 +123,11 @@ pub async fn put_profile(
     visit: Visit,
     request: Request,
 ) -> Answer {
-    put(&app, &caller, visit, request, Door::Profile).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
+    let owner = put(&app, &caller, visit, request, Door::Profile).await?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &owner::profile_of(&owner, app.addresses().sign_in().origin(), &caller),
+    ))
 }
 
 pub async fn read_own(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
@@ -144,8 +146,8 @@ pub async fn update(
     query::only(&uri, &[])?;
     let body = body.object(&PROFILE_FIELDS).await?;
     let change = ProfileUpdate::from_body(&body)?;
-    owner::update_profile(&app, &caller, change, visit).await?;
-    Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
+    let profile = owner::update_profile(&app, &caller, change, visit).await?;
+    Ok(json_answer(StatusCode::OK, &profile))
 }
 
 fn names(headers: &HeaderMap, etag: &str) -> bool {

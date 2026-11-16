@@ -2082,7 +2082,7 @@ const WRITE_KINDS = [
   "create_edge",
   "update_edge",
   "delete_edge",
-  "replace_metadata",
+  "replace_tags",
   "add_tag",
   "remove_tag",
   "write_extension",
@@ -2135,7 +2135,7 @@ describe("what a queue holds", () => {
       ],
       ["add_tag", () => device.addTag(HELD.id, "alpha")],
       ["remove_tag", () => device.removeTag(HELD.id, "alpha")],
-      ["replace_metadata", () => device.replaceMetadata(HELD.id, ["gamma"])],
+      ["replace_tags", () => device.replaceTags(HELD.id, ["gamma"])],
       [
         "write_extension",
         () => device.writeExtension(HELD.id, "app.notes", { a: 1 }),
@@ -2322,7 +2322,7 @@ describe("a write that is not about an item's fields", () => {
     const queued: Array<[string, () => Promise<{ ok: boolean }>]> = [
       ["add_tag", () => device.addTag(HELD.id, "alpha")],
       ["remove_tag", () => device.removeTag(HELD.id, "alpha")],
-      ["replace_metadata", () => device.replaceMetadata(HELD.id, ["gamma"])],
+      ["replace_tags", () => device.replaceTags(HELD.id, ["gamma"])],
       [
         "write_extension",
         () => device.writeExtension(HELD.id, "app.notes", { a: 1 }),
@@ -4148,7 +4148,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         target: local,
         type: "references",
       }),
-      replaced: await device.replaceMetadata(local, ["only"]),
+      replaced: await device.replaceTags(local, ["only"]),
       untagged: await device.removeTag(local, "theirs"),
       extension: await device.writeExtension(local, "app.test", { a: 1 }),
       unextended: await device.deleteExtension(local, "app.test"),
@@ -7766,8 +7766,8 @@ describe("an edit behind an edit of the same item", () => {
       items: rows(),
     });
     const { device, server } = harness;
-    const first = await device.replaceMetadata(HELD.id, ["one"]);
-    const second = await device.replaceMetadata(HELD.id, ["two"]);
+    const first = await device.replaceTags(HELD.id, ["one"]);
+    const second = await device.replaceTags(HELD.id, ["two"]);
     const deleted = await device.deleteItem(QUIET.id);
     const restored = await device.restoreItem(QUIET.id);
     for (const queued of [first, second, deleted, restored]) {
@@ -7782,7 +7782,7 @@ describe("an edit behind an edit of the same item", () => {
 
     const queue = await queueOf(device);
     const behind = (kind: string) => queue.find((row) => row.kind === kind);
-    const replaces = queue.filter((row) => row.kind === "replace_metadata");
+    const replaces = queue.filter((row) => row.kind === "replace_tags");
     expect(
       [replaces[1]?.verdict, replaces[1]?.follows],
       "the second replace went out beside the first, which had no answer",

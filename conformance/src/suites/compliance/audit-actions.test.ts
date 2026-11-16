@@ -108,7 +108,7 @@ describe("the names of the audit log's actions", () => {
       "item.update",
       "item.tag",
       "item.untag",
-      "item.metadata.replace",
+      "item.tags.replace",
       "extension.set",
       "extension.delete",
       "item.delete",

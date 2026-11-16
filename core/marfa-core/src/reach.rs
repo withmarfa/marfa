@@ -702,7 +702,7 @@ mod tests {
         );
         core.catch_up().unwrap();
         let request = &server.seen("/events")[0];
-        assert_eq!(request.query, "edges=all&copy=1");
+        assert_eq!(request.query, "edges=all&copy=true");
         assert_eq!(request.last_event_id.as_deref(), Some("10"));
         assert_eq!(request.reach.as_deref(), Some(FENCE));
         server.on(

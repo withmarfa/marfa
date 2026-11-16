@@ -146,7 +146,7 @@ it("answers a local replace of the tags in the order it names them, each once, b
   value(await device.hydrate([type], "library"));
 
   const named = ["yak", "ant", "yak", "zebra", "bee"];
-  value(await device.replaceMetadata(id, named));
+  value(await device.replaceTags(id, named));
   expect(
     await shown(id),
     "a replace before sending did not keep the order it names",

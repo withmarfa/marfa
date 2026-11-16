@@ -1836,7 +1836,7 @@ Each entry names what it records in `action`. The first table gives the `action`
 | `item.update`                | A write changes an item.                                                        | `data`         |
 | `item.tag`                   | A tag operation adds tags to an item.                                           | `data`         |
 | `item.untag`                 | A tag operation removes a tag from an item.                                     | `data`         |
-| `item.metadata.replace`      | A tag operation replaces the tags of an item.                                   | `data`         |
+| `item.tags.replace`      | A tag operation replaces the tags of an item.                                   | `data`         |
 | `extension.set`              | A write sets an extension namespace of an item.                                 | `data`         |
 | `extension.delete`           | A write deletes an extension namespace of an item.                              | `data`         |
 | `item.transition`            | A transition moves an item to another state.                                    | `data`         |

@@ -60,7 +60,7 @@ fn asked(rows: &[(&str, &str, Option<bool>)]) -> Answer {
         .collect();
     certified(scripted::json(
         200,
-        &json!({"items": items, "metadata": [], "listed": []}).to_string(),
+        &json!({"data": items, "metadata": [], "listed": []}).to_string(),
     ))
 }
 
@@ -471,7 +471,7 @@ fn a_look_asks_for_no_metadata_and_reads_an_answer_without_it() {
         "/items/bulk-get",
         vec![certified(scripted::json(
             200,
-            &json!({"items": [item], "listed": [true]}).to_string(),
+            &json!({"data": [item], "listed": [true]}).to_string(),
         ))],
     );
 
@@ -712,7 +712,7 @@ fn a_look_answered_outside_the_copys_reach_expires_it_as_any_read_does() {
     owed(&core);
     server.on(
         "/items/bulk-get",
-        vec![scripted::json(200, r#"{"items":[],"metadata":[]}"#)],
+        vec![scripted::json(200, r#"{"data":[],"metadata":[]}"#)],
     );
 
     assert!(matches!(

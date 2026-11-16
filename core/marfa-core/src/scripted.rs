@@ -303,7 +303,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 )
             })
             .collect();
-        answer = json(200, &format!(r#"{{"results":[{}]}}"#, results.join(",")));
+        answer = json(200, &format!(r#"{{"data":[{}]}}"#, results.join(",")));
     }
     loop {
         answer = match answer {

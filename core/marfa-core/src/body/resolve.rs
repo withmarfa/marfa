@@ -804,7 +804,7 @@ mod tests {
         let result = r#"{"name":"","items":[],"more":false}"#;
         crate::scripted::json(
             200,
-            &format!("{{\"results\":[{}]}}", vec![result; count].join(",")),
+            &format!("{{\"data\":[{}]}}", vec![result; count].join(",")),
         )
     }
 
@@ -817,7 +817,7 @@ mod tests {
             .iter()
             .map(|items| format!(r#"{{"name":"","items":[{items}],"more":false}}"#))
             .collect();
-        crate::scripted::json(200, &format!(r#"{{"results":[{}]}}"#, results.join(",")))
+        crate::scripted::json(200, &format!(r#"{{"data":[{}]}}"#, results.join(",")))
     }
 
     fn sent_names(server: &crate::scripted::Scripted) -> Vec<Vec<String>> {
@@ -907,7 +907,7 @@ mod tests {
             vec![crate::scripted::json(
                 200,
                 &format!(
-                    r#"{{"results":[{{"name":"Common","items":[{}],"more":true}}]}}"#,
+                    r#"{{"data":[{{"name":"Common","items":[{}],"more":true}}]}}"#,
                     titled("one", "Common")
                 ),
             )],

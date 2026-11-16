@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use clap::{Args, Subcommand};
 use marfa_core::{
-    Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, MetadataWrite, SearchFilters,
+    Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, TagsWrite, SearchFilters,
     Sort,
 };
 
@@ -2038,8 +2038,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
         DeviceCommand::Metadata { command } => {
             let core = store.open(None)?;
             let MetadataCommand::Replace { item, tags } = command;
-            let write = MetadataWrite { tags };
-            output::queued_one(&core.replace_metadata(&item, &write)?, json)
+            let write = TagsWrite { tags };
+            output::queued_one(&core.replace_tags(&item, &write)?, json)
         }
         DeviceCommand::Extensions { command } => {
             let core = store.open(None)?;

@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_links, extensions_text, metadata_for, name_of, not_found, rows,
+    Door, Item, Keys, check_links, extension_documents_text, extensions_text, metadata_for, name_of, not_found, rows,
     summary_of, with_blocks,
 };
 use crate::app::App;
@@ -428,7 +428,7 @@ pub async fn bulk_get(
         } else {
             also
         };
-        Ok(format!("{{\"items\":[{}]{also}}}", items.join(",")))
+        Ok(format!("{{\"data\":[{}]{also}}}", items.join(",")))
     })
     .await
 }
@@ -522,7 +522,7 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
             }
             results.push(serde_json::json!({ "name": name, "items": found, "more": more }));
         }
-        Ok(serde_json::json!({ "results": results }).to_string())
+        Ok(serde_json::json!({ "data": results }).to_string())
     })
     .await
 }
@@ -597,8 +597,7 @@ pub async fn extensions(app: &App, caller: &Caller, id: String) -> Result<String
     reading(app, caller, move |read| {
         let row = read.row(&id)?;
         read.hydrating();
-        let held = extensions_text(read.tx, &row, |name| read.caller.may_read_extension(name))?;
-        Ok(format!("{{\"extensions\":{held}}}"))
+        extension_documents_text(read.tx, &row, |name| read.caller.may_read_extension(name))
     })
     .await
 }
@@ -615,7 +614,7 @@ pub async fn extension(
         read.hydrating();
         let data = rows::extension(read.tx, row.seq, &namespace)?;
         Ok(format!(
-            "{{\"namespace\":{},\"data\":{}}}",
+            "{{\"namespace\":{},\"document\":{}}}",
             Value::from(namespace),
             data.as_deref().unwrap_or("null")
         ))

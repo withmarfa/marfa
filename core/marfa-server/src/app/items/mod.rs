@@ -528,6 +528,24 @@ fn extensions_text(
     Ok(format!("{{{}}}", entries.join(",")))
 }
 
+fn extension_documents_text(
+    tx: &Transaction<'_>,
+    item: &Item,
+    shown: impl Fn(&str) -> bool,
+) -> Result<String> {
+    let entries: Vec<String> = rows::extensions(tx, item.seq)?
+        .into_iter()
+        .filter(|(namespace, _)| shown(namespace))
+        .map(|(namespace, data)| {
+            format!(
+                "{{\"namespace\":{},\"document\":{data}}}",
+                Value::from(namespace)
+            )
+        })
+        .collect();
+    Ok(format!("{{\"data\":[{}]}}", entries.join(",")))
+}
+
 fn metadata_for(tx: &Transaction<'_>, item: &Item, caller: &Caller) -> Result<String> {
     metadata_text(tx, item, |namespace| caller.may_read_extension(namespace))
 }

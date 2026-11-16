@@ -628,7 +628,7 @@ fn original_status(answer: &Answer) -> Option<u64> {
         .and_then(|body| body.pointer("/error/details/original_status")?.as_u64())
 }
 
-/// Only some doors answer with an item: tags, metadata and extensions answer
+/// Only some doors answer with an item: tags and extensions answer
 /// the sidecar they changed, a delete answers `{"ok": true}`, an edge the
 /// edge, an upload the hash, and a row write each operation's outcome.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -842,7 +842,7 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             vec!["edges".into(), edge_id()?.into()],
             Shape::Plain,
         ),
-        WriteKind::ReplaceMetadata => to(
+        WriteKind::ReplaceTags => to(
             Method::Put,
             vec!["items".into(), item_id()?.into(), "tags".into()],
             Shape::Plain,

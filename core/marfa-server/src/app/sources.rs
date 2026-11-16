@@ -31,9 +31,15 @@ pub fn length(text: &str) -> usize {
     text.chars().count()
 }
 
+/// A dot segment, which a client folds out of the path `/sources/{source}`.
+pub fn is_dot_segment(code: &str) -> bool {
+    code == "." || code == ".."
+}
+
 pub fn check_code(code: &str) -> Result<()> {
     let short = |text: &str| length(text) <= MAX_LENGTH;
     if !code.is_empty()
+        && !is_dot_segment(code)
         && code.trim() == code
         && (short(code) || code.strip_prefix(RESTORED).is_some_and(short))
     {
@@ -358,7 +364,9 @@ mod tests {
     fn a_code_holds_what_the_instance_can() {
         for (code, ok) in [
             ("github", true),
-            ("..", true),
+            ("..", false),
+            (".", false),
+            ("...", true),
             ("a/b?c#d", true),
             ("", false),
             (" padded", false),

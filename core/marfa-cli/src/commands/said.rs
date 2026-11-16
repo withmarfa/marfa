@@ -47,18 +47,10 @@ pub fn item(verb: &str, answer: &Value) -> String {
     line
 }
 
-/// An answer that wraps the item's metadata: the tags it now has.
-pub fn tags(verb: &str, id: &str, answer: &Value) -> String {
-    listed_tags(verb, id, answer.pointer("/metadata/tags"))
-}
-
 /// An answer that is the item's tags: the tags it now has.
-pub fn replaced_tags(verb: &str, id: &str, answer: &Value) -> String {
-    listed_tags(verb, id, answer.get("tags"))
-}
-
-fn listed_tags(verb: &str, id: &str, held: Option<&Value>) -> String {
-    let tags: Vec<&str> = held
+pub fn tags(verb: &str, id: &str, answer: &Value) -> String {
+    let tags: Vec<&str> = answer
+        .get("tags")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -150,21 +142,12 @@ mod tests {
 
     #[test]
     fn tags_name_what_the_item_now_has() {
-        let answer = json!({"metadata": {"item_id": "i1", "tags": ["a", "b"]}});
+        let answer = json!({"tags": ["a", "b"]});
         assert_eq!(tags("tagged", "i1", &answer), "tagged i1; it now has a, b");
-        let none = json!({"metadata": {"item_id": "i1", "tags": []}});
+        let none = json!({"tags": []});
         assert_eq!(
             tags("untagged", "i1", &none),
             "untagged i1; it now has no tags"
-        );
-    }
-
-    #[test]
-    fn replaced_tags_name_what_the_item_now_has() {
-        let answer = json!({"tags": ["a", "b"]});
-        assert_eq!(
-            replaced_tags("set the tags of", "i1", &answer),
-            "set the tags of i1; it now has a, b"
         );
     }
 

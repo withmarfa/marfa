@@ -1968,7 +1968,7 @@ describe("the working copy belongs to one server", () => {
       items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const { device } = harness;
-    const queued = await device.replaceMetadata("n1", ["held"]);
+    const queued = await device.replaceTags("n1", ["held"]);
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
     if (!queued.ok) return;
 
@@ -2004,7 +2004,7 @@ describe("the working copy belongs to one server", () => {
       items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const { device } = harness;
-    const queued = await device.replaceMetadata("n1", ["held"]);
+    const queued = await device.replaceTags("n1", ["held"]);
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
 
     // What an earlier build would have left: a queue that admits a kind this
@@ -2021,8 +2021,8 @@ describe("the working copy belongs to one server", () => {
           .get() as { sql: string };
         const admitting = sql
           .replace(
-            "'replace_metadata',",
-            "'replace_metadata', 'merge_metadata',",
+            "'replace_tags',",
+            "'replace_tags', 'merge_metadata',",
           )
           .replace(/^CREATE TABLE\s+"?queue"?/, "CREATE TABLE queue_admitting");
         expect(admitting).toContain("'merge_metadata'");
@@ -2048,7 +2048,7 @@ describe("the working copy belongs to one server", () => {
 
     // The witness: the same reshaped store, its write still a kind this
     // build sends, is refused without naming a kind.
-    reshape("replace_metadata");
+    reshape("replace_tags");
     const known = await said();
     expect(known).toContain("1 write");
     expect(known).not.toContain("of kind");

@@ -511,7 +511,7 @@ export interface paths {
         put: operations["replaceItemTags"];
         /**
          * Add tags to an item
-         * @description Adds tags to the item and returns its metadata. A tag the item already has isn't added twice.
+         * @description Adds tags to the item and returns its tags. A tag the item already has isn't added twice.
          */
         post: operations["addItemTags"];
         delete?: never;
@@ -532,7 +532,7 @@ export interface paths {
         post?: never;
         /**
          * Remove a tag from an item
-         * @description Removes one tag from the item and returns its metadata. Removing a tag the item doesn't have changes nothing and succeeds.
+         * @description Removes one tag from the item and returns its tags. Removing a tag the item doesn't have changes nothing and succeeds.
          */
         delete: operations["removeItemTag"];
         options?: never;
@@ -569,7 +569,7 @@ export interface paths {
         };
         /**
          * Get an extension namespace
-         * @description Returns the data in one extension namespace on the item, or `data: null` if the item has none there.
+         * @description Returns the document in one extension namespace on the item, or `document: null` if the item has none there.
          */
         get: operations["getItemExtension"];
         /**
@@ -597,7 +597,7 @@ export interface paths {
         };
         /**
          * List extension namespaces
-         * @description Returns the extension namespaces on the item that you can read, each with its data.
+         * @description Returns the extension namespaces on the item that you can read, each with its document.
          */
         get: operations["listItemExtensions"];
         put?: never;
@@ -1053,14 +1053,18 @@ export interface paths {
         };
         /**
          * Download a blob
-         * @description Returns the bytes of a blob, from whichever store holds them, as a download. Send one `Range` to get part of it. `HEAD` returns the headers alone.
+         * @description Returns the bytes of a blob, from whichever store holds them, as a download. Send one `Range` to get part of it.
          */
         get: operations["downloadBlob"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
-        head?: never;
+        /**
+         * Check a blob
+         * @description Returns the headers `GET /blobs/{hash}` sends and no body, so you can check that you can read a blob and learn its type and size. Send one `Range` as you would to download.
+         */
+        head: operations["checkBlob"];
         patch?: never;
         trace?: never;
     };
@@ -1173,7 +1177,7 @@ export interface paths {
         };
         /**
          * Stream change events
-         * @description Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=1` to follow a working copy.
+         * @description Opens a Server-Sent Events stream of the changes to items and edges that you can read. Send `Last-Event-ID` to resume after a disconnect, or `copy=true` to follow a working copy.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -2023,7 +2027,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner's profile
-         * @description Updates the owner's name or removes the picture and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.
+         * @description Updates the owner's name or removes the picture and returns the profile fields you can read. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.
          */
         patch: operations["updateProfile"];
         trace?: never;
@@ -2062,7 +2066,7 @@ export interface paths {
         get?: never;
         /**
          * Replace the picture as an app
-         * @description Stores the request body as the owner's picture and returns `ok: true`. Requires profile write permission for the avatar.
+         * @description Stores the request body as the owner's picture and returns the profile fields you can read. Requires profile write permission for the avatar.
          */
         put: operations["replaceProfilePicture"];
         post?: never;
@@ -3660,6 +3664,21 @@ export interface components {
              */
             ok: true;
         };
+        /** @description The owner's profile, as far as your credential can read it. */
+        Profile: {
+            /** @description The owner's name. Present with `profile.name:read`. */
+            name?: string;
+            /**
+             * Format: email
+             * @description The owner's sign-in email address. Present with `profile.email:read`.
+             */
+            email?: string;
+            /**
+             * Format: uri
+             * @description The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`.
+             */
+            avatar?: string | null;
+        };
         /** @description An error response. */
         EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal: {
             /** @description What went wrong. */
@@ -3833,10 +3852,6 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
-        };
-        /** @description An item's metadata. */
-        MetadataResponse: {
-            metadata: components["schemas"]["Metadata"] & unknown;
         };
         /** @description An error response. */
         InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -4071,14 +4086,19 @@ export interface components {
                 };
             };
         };
+        /** @description One extension namespace on an item, with its document. */
+        Extension: {
+            /** @description The extension namespace. */
+            namespace: string;
+            /** @description The data the item holds in the namespace, or `null` if it holds none there. */
+            document: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** @description An item's extension namespaces that you can read. */
-        ExtensionsResponse: {
-            /** @description The item's extension namespaces that you can read, each mapped to its data. */
-            extensions: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
+        ExtensionPage: {
+            /** @description The extension namespaces on the item that you can read, by name. */
+            data: components["schemas"]["Extension"][];
         };
         /** @description An error response. */
         InvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -4207,10 +4227,6 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
-        };
-        /** @description One registered edge type. */
-        EdgeTypeRegistrationResponse: {
-            edge_type: components["schemas"]["EdgeType"] & unknown;
         };
         /** @description An error response. */
         InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -4604,10 +4620,6 @@ export interface components {
             retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
             /** @description The type's identifier, such as `acme.deal` or `user.recipe`. */
             id: string;
-        };
-        /** @description One type. */
-        TypeResponse: {
-            type: components["schemas"]["RegisteredType"] & unknown;
         };
         /** @description An error response. */
         LinkTakenOrTypeAlreadyExistsRefusal: {
@@ -5556,7 +5568,7 @@ export interface components {
          *       "data": []
          *     }
          */
-        AttentionList: {
+        AttentionPage: {
             /** @description Every known concern and unavailable check; empty when all checks report no concerns. */
             data: components["schemas"]["AttentionConcern"][];
         };
@@ -6108,7 +6120,7 @@ export interface components {
             };
         };
         /** @description Every live sign-in of the owner. */
-        SignInList: {
+        SignInPage: {
             /** @description The owner's live sign-ins, oldest first. */
             data: components["schemas"]["SignIn"][];
             /** @description Always `null`: Marfa returns every sign-in in one page. */
@@ -6228,7 +6240,7 @@ export interface components {
             };
         };
         /** @description Every registered owner passkey. */
-        OwnerPasskeyList: {
+        OwnerPasskeyPage: {
             /** @description Every registered owner passkey, oldest first. */
             data: components["schemas"]["OwnerPasskey"][];
             /** @description Always `null`: every passkey is returned in one page. */
@@ -9928,7 +9940,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         /** @description One result for each name, in the order the request named them. */
-                        results: {
+                        data: {
                             /** @description The name, as the request sent it. */
                             name: string;
                             /** @description The active and archived items you can read whose title matches the name, by ID, at most 20. */
@@ -10112,7 +10124,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         /** @description The items you can read, in the order `ids` named them, each once. IDs that name nothing, a trashed item or an item whose type you can't read are left out. */
-                        items: components["schemas"]["Item"][];
+                        data: components["schemas"]["Item"][];
                         /** @description The metadata of each item returned, in the same order. Present only when `include` has `metadata`. */
                         metadata?: components["schemas"]["Metadata"][];
                         /** @description For each item returned, in the same order: `true` if listings show you the item, `false` if `source_filter` leaves it out of them. Present only when you send `X-Marfa-Reach`. */
@@ -10955,7 +10967,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         /** @description The named tombstones as they stand after the write, in the order named. A key with no tombstone under `type` is left out. */
-                        tombstones: components["schemas"]["Tombstone"][];
+                        data: components["schemas"]["Tombstone"][];
                     };
                 };
             };
@@ -12724,7 +12736,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the item's metadata with the tags added. */
+            /** @description Returns the item's tags, with the new ones added. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12733,7 +12745,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MetadataResponse"];
+                    "application/json": components["schemas"]["ItemTags"];
                 };
             };
             /**
@@ -12934,7 +12946,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the item's metadata without the tag. */
+            /** @description Returns the item's tags without the removed one. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12943,7 +12955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MetadataResponse"];
+                    "application/json": components["schemas"]["ItemTags"];
                 };
             };
             /**
@@ -13243,7 +13255,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the namespace and its data. */
+            /** @description Returns the namespace and its document. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13251,12 +13263,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        namespace: string;
-                        data: {
-                            [key: string]: unknown;
-                        } | null;
-                    };
+                    "application/json": components["schemas"]["Extension"];
                 };
             };
             /**
@@ -13411,7 +13418,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExtensionsResponse"];
+                    "application/json": components["schemas"]["ExtensionPage"];
                 };
             };
             /**
@@ -13621,7 +13628,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExtensionsResponse"];
+                    "application/json": components["schemas"]["ExtensionPage"];
                 };
             };
             /**
@@ -13802,7 +13809,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the namespaces you can read, keyed by name. Namespaces you can't read are left out. */
+            /** @description Returns the namespaces you can read, by name. Namespaces you can't read are left out. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13810,7 +13817,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExtensionsResponse"];
+                    "application/json": components["schemas"]["ExtensionPage"];
                 };
             };
             /**
@@ -17037,7 +17044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeResponse"];
+                    "application/json": components["schemas"]["RegisteredType"];
                 };
             };
             /**
@@ -17365,7 +17372,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeResponse"];
+                    "application/json": components["schemas"]["RegisteredType"];
                 };
             };
             /**
@@ -17545,7 +17552,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents. */
-                force?: "true" | "false";
+                force?: boolean;
             };
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
@@ -18129,7 +18136,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeResponse"];
+                    "application/json": components["schemas"]["RegisteredType"];
                 };
             };
             /**
@@ -18310,7 +18317,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeResponse"];
+                    "application/json": components["schemas"]["RegisteredType"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -18600,7 +18607,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeTypeRegistrationResponse"];
+                    "application/json": components["schemas"]["EdgeType"];
                 };
             };
             /** @description Returns the new edge type. */
@@ -18611,7 +18618,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeTypeRegistrationResponse"];
+                    "application/json": components["schemas"]["EdgeType"];
                 };
             };
             /**
@@ -18774,7 +18781,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Delete the edge type even though edges of it exist. Those edges stay and keep naming it. */
-                force?: "true" | "false";
+                force?: boolean;
             };
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
@@ -19278,6 +19285,163 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["InsufficientStorageRefusal"];
                 };
+            };
+        };
+    };
+    checkBlob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob. */
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the headers, with the `Content-Type` the blob was first uploaded under, and no body. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    /** @description Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render. */
+                    "Content-Disposition"?: string;
+                    /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
+                    "Content-Security-Policy"?: string;
+                    /** @description Always `bytes`: one range of a blob can be asked for. */
+                    "Accept-Ranges"?: string;
+                    /** @description The blob's content hash, so a cached copy is validated by the name it was fetched under. */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Returns the headers of the range you asked for, and no body. Marfa serves one range, `bytes=<first>-<last>` or `bytes=<first>-`. For any other `Range`, it answers `200`. */
+            206: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    /** @description Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render. */
+                    "Content-Disposition"?: string;
+                    /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
+                    "Content-Security-Policy"?: string;
+                    /** @description Always `bytes`: one range of a blob can be asked for. */
+                    "Accept-Ranges"?: string;
+                    /** @description The blob's content hash, so a cached copy is validated by the name it was fetched under. */
+                    ETag?: string;
+                    /** @description `bytes <first>-<last>/<size>` for the range served. */
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description - `validation_error`: the hash is malformed. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description - `blob_not_found`: no blob has this hash, nothing you can read references it, or no store holds its bytes. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description - `range_not_satisfiable`: the range starts past the end of the blob, or ends before it starts. `Content-Range` gives the blob's size. */
+            416: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    /** @description `bytes *\/<size>`: the blob's size, so the caller can ask again within it. */
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /**
+             * @description - `blob_store_unavailable`: no store that holds this blob answered, so Marfa couldn't tell whether it still has the bytes. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -19963,8 +20127,8 @@ export interface operations {
     streamEvents: {
         parameters: {
             query?: {
-                /** @description Set to `1` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `reach`, and its item frames carry `listed`. */
-                copy?: "1";
+                /** @description `true` for a copy stream, which a working copy follows. It takes `edges=all` and no other parameter. Its `stream_cursor` and `stream_live` carry `instance_id` and `reach`, and its item frames carry `listed`. */
+                copy?: boolean;
                 /** @description Only send item events for these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A pattern matches the types you can read. Edge events aren't filtered. Leave it out for every type. */
                 type?: string;
                 /** @description Set to `none` to leave out edge events. You receive an edge event only if you could read the edge with `GET /edges/{id}`. */
@@ -20012,7 +20176,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=1` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Reach`.
+             * @description - `validation_error`: a parameter or header is invalid, or not one this endpoint takes. For example, `type` has more than 10 entries or is `*`, or `Last-Event-ID` isn't an event ID. A copy stream takes only `copy=true` and `edges=all`, and both resume headers or neither; another stream takes no `X-Marfa-Reach`.
              *     - `unknown_type`: a `type` entry isn't registered.
              */
             400: {
@@ -25040,7 +25204,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Only the agreements waiting to be carried to the vendor (`true`), or only the others (`false`). */
-                waiting?: "true" | "false";
+                waiting?: boolean;
                 /** @description The maximum number of results to return. */
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
@@ -29548,20 +29712,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** @description The owner's name. Present with `profile.name:read`. */
-                        name?: string;
-                        /**
-                         * Format: email
-                         * @description The owner's sign-in email address. Present with `profile.email:read`.
-                         */
-                        email?: string;
-                        /**
-                         * Format: uri
-                         * @description The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`.
-                         */
-                        avatar?: string | null;
-                    };
+                    "application/json": components["schemas"]["Profile"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -29685,7 +29836,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns ok: true. The profile was updated. */
+            /** @description Returns the profile fields you can read. The profile was updated. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29693,7 +29844,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Ok"];
+                    "application/json": components["schemas"]["Profile"];
                 };
             };
             /** @description The body is empty, contains an unknown field, or a field is invalid. */
@@ -30184,7 +30335,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns ok: true. The picture was stored. */
+            /** @description Returns the profile fields you can read. The picture was stored. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30192,7 +30343,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Ok"];
+                    "application/json": components["schemas"]["Profile"];
                 };
             };
             /** @description The body is empty, damaged, not a PNG, JPEG or WebP, or larger than 4096 pixels on a side. For example, a GIF, an AVIF or an SVG. */
@@ -30360,7 +30511,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SignInList"];
+                    "application/json": components["schemas"]["SignInPage"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -30467,7 +30618,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description For an app, also revoke every key it minted, as its `minted_by` entries show. Only an app takes it. */
-                revoke_keys?: "true" | "false";
+                revoke_keys?: boolean;
             };
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
@@ -30832,7 +30983,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OwnerPasskeyList"];
+                    "application/json": components["schemas"]["OwnerPasskeyPage"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -32369,7 +32520,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AttentionList"];
+                    "application/json": components["schemas"]["AttentionPage"];
                 };
             };
             /** @description - `validation_error`: a query field is unknown. */
@@ -33087,8 +33238,8 @@ export interface operations {
                 occurred_before?: string;
                 /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `files.ndjson.gz` marks each file it doesn't carry `not_carried`, including one your credential can't read. */
                 format?: "ndjson" | "archive";
-                /** @description With `format=archive`, `false` leaves out the bytes of files, which `files.ndjson.gz` then marks `not_carried`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
-                files?: "true" | "false";
+                /** @description With `format=archive`, `false` leaves out the bytes of files, which `files.ndjson.gz` then marks `not_carried`. `format=ndjson` carries no file bytes either way. */
+                files?: boolean;
             };
             header?: never;
             path?: never;

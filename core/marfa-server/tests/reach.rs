@@ -531,7 +531,7 @@ impl Instance {
     /// A copy stream's response; the stream runs until its body is read or dropped.
     async fn copy_stream(&self, key: &str, resume: Option<(&str, &str)>) -> Body {
         let mut builder = Request::builder()
-            .uri("/events?edges=all&copy=1")
+            .uri("/events?edges=all&copy=true")
             .header(header::AUTHORIZATION, format!("Bearer {key}"));
         if let Some((cursor, reach)) = resume {
             builder = builder

@@ -42,7 +42,7 @@ fn bulk(ids: &[&str]) -> Answer {
 fn bulk_under(ids: &[&str], fence: &str) -> Answer {
     let rows: Vec<Value> = ids.iter().map(|id| row(id, 1)).collect();
     let body = json!({
-        "items": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
+        "data": rows.iter().map(|row| row["item"].clone()).collect::<Vec<_>>(),
         "metadata": ids
             .iter()
             .map(|id| json!({"item_id": id, "tags": [], "extensions": {}}))

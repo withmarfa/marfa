@@ -211,7 +211,7 @@ impl Change {
             Change::Folder(FolderChange::Revoke { .. }) => "folder.revoke",
             Change::Put(_) => "item.create",
             Change::Update(_) => "item.update",
-            Change::SetTags { .. } => "item.metadata.replace",
+            Change::SetTags { .. } => "item.tags.replace",
             Change::AddTags { .. } => "item.tag",
             Change::RemoveTag { .. } => "item.untag",
             Change::SetExtension { .. } => "extension.set",
@@ -1925,10 +1925,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let item = self.tags_touched(row, details)?;
         Ok(Done {
             status: 200,
-            body: format!(
-                "{{\"metadata\":{}}}",
-                metadata_for(tx, &item, self.caller())?
-            ),
+            body: json!({ "tags": rows::tags(tx, item.seq)? }).to_string(),
         })
     }
 
@@ -1939,11 +1936,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let before = rows::tags(tx, row.seq)?.len();
         validation::tag_count(before, tags.len()).map_err(ruled)?;
         rows::set_tags(tx, row.seq, &tags)?;
-        let item = self.tags_touched(&row, json!({ "tags": tags }))?;
-        Ok(Done {
-            status: 200,
-            body: json!({ "tags": rows::tags(tx, item.seq)? }).to_string(),
-        })
+        self.tags_landed(&row, json!({ "tags": tags }))
     }
 
     fn add_tags(&self, id: &str, tags: Vec<String>, version: Option<i64>) -> Result<Done> {
@@ -1986,10 +1979,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.announce_metadata(row)?;
         Ok(Done {
             status: 200,
-            body: format!(
-                "{{\"extensions\":{}}}",
-                super::extensions_text(tx, row, |held| self.caller().may_read_extension(held))?
-            ),
+            body: super::extension_documents_text(tx, row, |held| {
+                self.caller().may_read_extension(held)
+            })?,
         })
     }
 
@@ -2578,7 +2570,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         )?;
         Ok(Done {
             status: 200,
-            body: json!({ "tombstones": tombstones }).to_string(),
+            body: json!({ "data": tombstones }).to_string(),
         })
     }
 }

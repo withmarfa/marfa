@@ -2920,7 +2920,7 @@ fn edit_fields(conn: &Connection, row: &QueuedWrite) -> Result<HashSet<EditField
 fn is_tag_write(row: &QueuedWrite) -> bool {
     matches!(
         row.kind,
-        WriteKind::AddTag | WriteKind::RemoveTag | WriteKind::ReplaceMetadata
+        WriteKind::AddTag | WriteKind::RemoveTag | WriteKind::ReplaceTags
     )
 }
 
@@ -3001,7 +3001,7 @@ fn learn_dead_effects(conn: &Connection, accepted: &QueuedWrite) -> Result<(), C
             continue;
         }
         if same_tag_subject(&dead, accepted) {
-            if accepted.kind == WriteKind::ReplaceMetadata {
+            if accepted.kind == WriteKind::ReplaceTags {
                 effect.whole = true;
             } else {
                 let original = tag_targets(&dead);
@@ -3010,12 +3010,12 @@ fn learn_dead_effects(conn: &Connection, accepted: &QueuedWrite) -> Result<(), C
                     covered
                         .iter()
                         .filter(|tag| {
-                            dead.kind == WriteKind::ReplaceMetadata || original.contains(*tag)
+                            dead.kind == WriteKind::ReplaceTags || original.contains(*tag)
                         })
                         .map(|tag| tag_field(tag)),
                 );
                 if original.is_empty()
-                    && dead.kind != WriteKind::ReplaceMetadata
+                    && dead.kind != WriteKind::ReplaceTags
                     && dead.kind == accepted.kind
                     && dead.body == accepted.body
                 {
@@ -3064,7 +3064,7 @@ fn remaining_dead_fields(
     if effect.whole {
         return Ok(Some(HashSet::new()));
     }
-    if is_tag_write(row) && row.kind != WriteKind::ReplaceMetadata {
+    if is_tag_write(row) && row.kind != WriteKind::ReplaceTags {
         let mut fields: HashSet<EditField> =
             tag_targets(row).iter().map(|tag| tag_field(tag)).collect();
         if fields.is_empty() {
@@ -4941,7 +4941,7 @@ pub fn land_on_held_row(
             | WriteKind::DeleteItem
             | WriteKind::RestoreItem
             | WriteKind::TransitionItem
-            | WriteKind::ReplaceMetadata
+            | WriteKind::ReplaceTags
             | WriteKind::RemoveTag
             | WriteKind::WriteExtension
             | WriteKind::DeleteExtension => true,
@@ -6188,8 +6188,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             HashSet::new()
         };
         let same_tags = same_tag_subject(&released, &witness)
-            && (released.kind == WriteKind::ReplaceMetadata
-                || witness.kind == WriteKind::ReplaceMetadata
+            && (released.kind == WriteKind::ReplaceTags
+                || witness.kind == WriteKind::ReplaceTags
                 || tag_targets(&released)
                     .iter()
                     .any(|tag| tag_targets(&witness).contains(tag)));
@@ -6921,14 +6921,14 @@ pub fn lay_waiting_writes_over(
             let effect = dead_effect(conn, &row)?;
             let mut desired = tag_targets(&row);
             desired.retain(|tag| !effect.fields.contains(&tag_field(tag)));
-            if row.kind == WriteKind::ReplaceMetadata {
+            if row.kind == WriteKind::ReplaceTags {
                 desired.extend(
                     tags.iter()
                         .filter(|tag| effect.fields.contains(&tag_field(tag)))
                         .cloned(),
                 );
             }
-            if matches!(row.kind, WriteKind::AddTag | WriteKind::ReplaceMetadata) {
+            if matches!(row.kind, WriteKind::AddTag | WriteKind::ReplaceTags) {
                 row.body["tags"] = serde_json::to_value(desired)?;
             }
         }
@@ -7084,7 +7084,7 @@ fn lay_write(
             }
         }
         WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
-        WriteKind::ReplaceMetadata => *tags = named_tags(),
+        WriteKind::ReplaceTags => *tags = named_tags(),
         WriteKind::CreateEdge
         | WriteKind::UpdateEdge
         | WriteKind::DeleteEdge
@@ -7578,8 +7578,8 @@ pub(crate) mod testing {
             .unwrap();
         let other = made
             .replacen(
-                "'replace_metadata',",
-                &format!("'replace_metadata', '{kind}',"),
+                "'replace_tags',",
+                &format!("'replace_tags', '{kind}',"),
                 1,
             )
             .replacen("CREATE TABLE queue", "CREATE TABLE queue_other", 1);
@@ -9731,7 +9731,7 @@ mod tests {
         );
         queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
         queue(WriteKind::RestoreItem, "{}", None);
-        queue(WriteKind::ReplaceMetadata, r#"{"tags":["a","b"]}"#, None);
+        queue(WriteKind::ReplaceTags, r#"{"tags":["a","b"]}"#, None);
         queue(WriteKind::AddTag, r#"{"tags":["c"]}"#, Some("c"));
         queue(WriteKind::RemoveTag, "{}", Some("a"));
         let answered = queue(
@@ -11267,7 +11267,7 @@ mod tests {
         let conn = conn();
         conn.execute(
             "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, reason, sent, queued_at)
-             VALUES ('aside', 'replace_metadata', 'held', 'first', '{\"tags\":[\"mine\"]}', 'blocked', 'failing_alone', 1, '2026-01-01T00:00:00Z')",
+             VALUES ('aside', 'replace_tags', 'held', 'first', '{\"tags\":[\"mine\"]}', 'blocked', 'failing_alone', 1, '2026-01-01T00:00:00Z')",
             [],
         )
         .unwrap();
@@ -11415,7 +11415,7 @@ mod tests {
             "witness: unresolved tag projects"
         );
         remove_tag(&conn, "held", "stale").unwrap();
-        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('later','replace_metadata','held','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"tags":[]}"#]).unwrap();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,queued_at) VALUES ('later','replace_tags','held','later',?1,1,'2026-01-01T00:00:01Z')", [r#"{"tags":[]}"#]).unwrap();
         record_verdict(
             &conn,
             "later",
@@ -11476,7 +11476,7 @@ mod tests {
                 "add_tag",
                 Some("stale"),
                 r#"{"tags":["stale"]}"#,
-                "replace_metadata",
+                "replace_tags",
                 None,
                 r#"{"tags":[]}"#,
                 vec![],
@@ -11487,7 +11487,7 @@ mod tests {
                 "remove_tag",
                 Some("stale"),
                 "{}",
-                "replace_metadata",
+                "replace_tags",
                 None,
                 r#"{"tags":["stale"]}"#,
                 vec!["stale"],
@@ -11495,10 +11495,10 @@ mod tests {
                 false,
             ),
             (
-                "replace_metadata",
+                "replace_tags",
                 None,
                 r#"{"tags":["old","keep"]}"#,
-                "replace_metadata",
+                "replace_tags",
                 None,
                 r#"{"tags":["new"]}"#,
                 vec!["new"],
@@ -11506,7 +11506,7 @@ mod tests {
                 false,
             ),
             (
-                "replace_metadata",
+                "replace_tags",
                 None,
                 r#"{"tags":["old","keep"]}"#,
                 "add_tag",
@@ -11517,7 +11517,7 @@ mod tests {
                 true,
             ),
             (
-                "replace_metadata",
+                "replace_tags",
                 None,
                 r#"{"tags":["old","keep"]}"#,
                 "remove_tag",

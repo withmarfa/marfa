@@ -2020,7 +2020,7 @@ mod tests {
             .map(|(id, _)| json!({"item_id": id, "tags": [], "extensions": {}}))
             .collect();
         let listed: Vec<bool> = rows.iter().map(|(_, listed)| *listed).collect();
-        json!({"items": items, "metadata": metadata, "listed": listed})
+        json!({"data": items, "metadata": metadata, "listed": listed})
     }
 
     fn bulk(rows: &[(&str, bool)]) -> Answer {
@@ -3131,7 +3131,7 @@ mod tests {
             serde_json::from_str(&scripted::item_payload("item.updated", &id, "core.note", 2))
                 .unwrap();
         let body = json!({
-            "items": [committed["item"]],
+            "data": [committed["item"]],
             "metadata": [{"item_id": id, "tags": [], "extensions": {}}],
             "listed": [false],
         });

@@ -100,7 +100,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
           );
           break;
         case "metadata":
-          write = value(await device.replaceMetadata(id, ["saved-offline"]));
+          write = value(await device.replaceTags(id, ["saved-offline"]));
           break;
         case "edge":
           write = value(

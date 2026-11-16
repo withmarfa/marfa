@@ -462,7 +462,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     }
     let mut shown: Vec<Value> = Vec::new();
     for item in got
-        .get("items")
+        .get("data")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()

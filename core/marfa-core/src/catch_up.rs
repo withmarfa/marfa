@@ -2978,7 +2978,7 @@ mod tests {
         crate::scripted::certified(crate::scripted::json(
             200,
             &serde_json::json!({
-                "items": [{ "id": "a", "type": NOTE, "source": "test", "read_only": read_only }],
+                "data": [{ "id": "a", "type": NOTE, "source": "test", "read_only": read_only }],
                 "metadata": [],
             })
             .to_string(),
@@ -3053,7 +3053,7 @@ mod tests {
         let answer = crate::scripted::certified(crate::scripted::json(
             200,
             &serde_json::json!({
-                "items": [{ "id": "a", "type": NOTE, "source": "told-late", "read_only": true }],
+                "data": [{ "id": "a", "type": NOTE, "source": "told-late", "read_only": true }],
             })
             .to_string(),
         ));

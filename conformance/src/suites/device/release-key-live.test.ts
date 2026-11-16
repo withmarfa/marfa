@@ -220,7 +220,7 @@ it("sends a set-aside write again under its key once a caller releases it, so th
       request.method === "PUT" && request.url === `/items/${id}/tags`,
   );
   const device = await deviceAt("release-key-aside", url);
-  const write = value(await device.replaceMetadata(id, ["mine"]));
+  const write = value(await device.replaceTags(id, ["mine"]));
 
   fate.next = "lose";
   for (let pass = 0; pass < 3; pass += 1) value(await device.drain());
@@ -384,7 +384,7 @@ it(
       key: server.workingKey,
     });
     value(await device.hydrate(["core.note"], "library"));
-    const write = value(await device.replaceMetadata(id, ["mine"]));
+    const write = value(await device.replaceTags(id, ["mine"]));
 
     // The write is applied by a server on another contract, from a client
     // that named that contract, and its answer is lost.

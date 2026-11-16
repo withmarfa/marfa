@@ -126,7 +126,7 @@ it("refuses a tag the server refuses, on every door, before it saves or queues a
 
     for (const [door, outcome] of [
       ["tags add", await device.addTag(row, tag)],
-      ["metadata replace", await device.replaceMetadata(row, [tag])],
+      ["metadata replace", await device.replaceTags(row, [tag])],
       [
         "items create",
         await device.create({
@@ -164,7 +164,7 @@ it("takes a tag the server takes, queues it, and has it accepted when the queue 
   await queue(device.addTag(row, ACCEPTED_TAGS[0]![0]));
   await queue(device.addTag(row, ACCEPTED_TAGS[2]![0]));
   await queue(
-    device.replaceMetadata(
+    device.replaceTags(
       row,
       ACCEPTED_TAGS.map(([tag]) => tag),
     ),
@@ -285,7 +285,7 @@ it("refuses a write naming more than 100 tags, or leaving an item more than 100 
     ],
     ["items add", await device.addFile(file, { tags: tags(101, "sent") })],
     ["tags add", await device.addTag(id, "one-more")],
-    ["metadata replace", await device.replaceMetadata(id, tags(101, "sent"))],
+    ["metadata replace", await device.replaceTags(id, tags(101, "sent"))],
   ] as const) {
     expectRefusedAsTheServerDoes(outcome, `${door} past 100 tags`);
   }

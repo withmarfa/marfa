@@ -581,7 +581,7 @@ fn hydration_lists_the_query_and_its_conflicted_copies_apart() {
     );
     let bulk = |ids: &[&str]| {
         let body = json!({
-            "items": ids.iter().map(|id| row(id, 1, "active", json!({"title": id}))).collect::<Vec<_>>(),
+            "data": ids.iter().map(|id| row(id, 1, "active", json!({"title": id}))).collect::<Vec<_>>(),
             "metadata": ids.iter().map(|id| json!({"item_id": id, "tags": [], "extensions": {}})).collect::<Vec<_>>(),
             "listed": ids.iter().map(|_| true).collect::<Vec<_>>(),
         });
@@ -901,7 +901,7 @@ fn read_drawing(rows: &[(&str, &[(&str, &str)])]) -> Answer {
     let listed: Vec<bool> = rows.iter().map(|_| true).collect();
     certified(scripted::json(
         200,
-        &json!({"items": items, "metadata": metadata, "listed": listed}).to_string(),
+        &json!({"data": items, "metadata": metadata, "listed": listed}).to_string(),
     ))
 }
 
@@ -1205,7 +1205,7 @@ fn read_by_id(ids: &[String]) -> Answer {
     let listed: Vec<bool> = ids.iter().map(|_| true).collect();
     certified(scripted::json(
         200,
-        &json!({"items": items, "metadata": metadata, "listed": listed}).to_string(),
+        &json!({"data": items, "metadata": metadata, "listed": listed}).to_string(),
     ))
 }
 
