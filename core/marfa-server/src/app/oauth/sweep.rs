@@ -16,7 +16,7 @@ use crate::app::refusal::Result;
 use crate::app::{App, stored};
 use crate::db::Write;
 use crate::settings::registry::{
-    UNAPPROVED_APP_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, Setting,
+    GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, Setting, UNAPPROVED_APP_RETENTION_HOURS,
 };
 
 const BATCH: i64 = 200;

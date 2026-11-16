@@ -1387,9 +1387,18 @@ const BOUND_CORE_TABLE: Record<string, string> = {
  * request, such as `profile update` with a picture and a name, is the entry
  * of each operation it reaches, and is driven once.
  */
+/**
+ * Commands the table names that send their operation only for a kept
+ * sign-in, which needs a keychain of its own (`NOT_DRIVEN`).
+ */
+const KEPT_SIGN_IN = ["logout"];
+
+/** Each command the table names, once, but `KEPT_SIGN_IN`. */
 function commandsOf<Row extends { command: string }>(rows: Row[]): Row[] {
   return rows.filter(
-    (row, at) => rows.findIndex((it) => it.command === row.command) === at,
+    (row, at) =>
+      rows.findIndex((it) => it.command === row.command) === at &&
+      !KEPT_SIGN_IN.includes(row.command),
   );
 }
 

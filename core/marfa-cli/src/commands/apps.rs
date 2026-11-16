@@ -37,8 +37,7 @@ pub fn list_request() -> Request {
 }
 
 pub fn narrow_request(id: &str, scopes: &[String], expected: &Value) -> Request {
-    Request::patch(&["grants", id])
-        .json(json!({ "scopes": scopes, "expected_scopes": expected }))
+    Request::patch(&["grants", id]).json(json!({ "scopes": scopes, "expected_scopes": expected }))
 }
 
 pub fn disconnect_request(id: &str, revoke_keys: bool) -> Request {

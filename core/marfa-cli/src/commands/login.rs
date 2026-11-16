@@ -381,10 +381,7 @@ mod tests {
         run(args(true), &named, &Printer { json: true }, &|_| {}).unwrap();
         let sent = door.received();
         assert_eq!(sent.len(), 3);
-        assert_eq!(
-            sent[0].path(),
-            "/.well-known/oauth-authorization-server"
-        );
+        assert_eq!(sent[0].path(), "/.well-known/oauth-authorization-server");
         assert_eq!(sent[1].path(), "/oauth/device-authorization");
         assert!(
             sent[1].body.contains("client_id=client"),

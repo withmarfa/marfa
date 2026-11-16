@@ -121,8 +121,8 @@ pub fn now_seconds() -> u64 {
 /// The document is held to the origin it was read from (RFC 8414 section
 /// 3.3): the binary is about to post a person's credential to what it names.
 pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
-    let value = remote
-        .json(&Request::get(&[".well-known", "oauth-authorization-server"]).public())?;
+    let value =
+        remote.json(&Request::get(&[".well-known", "oauth-authorization-server"]).public())?;
     let discovery: Discovery = serde_json::from_value(value).map_err(|error| {
         CliError::Invalid(format!(
             "the discovery document at {} is not one this build reads: {error}",

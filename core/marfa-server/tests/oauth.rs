@@ -19,7 +19,7 @@ use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::registry::{
-    UNAPPROVED_APP_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS,
+    GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, UNAPPROVED_APP_RETENTION_HOURS,
 };
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
@@ -257,12 +257,8 @@ impl Instance {
     async fn decide(&self, link: &str, scopes: &[&str]) -> Reply {
         let mut fields = vec![("decision", "approve"), ("authorization_request", link)];
         fields.extend(scopes.iter().map(|scope| ("scopes", *scope)));
-        self.send(post_form(
-            "/auth/consent",
-            Some(&self.cookie),
-            &fields,
-        ))
-        .await
+        self.send(post_form("/auth/consent", Some(&self.cookie), &fields))
+            .await
     }
 
     async fn code(&self, client: &str, scope: &str) -> String {
@@ -293,8 +289,7 @@ impl Instance {
             ("code_verifier", VERIFIER),
             ("redirect_uri", redirect_uri),
         ];
-        self.send(post_form("/oauth/token", None, &fields))
-            .await
+        self.send(post_form("/oauth/token", None, &fields)).await
     }
 
     async fn refresh(&self, client: &str, token: &str) -> Reply {
@@ -303,15 +298,12 @@ impl Instance {
             ("client_id", client),
             ("refresh_token", token),
         ];
-        self.send(post_form("/oauth/token", None, &fields))
-            .await
+        self.send(post_form("/oauth/token", None, &fields)).await
     }
 
     async fn revoke(&self, client: &str, token: &str) {
         let fields = [("client_id", client), ("token", token)];
-        let reply = self
-            .send(post_form("/oauth/revoke", None, &fields))
-            .await;
+        let reply = self.send(post_form("/oauth/revoke", None, &fields)).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
     }
 
@@ -389,8 +381,7 @@ impl Instance {
             ("client_id", client),
             ("device_code", device_code),
         ];
-        self.send(post_form("/oauth/token", None, &fields))
-            .await
+        self.send(post_form("/oauth/token", None, &fields)).await
     }
 
     async fn stage(&self, statement: &'static str) {
@@ -1692,14 +1683,10 @@ async fn an_approved_page_is_answered_for_as_long_as_it_is_approved() {
 async fn registration_answers_a_page_only_for_the_post_it_serves() {
     let instance = Instance::signed_in().await;
     let preflight = |asked: &str| {
-        from_page(
-            Method::OPTIONS,
-            "/oauth/register",
-            "https://any.example",
-        )
-        .header(header::ACCESS_CONTROL_REQUEST_METHOD, asked)
-        .body(Body::empty())
-        .unwrap()
+        from_page(Method::OPTIONS, "/oauth/register", "https://any.example")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, asked)
+            .body(Body::empty())
+            .unwrap()
     };
     let posting = instance.send(preflight("POST")).await;
     assert_eq!(posting.status, StatusCode::NO_CONTENT, "{}", posting.text);
@@ -1752,9 +1739,7 @@ impl Instance {
     }
 
     async fn grant_of(&self, client: &str) -> Value {
-        let listed = self
-            .local(from_local(Method::GET, "/grants", None))
-            .await;
+        let listed = self.local(from_local(Method::GET, "/grants", None)).await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
         let rows = listed.json()["data"].as_array().unwrap().clone();
         rows.into_iter()
@@ -2605,11 +2590,7 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let last_use = "SELECT last_used_at FROM sign_ins";
     let before = instance.text_of(last_use).await;
 
-    for door in [
-        "/auth/consent",
-        "/auth/device",
-        "/auth/device/consent",
-    ] {
+    for door in ["/auth/consent", "/auth/device", "/auth/device/consent"] {
         let form = Request::builder()
             .method(Method::POST)
             .uri(door)
@@ -2717,9 +2698,7 @@ async fn registrations_from_one_address_stop_at_their_limit() {
     );
 
     let body = json!({ "redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none" });
-    let held = instance
-        .send(post_json("/oauth/register", &body))
-        .await;
+    let held = instance.send(post_json("/oauth/register", &body)).await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS, "{}", held.text);
     assert!(held.headers.contains_key(header::RETRY_AFTER));
     let clients = "SELECT count(*) FROM oauth_clients";
@@ -2919,16 +2898,12 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
     };
     let form = exchange(&code, Some(asked));
     let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let refused = instance
-        .send(post_form("/oauth/token", None, &form))
-        .await;
+    let refused = instance.send(post_form("/oauth/token", None, &form)).await;
     refused_as(&refused, "invalid_scope");
 
     let form = exchange(&code, None);
     let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let issued = instance
-        .send(post_form("/oauth/token", None, &form))
-        .await;
+    let issued = instance.send(post_form("/oauth/token", None, &form)).await;
     assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
     let issued = issued.json();
     let fields = [

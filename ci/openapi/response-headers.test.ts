@@ -142,7 +142,6 @@ describe("the document declares the headers the server sets", () => {
     // and stamp the header themselves.
     const KNOWN_UNSTAMPED = new Set<string>([
       "POST /oauth/register 401",
-      "GET /oauth/authorize 400",
       "POST /oauth/device-authorization 400",
       "POST /oauth/device-authorization 401",
       "POST /oauth/token 400",

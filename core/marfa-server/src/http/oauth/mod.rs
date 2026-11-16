@@ -98,10 +98,7 @@ async fn any_origin(request: Request, next: Next) -> Response {
 pub fn grant_doors() -> Routes {
     Doors::new()
         .route("/grants", get(grants::list))
-        .route(
-            "/grants/{id}",
-            patch(grants::narrow).delete(grants::revoke),
-        )
+        .route("/grants/{id}", patch(grants::narrow).delete(grants::revoke))
         .route_layer(from_fn(no_store))
 }
 

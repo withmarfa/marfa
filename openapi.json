@@ -51641,30 +51641,37 @@
             }
           },
           "400": {
-            "description": "An error in the shape RFC 6749 defines, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document can't be read or isn't valid.\n- `invalid_scope`: a scope asks to write the owner's email.\n- `invalid_target`: a resource isn't served here.",
+            "description": "An RFC 6749 error, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.\n- `invalid_scope`: a scope writes the owner's email.\n- `invalid_target`: a resource isn't served here.\n\n`X-Marfa-Reach` gets `validation_error`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "enum": [
-                        "invalid_request",
-                        "invalid_client",
-                        "invalid_client_metadata",
-                        "invalid_scope",
-                        "invalid_target"
-                      ],
-                      "description": "The OAuth error code."
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ValidationErrorRefusal"
                     },
-                    "error_description": {
-                      "type": "string",
-                      "description": "A description of the error for a person to read."
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "string",
+                          "enum": [
+                            "invalid_request",
+                            "invalid_client",
+                            "invalid_client_metadata",
+                            "invalid_scope",
+                            "invalid_target"
+                          ],
+                          "description": "The OAuth error code."
+                        },
+                        "error_description": {
+                          "type": "string",
+                          "description": "A description of the error for a person to read."
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
                     }
-                  },
-                  "required": [
-                    "error"
                   ]
                 }
               }
@@ -51675,6 +51682,9 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },

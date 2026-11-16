@@ -342,7 +342,7 @@ If a caller authorized by `blobs.manage` or local authority, or a working key or
 
 If a request to `POST /blobs`, `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/copies` or the instance's link carries a query key the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › refuses an instance link under a malformed hash or with a stray key on it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`.
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › refuses an instance link under a malformed hash or with a stray key on it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door but the OAuth protocol endpoints, the event stream included`.
 
 ### `blobs/query-key-named`
 

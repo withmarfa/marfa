@@ -28639,20 +28639,23 @@ export interface operations {
                 content?: never;
             };
             /**
-             * @description An error in the shape RFC 6749 defines, when Marfa can't send the browser back to the app:
+             * @description An RFC 6749 error, when Marfa can't send the browser back to the app:
              *     - `invalid_request`: `client_id` is missing, or a parameter is repeated.
-             *     - `invalid_client` or `invalid_client_metadata`: the client ID metadata document can't be read or isn't valid.
-             *     - `invalid_scope`: a scope asks to write the owner's email.
+             *     - `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.
+             *     - `invalid_scope`: a scope writes the owner's email.
              *     - `invalid_target`: a resource isn't served here.
+             *
+             *     `X-Marfa-Reach` gets `validation_error`.
              */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"] | {
                         /**
                          * @description The OAuth error code.
                          * @enum {string}

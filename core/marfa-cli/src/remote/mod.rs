@@ -1514,10 +1514,7 @@ mod tests {
         let received = door.received();
         let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
         let link = format!("/blobs/{HASH}/url");
-        assert_eq!(
-            paths,
-            vec![&link, "/", "/oauth/token", &link, "/bytes"]
-        );
+        assert_eq!(paths, vec![&link, "/", "/oauth/token", &link, "/bytes"]);
         assert_eq!(
             received[0].header("authorization"),
             Some("Bearer marfa_at_old")

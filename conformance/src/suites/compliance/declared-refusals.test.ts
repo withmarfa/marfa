@@ -26,6 +26,14 @@ import {
   validatorFor,
 } from "../../utils/openapi.js";
 
+/** The OAuth protocol endpoints, which ignore a parameter they do not know, as RFC 6749 requires. */
+const OAUTH_PROTOCOL = new Set([
+  "GET /oauth/authorize",
+  "POST /oauth/token",
+  "POST /oauth/revoke",
+  "POST /oauth/device-authorization",
+]);
+
 /**
  * Refusals a door declares that no chapter's fixture otherwise draws.
  *
@@ -811,7 +819,7 @@ describe("a query key no door declares", () => {
     return { status: response.status, unknown };
   }
 
-  it("is refused 400 and named on every published door, the event stream included", async () => {
+  it("is refused 400 and named on every published door but the OAuth protocol endpoints, the event stream included", async () => {
     const managementKey = process.env.MARFA_MANAGEMENT_KEY;
     expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
 
@@ -849,6 +857,7 @@ describe("a query key no door declares", () => {
 
     const unrefused: string[] = [];
     for (const door of doors) {
+      if (OAUTH_PROTOCOL.has(`${door.method} ${door.path}`)) continue;
       // The owner-only doors use the owner session above. For the others, the
       // per-test key holds every content permission and the management key
       // holds the instance permissions it does not.
@@ -1040,6 +1049,27 @@ describe("a query key no door declares", () => {
       const taken = await fetch(`${apiUrl}${path}?${STRAY}=1`);
       expect(taken.status, `${path} with the key`).toBe(200);
       await taken.body?.cancel();
+    }
+
+    // The OAuth protocol endpoints answer a stray parameter as they answer
+    // the same request without it.
+    for (const door of OAUTH_PROTOCOL) {
+      const [method, path] = door.split(" ") as [string, string];
+      const ask = (query: string) =>
+        fetch(`${apiUrl}${path}${query}`, {
+          method,
+          redirect: "manual",
+          headers:
+            method === "POST"
+              ? { "content-type": "application/x-www-form-urlencoded" }
+              : {},
+          body: method === "POST" ? "client_id=none" : undefined,
+        });
+      const bare = await ask("");
+      const taken = await ask(`?${STRAY}=1`);
+      expect(taken.status, door).toBe(bare.status);
+      expect(await taken.text(), door).not.toContain(STRAY);
+      await bare.body?.cancel();
     }
 
     // A sender's query string belongs to the sender: it is recorded, not read.
