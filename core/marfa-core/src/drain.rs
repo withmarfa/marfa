@@ -1137,9 +1137,16 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
         &mut caught_up,
     );
     // No host owes a drain for a write it was not told is waiting, so one an
-    // answer queued goes out in this drain, as a pass of its own.
-    if sent.is_ok() && pass.follow_up && !pass.changed() && report.has_nothing_left() {
+    // answer queued goes out in this drain, as a pass of its own, as does an
+    // edge create held back for the answers of its ends.
+    if sent.is_ok()
+        && (pass.follow_up || pass.deferred > 0)
+        && !pass.changed()
+        && report.has_nothing_left()
+    {
         pass.follow_up = false;
+        pass.deferred = 0;
+        pass.later = true;
         let mut later = DrainReport::empty();
         sent = send_queue(
             core,
@@ -1152,6 +1159,8 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
         );
         report.absorb(later);
     }
+    // Held back for a pass that did not run, they still wait.
+    report.undelivered += std::mem::take(&mut pass.deferred);
     let result = match sent {
         // From a request that settled nothing, a lookup among them: a write
         // the refusal answered expired the copy as it settled.
@@ -1336,7 +1345,8 @@ fn send_queue(
     let mut cursor = 0;
 
     if report.unavailable.is_none() && !pass.changed() {
-        pages::send(
+        let defer = !pass.later;
+        let deferred = pages::send(
             &pages::Sender {
                 core,
                 http,
@@ -1352,7 +1362,11 @@ fn send_queue(
                 landing: &landing,
             },
             &mut confirm,
+            defer,
         )?;
+        // The walk leaves them for the next pass.
+        pass.deferred += deferred.len();
+        tested.extend(deferred);
     }
 
     loop {
@@ -3823,6 +3837,10 @@ struct ReachChange {
     /// Set when an answer queued a write of its own, which the pass read
     /// the queue too early to send.
     follow_up: bool,
+    /// The edge creates held back for the pass after this one.
+    deferred: usize,
+    /// Set on the second pass of a drain, which holds nothing back.
+    later: bool,
 }
 
 impl ReachChange {
