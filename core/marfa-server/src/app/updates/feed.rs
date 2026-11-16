@@ -18,6 +18,9 @@ use url::Url;
 use crate::app::faults::{Faults, ReleaseFeed};
 use crate::app::outbound::{self, Asker, Pinned, Reach};
 
+/// Where GitHub serves a release's files from, and where it redirects them to.
+pub const RELEASE_HOSTS: &[&str] = &["github.com", "release-assets.githubusercontent.com"];
+
 const MOST_HOPS: usize = 4;
 const MOST_ADDRESSES: usize = 16;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -70,14 +73,19 @@ impl Feed {
         }
     }
 
-    fn admit(&self, url: &Url) -> Result<(), Failed> {
+    fn admit(&self, url: &Url, hosts: Option<&[&str]>) -> Result<(), Failed> {
         let scheme = if self.local {
             matches!(url.scheme(), "http" | "https")
         } else {
             url.scheme() == "https"
         };
-        let plain =
-            scheme && url.host().is_some() && url.username().is_empty() && url.password().is_none();
+        let named = self.local
+            || hosts.is_none_or(|hosts| url.host_str().is_some_and(|host| hosts.contains(&host)));
+        let plain = scheme
+            && named
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none();
         if plain {
             Ok(())
         } else {
@@ -108,13 +116,14 @@ impl Feed {
         start: &Url,
         accept: &str,
         time: Duration,
+        hosts: Option<&[&str]>,
     ) -> Result<Response<ureq::Body>, Failed> {
         let tls = TlsConfig::builder()
             .root_certs(RootCerts::PlatformVerifier)
             .build();
         let mut url = start.clone();
         for _ in 0..=MOST_HOPS {
-            self.admit(&url)?;
+            self.admit(&url, hosts)?;
             let config = Agent::config_builder()
                 .https_only(!self.local)
                 .proxy(None)
@@ -166,8 +175,15 @@ impl Feed {
             .and_then(|value| value.parse().ok())
     }
 
-    pub fn document(&self, url: &Url, limit: u64, time: Duration) -> Result<Vec<u8>, Failed> {
-        let mut response = self.open(url, "application/vnd.github+json", time)?;
+    /// Reads a document from `hosts`, or from any public host when `None`.
+    pub fn document(
+        &self,
+        url: &Url,
+        limit: u64,
+        time: Duration,
+        hosts: Option<&[&str]>,
+    ) -> Result<Vec<u8>, Failed> {
+        let mut response = self.open(url, "application/vnd.github+json", time, hosts)?;
         if Feed::declared(&response).is_some_and(|length| length > limit) {
             return Err(Failed::TooLarge);
         }
@@ -184,9 +200,9 @@ impl Feed {
         Ok(body)
     }
 
-    /// Writes to `to`, removing it if the download fails; gives the SHA-256 as hex.
+    /// Writes a release's file to `to`, removing it if the download fails; gives the SHA-256 as hex.
     pub fn file(&self, url: &Url, to: &Path, limit: u64, time: Duration) -> Result<String, Failed> {
-        let mut response = self.open(url, "application/octet-stream", time)?;
+        let mut response = self.open(url, "application/octet-stream", time, Some(RELEASE_HOSTS))?;
         if Feed::declared(&response).is_some_and(|length| length > limit) {
             return Err(Failed::TooLarge);
         }
@@ -219,5 +235,59 @@ impl Feed {
             return Err(failed);
         }
         Ok(hex::encode(hash.finalize()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(text: &str) -> Url {
+        Url::parse(text).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_release_file_comes_only_from_github_and_its_asset_host_over_https() {
+        let feed = Feed::new(Arc::default());
+        let release = Some(RELEASE_HOSTS);
+        for allowed in [
+            "https://github.com/withmarfa/marfa/releases/download/v0.0.75/a.tar.gz",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1/2",
+        ] {
+            assert_eq!(feed.admit(&url(allowed), release), Ok(()), "{allowed}");
+        }
+        for refused in [
+            "https://example.com/a.tar.gz",
+            "https://github.com.example.com/a.tar.gz",
+            "https://evilgithub.com/a.tar.gz",
+            "https://objects.githubusercontent.com/a",
+            "https://user@github.com/a.tar.gz",
+            "http://github.com/a.tar.gz",
+            "https://203.0.113.9/a.tar.gz",
+        ] {
+            assert_eq!(
+                feed.admit(&url(refused), release),
+                Err(Failed::Unaddressable),
+                "{refused}"
+            );
+        }
+        assert_eq!(
+            feed.admit(&url("https://example.com/latest"), None),
+            Ok(()),
+            "the witness: with no host named any public https address is admitted"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fault_that_names_an_address_is_admitted_whatever_its_host() {
+        let faults = Arc::new(Faults::default());
+        faults
+            .set("release-feed", Some("http://127.0.0.1:9/latest"))
+            .unwrap();
+        let feed = Feed::new(faults);
+        assert_eq!(
+            feed.admit(&url("http://127.0.0.1:9/a"), Some(RELEASE_HOSTS)),
+            Ok(())
+        );
     }
 }

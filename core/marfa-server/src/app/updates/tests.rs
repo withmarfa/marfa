@@ -85,6 +85,23 @@ fn program(name: &str, version: &str, can_open: &str) -> String {
 
 const OPENS: &str = "echo '{\"schema\":1,\"standing\":\"current\"}'";
 
+/// An archive with each entry as given, whatever its name or kind.
+fn raw_archive(entries: &[(&str, tar::EntryType, &str, &str)]) -> Vec<u8> {
+    let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+    for (name, kind, link, text) in entries {
+        let mut header = tar::Header::new_gnu();
+        let named = header.as_gnu_mut().unwrap();
+        named.name[..name.len()].copy_from_slice(name.as_bytes());
+        named.linkname[..link.len()].copy_from_slice(link.as_bytes());
+        header.set_entry_type(*kind);
+        header.set_size(text.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append(&header, text.as_bytes()).unwrap();
+    }
+    tar.into_inner().unwrap().finish().unwrap()
+}
+
 fn archive(files: &[(&str, String)]) -> Vec<u8> {
     let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
     for (name, text) in files {
@@ -140,7 +157,10 @@ impl Case {
     /// The release's files served, with the checksums line `sum` gives (the archive's own when
     /// `None`) and `bytes` as the size the release claims.
     fn release(&self, files: &[(&str, String)], sum: Option<&str>, bytes: Option<u64>) -> Job {
-        let packed = archive(files);
+        self.release_of(archive(files), sum, bytes)
+    }
+
+    fn release_of(&self, packed: Vec<u8>, sum: Option<&str>, bytes: Option<u64>) -> Job {
         let name = archive_name("0.0.75", "linux-x86_64");
         let line = format!(
             "{}  {name}\n",
@@ -293,7 +313,7 @@ async fn a_release_that_will_not_open_this_database_changes_nothing_and_says_the
     let job = case.release(&good(refuses), None, None);
     let refused = case.run(job).await.unwrap_err();
     assert!(
-        refused.contains("will not open this server's database"),
+        refused.contains("will not run on this server's settings and database"),
         "{refused}"
     );
     assert!(
@@ -377,4 +397,97 @@ fn a_second_request_while_one_runs_joins_it_and_the_update_runs_once() {
         updates.begin("0.0.75"),
         "the witness: once it ends another may start"
     );
+}
+
+fn new_program(name: &str) -> String {
+    program(name, "0.0.75", OPENS)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn entries_outside_the_archive_or_named_as_a_program_but_not_a_file_are_never_written() {
+    use tar::EntryType::{Link, Regular, Symlink};
+    let case = Case::new("hostile");
+    let outside = case.root.join("escaped");
+    let outside = outside.to_str().unwrap();
+    let (server, cli) = (new_program("marfa-server"), new_program("marfa"));
+    let packed = raw_archive(&[
+        ("../marfa", Regular, "", "evil"),
+        ("../../escaped", Regular, "", "evil"),
+        (outside, Regular, "", "evil"),
+        ("nested/marfa-server", Regular, "", "evil"),
+        ("marfa-server", Regular, "", &server),
+        ("marfa", Regular, "", &cli),
+    ]);
+    case.run(case.release_of(packed, None, None)).await.unwrap();
+    assert_eq!(
+        case.text("marfa"),
+        cli,
+        "the witness: the real entries were used"
+    );
+    assert_eq!(
+        fs::read_to_string(previous_of(&case.bin(), "marfa")).unwrap(),
+        program("marfa", "0.0.74", OPENS),
+        "nothing replaced the running program before the swap"
+    );
+    assert!(!Path::new(outside).exists());
+    assert!(!case.root.join("marfa").exists());
+    assert!(!case.bin().join("nested").exists());
+
+    for (kind, link) in [(Symlink, "/etc/passwd"), (Link, "marfa")] {
+        let case = Case::new("hostile-link");
+        let packed = raw_archive(&[
+            ("marfa-server", kind, link, ""),
+            ("marfa", Regular, "", &cli),
+        ]);
+        let refused = case.run(case.release_of(packed, None, None)).await;
+        assert!(
+            refused.unwrap_err().contains("holds no marfa-server"),
+            "{kind:?}"
+        );
+        case.untouched();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_archive_that_holds_a_program_twice_is_refused() {
+    use tar::EntryType::Regular;
+    let case = Case::new("twice");
+    let (server, cli) = (new_program("marfa-server"), new_program("marfa"));
+    let packed = raw_archive(&[
+        ("marfa-server", Regular, "", &server),
+        ("marfa", Regular, "", &cli),
+        ("./marfa-server", Regular, "", &server),
+    ]);
+    let refused = case.run(case.release_of(packed, None, None)).await;
+    assert!(refused.unwrap_err().contains("more than once"));
+    case.untouched();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_swap_that_fails_on_the_second_program_puts_both_back_and_replaces_a_copy_left_earlier() {
+    let case = Case::new("undo");
+    let staging = case.bin().join(".staging");
+    fs::create_dir(&staging).unwrap();
+    fs::write(staging.join("marfa-server"), new_program("marfa-server")).unwrap();
+    let job = case.release(&good(OPENS), None, None);
+    let failed = apply::swap(&staging, &job, Some(1)).unwrap_err();
+    assert!(failed.contains("placing the new program"), "{failed}");
+    let _ = fs::remove_dir_all(&staging);
+    case.untouched();
+
+    fs::create_dir(&staging).unwrap();
+    for name in PROGRAMS {
+        fs::write(staging.join(name), new_program(name)).unwrap();
+    }
+    let stale = previous_of(&case.bin(), "marfa");
+    fs::write(&stale, "left by an earlier run").unwrap();
+    apply::swap(&staging, &job, Some(1)).unwrap();
+    for name in PROGRAMS {
+        assert_eq!(case.text(name), new_program(name), "{name}");
+        assert_eq!(
+            fs::read_to_string(previous_of(&case.bin(), name)).unwrap(),
+            program(name, "0.0.74", OPENS),
+            "the witness: a copy left earlier is replaced by the running program"
+        );
+    }
 }

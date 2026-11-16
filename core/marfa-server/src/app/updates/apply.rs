@@ -10,7 +10,7 @@ use flate2::read::GzDecoder;
 use serde::Deserialize;
 use url::Url;
 
-use super::feed::Feed;
+use super::feed::{Feed, RELEASE_HOSTS};
 use super::pending::{self, Folder, PROGRAMS, Pending};
 use super::release::Asset;
 use crate::db::volume;
@@ -84,6 +84,12 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
         if entry.size() > MAX_PROGRAM_BYTES {
             return Err(format!(
                 "{} in the archive is larger than a program is.",
+                PROGRAMS[at]
+            ));
+        }
+        if found[at] {
+            return Err(format!(
+                "The archive holds {} more than once.",
                 PROGRAMS[at]
             ));
         }
@@ -187,7 +193,7 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
             })?
             .schema),
         Some(78) => Err(format!(
-            "Release {} will not open this server's database, so nothing was changed. {}",
+            "Release {} will not run on this server's settings and database, so nothing was changed. {}",
             job.version,
             asked.stderr.trim()
         )),
@@ -199,8 +205,9 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
     }
 }
 
-/// Swaps each program in, undoing the steps done when one fails.
-fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
+/// Swaps each program in, undoing the steps done when one fails. The old program stays under its
+/// name until the new one replaces it in one step, so neither is ever missing.
+pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     let pending = Pending {
         from: job.from.clone(),
         to: job.version.clone(),
@@ -214,10 +221,11 @@ fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     let mut aside: Vec<&str> = Vec::new();
     let undo = |aside: &[&str], what: &str, error: std::io::Error| {
         for name in aside.iter().rev() {
-            let _ = fs::rename(
-                pending::previous_of(&job.programs, name),
-                job.programs.join(name),
-            );
+            let kept = pending::previous_of(&job.programs, name);
+            // A program still in place shares its inode with the copy, and renaming one link
+            // onto another does nothing.
+            let _ = fs::rename(&kept, job.programs.join(name));
+            let _ = fs::remove_file(&kept);
         }
         job.record.clear_pending();
         format!(
@@ -235,7 +243,8 @@ fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
             }
             _ => {}
         }
-        fs::rename(&live, &kept).map_err(|error| undo(&aside, "keeping the old program", error))?;
+        fs::hard_link(&live, &kept)
+            .map_err(|error| undo(&aside, "keeping the old program", error))?;
         aside.push(name);
         fs::rename(staging.join(name), &live)
             .map_err(|error| undo(&aside, "placing the new program", error))?;
@@ -294,6 +303,7 @@ fn prepare(
             &address(&job.checksums)?,
             MAX_CHECKSUMS_BYTES,
             Duration::from_secs(60),
+            Some(RELEASE_HOSTS),
         )
         .map_err(|failed| {
             format!(

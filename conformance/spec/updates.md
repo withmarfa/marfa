@@ -112,15 +112,23 @@ While an update runs, the server MUST answer another `POST /update` with the upd
 
 ### `updates/swap-checked`
 
-When the server is to replace its programs with a release's, the server MUST first check the downloaded archive against the release's checksum file, check that each new program runs and reports the release, and ask the new server program whether it opens this instance's database.
+When the server is to replace its programs with a release's, the server MUST first check the downloaded archive against the release's checksum file, check that each new program runs and reports the release, and ask the new server program whether it accepts this instance's settings and opens its database.
 
-**Reason:** a release that cannot open the database would leave the instance down.
+**Reason:** a release that cannot start on the instance's settings or open its database would leave the instance down.
 
 **Tests:** waiting on #3177.
 
 ### `updates/swap-refused-unchanged`
 
-If a download fails, its checksum does not match, a new program will not run or reports another release, the new server will not open the database, or the disk has too little room, then the server MUST leave the running programs as they were and report why in the last update.
+If a download fails, its checksum does not match, a new program will not run or reports another release, the new server will not accept the settings or open the database, or the disk has too little room, then the server MUST leave the running programs as they were and report why in the last update.
+
+**Tests:** waiting on #3177.
+
+### `updates/swap-hosts`
+
+When the server downloads a release's archive or checksum file, the server MUST fetch it over HTTPS from `github.com` or the host GitHub redirects release files to, and from no other host.
+
+**Reason:** a release that points elsewhere must not make the server fetch and run a program from there.
 
 **Tests:** waiting on #3177.
 

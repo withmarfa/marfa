@@ -23,6 +23,15 @@ pub enum DatabasePath {
 }
 
 impl DatabasePath {
+    /// The database the environment names, whether or not the rest of its settings read.
+    pub fn named_by(environment: &Environment) -> DatabasePath {
+        DatabasePath::read(
+            environment
+                .get("MARFA_DATABASE_PATH")
+                .unwrap_or("./data/marfa.db"),
+        )
+    }
+
     fn read(text: &str) -> DatabasePath {
         if text == ":memory:" {
             DatabasePath::Memory
@@ -429,11 +438,7 @@ impl Fixed {
                     .to_string(),
             );
         }
-        let database = DatabasePath::read(
-            environment
-                .get("MARFA_DATABASE_PATH")
-                .unwrap_or("./data/marfa.db"),
-        );
+        let database = DatabasePath::named_by(&environment);
         let control_socket = environment
             .get("MARFA_CONTROL_SOCKET")
             .map(PathBuf::from)

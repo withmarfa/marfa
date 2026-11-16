@@ -85,7 +85,7 @@ pub async fn kept(app: &App) -> Result<Kept> {
 fn ask(feed: &Feed, address: &str) -> std::result::Result<Latest, String> {
     let url = Url::parse(address).map_err(|_| "the release address does not read".to_string())?;
     let body = feed
-        .document(&url, ANSWER_BYTES, TIME)
+        .document(&url, ANSWER_BYTES, TIME, None)
         .map_err(|failed| failed.words())?;
     release::read_latest(&body, release::platform()).map_err(str::to_string)
 }

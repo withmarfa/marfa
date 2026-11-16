@@ -97,9 +97,11 @@ mod tests {
         })
     }
 
-    fn folder(with_marfa: bool) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("marfa-install-{}-{with_marfa}", std::process::id()));
+    fn folder(test: &str, with_marfa: bool) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "marfa-install-{}-{test}-{with_marfa}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for name in ["marfa-server"]
@@ -115,7 +117,7 @@ mod tests {
 
     #[test]
     fn a_service_with_writable_programs_beside_marfa_can_swap_them() {
-        let dir = folder(true);
+        let dir = folder("service", true);
         let exe = dir.join("marfa-server");
         for manager in ["launchd", "systemd"] {
             assert_eq!(
@@ -130,7 +132,7 @@ mod tests {
 
     #[test]
     fn nothing_else_swaps_its_programs() {
-        let dir = folder(true);
+        let dir = folder("nothing", true);
         let exe = dir.join("marfa-server");
         assert_eq!(
             detect_in(None, &exe, false, true),
@@ -152,7 +154,7 @@ mod tests {
             detect_in(Some("launchd"), cellar, false, true),
             Install::Other
         );
-        let alone = folder(false);
+        let alone = folder("nothing", false);
         assert_eq!(
             detect_in(Some("systemd"), &alone.join("marfa-server"), false, true),
             Install::Other,
@@ -164,7 +166,7 @@ mod tests {
 
     #[test]
     fn a_folder_the_account_cannot_write_is_not_writable_and_its_own_is() {
-        let dir = folder(true);
+        let dir = folder("writable", true);
         assert!(writable(&dir));
         assert!(!writable(&dir.join("absent")));
         let _ = std::fs::remove_dir_all(&dir);
