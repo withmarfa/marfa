@@ -1321,9 +1321,14 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
             copy_files(app, destination, folder, uncopied, &mut shared).await?
         }
     };
-    let backup = taken.send(app, &lost, app.blobs.check())?;
+    let bound = taken.bound(&lost)?;
+    if let Destination::Folder(folder) = destination
+        && let Some(why) = folder_shortfall(app, folder.root(), &mut shared, bound).await
+    {
+        return Err(destination.failed_while("writing the backup", &why));
+    }
+    let backup = taken.send(app, &lost, bound, app.blobs.check());
     let limit = backup.limit;
-    let bound = backup.size;
     let bytes = put_stream(app, backup);
     let size = match destination {
         Destination::Bucket(bucket) => {
@@ -1334,9 +1339,6 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
                 .map_err(|error| destination.unreachable("taking the backup", &error))?
         }
         Destination::Folder(folder) => {
-            if let Some(why) = folder_shortfall(app, folder.root(), &mut shared, bound).await {
-                return Err(destination.failed_while("writing the backup", &why));
-            }
             let written = super::blobs::store::within(
                 limit,
                 backup_folder::write(folder.clone(), name.clone(), bytes, app.faults.clone()),

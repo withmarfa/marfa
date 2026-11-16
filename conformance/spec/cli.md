@@ -626,11 +626,19 @@ If `logout` signs out of a sign-in that kept no revocation endpoint, or whose re
 
 ### `cli/command-logout-off`
 
-While the keychain is off, when `logout` is given a sign-in token with `--key` or `MARFA_API_KEY` and the client id it was issued to with `--client-id`, the CLI MUST ask the revocation endpoint that the server's discovery document names to revoke the token for that client, with the token's type.
+While the keychain is off, when `logout` is given a sign-in token with `--key` or `MARFA_API_KEY` and the client id it was issued to with `--client-id`, the CLI MUST ask the revocation endpoint that the discovery document of the server `--url` or `MARFA_API_URL` names gives, and no other server, to revoke the token for that client, with the token's type.
 
 **Reason:** a token printed by `login --print-token` is kept nowhere, so a sign-out that only forgot it would end nothing. The revocation door needs the client the token was issued to.
 
 **Tests:** `device/credential-locks.test.ts › revokes the token it is handed when the keychain is off, and says so only when the server then refuses it`.
+
+### `cli/command-logout-off-profile`
+
+While the keychain is off, if a profile is chosen for `logout`, then the CLI MUST exit 2 with `usage` and send no request.
+
+**Reason:** a profile's credential is its own, so a token handed to `logout` cannot be for it.
+
+**Tests:** `cli/profiles.test.ts › refuses logout with a profile chosen while the keychain is off, sending nothing`.
 
 ### `cli/command-logout-off-still-works`
 
@@ -804,7 +812,7 @@ If `--url` names a server other than the one `MARFA_API_URL` names, `MARFA_API_K
 
 **Reason:** the two variables are exported as a pair for one server, and the key must not go to another.
 
-**Tests:** `cli/key-and-files.test.ts › goes only to the server MARFA_API_URL names, and a --url for another server refuses`.
+**Tests:** `cli/key-and-files.test.ts › goes only to the server MARFA_API_URL names, and a --url for another server refuses`, `› sends logout's token only to the server MARFA_API_URL names, and refuses a --url for another server`.
 
 ### `cli/command-output-owner-only`
 

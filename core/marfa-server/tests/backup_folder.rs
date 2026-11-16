@@ -880,6 +880,15 @@ async fn an_archive_that_would_leave_less_than_the_reserve_on_the_servers_volume
         "{told}"
     );
     assert!(names_in(&own).is_empty(), "{:?}", names_in(&own));
+    // The refusal comes before the archive's files are spooled, and what was read is removed.
+    let tmp = instance.data.path().join("blobs").join("tmp");
+    for _ in 0..250 {
+        if names_in(&tmp).is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(names_in(&tmp), Vec::<String>::new());
 
     // The witness: the same run with room puts the archive.
     instance

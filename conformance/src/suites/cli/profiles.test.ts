@@ -273,6 +273,25 @@ describe("profiles", () => {
     expect(listener.bearers).toEqual([`Bearer ${EXAMPLE_KEY}`]);
   });
 
+  it("refuses logout with a profile chosen while the keychain is off, sending nothing", async () => {
+    listener.clear();
+    const off = base.withEnv({ MARFA_NO_KEYCHAIN: "1" });
+    const { code, envelope } = await off.refused([
+      "--profile",
+      "example",
+      "logout",
+      "--client-id",
+      "fixture",
+    ]);
+    expect(code).toBe(2);
+    expect(envelope.error.code).toBe("usage");
+    expect(listener.bearers).toEqual([]);
+
+    // The witness: the same profile reaches its server for a command that sends.
+    await off.run(["--json", "--profile", "example", "items", "get", "i1"]);
+    expect(listener.bearers.length).toBeGreaterThan(0);
+  });
+
   it("sends a profile's server no key but the profile's", async () => {
     listener.clear();
     for (const env of [

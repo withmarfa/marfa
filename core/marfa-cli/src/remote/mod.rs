@@ -421,9 +421,13 @@ impl Remote {
         if named.profile.is_some() {
             return Ok(None);
         }
-        let from_flag = named.key.clone().filter(|key| !key.is_empty());
-        let from_environment = from_flag.is_none();
-        let Some(key) = from_flag.or(environment_key.clone()) else {
+        // As `resolve` does, an empty `--key` is a key given: no token goes, and the environment's
+        // does not stand in for it.
+        if named.key.as_deref() == Some("") {
+            return Ok(None);
+        }
+        let from_environment = named.key.is_none();
+        let Some(key) = named.key.clone().or(environment_key.clone()) else {
             return Ok(None);
         };
         let url = Self::url_named_with(named, environment_url.clone(), environment_key.is_some())?;
@@ -1098,6 +1102,14 @@ mod tests {
             handed(&at("https://b.example"), None, None),
             Ok(None)
         ));
+        // An empty --key is a key given, as it is to `resolve`: no token goes, and the
+        // environment's does not stand in for it.
+        let emptied = Named {
+            key: Some(String::new()),
+            ..at("https://b.example")
+        };
+        let found = handed(&emptied, Some("marfa_at_a"), Some("https://b.example"));
+        assert!(matches!(found, Ok(None)), "{found:?}");
     }
 
     #[test]

@@ -190,13 +190,38 @@ pub struct Backup {
 }
 
 impl Taken {
-    /// Sends the backup, its `files.ndjson.gz` naming as lost each file in `lost`.
+    /// The most bytes the archive can take once the files in `lost` are named as lost. A caller
+    /// holds the archive to its disk before `send` starts the work of writing it.
+    pub fn bound(&self, lost: &[String]) -> Result<u64> {
+        let lost: HashSet<&str> = lost.iter().map(String::as_str).collect();
+        let mut listed = 0u64;
+        for line in &self.listing {
+            let mut printed = print(line)?.len() as u64 + 1;
+            if lost.contains(line.hash.as_str()) {
+                printed = printed - line.state.len() as u64 + LOST.len() as u64;
+            }
+            listed += printed;
+        }
+        let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
+        Ok(entry(self.prepared.manifest.len() as u64)
+            + entry(listed + listed / 1000 + 1024)
+            + entry(self.prepared.instance.size)
+            + entry(self.prepared.items.size)
+            + entry(self.prepared.versions.size)
+            + entry(self.prepared.edges.size)
+            + entry(self.prepared.rows.size)
+            + tar::END.len() as u64)
+    }
+
+    /// Sends the backup, its `files.ndjson.gz` naming as lost each file in `lost`. `size` is
+    /// what `bound` gave for the same `lost`.
     pub fn send(
         self,
         app: &Arc<App>,
         lost: &[String],
+        size: u64,
         check: std::time::Duration,
-    ) -> Result<Backup> {
+    ) -> Backup {
         let Taken {
             mut prepared,
             mut listing,
@@ -204,22 +229,11 @@ impl Taken {
             ..
         } = self;
         let lost: HashSet<&str> = lost.iter().map(String::as_str).collect();
-        let mut listed = 0u64;
         for line in &mut listing {
             if lost.contains(line.hash.as_str()) {
                 line.state = LOST;
             }
-            listed += print(line)?.len() as u64 + 1;
         }
-        let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
-        let size = entry(prepared.manifest.len() as u64)
-            + entry(listed + listed / 1000 + 1024)
-            + entry(prepared.instance.size)
-            + entry(prepared.items.size)
-            + entry(prepared.versions.size)
-            + entry(prepared.edges.size)
-            + entry(prepared.rows.size)
-            + tar::END.len() as u64;
         let limit = super::blobs::store::write_deadline(check, size);
         let (sender, body) = channel(QUEUED);
         let (app, room, cap) = (app.clone(), app.room(), app.archive_line_cap());
@@ -238,7 +252,7 @@ impl Taken {
                 Err(_) => tracing::warn!("A backup's files were not spooled"),
             }
         });
-        Ok(Backup { body, limit, size })
+        Backup { body, limit, size }
     }
 }
 
