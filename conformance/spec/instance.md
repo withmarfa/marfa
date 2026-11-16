@@ -1340,7 +1340,7 @@ When `GET /health` is called while an attempt of the `database_write` probe's wr
 
 The server MUST attempt the write of the `database_write` probe at most once in ten seconds, however many callers ask.
 
-**Reason:** the operation takes no credential, so the writes a caller can make the server attempt through it stay few. A second attempt in the window would answer `ok` where the first answered `down`, so a caller sees a cap broken as a change of outcome within one window.
+**Reason:** the operation takes no credential, so the writes a caller can make the server attempt through it stay few.
 
 **Tests:** `compliance/health.test.ts › commits its write once in ten seconds however many callers ask`.
 
