@@ -68,7 +68,9 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
     const unclaimed = await local("/profile");
     expect(unclaimed.status).toBe(404);
-    expect(unclaimed.body).toMatchObject({ error: { code: "owner_not_found" } });
+    expect(unclaimed.body).toMatchObject({
+      error: { code: "owner_not_found" },
+    });
     expect((await fetch(`${server.url}/profile`)).status).toBe(401);
     const noProofClaim = await post("/setup/claim", OWNER);
     expect(noProofClaim.status).toBe(401);
@@ -543,9 +545,7 @@ describe("claiming the one owner", () => {
         })
       ).status,
     ).toBe(200);
-    expect((await local("/_control/setup/status")).body.owner_id).toBe(
-      ownerId,
-    );
+    expect((await local("/_control/setup/status")).body.owner_id).toBe(ownerId);
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
   });
   it("keeps a completed claim and recovered password through restart", async () => {
@@ -671,7 +671,11 @@ describe("signing the owner in at the claim", () => {
         expect(read.status).toBe(200);
         expect(
           (await controlRequest(instance.controlSocket, "/profile")).body,
-        ).toEqual({ name: owner.name, email: owner.email, avatar: owner.avatar });
+        ).toEqual({
+          name: owner.name,
+          email: owner.email,
+          avatar: owner.avatar,
+        });
 
         const login = await fetch(`${instance.url}/auth/sign-in`, {
           method: "POST",

@@ -17,7 +17,7 @@ afterAll(async () => {
 });
 
 describe("the sign-ins from the terminal", () => {
-  it("lists, renames and ends a sign-in through the private socket, and refuses an ordinary key", async () => {
+  it("lists, renames and ends a sign-in through the private socket, and refuses a key without sign_ins.manage", async () => {
     const socket = process.env.MARFA_CONTROL_SOCKET;
     expect(
       socket,
@@ -63,11 +63,18 @@ describe("the sign-ins from the terminal", () => {
     ]);
     expect(renamed).toMatchObject({ id: minted.id, name: `${label} renamed` });
 
-    for (const ordinary of [c.cli, c.operator]) {
-      const refused = await ordinary.refused(["sign-ins", "list"]);
-      expect(refused.code).toBe(1);
-      expect(refused.envelope.error.server?.code).toBe("forbidden");
-    }
+    const refused = await c.cli.refused(["sign-ins", "list"]);
+    expect(refused.code).toBe(1);
+    expect(refused.envelope.error.server?.code).toBe("forbidden");
+    expect(refused.envelope.error.server?.details).toMatchObject({
+      required_scope: "sign_ins.manage",
+    });
+    // The witness: a key that holds sign_ins.manage lists the same sign-in.
+    expect(
+      (
+        await c.operator.json<{ data: SignIn[] }>(["sign-ins", "list"])
+      ).data.some((row) => row.id === minted.id),
+    ).toBe(true);
 
     expect(await local.json(["sign-ins", "end", minted.id])).toEqual({
       ok: true,

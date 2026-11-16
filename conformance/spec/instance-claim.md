@@ -689,4 +689,3 @@ If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`,
 If a password sign-in's submitted email no longer matches the owner's address when its session is created, then the server MUST refuse that sign-in.
 
 **Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
-

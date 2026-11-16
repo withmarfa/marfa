@@ -170,7 +170,12 @@ describe("folder sync reports", () => {
     expect(ids.has(firstId)).toBe(true);
     expect(ids.has(secondId)).toBe(true);
     const reader = await key();
-    const fromKey = await call("GET", "/folders?limit=200", undefined, reader.key);
+    const fromKey = await call(
+      "GET",
+      "/folders?limit=200",
+      undefined,
+      reader.key,
+    );
     expect(fromKey.status).toBe(200);
     const read = ((await fromKey.json()) as { data: { id: string }[] }).data;
     expect(read.map((row) => row.id)).toEqual(
@@ -265,13 +270,16 @@ describe("folder sync reports", () => {
     const delegated = (
       await connect(server, origin, cookie, app, "system.folder:read")
     ).access_token!;
-    const listed = await call("GET", "/folders?limit=200", undefined, delegated);
+    const listed = await call(
+      "GET",
+      "/folders?limit=200",
+      undefined,
+      delegated,
+    );
     expect(listed.status).toBe(200);
     const shown = ((await listed.json()) as { data: { id: string }[] }).data;
     expect(
-      shown
-        .map((row) => row.id)
-        .filter((id) => made.some((m) => m.id === id)),
+      shown.map((row) => row.id).filter((id) => made.some((m) => m.id === id)),
     ).toEqual(newestFirst.map((m) => m.id));
   });
   it("allows a local command to read but refuses a report without a sign-in", async () => {

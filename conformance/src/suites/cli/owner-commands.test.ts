@@ -76,8 +76,11 @@ it("ends every browser sign-in at once, sparing a named one and leaving apps and
   const plain = await local.run(["sign-ins", "end-all"]);
   expect(plain.stdout.trim()).toBe("ended 0 sign-ins");
 
-  const ordinary = await keyed.refused(["sign-ins", "end-all"]);
-  expect(ordinary.envelope.error.server?.status).toBeGreaterThanOrEqual(400);
+  // A key that holds sign_ins.manage ends them too; none is left to end.
+  expect(await keyed.json(["sign-ins", "end-all"])).toMatchObject({
+    ended: 0,
+    failed: [],
+  });
 });
 
 it("clears the owner's avatar", async () => {

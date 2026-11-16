@@ -8,7 +8,6 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 
-type RefusalBody = { error: { details?: unknown } };
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("item-summaries");

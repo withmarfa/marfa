@@ -272,9 +272,9 @@ describe("owner tasks", () => {
       `/grants/${grantOf(revokedApp.clientId).id}`,
     );
     expect(revoked.status).toBe(200);
-    expect((await call(revokedApp.token, "GET", "/owner/sign-ins")).status).toBe(
-      401,
-    );
+    expect(
+      (await call(revokedApp.token, "GET", "/owner/sign-ins")).status,
+    ).toBe(401);
   });
 
   it("lists and empties only the bin's items of the types a credential holding items.purge reads", async () => {
@@ -355,7 +355,9 @@ describe("owner tasks", () => {
   });
 
   it("lists folders to a credential that reads system.folder, and refuses one that does not", async () => {
-    const reader = await mint({ type_permissions: { "system.folder": "read" } });
+    const reader = await mint({
+      type_permissions: { "system.folder": "read" },
+    });
     const listed = await call(reader.key, "GET", "/folders");
     expect(listed.status, JSON.stringify(listed.body)).toBe(200);
     expect(Array.isArray(listed.body.data)).toBe(true);
@@ -404,9 +406,10 @@ describe("owner tasks", () => {
       ["GET", "/grants"],
     ] as const) {
       const answer = await local(method, path);
-      expect(answer.status, `${method} ${path} ${JSON.stringify(answer.body)}`).toBe(
-        200,
-      );
+      expect(
+        answer.status,
+        `${method} ${path} ${JSON.stringify(answer.body)}`,
+      ).toBe(200);
     }
   });
 });
