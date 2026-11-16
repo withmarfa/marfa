@@ -13,7 +13,7 @@
 //! An item's create carries in its entry the tags queued with it, whose own
 //! writes the page then answers (`queue-and-verdicts/page-carries-tags`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 
 use serde::Deserialize;
@@ -152,26 +152,33 @@ pub(super) struct Standing<'a, 'b> {
 /// Sends the creates of items, then of edges, that wait in pages, where at
 /// least `FLOOR` of a kind do. Edges go after every item page is settled, so
 /// an edge goes in a page only once both its ends are answered.
+///
+/// With `defer`, the ids of edges left for a later pass are returned.
 pub(super) fn send(
     sender: &Sender<'_>,
     pass: &mut ReachChange,
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
     confirm: &mut dyn FnMut(&mut DrainReport) -> Result<bool>,
-) -> Result<()> {
+    defer: bool,
+) -> Result<HashSet<String>> {
+    let mut deferred = HashSet::new();
     for lane in [Lane::Items, Lane::Edges] {
         if report.unavailable.is_some() || pass.changed() {
-            return Ok(());
+            return Ok(deferred);
         }
-        let mut waiting = candidates(sender.core, lane, standing)?;
-        if waiting.len() < FLOOR || !confirm(report)? {
+        let Found {
+            ready: mut waiting,
+            deferrable,
+        } = candidates(sender.core, lane, standing, defer)?;
+        if waiting.len() + deferrable.len() < FLOOR || !confirm(report)? {
             continue;
         }
         // The root was read just now. A create over its limit meets the walk,
         // so whether it goes does not depend on what else waits.
         if let Some(limit) = store::request_limit(&*sender.core.conn()?)? {
             waiting.retain(|candidate| candidate.size <= limit);
-            if waiting.len() < FLOOR {
+            if waiting.len() + deferrable.len() < FLOOR {
                 continue;
             }
             for candidate in &mut waiting {
@@ -180,19 +187,24 @@ pub(super) fn send(
                 }
             }
         }
-        for page in pages(&waiting) {
-            crate::catch_up::refuse_if_stopped(sender.stop)?;
-            if report.unavailable.is_some() {
-                return Ok(());
-            }
-            if !send_page(sender, pass, report, standing, lane, &page)? {
-                // The server would not take the page whole: what is left goes
-                // on its own doors.
-                return Ok(());
+        if waiting.len() < FLOOR {
+            deferred.extend(waiting.iter().map(|candidate| candidate.row.id.clone()));
+        } else {
+            for page in pages(&waiting) {
+                crate::catch_up::refuse_if_stopped(sender.stop)?;
+                if report.unavailable.is_some() {
+                    return Ok(deferred);
+                }
+                if !send_page(sender, pass, report, standing, lane, &page)? {
+                    // The server would not take the page whole: what is left
+                    // goes on its own doors.
+                    return Ok(deferred);
+                }
             }
         }
+        deferred.extend(deferrable.iter().map(|row| row.id.clone()));
     }
-    Ok(())
+    Ok(deferred)
 }
 
 /// The creates the walk would send unchanged, in queue order, each with the
@@ -210,10 +222,17 @@ fn candidates<'a>(
     core: &Core,
     lane: Lane,
     standing: &Standing<'a, '_>,
-) -> Result<Vec<Candidate<'a>>> {
+    defer: bool,
+) -> Result<Found<'a>> {
     let conn = core.conn()?;
     let none = HashSet::new();
     let mut found = Vec::new();
+    let mut deferrable = Vec::new();
+    let led = if defer && lane == Lane::Edges {
+        led(standing)
+    } else {
+        HashSet::new()
+    };
     let mut by_item: HashMap<&str, Vec<&'a QueuedWrite>> = HashMap::new();
     if lane == Lane::Items {
         for row in standing.all {
@@ -240,18 +259,28 @@ fn candidates<'a>(
         if !fits(lane, row, &row.body, size) {
             continue;
         }
-        if !matches!(
-            readiness(
-                row,
-                standing.rows,
-                &*standing.answers,
-                &none,
-                standing.landing,
-                super::create_edges::waits(&conn, row)?,
-            ),
-            Readiness::Ready
-        ) || crate::body::rule::lost_body(&conn, row)?.is_some()
-        {
+        let ready = readiness(
+            row,
+            standing.rows,
+            &*standing.answers,
+            &none,
+            standing.landing,
+            super::create_edges::waits(&conn, row)?,
+        );
+        let held = match ready {
+            Readiness::Ready => false,
+            Readiness::Held
+                if defer && lane == Lane::Edges && waits_for_answers(row, standing, &led) =>
+            {
+                true
+            }
+            _ => continue,
+        };
+        if crate::body::rule::lost_body(&conn, row)?.is_some() {
+            continue;
+        }
+        if held {
+            deferrable.push(row);
             continue;
         }
         let tags = match row.item_id.as_deref().and_then(|item| by_item.get(item)) {
@@ -270,7 +299,55 @@ fn candidates<'a>(
         }
         found.push(candidate);
     }
-    Ok(found)
+    Ok(Found {
+        ready: found,
+        deferrable,
+    })
+}
+
+/// The creates ready for a page, and the edge creates that wait only on writes not yet answered.
+struct Found<'a> {
+    ready: Vec<Candidate<'a>>,
+    deferrable: Vec<&'a QueuedWrite>,
+}
+
+/// The writes another unanswered write follows or depends on.
+fn led<'a>(standing: &Standing<'a, '_>) -> HashSet<&'a str> {
+    standing
+        .all
+        .iter()
+        .filter(|row| {
+            standing
+                .answers
+                .get(&row.id)
+                .is_some_and(|verdict| verdict.is_none())
+        })
+        .flat_map(|row| {
+            row.follows
+                .as_deref()
+                .into_iter()
+                .chain(row.depends_on.iter().map(String::as_str))
+        })
+        .collect()
+}
+
+/// Whether the write waits only on unanswered writes, with no write behind it.
+fn waits_for_answers(row: &QueuedWrite, standing: &Standing<'_, '_>, led: &HashSet<&str>) -> bool {
+    if led.contains(row.id.as_str()) {
+        return false;
+    }
+    let mut pending = false;
+    for dependency in &row.depends_on {
+        if standing.landing.contains_key(dependency) {
+            return false;
+        }
+        match standing.answers.get(dependency) {
+            Some(None) => pending = true,
+            Some(Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)) => {}
+            _ => return false,
+        }
+    }
+    pending
 }
 
 /// A create a page may carry, and the tag writes its entry carries with it.
@@ -738,7 +815,84 @@ fn read(
             held.insert(row.item.id.clone(), (row, whole));
         }
     }
+    if lane == Lane::Edges {
+        read_rest(&reader, stop, rows, &mut held)?;
+    }
     Ok(held)
+}
+
+/// The most pages of one source's edges of a type a read follows.
+const LISTING_PAGES: usize = 20;
+
+/// Looks for an edge past the first page of its source's edges (`edges/hydrate-cap`) in the rest of the listing.
+fn read_rest(http: &Http, stop: &AtomicBool, rows: &[&QueuedWrite], held: &mut Held) -> Result<()> {
+    let mut wanted: BTreeMap<(String, String), HashSet<String>> = BTreeMap::new();
+    for row in rows {
+        let (Some(source), Some(id), Some(edge_type)) = (
+            Lane::Edges.source(row),
+            row.edge_id.as_deref(),
+            row.body
+                .get("edge_type")
+                .and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        if held
+            .get(&source)
+            .is_some_and(|(_, whole)| edge_in(whole, row, id).is_none())
+        {
+            wanted
+                .entry((source, edge_type.to_string()))
+                .or_default()
+                .insert(id.to_string());
+        }
+    }
+    for ((source, edge_type), mut ids) in wanted {
+        let Some((_, whole)) = held.get_mut(&source) else {
+            continue;
+        };
+        let Some(block) = whole
+            .get_mut("edges")
+            .and_then(|edges| edges.get_mut(&edge_type))
+        else {
+            continue;
+        };
+        let mut cursor = block
+            .get("next_cursor")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let Some(data) = block
+            .get_mut("data")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        let mut seen = HashSet::new();
+        for _ in 0..LISTING_PAGES {
+            let Some(at) = cursor.take() else {
+                break;
+            };
+            if ids.is_empty() || !seen.insert(at.clone()) {
+                break;
+            }
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let page = match http.item_edges_page(&source, &edge_type, Some(&at)) {
+                Ok(page) => page,
+                Err(error) if error.is_environmental() || ends_the_drain(&error) => {
+                    return Err(error);
+                }
+                // The walk sends what the listing did not bring.
+                Err(_) => break,
+            };
+            for edge in page.data {
+                if ids.remove(&edge.id) {
+                    data.push(serde_json::to_value(&edge)?);
+                }
+            }
+            cursor = page.next_cursor;
+        }
+    }
+    Ok(())
 }
 
 /// The write's row as the reads found it, as a write's answer and as its
@@ -1294,8 +1448,10 @@ mod tests {
                 answers: &mut answers,
                 landing: &landing,
             },
+            false,
         )
-        .unwrap();
+        .unwrap()
+        .ready;
         assert_eq!(found.len(), FLOOR);
         let carried: Vec<Vec<&str>> = found
             .iter()
@@ -1310,5 +1466,197 @@ mod tests {
         // The second tag is queued behind the removal of the first.
         assert_eq!(carried[0], vec!["alpha"]);
         assert!(carried[1..].iter().all(|tags| tags == &vec!["alpha"]));
+    }
+
+    fn edge_json(row: &QueuedWrite) -> serde_json::Value {
+        serde_json::json!({
+            "id": row.edge_id,
+            "from_id": row.body["from_id"],
+            "to_id": row.body["to_id"],
+            "edge_type": "references",
+            "properties": {},
+            "version": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        })
+    }
+
+    fn item_json(id: &str, edges: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "type": "core.note",
+            "properties": {},
+            "state": "active",
+            "tier": "library",
+            "version": 1,
+            "schema_version": 1,
+            "source": "test",
+            "occurred_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "edges": edges,
+        })
+    }
+
+    /// A host with `count` notes behind it, and an edge to each.
+    fn linking(server: &Scripted, count: usize) -> (tempfile::TempDir, Core, Vec<QueuedWrite>) {
+        let (dir, core) = creating(server, count + 1);
+        let notes: Vec<String> = core
+            .queue()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row.item_id.clone())
+            .collect();
+        let edges = notes[1..]
+            .iter()
+            .map(|to| {
+                core.create_edge(&crate::model::EdgeDraft {
+                    from_id: notes[0].clone(),
+                    to_id: to.clone(),
+                    edge_type: "references".into(),
+                    ..Default::default()
+                })
+                .unwrap()
+            })
+            .collect();
+        (dir, core, edges)
+    }
+
+    /// `queue-and-verdicts/page-read-back`: the first page of an item's
+    /// edges of a type holds 50 at most (`edges/hydrate-cap`), and the rest
+    /// of the listing is read from the cursor that page names.
+    #[test]
+    fn an_edge_past_the_first_page_of_its_hosts_edges_is_read_from_the_rest_of_the_listing() {
+        let server = Scripted::start();
+        let (_dir, core, edges) = linking(&server, 3);
+        let host = edges[0].body["from_id"].as_str().unwrap().to_string();
+        server.on(
+            "/items/bulk-get",
+            vec![scripted::certified(scripted::json(
+                200,
+                &serde_json::json!({
+                    "items": [item_json(&host, serde_json::json!({
+                        "references": { "data": [edge_json(&edges[0])], "next_cursor": "c1" }
+                    }))],
+                    "metadata": [{ "item_id": host, "tags": [] }],
+                    "listed": [true],
+                })
+                .to_string(),
+            ))],
+        );
+        server.on(
+            &format!("/items/{host}/edges"),
+            vec![
+                scripted::certified(scripted::json(
+                    200,
+                    &serde_json::json!({ "data": [edge_json(&edges[1])], "next_cursor": "c2" })
+                        .to_string(),
+                )),
+                scripted::certified(scripted::json(
+                    200,
+                    &serde_json::json!({ "data": [edge_json(&edges[2])], "next_cursor": null })
+                        .to_string(),
+                )),
+            ],
+        );
+        let rows: Vec<&QueuedWrite> = edges.iter().collect();
+        let (context, before) = capture(&core, Lane::Edges, &rows).unwrap();
+
+        let held = read(&core, &AtomicBool::new(false), &context, Lane::Edges, &rows).unwrap();
+
+        for row in &rows {
+            assert!(
+                found(Lane::Edges, row, &held, &context, &before).is_some(),
+                "{row:?}"
+            );
+        }
+        let listed = server.seen(&format!("/items/{host}/edges"));
+        assert_eq!(listed.len(), 2);
+        assert!(listed[0].query.contains("cursor=c1"), "{}", listed[0].query);
+        assert!(listed[1].query.contains("cursor=c2"), "{}", listed[1].query);
+    }
+
+    /// Where the edge is not in a block that names no cursor, the server made
+    /// none, and no listing is read.
+    #[test]
+    fn an_edge_a_whole_block_leaves_out_is_left_to_the_walk_with_no_listing_read() {
+        let server = Scripted::start();
+        let (_dir, core, edges) = linking(&server, 2);
+        let host = edges[0].body["from_id"].as_str().unwrap().to_string();
+        server.on(
+            "/items/bulk-get",
+            vec![scripted::certified(scripted::json(
+                200,
+                &serde_json::json!({
+                    "items": [item_json(&host, serde_json::json!({
+                        "references": { "data": [edge_json(&edges[0])], "next_cursor": null }
+                    }))],
+                    "metadata": [{ "item_id": host, "tags": [] }],
+                    "listed": [true],
+                })
+                .to_string(),
+            ))],
+        );
+        let rows: Vec<&QueuedWrite> = edges.iter().collect();
+        let (context, before) = capture(&core, Lane::Edges, &rows).unwrap();
+
+        let held = read(&core, &AtomicBool::new(false), &context, Lane::Edges, &rows).unwrap();
+
+        assert!(found(Lane::Edges, rows[0], &held, &context, &before).is_some());
+        assert!(found(Lane::Edges, rows[1], &held, &context, &before).is_none());
+        assert!(server.seen(&format!("/items/{host}/edges")).is_empty());
+    }
+
+    /// An edge whose ends are creates the walk sends on their own doors is
+    /// held for a pass after them, and none of the others is.
+    #[test]
+    fn edges_waiting_on_creates_the_walk_sends_are_deferred_where_nothing_follows_them() {
+        let server = Scripted::start();
+        let (_dir, core, edges) = linking(&server, FLOOR + 1);
+        // An edit queued behind an edge's create: that edge stays on the walk.
+        core.update_edge(
+            edges[0].edge_id.as_deref().unwrap(),
+            &crate::model::EdgeEdit {
+                properties: serde_json::json!({ "note": "x" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                base_version: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let all = store::queued_writes(&core.conn().unwrap()).unwrap();
+        let mut answers = all
+            .iter()
+            .map(|row| (row.id.clone(), row.verdict))
+            .collect();
+        let rows = all.iter().map(|row| (row.id.as_str(), row)).collect();
+        let landing = store::pending_landings(&core.conn().unwrap()).unwrap();
+        let standing = Standing {
+            all: &all,
+            rows: &rows,
+            answers: &mut answers,
+            landing: &landing,
+        };
+
+        let off = candidates(&core, Lane::Edges, &standing, false).unwrap();
+        let on = candidates(&core, Lane::Edges, &standing, true).unwrap();
+
+        // The witness: the same rows are ready once their ends are answered.
+        assert!(off.ready.is_empty() && off.deferrable.is_empty());
+        assert_eq!(on.deferrable.len(), FLOOR);
+        assert!(on.deferrable.iter().all(|row| row.id != edges[0].id));
+        let ends: Vec<String> = all
+            .iter()
+            .filter(|row| row.kind == WriteKind::CreateItem)
+            .map(|row| row.id.clone())
+            .collect();
+        for end in ends {
+            standing.answers.insert(end, Some(Verdict::Accepted));
+        }
+        let answered = candidates(&core, Lane::Edges, &standing, true).unwrap();
+        assert_eq!(answered.ready.len(), FLOOR + 1);
+        assert!(answered.deferrable.is_empty());
     }
 }
