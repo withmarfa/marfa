@@ -67,7 +67,13 @@ fn parse_sort(text: &str) -> Result<String, String> {
     }
     parse_sort_field(text)
         .map(|field| field.to_string())
-        .map_err(|error| format!("{error}, or `relevance`"))
+        .map_err(|error| {
+            if text.starts_with("properties.") {
+                error
+            } else {
+                format!("{error}, or `relevance`")
+            }
+        })
 }
 
 pub fn request(args: &SearchArgs) -> Result<Request, CliError> {
