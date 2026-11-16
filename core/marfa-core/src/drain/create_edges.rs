@@ -147,20 +147,15 @@ pub(super) fn read(core: &Core, item: &str) -> Result<()> {
     Ok(())
 }
 
-/// The edge `item` was shown with to `target`, whose read failed for good:
+/// The edge from `item` to `to` the copy showed, whose read failed for good:
 /// each write waiting on it is refused unsent, and the edge stays shown as
 /// the create drew it, since the server made it.
-fn keep_unread(
-    conn: &rusqlite::Connection,
-    item: &str,
-    edge_type: &str,
-    target: &str,
-) -> Result<()> {
-    let shown = projected_edge_id(item, edge_type, target);
+fn keep_unread(conn: &rusqlite::Connection, item: &str, edge_type: &str, to: &str) -> Result<()> {
+    let shown = projected_edge_id(item, edge_type, to);
     store::refuse_edge_writes(conn, &shown, READ_FAILED)?;
     let held = store::edges_from(conn, item)?
         .into_iter()
-        .any(|edge| edge.id != shown && edge.edge_type == edge_type && edge.to_id == target);
+        .any(|edge| edge.id != shown && edge.edge_type == edge_type && edge.to_id == to);
     if held {
         return Ok(());
     }
@@ -170,7 +165,7 @@ fn keep_unread(
         &WireEdge {
             id: shown,
             from_id: item.to_string(),
-            to_id: target.to_string(),
+            to_id: to.to_string(),
             edge_type: edge_type.to_string(),
             properties: Default::default(),
             version: 0,

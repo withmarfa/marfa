@@ -350,7 +350,7 @@ pub const MAX_JSON_DEPTH: usize = 64;
 /// The tag the server gives a conflicted copy (`versions/copy-written`).
 pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 
-/// The edge type linking a conflicted copy, its source, to the original
+/// The edge type from a conflicted copy to the original
 /// (`versions/copy-link`).
 pub const CONFLICTED_COPY_EDGE: &str = "derived-from";
 

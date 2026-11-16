@@ -2102,7 +2102,7 @@ pub fn hold_beneath_edge(conn: &Connection, id: &str) -> Result<(), CoreError> {
 pub struct Owed {
     pub subject: Subject,
     pub id: String,
-    /// An edge's source, whose listing of the edge's type it is read from.
+    /// An edge's from item, whose listing of the edge's type it is read from.
     pub from_id: Option<String>,
     pub edge_type: Option<String>,
     /// The refused write moved the row, so a read outside the slice lets it go.
@@ -3200,15 +3200,15 @@ pub struct Attachment {
     pub stated: Option<u64>,
 }
 
-/// Every file item the copy holds, out of the bin, that is the source of an
-/// `attached-to` edge whose target the copy holds out of the bin. A row whose
+/// Every file item the copy holds, out of the bin, that is the from item of an
+/// `attached-to` edge whose to item the copy holds out of the bin. A row whose
 /// stored properties are not JSON, or that names its bytes by no text, is
 /// none.
 pub fn attachments(conn: &Connection) -> Result<Vec<Attachment>, CoreError> {
     attachments_where(conn, "1", &[])
 }
 
-/// The attachments among `ids` and among the sources of `attached-to` edges
+/// The attachments among `ids` and among the from items of `attached-to` edges
 /// to `ids`: those a change to the rows or edges of `ids` can make or end.
 fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachment>, CoreError> {
     if ids.is_empty() {
@@ -3280,7 +3280,7 @@ fn attachments_where(
     Ok(found)
 }
 
-/// How many sources of `attached-to` edges to items the copy holds out of
+/// How many from items of `attached-to` edges to items the copy holds out of
 /// the bin the copy holds no row of.
 pub fn attachments_not_in_copy(conn: &Connection) -> Result<u64, CoreError> {
     let outside: i64 = conn.query_row(
@@ -4242,8 +4242,8 @@ pub(crate) struct NamingHost {
     pub properties: Map<String, Value>,
 }
 
-/// The target of the oldest edge of a `with-hosts` type or of `excerpt-of`
-/// that `id` draws, by `created_at` and then id, among the targets the copy
+/// The to item of the oldest edge of a `with-hosts` type or of `excerpt-of`
+/// that `id` draws, by `created_at` and then id, among the to items the copy
 /// holds out of the bin. The mode is read from the held catalog, so a
 /// registered type counts.
 pub(crate) fn naming_host(conn: &Connection, id: &str) -> Result<Option<NamingHost>, CoreError> {
@@ -4559,7 +4559,7 @@ pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     forget_marks_of_the_walk(conn)
 }
 
-/// The ids a waiting write names: as its item or its target, or as an end
+/// The ids a waiting write names: as its item or its to item, or as an end
 /// of the edge it writes, whether the ends it was queued with, those a move
 /// in its payload names or those of the edge the copy shows. The one rule a
 /// copy keeps rows by for its waiting writes, whatever lets rows go.

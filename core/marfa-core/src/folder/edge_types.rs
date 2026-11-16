@@ -66,7 +66,7 @@ impl EdgeTypes {
     }
 }
 
-/// The targets a line names, once each whatever their case or form; unquoted
+/// The items a line names, once each whatever their case or form; unquoted
 /// `[[name]]` is YAML for a list inside a list.
 pub(crate) fn typed(value: &Value) -> Result<Vec<Typed>, String> {
     let named: Vec<&Value> = match value {

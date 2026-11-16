@@ -397,7 +397,7 @@ impl Graph for HeldEdges<'_> {
 }
 
 /// Refuses an edge the server would refuse for its ends: an end in the bin,
-/// an end of a type the edge type does not admit, then a source a flat edge
+/// an end of a type the edge type does not admit, then a from item a flat edge
 /// type does not take.
 fn refuse_unfitting_ends(
     conn: &Connection,

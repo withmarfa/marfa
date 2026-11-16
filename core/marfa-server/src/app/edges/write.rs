@@ -40,7 +40,7 @@ pub struct Writing<'a, 't, 'c> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum By {
     Caller,
-    /// Whether the source goes to the bin with a binned host is judged once every listed edge
+    /// Whether the from item goes to the bin with a binned host is judged once every listed edge
     /// stands, so listing order decides nothing. What reads only the edge and its ends was judged
     /// by [`inline_gates`], before the item's version.
     Inline,
@@ -98,14 +98,14 @@ impl Wrote {
     }
 }
 
-pub(crate) fn source_missing(id: &str) -> Refusal {
+pub(crate) fn from_missing(id: &str) -> Refusal {
     Refusal::new(
         Code::ItemNotFound,
         format!("Edge from item not found: {id}"),
     )
 }
 
-pub(crate) fn target_missing(id: &str) -> Refusal {
+pub(crate) fn to_missing(id: &str) -> Refusal {
     Refusal::new(Code::ItemNotFound, format!("Edge to item not found: {id}"))
 }
 
@@ -266,22 +266,22 @@ impl<'c> Writing<'_, '_, 'c> {
         self.caller().require_type(&row.type_id, Level::Write)
     }
 
-    pub(super) fn source_row(&self, id: &str) -> Result<Item> {
+    pub(super) fn row_as_from(&self, id: &str) -> Result<Item> {
         self.note(Need::Reach);
         self.caller().require_reach()?;
         items::row(self.tx(), id)?
             .filter(|row| row.state != "trashed" && self.caller().may_read_type(&row.type_id))
-            .ok_or_else(|| source_missing(id))
+            .ok_or_else(|| from_missing(id))
     }
 
     /// A row in the bin takes only a part arriving late.
-    fn target_row(&self, kind: &EdgeType, id: &str) -> Result<Item> {
+    fn row_as_to(&self, kind: &EdgeType, id: &str) -> Result<Item> {
         let row = items::row(self.tx(), id)?
             .filter(|row| self.caller().may_read_type(&row.type_id))
-            .ok_or_else(|| target_missing(id))?;
+            .ok_or_else(|| to_missing(id))?;
         let parts = OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::WithHosts;
         if row.state == "trashed" && !parts {
-            return Err(target_missing(id));
+            return Err(to_missing(id));
         }
         self.note(Need::Item {
             id: row.id.clone(),
@@ -368,12 +368,12 @@ impl<'c> Writing<'_, '_, 'c> {
             return Err(self_loop(kind));
         }
         self.judge_properties(kind, properties, by)?;
-        let target = self.target_row(kind, to_id)?;
+        let target = self.row_as_to(kind, to_id)?;
         self.judge_cascade(kind, &target)?;
         self.judge_ends(kind, source, &target)
     }
 
-    /// An edge that cascades asks for write on its target's type.
+    /// An edge that cascades asks for write on its to item's type.
     fn judge_cascade(&self, kind: &EdgeType, target: &Item) -> Result<()> {
         if OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::Cascade {
             self.note(Need::CascadeTo {
@@ -471,7 +471,7 @@ impl<'c> Writing<'_, '_, 'c> {
                 check_id("id", id)?;
             }
         }
-        let source = self.source_row(&create.from_id)?;
+        let source = self.row_as_from(&create.from_id)?;
         if by != By::Link {
             self.require_row_write(&source)?;
             self.require_edge_write(&create.edge_type)?;
@@ -713,15 +713,15 @@ impl<'c> Writing<'_, '_, 'c> {
         if update.version != edge.version {
             return Err(stale(&edge, update.version)?);
         }
-        let new_source = update.from_id.filter(|id| *id != edge.from_id);
-        let new_target = update.to_id.filter(|id| *id != edge.to_id);
-        if let Some(id) = &new_source {
+        let new_from = update.from_id.filter(|id| *id != edge.from_id);
+        let new_to = update.to_id.filter(|id| *id != edge.to_id);
+        if let Some(id) = &new_from {
             check_id("from_id", id)?;
         }
-        if let Some(id) = &new_target {
+        if let Some(id) = &new_to {
             check_id("to_id", id)?;
         }
-        if new_source.is_some() && new_target.is_some() {
+        if new_from.is_some() && new_to.is_some() {
             return Err(at_path(
                 "from_id",
                 "An update moves one end of an edge at a time; delete it and create the edge wanted"
@@ -729,10 +729,10 @@ impl<'c> Writing<'_, '_, 'c> {
             ));
         }
         let kind = self.catalog.edge_kind(&edge.edge_type);
-        let moved = new_source.is_some() || new_target.is_some();
+        let moved = new_from.is_some() || new_to.is_some();
         if moved {
             let kind = kind.ok_or_else(|| unknown_kind(&edge.edge_type))?;
-            let (field, kept) = if new_source.is_some() {
+            let (field, kept) = if new_from.is_some() {
                 ("from_id", End::To)
             } else {
                 ("to_id", End::From)
@@ -748,16 +748,16 @@ impl<'c> Writing<'_, '_, 'c> {
             }
         }
         let mut stands = source;
-        if let Some(id) = &new_source {
-            stands = self.source_row(id)?;
+        if let Some(id) = &new_from {
+            stands = self.row_as_from(id)?;
             self.require_row_write(&stands)?;
         }
-        let to_id = new_target.as_deref().unwrap_or(&edge.to_id).to_string();
+        let to_id = new_to.as_deref().unwrap_or(&edge.to_id).to_string();
         if let (true, Some(kind)) = (moved, kind) {
             if stands.state == "trashed" {
-                return Err(source_missing(&stands.id));
+                return Err(from_missing(&stands.id));
             }
-            self.target_row(kind, &to_id)?;
+            self.row_as_to(kind, &to_id)?;
         } else if update.properties.is_none() {
             return Err(Refusal::new(
                 Code::MissingRequiredField,
@@ -797,7 +797,7 @@ impl<'c> Writing<'_, '_, 'c> {
             },
         )?;
         decided.apply(self.tx(), Referencing::Edge(written.seq))?;
-        if new_source.is_some() {
+        if new_from.is_some() {
             instance::raise_reach(self.tx())?;
         }
         announce(self.unit, "edge.updated", &written, &stands, None)?;
@@ -1068,13 +1068,13 @@ pub(crate) fn inline_gates(
     let mut ends = Vec::new();
     for (kind, new, kept) in &named {
         for target in new {
-            ends.push((*kind, writing.target_row(kind, target)?));
+            ends.push((*kind, writing.row_as_to(kind, target)?));
         }
         for target in kept {
             let readable = items::row(writing.tx(), target)?
                 .is_some_and(|row| writing.caller().may_read_type(&row.type_id));
             if !readable {
-                return Err(target_missing(target));
+                return Err(to_missing(target));
             }
         }
     }

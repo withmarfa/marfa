@@ -128,7 +128,7 @@ pub enum ItemsCommand {
     /// item for them.
     Add(AddArgs),
     /// Attach a file: upload its bytes, create a file item for them, and link
-    /// it to the target with an `attached-to` edge.
+    /// it to the item with an `attached-to` edge.
     Attach(AttachArgs),
     /// Item counts, by state, by type or by source.
     Stats {

@@ -1018,7 +1018,7 @@ fn alone(
     Ok(None)
 }
 
-/// The edge as the source item's first page of its edges of the type holds
+/// The edge as its from item's first page of its edges of the type holds
 /// it, which the read asked for.
 fn edge_in(
     item: &serde_json::Value,

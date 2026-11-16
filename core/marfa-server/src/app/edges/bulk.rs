@@ -60,13 +60,13 @@ impl Writing<'_, '_, '_> {
 
     fn entry(&self, entry: Entry, create_only: bool) -> Result<Entered> {
         self.entry_gates(&entry)?;
-        let source = self.source_row(&entry.from_id)?;
+        let source = self.row_as_from(&entry.from_id)?;
         self.require_row_write(&source)?;
         self.require_edge_write(&entry.edge_type)?;
         let reachable = items::row(self.unit.tx(), &entry.to_id)?
             .is_some_and(|row| self.unit.caller.may_read_type(&row.type_id));
         if !reachable {
-            return Err(edges::target_missing(&entry.to_id));
+            return Err(edges::to_missing(&entry.to_id));
         }
         self.note(Need::Reach);
         if let Some(id) = &entry.id

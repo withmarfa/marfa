@@ -874,7 +874,7 @@ marfa items add [OPTIONS] <FILE>
 
 ### marfa items attach
 
-Attach a file: upload its bytes, create a file item for them, and link it to the target with an `attached-to` edge.
+Attach a file: upload its bytes, create a file item for them, and link it to the item with an `attached-to` edge.
 
 ```text
 marfa items attach [OPTIONS] <ID> <FILE>

@@ -199,7 +199,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 ));
             }
             let built = edge_type_from_request(&body, &taken).map_err(refusal_of)?;
-            require_stored_targets(unit, &id, &built)?;
+            require_stored_to_items(unit, &id, &built)?;
             unit.tx().execute(
                 "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
@@ -223,7 +223,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
 
 /// A type that cascades asks of each stored to item what writing such an edge asks. The
 /// refusal names no type, since the to item can be one the caller cannot read.
-fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
+fn require_stored_to_items(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
     if text_of(built, "cascade_on_delete") != Some("cascade") {
         return Ok(());
     }
