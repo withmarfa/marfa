@@ -10817,7 +10817,10 @@ mod tests {
             reason.contains("1 write of kind replace_metadata, which this build cannot send"),
             "{reason}"
         );
-        assert!(reason.contains("schema version 4"), "{reason}");
+        assert!(
+            reason.contains(&format!("schema version {}", SCHEMA_VERSION - 1)),
+            "{reason}"
+        );
         assert_eq!(unsent, Some(1));
         let conn = Connection::open(&path).unwrap();
         assert_eq!(
@@ -10835,7 +10838,7 @@ mod tests {
         "2d4e4e1e76ec61dc",
         "c2b64b3a6428a46c",
         "e5029183e86b7c37",
-        "0000000000000000",
+        "195bcf17d74301ef",
     ];
 
     #[test]

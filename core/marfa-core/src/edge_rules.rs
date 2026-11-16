@@ -215,8 +215,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
         }
         let part = |held: &str| copy.on_delete(held) == OnDelete::WithHosts;
         if part(edge.edge_type) && edges::closes_cycle(&copy, &proposed, part)? {
-            let cycle =
-                edges::refused_parts_cycle(edge.edge_type, edge.from.id(), edge.to_id);
+            let cycle = edges::refused_parts_cycle(edge.edge_type, edge.from.id(), edge.to_id);
             return Err(CoreError::Validation {
                 server: None,
                 code: "edge_cycle".into(),
@@ -1998,10 +1997,10 @@ mod tests {
                 "a move of a's host onto c, which a already hosts"
             ),
             json!({
-                "edge_type": "mock.moving-part",
-                "from_id": NOTE_A,
-                "to_id": NOTE_C,
-                }),
+            "edge_type": "mock.moving-part",
+            "from_id": NOTE_A,
+            "to_id": NOTE_C,
+            }),
         );
         assert_eq!(queued(&core), before, "a refused move was queued");
     }
