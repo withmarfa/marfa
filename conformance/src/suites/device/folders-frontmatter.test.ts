@@ -3129,7 +3129,7 @@ describe("embedded files", () => {
           "UPDATE folder_files SET links = '[]', embeds = NULL, edge_lines = ? WHERE path = 'Note.md'",
         ).run(
           JSON.stringify([
-            { edge_type: "attached-to", end: "target", other: pic },
+            { edge_type: "attached-to", end: "to", other: pic },
           ]),
         );
         db.prepare(

@@ -302,7 +302,7 @@ it("reads the server's catalog before its first hydration, leaving the copy's ow
   );
   expect([parent?.reverse_name, parent?.written_from]).toEqual([
     "child-of",
-    "target",
+    "to",
   ]);
   // The copy still holds what it held: the shipped and declared types, no
   // server catalog and no hydration.
