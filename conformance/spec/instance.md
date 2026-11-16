@@ -2963,7 +2963,7 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or turn reporting from off to on without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
 
-**Reason:** validation includes the defaults exposed by clearing a stored setting. The receivers' addresses and credentials are start-only settings.
+**Reason:** validation includes the defaults exposed by clearing a stored setting. A receiver is `heartbeat_url` for the heartbeat, and `error_webhook_url` or an exception receiver set where Marfa runs for error reporting.
 
 **Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the default`, `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
 
