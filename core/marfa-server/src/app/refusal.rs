@@ -115,6 +115,8 @@ codes! {
     TypeMismatch = "type_mismatch", 409;
     TypeMoveBlocked = "type_move_blocked", 409;
     UndoConflict = "undo_conflict", 409;
+    UpdateNotReady = "update_not_ready", 409;
+    UpdateUnavailable = "update_unavailable", 409;
     VersionConflict = "version_conflict", 409;
     ContractMismatch = "contract_mismatch", 412;
     RequestTooLarge = "request_too_large", 413;

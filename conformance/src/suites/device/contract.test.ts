@@ -1174,6 +1174,8 @@ const invocations: Record<string, () => string[]> = {
   "blobs orphans": () => [],
   "housekeeping list": () => [],
   "housekeeping run": () => ["heartbeat"],
+  "update status": () => [],
+  "update start": () => [],
   "connectors register": () => ["--name", "n"],
   "connectors list": () => [],
   "connectors get": () => [ID],

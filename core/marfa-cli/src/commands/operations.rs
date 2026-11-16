@@ -119,6 +119,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listAttention", "attention"),
     reached("listHousekeeping", "housekeeping list"),
     reached("runHousekeeping", "housekeeping run"),
+    reached("getUpdate", "update status"),
+    reached("startUpdate", "update start"),
     reached("registerConnector", "connectors register"),
     reached("listConnectors", "connectors list"),
     reached("getConnector", "connectors get"),

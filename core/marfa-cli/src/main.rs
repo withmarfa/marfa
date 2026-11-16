@@ -37,8 +37,8 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crate::commands::{
     apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
     export, extensions, housekeeping, items, keys, login, logout, metrics, operations, overview,
-    owner, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types, views,
-    webhooks, whoami,
+    owner, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types, update,
+    views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -341,6 +341,11 @@ enum Command {
     Housekeeping {
         #[command(subcommand)]
         command: housekeeping::HousekeepingCommand,
+    },
+    /// Whether a newer release is ready, and updating the server to it.
+    Update {
+        #[command(subcommand)]
+        command: update::UpdateCommand,
     },
     /// Programs outside the server that register under a key of their own:
     /// registered, heard from, and reporting their runs. A key registers
@@ -735,6 +740,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Events(args) => events::run(args, &remote()?, &out),
         Command::Attention => attention::run(&remote()?, &out),
         Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
+        Command::Update { command } => update::run(command, &remote()?, &out),
         Command::Connectors { command } => connectors::run(command, &remote()?, &out),
     }
     .map(|()| Exit::Done)

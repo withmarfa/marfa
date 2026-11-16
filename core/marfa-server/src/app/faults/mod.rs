@@ -80,6 +80,16 @@ pub struct Resolved {
     pub reached: Vec<std::net::IpAddr>,
 }
 
+/// Where the release check asks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReleaseFeed {
+    Public,
+    /// A build with test hooks asks nobody until a fault names an address.
+    Nowhere,
+    /// The address a fault names, which may be on this machine.
+    At(String),
+}
+
 /// What a blob fault makes the disk store read of a blob it names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lie {

@@ -22,7 +22,7 @@ use rusqlite::Transaction;
 use tokio::sync::watch;
 
 pub use hold::{Holding, Permit};
-pub use open::{Lock, Options};
+pub use open::{Inspection, Lock, Options, inspect};
 pub use writer::{Pulse, Watcher};
 
 use crate::app::clock::Clock;

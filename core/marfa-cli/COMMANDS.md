@@ -2527,6 +2527,32 @@ Take the server's clock as right (private socket required). While the clock read
 marfa housekeeping confirm-clock [OPTIONS]
 ```
 
+## update
+
+Whether a newer release is ready, and updating the server to it.
+
+### marfa update
+
+```text
+marfa update [OPTIONS] <COMMAND>
+```
+
+### marfa update status
+
+The release the server runs, the newest release it found and when, and whether and how it can be updated. Requires `instance.read`.
+
+```text
+marfa update status [OPTIONS]
+```
+
+### marfa update start
+
+Have the server update itself to the newest release it found, where it runs as the service `marfa server install` set up. Elsewhere it changes nothing and says the step to take on the host. Requires `instance.maintain`.
+
+```text
+marfa update start [OPTIONS]
+```
+
 ## connectors
 
 Programs outside the server that register under a key of their own: registered, heard from, and reporting their runs. A key registers itself; `connectors.manage` sees every registration and may remove one.
