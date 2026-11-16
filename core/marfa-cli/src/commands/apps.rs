@@ -22,7 +22,7 @@ pub enum AppsCommand {
         clear: bool,
     },
     /// End an app's grant. Requires grants.manage or private machine authority.
-    Disconnect {
+    Revoke {
         /// The app grant's ID.
         id: String,
         /// Also revoke every key the app minted, and every key those keys
@@ -40,7 +40,7 @@ pub fn narrow_request(id: &str, scopes: &[String], expected: &Value) -> Request 
     Request::patch(&["grants", id]).json(json!({ "scopes": scopes, "expected_scopes": expected }))
 }
 
-pub fn disconnect_request(id: &str, revoke_keys: bool) -> Request {
+pub fn revoke_request(id: &str, revoke_keys: bool) -> Request {
     Request::delete(&["grants", id]).query_flag("revoke_keys", revoke_keys)
 }
 
@@ -62,9 +62,9 @@ pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), C
             let answer = remote.json(&narrow_request(&id, &scope, &expected))?;
             out.report(&answer, |_| format!("narrowed the app {id}"))
         }
-        AppsCommand::Disconnect { id, revoke_keys } => {
-            let answer = remote.json(&disconnect_request(&id, revoke_keys))?;
-            out.report(&answer, |_| format!("disconnected the app {id}"))
+        AppsCommand::Revoke { id, revoke_keys } => {
+            let answer = remote.json(&revoke_request(&id, revoke_keys))?;
+            out.report(&answer, |_| format!("revoked the app {id}"))
         }
     }
 }

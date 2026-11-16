@@ -19,22 +19,22 @@ pub struct ProfileUpdateArgs {
     /// The owner's new display name.
     #[arg(long)]
     name: Option<String>,
-    /// A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes.
+    /// A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes.
     #[arg(long, value_name = "FILE", conflicts_with = "clear_avatar")]
     avatar: Option<PathBuf>,
-    /// Remove the owner's picture.
+    /// Remove the owner's avatar.
     #[arg(long)]
     clear_avatar: bool,
 }
 
-/// The largest picture the server accepts, so a larger file is refused here
+/// The largest avatar the server accepts, so a larger file is refused here
 /// before the upload starts and the server's reply is cut off.
-const PICTURE_LIMIT_BYTES: u64 = 2 * 1024 * 1024;
+const AVATAR_LIMIT_BYTES: u64 = 2 * 1024 * 1024;
 
-/// The request that stores the picture in `file`, built only once the file
+/// The request that stores the avatar in `file`, built only once the file
 /// opens, is a regular file and fits the limit, so a bad path fails before
 /// anything is sent.
-pub(super) fn picture_request(door: &[&str], file: &Path) -> Result<Request, CliError> {
+pub(super) fn avatar_request(door: &[&str], file: &Path) -> Result<Request, CliError> {
     let unreadable = |reason: &dyn std::fmt::Display| {
         CliError::Invalid(format!("cannot read {}: {reason}", file.display()))
     };
@@ -44,9 +44,9 @@ pub(super) fn picture_request(door: &[&str], file: &Path) -> Result<Request, Cli
     if !metadata.is_file() {
         return Err(unreadable(&"not a file"));
     }
-    if metadata.len() > PICTURE_LIMIT_BYTES {
+    if metadata.len() > AVATAR_LIMIT_BYTES {
         return Err(CliError::Invalid(format!(
-            "{} is over 2 MiB; use a picture of 2 MiB or less",
+            "{} is over 2 MiB; use an avatar of 2 MiB or less",
             file.display()
         )));
     }
@@ -57,8 +57,8 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
     match command {
         ProfileCommand::Show => out.value(&remote.json(&Request::get(&["profile"]))?),
         ProfileCommand::Update(args) => {
-            let picture = match &args.avatar {
-                Some(file) => Some(picture_request(&["profile", "avatar"], file)?),
+            let avatar = match &args.avatar {
+                Some(file) => Some(avatar_request(&["profile", "avatar"], file)?),
                 None => None,
             };
             let mut body = Map::new();
@@ -68,10 +68,10 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
             if args.clear_avatar {
                 body.insert("avatar".into(), Value::Null);
             }
-            // The picture goes first: the server may refuse it, and a refusal
+            // The avatar goes first: the server may refuse it, and a refusal
             // then leaves the name as it was.
             let mut reply = None;
-            if let Some(request) = picture {
+            if let Some(request) = avatar {
                 reply = Some(remote.json(&request)?);
             }
             if !body.is_empty() {

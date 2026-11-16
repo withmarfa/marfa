@@ -306,8 +306,8 @@ it("lists a view's items in the order the server does, for each sort and query",
           "--offset",
           String(offset),
         ]),
-      ) as { items: Item[] };
-      local.push(...page.items.map((row) => row.id));
+      ) as { data: Item[] };
+      local.push(...page.data.map((row) => row.id));
     }
     expect(local, item.name).toEqual(remote);
   }

@@ -464,7 +464,7 @@ describe("a device filling a library of images", () => {
     const env: Environment = { url, key, store: join(work, `${name}.sqlite`) };
     const filled = await device(env, [
       "hydrate",
-      "--types",
+      "--type",
       type,
       "--tier",
       "library",

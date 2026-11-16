@@ -274,9 +274,9 @@ describe("a working copy answers the part term from what it holds", () => {
     const listed = await offline(started, async () => {
       const answer = value(
         await started.device.attempt(["items", "list", "--view", VIEW]),
-      ) as { completeness: string; items: Item[] };
+      ) as { completeness: string; data: Item[] };
       expect(answer.completeness).toBe("complete");
-      return answer.items.map((item) => item.id).sort();
+      return answer.data.map((item) => item.id).sort();
     });
     // The view asks for active notes, so the part on an archived host is
     // listed and the archived host is not.
@@ -284,9 +284,9 @@ describe("a working copy answers the part term from what it holds", () => {
     const counted = await offline(started, async () => {
       const answer = value(
         await started.device.attempt(["views", "groups", VIEW]),
-      ) as { completeness: string; groups: Array<{ count: number }> };
+      ) as { completeness: string; data: Array<{ count: number }> };
       expect(answer.completeness).toBe("complete");
-      return answer.groups;
+      return answer.data;
     });
     expect(counted).toEqual([{ key: null, count: PARTS.length }]);
   });

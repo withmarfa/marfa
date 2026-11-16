@@ -175,7 +175,7 @@ describe("folder title names and retried pulls", () => {
           },
         }),
       ).rejects.toThrow(
-        new RegExp(`${setting}.*${reason}.*marfa folders change`),
+        new RegExp(`${setting}.*${reason}.*marfa folders update`),
       );
     }
     folder = await folderHarness("contract-c-good-settings", {

@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand};
 use serde_json::{Map, Value, json};
 
-use super::insert_opt;
+use super::{PageArgs, insert_opt};
 use crate::access;
 use crate::error::CliError;
 use crate::output::{Printer, printable};
@@ -37,9 +37,8 @@ pub enum WebhooksCommand {
     Deliveries {
         /// The webhook id.
         id: String,
-        /// How many at most.
-        #[arg(long)]
-        limit: Option<u32>,
+        #[command(flatten)]
+        page: PageArgs,
     },
     /// Queue a failed delivery again using the subscription's current address.
     Redeliver {
@@ -52,9 +51,9 @@ pub enum WebhooksCommand {
 
 #[derive(Default, Args)]
 pub struct WebhookCreateArgs {
-    /// Where to deliver. Named `--to` rather than `--url`, which is the server.
-    #[arg(long = "to", value_name = "URL")]
-    pub to: String,
+    /// Where to deliver. Named `--delivery-url` because `--url` is the server.
+    #[arg(long, value_name = "URL")]
+    pub delivery_url: String,
     /// An event name from the vocabulary, repeatable; `*` is refused.
     #[arg(long = "event", value_name = "EVENT", required = true)]
     pub events: Vec<String>,
@@ -70,7 +69,7 @@ impl std::fmt::Debug for WebhookCreateArgs {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("WebhookCreateArgs")
-            .field("to", &self.to)
+            .field("delivery_url", &self.delivery_url)
             .field("events", &self.events)
             .field("type_filter", &self.type_filter)
             .finish_non_exhaustive()
@@ -81,9 +80,9 @@ impl std::fmt::Debug for WebhookCreateArgs {
 pub struct WebhookUpdateArgs {
     /// The webhook id.
     pub id: String,
-    /// Where to deliver. Named `--to` rather than `--url`, which is the server.
-    #[arg(long = "to", value_name = "URL")]
-    pub to: Option<String>,
+    /// Where to deliver. Named `--delivery-url` because `--url` is the server.
+    #[arg(long, value_name = "URL")]
+    pub delivery_url: Option<String>,
     /// The events, whole; repeatable.
     #[arg(long = "event", value_name = "EVENT")]
     pub events: Vec<String>,
@@ -100,7 +99,7 @@ pub struct WebhookUpdateArgs {
 
 pub fn create_request(args: &WebhookCreateArgs) -> Request {
     let mut body = Map::new();
-    body.insert("url".into(), Value::String(args.to.clone()));
+    body.insert("url".into(), Value::String(args.delivery_url.clone()));
     body.insert("events".into(), json!(args.events));
     insert_opt(&mut body, "type_filter", args.type_filter.clone());
     insert_opt(&mut body, "secret", args.secret.clone());
@@ -119,7 +118,7 @@ pub fn get_request(id: &str) -> Request {
 
 pub fn update_request(args: &WebhookUpdateArgs) -> Request {
     let mut body = Map::new();
-    insert_opt(&mut body, "url", args.to.clone());
+    insert_opt(&mut body, "url", args.delivery_url.clone());
     if !args.events.is_empty() {
         body.insert("events".into(), json!(args.events));
     }
@@ -137,9 +136,10 @@ pub fn delete_request(id: &str) -> Request {
     Request::delete(&["webhooks", id])
 }
 
-pub fn deliveries_request(id: &str, limit: Option<u32>) -> Request {
+pub fn deliveries_request(id: &str, page: &PageArgs) -> Request {
     Request::get(&["webhooks", id, "deliveries"])
-        .query_opt("limit", limit.map(|limit| limit.to_string()))
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
 }
 
 pub fn redeliver_request(id: &str, delivery_id: &str) -> Request {
@@ -153,10 +153,11 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
         WebhooksCommand::Get { id } => get_request(id),
         WebhooksCommand::Update(args) => update_request(args),
         WebhooksCommand::Delete { id } => delete_request(id),
-        WebhooksCommand::Deliveries { id, limit } => deliveries_request(id, *limit),
+        WebhooksCommand::Deliveries { id, page } => deliveries_request(id, page),
         WebhooksCommand::Redeliver { id, delivery_id } => redeliver_request(id, delivery_id),
     };
-    let answer = remote.json(&request)?;
+    let all = matches!(&command, WebhooksCommand::Deliveries { page, .. } if page.all);
+    let answer = remote.pages(&request, all)?;
     match &command {
         WebhooksCommand::Create(args) => out.report(&answer, |answer| created_text(answer, args)),
         WebhooksCommand::Update(_) => out.report(&answer, |answer| {
@@ -242,7 +243,7 @@ mod tests {
     #[test]
     fn no_debug_shows_the_secret() {
         let args = WebhookCreateArgs {
-            to: "https://receiver.example/hook".into(),
+            delivery_url: "https://receiver.example/hook".into(),
             secret: Some("whsec_PLAINTEXT".into()),
             ..Default::default()
         };

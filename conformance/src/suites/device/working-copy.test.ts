@@ -1678,7 +1678,7 @@ describe("the working copy belongs to one server", () => {
     // The helper starts first and waits for saves. `changes` opens to read
     // whether or not it is told to, so it starts here without `--reader`,
     // and the app starting after it is the writer all the same.
-    const reader = harness.device.hold(["changes", "--for", "20"]);
+    const reader = harness.device.hold(["changes", "--for-seconds", "20"]);
     const pause = (ms: number) =>
       new Promise((resolve) => setTimeout(resolve, ms));
     try {
@@ -1766,7 +1766,7 @@ describe("the working copy belongs to one server", () => {
     ).toBe(130);
 
     // The witness: the same helper, left alone until its time is up, ends 0.
-    const timed = harness.device.hold(["changes", "--for", "1"]);
+    const timed = harness.device.hold(["changes", "--for-seconds", "1"]);
     try {
       await timed.exited();
     } finally {
@@ -3055,7 +3055,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
     // this one did not. Hydrating proves the request asked for every state;
     // it does not prove the item landed. Without this, a device that dropped
     // trashed items on ingest would pass this case while having lost the item
-    // from `--all-states` reads and from what a catch-up prunes against.
+    // from `--state any` reads and from what a catch-up prunes against.
     expect(
       await heldIds(),
       "the copy does not hold the binned item at all, so the absence below is an item that never arrived rather than one the read refuses",

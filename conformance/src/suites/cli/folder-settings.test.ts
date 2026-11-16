@@ -58,7 +58,7 @@ describe("a folder's settings from the terminal", () => {
 
     const changed = await c.cli.json<Folder>([
       "folders",
-      "change",
+      "update",
       created.item.id,
       "--version",
       "1",
@@ -70,7 +70,7 @@ describe("a folder's settings from the terminal", () => {
 
     const stale = await c.cli.refused([
       "folders",
-      "change",
+      "update",
       created.item.id,
       "--version",
       "1",

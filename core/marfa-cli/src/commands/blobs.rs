@@ -36,8 +36,8 @@ pub enum BlobsCommand {
         /// The blob hash, `sha256:<hex>`.
         hash: String,
         /// How long the link lives, in seconds.
-        #[arg(long)]
-        ttl: Option<u64>,
+        #[arg(long = "ttl-seconds", value_name = "SECONDS")]
+        ttl_seconds: Option<u64>,
     },
     /// Every store the instance has attached, and the copies a blob keeps
     /// at the least. Requires `instance.read`.
@@ -198,7 +198,9 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             }
             Ok(())
         }
-        BlobsCommand::Url { hash, ttl } => out.value(&remote.json(&url_request(&hash, ttl))?),
+        BlobsCommand::Url { hash, ttl_seconds } => {
+            out.value(&remote.json(&url_request(&hash, ttl_seconds))?)
+        }
         BlobsCommand::Stores => out.value(&remote.json(&stores_request())?),
         BlobsCommand::Copies { hash } => out.value(&remote.json(&copies_request(&hash))?),
         BlobsCommand::DeleteCopy { hash, store } => {

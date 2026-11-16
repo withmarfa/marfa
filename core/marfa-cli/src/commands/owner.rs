@@ -17,11 +17,11 @@ pub enum OwnerCommand {
     },
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
-    /// Change the owner's email, display name, or picture (private socket required).
+    /// Change the owner's email, display name, or avatar (private socket required).
     Update(OwnerUpdateArgs),
-    /// Fetch the owner's picture.
-    Picture {
-        /// Where to write the picture. Omitted, its bytes go to stdout.
+    /// Fetch the owner's avatar.
+    Avatar {
+        /// Where to write the avatar. Omitted, its bytes go to stdout.
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
@@ -36,10 +36,10 @@ pub struct OwnerUpdateArgs {
     /// The owner's display name.
     #[arg(long)]
     name: Option<String>,
-    /// A PNG, JPEG or WebP picture file of 2 MiB or less. The server decides the kind from the bytes.
+    /// A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes.
     #[arg(long, value_name = "FILE", conflicts_with = "clear_avatar")]
     avatar: Option<PathBuf>,
-    /// Remove the owner's picture.
+    /// Remove the owner's avatar.
     #[arg(long)]
     clear_avatar: bool,
 }
@@ -142,7 +142,7 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
     match command {
         OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
         OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
-        OwnerCommand::Picture { output } => {
+        OwnerCommand::Avatar { output } => {
             let (content_type, mut reader) =
                 remote.stream(&Request::get(&["owner", "avatar"]).streamed())?;
             let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
@@ -164,8 +164,8 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         OwnerCommand::Update(args) => {
             require_local(remote)?;
-            let picture = match &args.avatar {
-                Some(file) => Some(super::profile::picture_request(&["owner", "avatar"], file)?),
+            let avatar = match &args.avatar {
+                Some(file) => Some(super::profile::avatar_request(&["owner", "avatar"], file)?),
                 None => None,
             };
             let mut body = serde_json::Map::new();
@@ -178,10 +178,10 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
             if args.clear_avatar {
                 body.insert("avatar".into(), Value::Null);
             }
-            // The picture goes first: the server may refuse it, and a refusal
+            // The avatar goes first: the server may refuse it, and a refusal
             // then leaves the email and name as they were.
             let mut reply = None;
-            if let Some(request) = picture {
+            if let Some(request) = avatar {
                 reply = Some(remote.json(&request)?);
             }
             if !body.is_empty() {

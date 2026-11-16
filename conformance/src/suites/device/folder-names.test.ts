@@ -285,7 +285,7 @@ describe("a folder whose saved filter compares with null", () => {
     }
     expect(refused).toContain("query.filter");
     expect(refused).toContain("Null is not a value to compare with");
-    expect(refused).toContain("marfa folders change");
+    expect(refused).toContain("marfa folders update");
     await folder?.stop().catch(() => undefined);
     folder = undefined;
   });

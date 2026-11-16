@@ -92,7 +92,7 @@ If saved folder settings contain a refused default tag, a refused default proper
 
 ### `folder-setup/settings-name-guidance`
 
-If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST name the setting, explain the refusal and identify `marfa folders change` as the command that changes it.
+If saved folder settings contain a refused default tag, a refused default property name or a filter comparison with `null`, then a device MUST name the setting, explain the refusal and identify `marfa folders update` as the command that changes it.
 
 **Tests:** `device/folder-names.test.ts › says which setting, what is wrong with it and how to change it`, `device/folders-contract-c.test.ts › names each refused default and explains how to change it`.
 
@@ -762,13 +762,13 @@ If a settings-file edit names `search` or a query tier other than `library`, `fe
 
 ### `folder-setup/query-cli-flag`
 
-The CLI MUST take the folder query through `--query` on `marfa folders create` and `marfa folders change`.
+The CLI MUST take the folder query through `--query` on `marfa folders create` and `marfa folders update`.
 
 **Tests:** `device/folders-query.test.ts › names only --query in folders %s and refuses --search`.
 
 ### `folder-setup/query-cli-search-refused`
 
-If `marfa folders create` or `marfa folders change` names `--search`, then the CLI MUST refuse it as an unexpected argument.
+If `marfa folders create` or `marfa folders update` names `--search`, then the CLI MUST refuse it as an unexpected argument.
 
 **Tests:** `device/folders-query.test.ts › names only --query in folders %s and refuses --search`.
 

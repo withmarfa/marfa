@@ -34,8 +34,8 @@ afterAll(async () => {
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob",
   "POST /restore": "a gzip archive",
-  "PUT /owner/avatar": "the bytes of a picture",
-  "PUT /profile/avatar": "the bytes of a picture",
+  "PUT /owner/avatar": "the bytes of an avatar",
+  "PUT /profile/avatar": "the bytes of an avatar",
   "POST /oauth/token": "a form, as RFC 6749 defines",
   "POST /oauth/revoke": "a form, as RFC 7009 defines",
   "POST /oauth/device-authorization": "a form, as RFC 8628 defines",

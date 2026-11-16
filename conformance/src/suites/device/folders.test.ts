@@ -417,7 +417,7 @@ describe("what a folder is", () => {
       ["hydrate"],
       ["unmatched"],
       ["remove"],
-      ["watch", "--for", "1"],
+      ["watch", "--for-seconds", "1"],
     ]) {
       const [name, ...flags] = command;
       const ran = spawnSync(

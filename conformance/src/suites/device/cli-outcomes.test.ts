@@ -77,7 +77,7 @@ const drainOutcomes = [
 describe("CLI outcomes preserve the result", () => {
   it.each([
     ["--reader", "queue"],
-    ["changes", "--for", "0"],
+    ["changes", "--for-seconds", "0"],
   ])("reports an absent reading store: %j", async (...args) => {
     const store = newStore("absent-reader");
     const cli = new Cli(requireBinary(), "http://127.0.0.1:1", KEY);
@@ -165,7 +165,7 @@ describe("CLI outcomes preserve the result", () => {
       }
       const args =
         command === "events"
-          ? ["--json", "events", "--for", "5"]
+          ? ["--json", "events", "--for-seconds", "5"]
           : command === "catch-up"
             ? ["--json", "device", "--db", device.store, "catch-up"]
             : [
@@ -174,7 +174,7 @@ describe("CLI outcomes preserve the result", () => {
                 "--db",
                 device.store,
                 "hydrate",
-                "--types",
+                "--type",
                 "core.note",
                 "--tier",
                 "library",

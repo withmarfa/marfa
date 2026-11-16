@@ -62,9 +62,9 @@ async function addNotes(name: string): Promise<string> {
 }
 
 async function listed(): Promise<string[]> {
-  return (await c.cli.json<Array<{ dir: string }>>(["folders", "list"])).map(
-    (entry) => entry.dir,
-  );
+  return (
+    await c.cli.json<{ data: Array<{ dir: string }> }>(["folders", "list"])
+  ).data.map((entry) => entry.dir);
 }
 
 interface PushReport {
@@ -457,12 +457,11 @@ describe("a folder round trip", () => {
       "--yes",
     ]);
     expect(added.dir).toBe(resolved);
-    const listed = await c.cli.json<Array<{ dir: string; folder: string }>>([
-      "folders",
-      "list",
-    ]);
+    const listed = await c.cli.json<{
+      data: Array<{ dir: string; folder: string }>;
+    }>(["folders", "list"]);
     expect(
-      listed
+      listed.data
         .filter((entry) => entry.folder === settings.item.id)
         .map((entry) => entry.dir),
     ).toEqual([resolved]);
@@ -1197,7 +1196,13 @@ describe("a folder round trip", () => {
     );
     // The edit is sent as read at the version its file names, whether or
     // not the watch has caught up with the change made elsewhere by then.
-    const watched = await c.cli.run(["folders", "watch", dir, "--for", "8"]);
+    const watched = await c.cli.run([
+      "folders",
+      "watch",
+      dir,
+      "--for-seconds",
+      "8",
+    ]);
     expect(watched.code, watched.stderr).toBe(0);
     const copy = join(dir, `${title} (2).md`);
     expect(readFileSync(copy, "utf8")).toContain("Edited here");
@@ -1296,7 +1301,7 @@ describe("a folder round trip", () => {
     // in it. This is the success the exit-code scenario's unhydrated
     // refusal is held against.
     const store = join(dir, ".marfa", "core.sqlite");
-    const local = await c.cli.json<{ items: Array<{ id: string }> }>([
+    const local = await c.cli.json<{ data: Array<{ id: string }> }>([
       "device",
       "--db",
       store,
@@ -1305,7 +1310,7 @@ describe("a folder round trip", () => {
       "--type",
       "core.note",
     ]);
-    expect(local.items.map((row) => row.id)).toContain(seed.item.id);
+    expect(local.data.map((row) => row.id)).toContain(seed.item.id);
 
     const title = unique("cli-folder-note");
     writeFileSync(
@@ -1404,7 +1409,7 @@ describe("a folder round trip", () => {
     // through its stream, and the next new file takes it.
     await c.cli.json([
       "folders",
-      "change",
+      "update",
       settings.item.id,
       "--version",
       String(settings.item.version),
@@ -1629,7 +1634,7 @@ describe("a folder round trip", () => {
     trackItem(c.ctx, id);
     expect(await placedIn(id)).toEqual({ [bin.id]: "kept.md" });
 
-    await c.cli.json(["items", "delete", id]);
+    await c.cli.json(["items", "trash", id]);
     const trashed = await sync(bin.folder);
     expect(existsSync(join(bin.folder, "kept.md"))).toBe(false);
     expect(
@@ -1693,8 +1698,8 @@ describe("a folder round trip", () => {
     await sync(two.folder);
     expect(await placedIn(id)).toEqual({ [one.id]: name });
 
-    await c.cli.json(["items", "untag", id, "one"]);
-    await c.cli.json(["items", "tag", id, "two"]);
+    await c.cli.json(["items", "tags", "remove", id, "one"]);
+    await c.cli.json(["items", "tags", "add", id, "two"]);
     await sync(one.folder);
     expect(
       await placedIn(id),

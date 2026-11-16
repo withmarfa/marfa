@@ -329,8 +329,8 @@ async fn the_local_command_lists_and_acts_on_only_what_the_filter_admits() {
     let binned = instance.made(&shown, note(json!({}))).await;
     let kept_out = instance.made(&hidden, note(json!({}))).await;
     for id in [&binned, &kept_out] {
-        let path = format!("/items/summaries/{id}/trash?version=1");
-        let moved = instance.local(Method::POST, &path, None).await;
+        let path = format!("/items/{id}?version=1");
+        let moved = instance.local(Method::DELETE, &path, None).await;
         assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
     }
     let bin = instance.local(Method::GET, "/trash", None).await;
@@ -347,12 +347,12 @@ async fn the_local_command_lists_and_acts_on_only_what_the_filter_admits() {
     assert_eq!(bin.sources(), ["shown"], "{}", bin.text);
 
     let version = bin.body["data"][0]["version"].as_i64().unwrap();
-    let path = format!("/items/summaries/{binned}/restore?version={version}");
+    let path = format!("/items/{binned}/restore?version={version}");
     let admitted = instance.local(Method::POST, &path, None).await;
     assert_eq!(admitted.status, StatusCode::OK, "{}", admitted.text);
 
     for act in ["restore", "purge"] {
-        let path = format!("/items/summaries/{kept_out}/{act}?version={version}");
+        let path = format!("/items/{kept_out}/{act}?version={version}");
         let refused = instance.local(Method::POST, &path, None).await;
         assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
     }
@@ -366,8 +366,8 @@ async fn the_bin_states_the_retention_the_trash_purge_will_apply() {
     let instance = Instance::start().await;
     let key = instance.key("writer", json!({})).await;
     let id = instance.made(&key, note(json!({}))).await;
-    let path = format!("/items/summaries/{id}/trash?version=1");
-    let moved = instance.local(Method::POST, &path, None).await;
+    let path = format!("/items/{id}?version=1");
+    let moved = instance.local(Method::DELETE, &path, None).await;
     assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
 
     let bin = instance.local(Method::GET, "/trash", None).await;

@@ -17,7 +17,7 @@ pub enum ViewsCommand {
     /// Create a view, as a `system.view`.
     Create(CreateArgs),
     /// Change a view's settings, each named one replaced whole.
-    Change(ChangeArgs),
+    Update(UpdateArgs),
     /// Delete a view at once, with no bin.
     Delete {
         /// The view's `system.view` id.
@@ -123,7 +123,7 @@ pub struct CreateArgs {
 }
 
 #[derive(Debug, Default, Args)]
-pub struct ChangeArgs {
+pub struct UpdateArgs {
     /// The view's `system.view` id.
     pub id: String,
     /// The version the change was based on.
@@ -142,7 +142,7 @@ pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {
         .apply(Request::post(&["views"]).json(Value::Object(body))))
 }
 
-pub fn change_request(args: &ChangeArgs) -> Result<Request, CliError> {
+pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
     let mut body = args.settings.read()?;
     body.insert("version".into(), Value::from(args.version));
     Ok(args
@@ -167,7 +167,7 @@ pub fn items_request(id: &str, page: &PageArgs) -> Request {
 pub fn run(command: ViewsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         ViewsCommand::Create(args) => create_request(args)?,
-        ViewsCommand::Change(args) => change_request(args)?,
+        ViewsCommand::Update(args) => update_request(args)?,
         ViewsCommand::Delete { id, idempotency } => delete_request(id, idempotency),
         ViewsCommand::Items { id, page } => items_request(id, page),
         ViewsCommand::Get { id } => get_request(id),
@@ -183,8 +183,8 @@ pub fn run(command: ViewsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ViewsCommand::Create(_) => {
             out.report(&answer, |answer| super::said::item("created view", answer))
         }
-        ViewsCommand::Change(_) => {
-            out.report(&answer, |answer| super::said::item("changed view", answer))
+        ViewsCommand::Update(_) => {
+            out.report(&answer, |answer| super::said::item("updated view", answer))
         }
         ViewsCommand::Delete { id, .. } => out.report(&answer, |_| format!("removed view {id}")),
         _ => out.value(&answer),

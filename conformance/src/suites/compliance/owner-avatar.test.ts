@@ -19,13 +19,13 @@ import {
   pngPadded,
   svg,
   webp,
-} from "../../utils/pictures.js";
+} from "../../utils/avatars.js";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
 let server: FreshServer;
 beforeAll(async () => {
-  server = await bootFreshServer("owner-picture");
+  server = await bootFreshServer("owner-avatar");
   vi.stubEnv("MARFA_API_URL", server.apiUrl);
 }, FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {
@@ -134,8 +134,8 @@ async function keyWith(profile_permissions: Record<string, string>) {
   const made = await controlRequest(server.controlSocket, "/keys", {
     method: "POST",
     body: {
-      label: "Picture",
-      source: `picture-${Math.random().toString(36).slice(2, 10)}`,
+      label: "Avatar",
+      source: `avatar-${Math.random().toString(36).slice(2, 10)}`,
       profile_permissions,
     },
   });
@@ -149,7 +149,7 @@ async function refusal(res: Response) {
   return { status: res.status, code: body.error?.code, body };
 }
 
-/** Removes the picture, so the case that follows starts with none. */
+/** Removes the avatar, so the case that follows starts with none. */
 async function clear() {
   expect((await patchOwner({ avatar: null })).status).toBe(200);
 }
@@ -207,8 +207,8 @@ function sendChunked(
   });
 }
 
-describe("the owner's picture", () => {
-  it("stores a picture sent to the owner door and returns the owner", async () => {
+describe("the owner's avatar", () => {
+  it("stores an avatar sent to the owner door and returns the owner", async () => {
     const before = await ownerNow();
     expect(before.avatar).toBeNull();
     const file = png(16, 16);
@@ -224,7 +224,7 @@ describe("the owner's picture", () => {
     expect(await served()).toMatchObject({ status: 200, bytes: file });
   });
 
-  it("stores a picture sent through the private local command", async () => {
+  it("stores an avatar sent through the private local command", async () => {
     const file = png(12, 12, 0x20);
     const res = await controlRequest(server.controlSocket, "/owner/avatar", {
       method: "PUT",
@@ -235,7 +235,7 @@ describe("the owner's picture", () => {
     expect((await served()).bytes).toEqual(file);
   });
 
-  it("stores a picture sent to the profile door by a credential that may write the avatar", async () => {
+  it("stores an avatar sent to the profile door by a credential that may write the avatar", async () => {
     await clear();
     const file = png(10, 10, 0x40);
     const res = await putProfile(file);
@@ -285,17 +285,17 @@ describe("the owner's picture", () => {
     await clear();
     const kept = png(7, 7);
     expect((await putOwner(kept)).status).toBe(200);
-    const notPictures = [
+    const notAvatars = [
       ["html", html()],
       ["svg", svg()],
       ["gif", gif()],
       ["avif", avif()],
-      ["text", Buffer.from("hello, this is not a picture")],
+      ["text", Buffer.from("hello, this is not an avatar")],
     ] as const;
-    for (const [label, file] of notPictures) {
+    for (const [label, file] of notAvatars) {
       const claims = {
         "content-type": "image/png",
-        "content-disposition": 'attachment; filename="picture.png"',
+        "content-disposition": 'attachment; filename="avatar.png"',
       };
       for (const send of [
         () => putOwner(file, claims),
@@ -309,11 +309,11 @@ describe("the owner's picture", () => {
         await expectMatchesSchema("PUT", "/owner/avatar", 400, refused.body);
       }
     }
-    // The previous picture stands, and the same door took a real one.
+    // The previous avatar stands, and the same door took a real one.
     expect((await served()).bytes).toEqual(kept);
   });
 
-  it("refuses an empty body and a picture cut short, and keeps the previous one", async () => {
+  it("refuses an empty body and an avatar cut short, and keeps the previous one", async () => {
     const kept = png(6, 6);
     expect((await putOwner(kept)).status).toBe(200);
     const empty = await refusal(await putOwner(new Uint8Array()));
@@ -397,7 +397,7 @@ describe("the owner's picture", () => {
     }
   });
 
-  it("accepts a picture of exactly 2097152 bytes and refuses one byte more", async () => {
+  it("accepts an avatar of exactly 2097152 bytes and refuses one byte more", async () => {
     await clear();
     const atLimit = pngPadded(MAX_BYTES);
     expect(atLimit.length).toBe(MAX_BYTES);
@@ -412,7 +412,7 @@ describe("the owner's picture", () => {
       });
       await expectMatchesSchema("PUT", "/owner/avatar", 413, refused.body);
     }
-    // The refused ones left the stored picture as it was.
+    // The refused ones left the stored avatar as it was.
     expect((await served()).bytes.length).toBe(MAX_BYTES);
   });
 
@@ -440,10 +440,10 @@ describe("the owner's picture", () => {
     expect((await served()).bytes).toEqual(kept);
   });
 
-  it("keeps the previous picture when an upload is cut off, and replaces it when one finishes", async () => {
+  it("keeps the previous avatar when an upload is cut off, and replaces it when one finishes", async () => {
     const kept = png(14, 14, 0x11);
     expect((await putOwner(kept)).status).toBe(200);
-    // A whole picture, sent under a length that promises more: were the body
+    // A whole avatar, sent under a length that promises more: were the body
     // judged as it stood, the server would take it.
     const next = png(64, 64, 0x22);
     await new Promise<void>((resolve) => {
@@ -463,12 +463,12 @@ describe("the owner's picture", () => {
     });
     await new Promise((done) => setTimeout(done, 300));
     expect((await served()).bytes).toEqual(kept);
-    // The witness: the same picture sent whole replaces the old one.
+    // The witness: the same avatar sent whole replaces the old one.
     expect((await putOwner(next)).status).toBe(200);
     expect((await served()).bytes).toEqual(next);
   });
 
-  it("holds one picture, the last one stored", async () => {
+  it("holds one avatar, the last one stored", async () => {
     const files = [
       png(8, 8, 0x01),
       jpeg(9, 9),
@@ -483,7 +483,7 @@ describe("the owner's picture", () => {
     expect((await getAsOwner()).status).toBe(404);
   });
 
-  it("removes the picture through either PATCH door and leaves the other fields as they were", async () => {
+  it("removes the avatar through either PATCH door and leaves the other fields as they were", async () => {
     for (const door of ["owner", "profile"] as const) {
       expect((await putOwner(png(8, 8))).status, door).toBe(200);
       const before = await ownerNow();
@@ -517,13 +517,13 @@ describe("the owner's picture", () => {
     }
     expect(await ownerNow()).toEqual(before);
     expect((await served()).bytes).toEqual(kept);
-    // The witness: a name change alone is taken and leaves the picture.
+    // The witness: a name change alone is taken and leaves the avatar.
     expect((await patchOwner({ name: "Renamed" })).status).toBe(200);
     expect((await served()).bytes).toEqual(kept);
   });
 
-  it("gives an app that may read the avatar the picture's address at its profile, and null when there is none", async () => {
-    const readsPicture = await app("avatar");
+  it("gives an app that may read the avatar the avatar's address at its profile, and null when there is none", async () => {
+    const readsAvatar = await app("avatar");
     const readsName = await app("name");
     const profile = async (token: string) =>
       (await (
@@ -533,12 +533,12 @@ describe("the owner's picture", () => {
       ).json()) as Record<string, unknown>;
 
     expect((await putOwner(png(8, 8))).status).toBe(200);
-    expect(await profile(readsPicture.token)).toEqual({ avatar: address() });
+    expect(await profile(readsAvatar.token)).toEqual({ avatar: address() });
     // An app that did not ask for the avatar is not given it.
     expect(Object.hasOwn(await profile(readsName.token), "avatar")).toBe(false);
 
     await clear();
-    expect(await profile(readsPicture.token)).toEqual({ avatar: null });
+    expect(await profile(readsAvatar.token)).toEqual({ avatar: null });
   });
 
   it("serves the stored bytes under the kind decided from them", async () => {
@@ -555,7 +555,7 @@ describe("the owner's picture", () => {
     }
   });
 
-  it("serves the picture with the headers that keep its bytes from running", async () => {
+  it("serves the avatar with the headers that keep its bytes from running", async () => {
     expect((await putOwner(png(8, 8))).status).toBe(200);
     const asKey = await getWithKey(server.workingKey);
     const asApp = await getWithKey((await app("avatar")).token);
@@ -566,14 +566,14 @@ describe("the owner's picture", () => {
         "sandbox; default-src 'none'",
       );
       expect(res.headers.get("content-disposition")).toBe(
-        'attachment; filename="picture"',
+        'attachment; filename="avatar"',
       );
       expect(res.headers.get("cache-control")).toBe("private, no-cache");
       await res.arrayBuffer();
     }
   });
 
-  it("answers 304 to a validator that still matches, and sends the picture when it does not", async () => {
+  it("answers 304 to a validator that still matches, and sends the avatar when it does not", async () => {
     const file = png(18, 18, 0x55);
     expect((await putOwner(file)).status).toBe(200);
     const first = await getAsOwner();
@@ -598,7 +598,7 @@ describe("the owner's picture", () => {
     expect(Buffer.from(await after.arrayBuffer())).toEqual(next);
   });
 
-  it("serves the picture only to the owner and to a credential that may read the avatar", async () => {
+  it("serves the avatar only to the owner and to a credential that may read the avatar", async () => {
     expect((await putOwner(png(8, 8))).status).toBe(200);
     // The admitted callers, so the refusals below are about the caller.
     expect((await getAsOwner()).status).toBe(200);
@@ -627,20 +627,20 @@ describe("the owner's picture", () => {
     expect(refused).toMatchObject({ status: 403, code: "forbidden" });
   });
 
-  it("answers 404 when there is no picture, and again after it is removed", async () => {
+  it("answers 404 when there is no avatar, and again after it is removed", async () => {
     await clear();
     const none = await refusal(await getAsOwner());
     expect(none).toMatchObject({ status: 404, code: "not_found" });
     await expectMatchesSchema("GET", "/owner/avatar", 404, none.body);
     expect((await getWithKey(server.workingKey)).status).toBe(404);
-    // The witness: with a picture the same door answers.
+    // The witness: with an avatar the same door answers.
     expect((await putOwner(png(8, 8))).status).toBe(200);
     expect((await getAsOwner()).status).toBe(200);
     await clear();
     expect((await getAsOwner()).status).toBe(404);
   });
 
-  it("refuses a picture from a caller the door does not admit, and keeps the previous one", async () => {
+  it("refuses an avatar from a caller the door does not admit, and keeps the previous one", async () => {
     const kept = png(8, 8, 0x77);
     expect((await putOwner(kept)).status).toBe(200);
     const next = png(9, 9, 0x78);

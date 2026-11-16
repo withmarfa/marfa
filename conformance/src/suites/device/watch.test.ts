@@ -45,7 +45,7 @@ async function watched(
   device: Harness["device"],
   seconds: number,
 ): Promise<Watched> {
-  const run = device.hold(["watch", "--for", String(seconds)]);
+  const run = device.hold(["watch", "--for-seconds", String(seconds)]);
   try {
     await run.exited();
   } finally {
@@ -192,7 +192,7 @@ describe("a watch", () => {
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
-    const run = device.hold(["watch", "--for", "20"]);
+    const run = device.hold(["watch", "--for-seconds", "20"]);
     try {
       await vi.waitFor(
         () => {
@@ -289,7 +289,7 @@ describe("a watch", () => {
 
     const reader = device
       .reopen({ reader: true })
-      .hold(["watch", "--for", "20"]);
+      .hold(["watch", "--for-seconds", "20"]);
     try {
       // The helper starts first; the app that writes starts after it.
       await new Promise((resolve) => setTimeout(resolve, 1_000));

@@ -229,7 +229,7 @@ pub struct InstallArgs {
     #[arg(long, conflicts_with = "autostart")]
     no_autostart: bool,
     /// How long to wait for the server to answer, in seconds.
-    #[arg(long, value_name = "SECONDS", default_value_t = 120)]
+    #[arg(long = "wait-seconds", value_name = "SECONDS", default_value_t = 120)]
     wait: u64,
     /// Ask nothing: use the flags and the defaults.
     #[arg(long, short = 'y')]
@@ -245,7 +245,7 @@ pub struct UpgradeArgs {
     #[arg(long, value_name = "VERSION")]
     release: Option<String>,
     /// How long to wait for the server to answer, in seconds.
-    #[arg(long, value_name = "SECONDS", default_value_t = 120)]
+    #[arg(long = "wait-seconds", value_name = "SECONDS", default_value_t = 120)]
     wait: u64,
 }
 
@@ -254,7 +254,7 @@ pub struct StartArgs {
     #[command(flatten)]
     dir: DirArgs,
     /// How long to wait for Docker's engine and then the server, in seconds.
-    #[arg(long, value_name = "SECONDS", default_value_t = 120)]
+    #[arg(long = "wait-seconds", value_name = "SECONDS", default_value_t = 120)]
     wait: u64,
 }
 

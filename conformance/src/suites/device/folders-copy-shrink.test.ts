@@ -1246,8 +1246,8 @@ describe("a saved view read from a narrowed copy", () => {
 
     const covered = value(
       await device.attempt(["items", "list", "--view", id(10)]),
-    ) as { items: Item[] };
-    expect(covered.items.map((item) => item.id)).toEqual([id(1)]);
+    ) as { data: Item[] };
+    expect(covered.data.map((item) => item.id)).toEqual([id(1)]);
 
     const other = await device.attempt(["items", "list", "--view", id(11)]);
     expect(other.ok, JSON.stringify(other)).toBe(false);
@@ -1293,8 +1293,8 @@ describe("a saved view read from a narrowed copy", () => {
 
     const covered = value(
       await device.attempt(["items", "list", "--view", id(10)]),
-    ) as { items: Item[] };
-    expect(covered.items.map((item) => item.id)).toEqual([id(2)]);
+    ) as { data: Item[] };
+    expect(covered.data.map((item) => item.id)).toEqual([id(2)]);
 
     const other = await device.attempt(["items", "list", "--view", id(11)]);
     expect(other.ok, JSON.stringify(other)).toBe(false);

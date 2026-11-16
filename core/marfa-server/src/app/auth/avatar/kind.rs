@@ -1,4 +1,4 @@
-//! A picture's kind and size, read from its marks alone: no pixel is ever decoded.
+//! An avatar's kind and size, read from its marks alone: no pixel is ever decoded.
 
 use crate::app::refusal::Refusal;
 
@@ -37,13 +37,13 @@ enum Fault {
 impl From<Fault> for Refusal {
     fn from(fault: Fault) -> Refusal {
         let message = match fault {
-            Fault::Unknown => "Use a PNG, JPEG or WebP picture.".to_string(),
-            Fault::Damaged => "The picture is cut short or damaged.".to_string(),
+            Fault::Unknown => "Use a PNG, JPEG or WebP avatar.".to_string(),
+            Fault::Damaged => "The avatar is cut short or damaged.".to_string(),
             Fault::Frame => {
                 "Only baseline, extended sequential and progressive JPEGs are taken.".to_string()
             }
             Fault::Side(width, height) => format!(
-                "The picture is {width} by {height} pixels; each side must be 1 to {MAX_SIDE}."
+                "The avatar is {width} by {height} pixels; each side must be 1 to {MAX_SIDE}."
             ),
         };
         Refusal::validation(message).with_detail("field", "body")
@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_what_is_not_a_picture() {
+    fn refuses_what_is_not_a_avatar() {
         for bytes in [
             &b""[..],
             b"GIF89a",

@@ -10,7 +10,7 @@ import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { HOUR_MS, movedClock, operatorOf } from "../../utils/moved-clock.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 import { DISK_ONLY } from "../../utils/own-blob-server.js";
-import { png } from "../../utils/pictures.js";
+import { png } from "../../utils/avatars.js";
 import { issuerOrigin, signIn } from "../../utils/signed-in.js";
 import {
   heldRequest,
@@ -340,12 +340,12 @@ describe("a credential whose authority changes while its body arrives", () => {
 });
 
 describe("a credential revoked while an upload streams in", () => {
-  it("is refused 401 and stores no picture when the key was revoked while a profile picture streamed in", async () => {
+  it("is refused 401 and stores no avatar when the key was revoked while a profile avatar streamed in", async () => {
     const minted = await controlRequest(server.controlSocket, "/keys", {
       method: "POST",
       body: {
-        label: "held-picture",
-        source: "public-body-held-picture",
+        label: "held-avatar",
+        source: "public-body-held-avatar",
         profile_permissions: { avatar: "write" },
       },
     });

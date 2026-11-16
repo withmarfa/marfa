@@ -44,25 +44,6 @@ impl ItemState {
     }
 }
 
-// The `At` suffix is the server's column names.
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum SortField {
-    CreatedAt,
-    UpdatedAt,
-    OccurredAt,
-}
-
-impl SortField {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SortField::CreatedAt => "created_at",
-            SortField::UpdatedAt => "updated_at",
-            SortField::OccurredAt => "occurred_at",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SortDirection {
     Asc,
@@ -108,16 +89,22 @@ impl From<ItemState> for marfa_core::ItemState {
     }
 }
 
-/// A sort field as typed on a device listing: the three times by their
-/// kebab names, or `properties.<name>`.
-pub fn parse_sort_field(text: &str) -> Result<marfa_core::SortField, String> {
+/// A sort field as typed on the command line: `created-at`, `updated-at`,
+/// `occurred-at`, `last-activity-at` or `properties.<name>`, the name kept as written.
+pub fn parse_sort_field(text: &str) -> Result<marfa_rules::query::SortField, String> {
+    use marfa_rules::query::SortField;
     match text {
-        "created-at" => Ok(marfa_core::SortField::CreatedAt),
-        "updated-at" => Ok(marfa_core::SortField::UpdatedAt),
-        "occurred-at" => Ok(marfa_core::SortField::OccurredAt),
-        other => other
-            .parse()
-            .map_err(|error: marfa_rules::RuleError| error.to_string()),
+        "created-at" => Ok(SortField::CreatedAt),
+        "updated-at" => Ok(SortField::UpdatedAt),
+        "occurred-at" => Ok(SortField::OccurredAt),
+        "last-activity-at" => Ok(SortField::LastActivityAt),
+        other => match other.strip_prefix("properties.") {
+            Some(name) => SortField::property(name).map_err(|error| error.to_string()),
+            None => Err(format!(
+                "`{other}` is not a sort: use `created-at`, `updated-at`, `occurred-at`, \
+                 `last-activity-at` or `properties.<field>`"
+            )),
+        },
     }
 }
 

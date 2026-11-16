@@ -7,7 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { png } from "../../utils/pictures.js";
+import { png } from "../../utils/avatars.js";
 import { Cli, requireBinary } from "./harness.js";
 
 let server: FreshServer;
@@ -80,21 +80,21 @@ it("ends every browser sign-in at once, sparing a named one and leaving apps and
   expect(ordinary.envelope.error.server?.status).toBeGreaterThanOrEqual(400);
 });
 
-it("clears the owner's picture", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "marfa-cli-owner-picture-"));
+it("clears the owner's avatar", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "marfa-cli-owner-avatar-"));
   try {
     const file = join(dir, "me.png");
     await writeFile(file, png(16, 16));
     const owner = () =>
       local.json<{ avatar: string | null }>(["owner", "show"]);
-    const pictured = await local.json<{ avatar: string | null }>([
+    const updated = await local.json<{ avatar: string | null }>([
       "owner",
       "update",
       "--avatar",
       file,
     ]);
-    expect(pictured.avatar).toMatch(/\/owner\/avatar$/);
-    expect((await owner()).avatar).toBe(pictured.avatar);
+    expect(updated.avatar).toMatch(/\/owner\/avatar$/);
+    expect((await owner()).avatar).toBe(updated.avatar);
 
     const cleared = await local.json<{ avatar: string | null }>([
       "owner",
@@ -105,7 +105,7 @@ it("clears the owner's picture", async () => {
     expect((await owner()).avatar).toBeNull();
     const gone = await local.refused([
       "owner",
-      "picture",
+      "avatar",
       "--output",
       join(dir, "gone.png"),
     ]);

@@ -468,7 +468,7 @@ describe("the contract the binary was built for", () => {
         "--key",
         KEY,
         "events",
-        "--for",
+        "--for-seconds",
         "1",
       ]);
     };
@@ -516,9 +516,9 @@ describe("the contract the binary was built for", () => {
         "--key",
         KEY,
         "events",
-        "--from",
+        "--cursor",
         "99",
-        "--for",
+        "--for-seconds",
         "5",
       ];
       const refused = await marfa(["--json", ...args]);
@@ -554,9 +554,9 @@ describe("the contract the binary was built for", () => {
         "--key",
         KEY,
         "events",
-        "--from",
+        "--cursor",
         "0",
-        "--for",
+        "--for-seconds",
         "1",
       ]);
       expect(read.code, read.stderr).toBe(0);
@@ -595,7 +595,7 @@ describe("the contract the binary was built for", () => {
         "--key",
         KEY,
         "events",
-        "--for",
+        "--for-seconds",
         "5",
       ];
       // The witness: the stream before its last frame is read to its end.
@@ -644,7 +644,7 @@ describe("the contract the binary was built for", () => {
         "--key",
         KEY,
         "events",
-        "--for",
+        "--for-seconds",
         "5",
       ]);
       expect(ended.code, ended.stderr).toBe(exit);
@@ -925,7 +925,7 @@ describe("the contract the binary was built for", () => {
         ["export"],
         ["events"],
         ["items", "list"],
-        ["items", "tag", ID, "kept"],
+        ["items", "tags", "add", ID, "kept"],
         [
           "items",
           "bulk-action",
@@ -960,7 +960,7 @@ describe("the contract the binary was built for", () => {
 const NEEDS_A_KEY =
   "this operation needs a key or a token, which --socket does not carry; run it without --socket";
 const WHAT_NEEDS_ONE =
-  "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items bin`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one";
+  "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items bin`, `items trash`, `items restore` and `items purge` of one item, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one";
 
 /**
  * A server on a Unix socket of its own. It serves a supplied JSON answer,
@@ -1069,16 +1069,16 @@ const invocations: Record<string, () => string[]> = {
   "items stats": () => [],
   "items get": () => [ID],
   "items update": () => ["--version", "1", "--properties", "{}", ID],
-  "items delete": () => [ID],
+  "items trash": () => [ID],
   "items restore": () => [ID],
   "items transition": () => ["--state", "archived", ID],
   "items versions": () => [ID],
-  "metadata replace": () => ["--tag", "t", ID],
-  "items tag": () => [ID, "t"],
+  "items tags replace": () => [ID, "t"],
+  "items tags add": () => [ID, "t"],
   "items purge": () => [ID],
-  "items untag": () => [ID, "t"],
+  "items tags remove": () => [ID, "t"],
   "items bulk": () => ["--file", fileOf("items.json", '{"items":[]}')],
-  "items bulk-action": () => ["tier", "--to", "feed", "--type", "core.note"],
+  "items bulk-action": () => ["tier", "feed", "--type", "core.note"],
   "items bulk-action job": () => [ID],
   "items bulk-action cancel": () => [ID],
   "items bulk-get": () => [ID],
@@ -1126,10 +1126,10 @@ const invocations: Record<string, () => string[]> = {
   "types clear-icon": () => ["user.t"],
   "sources list": () => [],
   "sources get": () => ["github"],
-  "sources set": () => ["--name", "GitHub", "github"],
+  "sources update": () => ["--name", "GitHub", "github"],
   search: () => ["q"],
   "items occurrences": () => ["--from", WHEN, "--to", LATER],
-  "metadata tags": () => [],
+  tags: () => [],
   "blobs upload": () => [fileOf("blob.txt", "bytes")],
   "blobs download": () => [HASH],
   "blobs url": () => [HASH],
@@ -1151,11 +1151,11 @@ const invocations: Record<string, () => string[]> = {
     "--query",
     '{"types":["core.note"]}',
   ],
-  "views change": () => [ID, "--version", "1", "--title", "Notes"],
+  "views update": () => [ID, "--version", "1", "--title", "Notes"],
   "views delete": () => [ID],
   "views items": () => [ID],
   "webhooks create": () => [
-    "--to",
+    "--delivery-url",
     "https://example.com/hook",
     "--event",
     "item.created",
@@ -1167,7 +1167,7 @@ const invocations: Record<string, () => string[]> = {
   "webhooks deliveries": () => [ID],
   "webhooks redeliver": () => [ID, ID],
   audit: () => [],
-  events: () => ["--for", "1"],
+  events: () => ["--for-seconds", "1"],
   "blobs stores": () => [],
   "blobs copies": () => [HASH],
   "blobs delete-copy": () => ["--store", "disk", HASH],
@@ -1204,16 +1204,16 @@ const invocations: Record<string, () => string[]> = {
   "connectors agreements lookup": () => [ID, ID],
   "connectors agreements list": () => ["--waiting", "true", ID],
   "folders create": () => ["--title", "t"],
-  "folders change": () => ["--version", "1", "--title", "t", ID],
+  "folders update": () => ["--version", "1", "--title", "t", ID],
   "folders revoke": () => [ID],
   "folders health": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
-  "owner picture": () => [],
+  "owner avatar": () => [],
   "profile show": () => [],
   "profile update": () => ["--name", "Profile"],
   "apps list": () => [],
-  "apps disconnect": () => [ID],
+  "apps revoke": () => [ID],
   "sign-ins list": () => [],
   "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],
@@ -1236,7 +1236,7 @@ function codeOf(stderr: string): string {
  */
 const beyondTheTable: Record<string, () => string[]> = {
   "views get": () => [ID],
-  // `sources clear` sends the update operation `sources set` is the entry for.
+  // `sources clear` sends the update operation `sources update` is the entry for.
   "sources clear": () => ["--name", "github"],
   // `sign-ins end-all` sends the list and end operations `sign-ins list` and `sign-ins end` are the entries for.
   "sign-ins end-all": () => [],
@@ -1251,16 +1251,13 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "apps narrow": () => [ID, "--scope", "core.note:read"],
   "items summaries": () => [],
   "items bin list": () => [],
-  "items bin move": () => [ID, "--version", "1"],
-  "items bin restore": () => [ID, "--version", "1"],
-  "items bin purge": () => [ID, "--version", "1"],
   "items bin empty": () => ["--confirm", "PURGE"],
   attention: () => [],
   "folders inventory": () => ["--limit", "1"],
   "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
   "owner passkeys list": () => [],
   "owner passkeys rename": () => [ID, "--name", "Studio"],
-  "owner passkeys remove": () => [ID],
+  "owner passkeys delete": () => [ID],
   "backups list": () => [],
   "backups run": () => [],
   "backups restore": () => [ID, BACKUP],
@@ -1384,7 +1381,7 @@ const BOUND_CORE_TABLE: Record<string, string> = {
 
 /**
  * The table's rows, one to a command: a command that sends more than one
- * request, such as `profile update` with a picture and a name, is the entry
+ * request, such as `profile update` with an avatar and a name, is the entry
  * of each operation it reaches, and is driven once.
  */
 /**
@@ -1405,7 +1402,9 @@ function commandsOf<Row extends { command: string }>(rows: Row[]): Row[] {
 /** Every command driven here, as the table names it and beyond it. */
 async function driven(): Promise<{ command: string }[]> {
   const outcome = await marfa(["--json", "operations"]);
-  const rows = commandsOf(JSON.parse(outcome.stdout) as { command: string }[]);
+  const rows = commandsOf(
+    (JSON.parse(outcome.stdout) as { data: { command: string }[] }).data,
+  );
   return [
     ...rows.filter(
       (row) =>
@@ -1434,10 +1433,11 @@ describe("every command holds the server to the contract", () => {
     const outcome = await marfa(["--json", "operations"]);
     expect(outcome.code, outcome.stderr).toBe(0);
     return commandsOf(
-      JSON.parse(outcome.stdout) as {
-        operation_id: string;
-        command: string;
-      }[],
+      (
+        JSON.parse(outcome.stdout) as {
+          data: { operation_id: string; command: string }[];
+        }
+      ).data,
     );
   }
 
@@ -1567,15 +1567,22 @@ describe("every command holds the server to the contract", () => {
 
   it("holds every bin command to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
-    const paths: Record<string, string> = {
-      "items bin list": "GET /trash",
-      "items bin move": `POST /items/summaries/${ID}/trash?version=1`,
-      "items bin restore": `POST /items/summaries/${ID}/restore?version=1`,
-      "items bin purge": `POST /items/summaries/${ID}/purge?version=1`,
-      "items bin empty": "POST /trash/empty",
+    const named = ["--version", "1"];
+    const paths: Record<string, [string, string[]]> = {
+      "items bin list": [
+        "GET /trash",
+        PRIVATE_SOCKET_TABLE["items bin list"]!(),
+      ],
+      "items trash": [`DELETE /items/${ID}?version=1`, [ID, ...named]],
+      "items restore": [`POST /items/${ID}/restore?version=1`, [ID, ...named]],
+      "items purge": [`POST /items/${ID}/purge?version=1`, [ID, ...named]],
+      "items bin empty": [
+        "POST /trash/empty",
+        PRIVATE_SOCKET_TABLE["items bin empty"]!(),
+      ],
     };
     try {
-      for (const [command, path] of Object.entries(paths)) {
+      for (const [command, [path, args]] of Object.entries(paths)) {
         for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
           socket.contract = contract;
           socket.asked = [];
@@ -1585,7 +1592,7 @@ describe("every command holds the server to the contract", () => {
             "--socket",
             socket.path,
             ...command.split(" "),
-            ...PRIVATE_SOCKET_TABLE[command]!(),
+            ...args,
           ]);
           expect(socket.asked, command).toEqual([path]);
           if (contract === BUILT_FOR)
@@ -1657,8 +1664,8 @@ describe("every command holds the server to the contract", () => {
         body: { id: ID, name: "Studio", created_at: WHEN, last_used_at: null },
       },
       {
-        command: "owner passkeys remove",
-        args: PRIVATE_SOCKET_TABLE["owner passkeys remove"]!(),
+        command: "owner passkeys delete",
+        args: PRIVATE_SOCKET_TABLE["owner passkeys delete"]!(),
         path: `DELETE /owner/passkeys/${ID}`,
         body: { ok: true },
       },
@@ -1883,8 +1890,8 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
-  it("holds the profile picture upload to the contract through its ordinary credential", async () => {
-    const picture = fileOf("profile-picture.png", "picture bytes");
+  it("holds the profile avatar upload to the contract through its ordinary credential", async () => {
+    const avatar = fileOf("profile-avatar.png", "avatar bytes");
     for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
       server = await ScriptedServer.start();
       server.contract = contract;
@@ -1902,14 +1909,14 @@ describe("every command holds the server to the contract", () => {
         "profile",
         "update",
         "--avatar",
-        picture,
+        avatar,
       ]);
       const label = `profile update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
       expect(sent(server), label).toEqual(["PUT /profile/avatar"]);
       expect(server.requests[0]?.headers.authorization, label).toBe(
         `Bearer ${KEY}`,
       );
-      expect(server.requests[0]?.body, label).toBe("picture bytes");
+      expect(server.requests[0]?.body, label).toBe("avatar bytes");
       if (contract === BUILT_FOR) {
         expect(outcome.code, label).toBe(0);
         expect(JSON.parse(outcome.stdout), label).toEqual({ ok: true });
@@ -1924,9 +1931,9 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
-  it("holds the owner picture upload to the contract through its private socket", async () => {
+  it("holds the owner avatar upload to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
-    const picture = fileOf("owner-picture.png", "picture bytes");
+    const avatar = fileOf("owner-avatar.png", "avatar bytes");
     const body = {
       id: "owner",
       email: "a@cyzr.me",
@@ -1945,7 +1952,7 @@ describe("every command holds the server to the contract", () => {
           "owner",
           "update",
           "--avatar",
-          picture,
+          avatar,
         ]);
         const label = `owner update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
         expect(socket.asked, label).toEqual(["PUT /owner/avatar"]);
@@ -2047,7 +2054,9 @@ describe("every command holds the server to the contract", () => {
     const outcome = await marfa(["--json", "--url", server.url, "operations"]);
     expect(outcome.code, outcome.stderr).toBe(0);
     // Witness: it printed the table it was asked for.
-    expect(JSON.parse(outcome.stdout)).not.toHaveLength(0);
+    expect(
+      (JSON.parse(outcome.stdout) as { data: unknown[] }).data,
+    ).not.toHaveLength(0);
     expect(server.requests).toEqual([]);
   });
 

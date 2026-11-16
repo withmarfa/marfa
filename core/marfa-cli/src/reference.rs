@@ -72,19 +72,19 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ("End one sign-in", &["sign-ins end"]),
     ("End every sign-in of a kind at once", &["sign-ins end-all"]),
     (
-        "List, narrow and disconnect a connected app",
-        &["apps list", "apps narrow", "apps disconnect"],
+        "List, narrow and revoke a connected app",
+        &["apps list", "apps narrow", "apps revoke"],
     ),
     (
-        "Read and change the owner's email, name and picture, or clear the picture",
-        &["owner show", "owner update", "owner picture"],
+        "Read and change the owner's email, name and avatar, or clear the avatar",
+        &["owner show", "owner update", "owner avatar"],
     ),
     (
         "Manage the owner's passkeys",
         &[
             "owner passkeys list",
             "owner passkeys rename",
-            "owner passkeys remove",
+            "owner passkeys delete",
         ],
     ),
     ("Set a new owner password", &["owner recover"]),
@@ -113,11 +113,11 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "List, make, change and revoke folders, and read their sync reports",
+        "List, make, update and revoke folders, and read their sync reports",
         &[
             "folders inventory",
             "folders create",
-            "folders change",
+            "folders update",
             "folders revoke",
             "folders health",
         ],
@@ -149,11 +149,12 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "Empty and restore the bin",
+        "Trash, restore and purge an item, and empty the bin",
         &[
+            "items trash",
+            "items restore",
+            "items purge",
             "items bin list",
-            "items bin restore",
-            "items bin purge",
             "items bin empty",
         ],
     ),

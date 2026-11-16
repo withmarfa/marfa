@@ -18,6 +18,7 @@ pub enum RowsCommand {
     /// One row of a table.
     Get {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -29,6 +30,7 @@ pub enum RowsCommand {
     /// up to 1000, applied in order.
     Write {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -40,6 +42,7 @@ pub enum RowsCommand {
     /// Write one whole row: create it, or replace the row `--id` names.
     Put {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -56,6 +59,7 @@ pub enum RowsCommand {
     /// A `null` value clears a column.
     Patch {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -71,6 +75,7 @@ pub enum RowsCommand {
     /// is answered `absent`.
     Delete {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -84,6 +89,7 @@ pub enum RowsCommand {
     /// names `adds_up`.
     Totals {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -98,6 +104,7 @@ pub enum RowsCommand {
     /// `next_cursor` as `--cursor` for the next page.
     Batches {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -108,6 +115,7 @@ pub enum RowsCommand {
     /// them or none, as a new batch. Undo an undo to redo it.
     Undo {
         /// The item id.
+        #[arg(value_name = "ID")]
         item: String,
         /// The table name.
         table: String,
@@ -121,6 +129,7 @@ pub enum RowsCommand {
 #[derive(Debug, Default, Args)]
 pub struct ListArgs {
     /// The item id.
+    #[arg(value_name = "ID")]
     pub item: String,
     /// The table name.
     pub table: String,

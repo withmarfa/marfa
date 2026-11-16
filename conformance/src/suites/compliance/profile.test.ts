@@ -11,7 +11,7 @@ import {
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { png } from "../../utils/pictures.js";
+import { png } from "../../utils/avatars.js";
 import {
   bootUnclaimedServer,
   stopServer,
@@ -102,7 +102,7 @@ describe("owner and delegated profile changes", () => {
       { name: "\u200fInvalid" },
       { name: " " },
       { email: "invalid" },
-      { avatar: "file:///picture" },
+      { avatar: "file:///avatar" },
       { avatar: "https://example.test/portrait.png" },
     ])
       expect((await owner(body)).status).toBe(400);
@@ -142,7 +142,7 @@ describe("owner and delegated profile changes", () => {
       {},
       { email: "app@example.test" },
       { name: "No", email: "app@example.test" },
-      { avatar: "file:///picture" },
+      { avatar: "file:///avatar" },
       { avatar: "https://example.test/portrait.png" },
     ])
       expect((await profile(body)).status).toBe(400);
@@ -239,7 +239,7 @@ describe("owner and delegated profile changes", () => {
   });
 
   it(
-    "refuses an owner update and a picture upload from the local command while the instance is unclaimed",
+    "refuses an owner update and an avatar upload from the local command while the instance is unclaimed",
     async () => {
       const state = await mkdtemp(join(tmpdir(), "marfa-profile-unclaimed-"));
       try {
@@ -266,19 +266,19 @@ describe("owner and delegated profile changes", () => {
         await expectMatchesSchema("PATCH", "/owner", 404, ownerRefused.body);
         await assertStillUnclaimed();
 
-        const pictureRefused = await local("/owner/avatar", {
+        const avatarRefused = await local("/owner/avatar", {
           method: "PUT",
           body: png(8, 8),
         });
-        expect(pictureRefused.status).toBe(404);
-        expect(pictureRefused.body).toMatchObject({
+        expect(avatarRefused.status).toBe(404);
+        expect(avatarRefused.body).toMatchObject({
           error: { code: "owner_not_found" },
         });
         await expectMatchesSchema(
           "PUT",
           "/owner/avatar",
           404,
-          pictureRefused.body,
+          avatarRefused.body,
         );
         await assertStillUnclaimed();
       } finally {

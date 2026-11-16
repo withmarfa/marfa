@@ -24,7 +24,7 @@ fn body(request: &Request) -> &serde_json::Value {
 #[test]
 fn a_listing_sends_only_the_filters_it_was_given() {
     let request = items::list_request(&items::ListArgs {
-        type_: Some("core.note".into()),
+        types: vec!["core.note".into()],
         state: vec![StateFilter::Any],
         tags: vec!["a".into(), "b".into()],
         occurred_after: Some("2026-01-01T00:00:00Z".into()),
@@ -569,20 +569,51 @@ fn a_search_sort_is_sent_in_the_servers_spelling_or_refused_before_the_request()
     for (typed, sent) in [
         ("relevance", "relevance"),
         ("created-at", "created_at"),
-        ("occurred_at", "occurred_at"),
+        ("updated-at", "updated_at"),
+        ("occurred-at", "occurred_at"),
+        ("last-activity-at", "last_activity_at"),
         ("properties.due_at", "properties.due_at"),
+        ("properties.due_date", "properties.due_date"),
     ] {
         assert_eq!(sort_of(typed).as_deref(), Ok(sent), "{typed}");
     }
     for bad in [
         "title",
+        "created_at",
+        "occurred_at",
+        "last_activity_at",
         "properties.",
         "properties.Due",
+        "properties.due-date",
         "properties.a.b",
         "",
     ] {
         assert!(sort_of(bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn an_items_sort_takes_one_spelling_and_keeps_a_property_name_as_written() {
+    use crate::values::parse_sort_field;
+    use marfa_rules::query::SortField;
+    for (typed, field) in [
+        ("created-at", SortField::CreatedAt),
+        ("updated-at", SortField::UpdatedAt),
+        ("occurred-at", SortField::OccurredAt),
+        ("last-activity-at", SortField::LastActivityAt),
+        (
+            "properties.due_date",
+            SortField::Property("due_date".into()),
+        ),
+    ] {
+        assert_eq!(parse_sort_field(typed), Ok(field), "{typed}");
+    }
+    for bad in ["created_at", "updated_at", "last_activity_at", "trashed-at"] {
+        let error = parse_sort_field(bad).unwrap_err();
+        assert!(error.contains("`last-activity-at`"), "{bad}: {error}");
+    }
+    // A property name is never rewritten: a hyphen is refused as the server refuses it.
+    assert!(parse_sort_field("properties.due-date").is_err());
 }
 
 #[test]
@@ -1288,7 +1319,7 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert_eq!(check.path(), "/config/address-check");
     let exported = export::request(&export::ExportArgs {
         format: export::ExportFormat::Archive,
-        type_: Some("core.note".into()),
+        types: vec!["core.note".into()],
         ..Default::default()
     })
     .unwrap();
@@ -1309,8 +1340,8 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     let streamed = events::request(&events::EventsArgs {
         types: vec!["core.note".into(), "core.task".into()],
         edges: Some(events::EdgeMode::None),
-        from: Some("41".into()),
-        r#for: None,
+        cursor: Some("41".into()),
+        for_seconds: None,
     });
     assert_eq!(streamed.path(), "/events");
     assert!(streamed.stream);
@@ -1332,7 +1363,7 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
 #[test]
 fn webhooks_are_registered_with_their_events_and_paused_by_a_flag() {
     let created = webhooks::create_request(&webhooks::WebhookCreateArgs {
-        to: "https://hooks.example/in".into(),
+        delivery_url: "https://hooks.example/in".into(),
         events: vec!["item.created".into()],
         ..Default::default()
     });
@@ -1347,7 +1378,18 @@ fn webhooks_are_registered_with_their_events_and_paused_by_a_flag() {
     });
     assert_eq!(body(&paused), &json!({ "active": false }));
     assert_eq!(
-        query(&webhooks::deliveries_request("w", Some(5)), "limit").as_deref(),
+        query(
+            &webhooks::deliveries_request(
+                "w",
+                &PageArgs {
+                    limit: Some(5),
+                    cursor: Some("c".into()),
+                    all: false,
+                }
+            ),
+            "limit"
+        )
+        .as_deref(),
         Some("5")
     );
 }
@@ -1409,7 +1451,7 @@ fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice()
         })
     );
 
-    let changed = folders::change_request(&folders::ChangeArgs {
+    let changed = folders::update_request(&folders::UpdateArgs {
         id: "f1".into(),
         version: 3,
         settings: folders::SettingsArgs {
@@ -1475,7 +1517,7 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
         })
     );
 
-    let changed = views::change_request(&views::ChangeArgs {
+    let changed = views::update_request(&views::UpdateArgs {
         id: "v1".into(),
         version: 2,
         settings: views::SettingsArgs {
@@ -1493,7 +1535,7 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
         body(&changed),
         &json!({ "query": { "tier": "feed" }, "version": 2 })
     );
-    let cleared = views::change_request(&views::ChangeArgs {
+    let cleared = views::update_request(&views::UpdateArgs {
         id: "v1".into(),
         version: 3,
         settings: views::SettingsArgs {
@@ -1932,8 +1974,9 @@ mod dispatch {
     fn a_delete_carries_the_idempotency_key_it_was_given() {
         let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
         items::run(
-            items::ItemsCommand::Delete {
+            items::ItemsCommand::Trash {
                 ids: vec!["i".into()],
+                version: None,
                 dry_run: false,
                 digest: None,
                 idempotency: items::IdempotencyArgs {
@@ -1957,8 +2000,9 @@ mod dispatch {
             r#"{"items":[],"count":2,"digest":"d"}"#,
         )]);
         items::run(
-            items::ItemsCommand::Delete {
+            items::ItemsCommand::Trash {
                 ids: vec!["i".into(), "j".into()],
+                version: None,
                 dry_run: true,
                 digest: None,
                 idempotency: items::IdempotencyArgs {
@@ -1984,7 +2028,7 @@ mod dispatch {
         use clap::Parser;
         let digest = "a".repeat(64);
         let cli =
-            crate::Cli::try_parse_from(["marfa", "items", "delete", "i", "j", "--digest", &digest])
+            crate::Cli::try_parse_from(["marfa", "items", "trash", "i", "j", "--digest", &digest])
                 .unwrap();
         let crate::Command::Items { command } = cli.command else {
             panic!("not an items command");
@@ -2003,7 +2047,7 @@ mod dispatch {
             crate::Cli::try_parse_from([
                 "marfa",
                 "items",
-                "delete",
+                "trash",
                 "i",
                 "--dry-run",
                 "--digest",
@@ -2011,24 +2055,91 @@ mod dispatch {
             ])
             .is_err()
         );
-        assert!(crate::Cli::try_parse_from(["marfa", "items", "delete"]).is_err());
+        assert!(crate::Cli::try_parse_from(["marfa", "items", "trash"]).is_err());
     }
 
     #[test]
-    fn a_dry_run_delete_refuses_an_idempotency_key() {
+    fn a_dry_run_trash_refuses_an_idempotency_key() {
         use clap::Parser;
-        assert!(
-            crate::Cli::try_parse_from([
-                "marfa",
-                "items",
-                "delete",
-                "i",
-                "--dry-run",
-                "--idempotency-key",
-                "once",
-            ])
-            .is_err()
-        );
+        let line = |flags: &[&'static str]| {
+            let mut argv = vec!["marfa", "items", "trash", "i"];
+            argv.extend_from_slice(flags);
+            crate::Cli::try_parse_from(argv)
+        };
+        // The witness: the same command without the dry run takes the key.
+        assert!(line(&["--idempotency-key", "once"]).is_ok());
+        assert!(line(&["--dry-run", "--idempotency-key", "once"]).is_err());
+        assert!(line(&["--dry-run", "--version", "2"]).is_err());
+    }
+
+    #[test]
+    fn a_version_goes_to_the_one_door_that_names_it_and_is_refused_beside_several_ids() {
+        use clap::Parser;
+        let sent = |argv: &[&str], answers: usize| {
+            let cli = crate::Cli::try_parse_from(argv).unwrap();
+            let crate::Command::Items { command } = cli.command else {
+                panic!("not an items command");
+            };
+            let door = Door::open(
+                (0..answers)
+                    .map(|_| Answer::json("200 OK", r#"{"id":"i"}"#))
+                    .collect(),
+            );
+            let ran = items::run(command, &remote_at(&door), &QUIET);
+            (ran, door.received())
+        };
+        for (argv, method, path) in [
+            (
+                ["marfa", "items", "trash", "i", "--version", "3"],
+                "DELETE",
+                "/items/i?version=3",
+            ),
+            (
+                ["marfa", "items", "restore", "i", "--version", "3"],
+                "POST",
+                "/items/i/restore?version=3",
+            ),
+            (
+                ["marfa", "items", "purge", "i", "--version", "3"],
+                "POST",
+                "/items/i/purge?version=3",
+            ),
+        ] {
+            let (ran, received) = sent(&argv, 1);
+            ran.unwrap();
+            assert_eq!(received[0].method(), method, "{argv:?}");
+            assert_eq!(received[0].path(), path, "{argv:?}");
+        }
+        // Without a version, none is sent.
+        let (ran, received) = sent(&["marfa", "items", "trash", "i"], 1);
+        ran.unwrap();
+        assert_eq!(received[0].path(), "/items/i");
+        // A version names one item's version.
+        let (ran, received) = sent(&["marfa", "items", "trash", "i", "j", "--version", "3"], 0);
+        assert!(matches!(ran, Err(CliError::Usage(_))));
+        assert!(received.is_empty());
+    }
+
+    #[test]
+    fn tags_are_added_removed_and_replaced_under_one_group_in_one_order() {
+        use clap::Parser;
+        for argv in [
+            ["marfa", "items", "tags", "add", "i", "t"],
+            ["marfa", "items", "tags", "remove", "i", "t"],
+            ["marfa", "items", "tags", "replace", "i", "t"],
+        ] {
+            assert!(crate::Cli::try_parse_from(argv).is_ok(), "{argv:?}");
+        }
+        // Replacing with no tag clears them; adding with none is refused.
+        assert!(crate::Cli::try_parse_from(["marfa", "items", "tags", "replace", "i"]).is_ok());
+        assert!(crate::Cli::try_parse_from(["marfa", "items", "tags", "add", "i"]).is_err());
+        // The old names are gone.
+        for old in [
+            ["marfa", "items", "tag", "i", "t"],
+            ["marfa", "metadata", "tags", "i", "t"],
+        ] {
+            assert!(crate::Cli::try_parse_from(old).is_err(), "{old:?}");
+        }
     }
 
     #[test]
@@ -2040,8 +2151,18 @@ mod dispatch {
             Answer::json("200 OK", tags),
         ]);
         for args in [
-            ["marfa", "items", "tag", "i", "a", "--version", "3"].as_slice(),
-            ["marfa", "items", "untag", "i", "a", "--version", "3"].as_slice(),
+            ["marfa", "items", "tags", "add", "i", "a", "--version", "3"].as_slice(),
+            [
+                "marfa",
+                "items",
+                "tags",
+                "remove",
+                "i",
+                "a",
+                "--version",
+                "3",
+            ]
+            .as_slice(),
         ] {
             let crate::Command::Items { command } =
                 crate::Cli::try_parse_from(args).unwrap().command
@@ -2070,32 +2191,38 @@ mod dispatch {
         ]);
         let remote = remote_at(&door);
         items::run(
-            items::ItemsCommand::Tag {
-                id: "i".into(),
-                tags: vec!["a".into()],
-                version: None,
-                idempotency: key("tag"),
+            items::ItemsCommand::Tags {
+                command: items::ItemTagsCommand::Add {
+                    id: "i".into(),
+                    tags: vec!["a".into()],
+                    version: None,
+                    idempotency: key("tag"),
+                },
             },
             &remote,
             &QUIET,
         )
         .unwrap();
         items::run(
-            items::ItemsCommand::Untag {
-                id: "i".into(),
-                tag: "a".into(),
-                version: None,
-                idempotency: key("untag"),
+            items::ItemsCommand::Tags {
+                command: items::ItemTagsCommand::Remove {
+                    id: "i".into(),
+                    tag: "a".into(),
+                    version: None,
+                    idempotency: key("untag"),
+                },
             },
             &remote,
             &QUIET,
         )
         .unwrap();
-        metadata::run(
-            metadata::MetadataCommand::Replace {
-                id: "i".into(),
-                tags: vec!["a".into()],
-                idempotency: key("replace"),
+        items::run(
+            items::ItemsCommand::Tags {
+                command: items::ItemTagsCommand::Replace {
+                    id: "i".into(),
+                    tags: vec!["a".into()],
+                    idempotency: key("replace"),
+                },
             },
             &remote,
             &QUIET,
@@ -2151,7 +2278,7 @@ mod dispatch {
     fn attach_uploads_then_creates_the_file_item_then_the_edge_from_it() {
         let dir = std::env::temp_dir().join(format!("marfa-attach-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("picture.png");
+        let file = dir.join("avatar.png");
         std::fs::write(&file, b"png bytes").unwrap();
         let door = Door::open(vec![
             Answer::json(
@@ -2309,13 +2436,13 @@ fn summaries_send_only_name_type_and_page_filters() {
 }
 
 #[test]
-fn a_picture_is_put_to_its_door_as_the_file_itself() {
-    let dir = std::env::temp_dir().join(format!("marfa-picture-{}", std::process::id()));
+fn an_avatar_is_put_to_its_door_as_the_file_itself() {
+    let dir = std::env::temp_dir().join(format!("marfa-avatar-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("me.png");
-    std::fs::write(&file, b"picture bytes").unwrap();
+    std::fs::write(&file, b"avatar bytes").unwrap();
     for door in [["owner", "avatar"], ["profile", "avatar"]] {
-        let request = profile::picture_request(&door, &file).unwrap();
+        let request = profile::avatar_request(&door, &file).unwrap();
         assert_eq!(request.method, Method::Put);
         assert_eq!(request.path(), format!("/{}/avatar", door[0]));
         assert_eq!(
@@ -2330,9 +2457,9 @@ fn a_picture_is_put_to_its_door_as_the_file_itself() {
 }
 
 #[test]
-fn a_picture_that_cannot_be_read_is_refused_before_any_request_is_built() {
-    let missing = std::env::temp_dir().join(format!("marfa-no-picture-{}.png", std::process::id()));
-    match profile::picture_request(&["owner", "avatar"], &missing) {
+fn an_avatar_that_cannot_be_read_is_refused_before_any_request_is_built() {
+    let missing = std::env::temp_dir().join(format!("marfa-no-avatar-{}.png", std::process::id()));
+    match profile::avatar_request(&["owner", "avatar"], &missing) {
         Err(CliError::Invalid(message)) => assert!(message.contains("cannot read"), "{message}"),
         other => panic!(
             "expected a refusal, got {:?}",
@@ -2342,10 +2469,10 @@ fn a_picture_that_cannot_be_read_is_refused_before_any_request_is_built() {
 }
 
 #[test]
-fn a_picture_path_that_is_a_directory_is_refused_before_any_request_is_built() {
-    let dir = std::env::temp_dir().join(format!("marfa-picture-dir-{}", std::process::id()));
+fn an_avatar_path_that_is_a_directory_is_refused_before_any_request_is_built() {
+    let dir = std::env::temp_dir().join(format!("marfa-avatar-dir-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let result = profile::picture_request(&["profile", "avatar"], &dir);
+    let result = profile::avatar_request(&["profile", "avatar"], &dir);
     std::fs::remove_dir_all(&dir).unwrap();
     match result {
         Err(CliError::Invalid(message)) => {
@@ -2359,29 +2486,29 @@ fn a_picture_path_that_is_a_directory_is_refused_before_any_request_is_built() {
 }
 
 #[test]
-fn a_picture_over_two_mebibytes_is_refused_before_any_request_is_built() {
-    let dir = std::env::temp_dir().join(format!("marfa-picture-big-{}", std::process::id()));
+fn an_avatar_over_two_mebibytes_is_refused_before_any_request_is_built() {
+    let dir = std::env::temp_dir().join(format!("marfa-avatar-big-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("big.png");
     let limit = 2 * 1024 * 1024;
     // A sparse file: the size is what the check reads, not the bytes.
     let handle = std::fs::File::create(&file).unwrap();
     handle.set_len(limit + 1).unwrap();
-    let over = profile::picture_request(&["owner", "avatar"], &file);
+    let over = profile::avatar_request(&["owner", "avatar"], &file);
     handle.set_len(limit).unwrap();
-    let exact = profile::picture_request(&["owner", "avatar"], &file);
+    let exact = profile::avatar_request(&["owner", "avatar"], &file);
     std::fs::remove_dir_all(&dir).unwrap();
     match over {
         Err(CliError::Invalid(message)) => assert_eq!(
             message,
             format!(
-                "{} is over 2 MiB; use a picture of 2 MiB or less",
+                "{} is over 2 MiB; use an avatar of 2 MiB or less",
                 file.display()
             )
         ),
         other => panic!("expected a refusal, got {:?}", other.map(|r| r.path())),
     }
-    assert!(exact.is_ok(), "a picture of exactly 2 MiB is allowed");
+    assert!(exact.is_ok(), "an avatar of exactly 2 MiB is allowed");
 }
 
 #[test]
@@ -2482,16 +2609,12 @@ fn states_sent(door: &str, flags: &[&str]) -> Result<Option<String>, CliError> {
 #[test]
 fn a_state_list_is_sent_as_the_servers_comma_separated_list() {
     for door in ["items list", "search", "export"] {
-        for flags in [
-            &["--state", "active,archived"][..],
-            &["--state", "active", "--state", "archived"],
-        ] {
-            assert_eq!(
-                states_sent(door, flags).unwrap().as_deref(),
-                Some("active,archived"),
-                "{door} {flags:?}"
-            );
-        }
+        let flags = &["--state", "active", "--state", "archived"];
+        assert_eq!(
+            states_sent(door, flags).unwrap().as_deref(),
+            Some("active,archived"),
+            "{door} {flags:?}"
+        );
         // The witness for the absences below: one state and none are producible.
         assert_eq!(
             states_sent(door, &["--state", "any"]).unwrap().as_deref(),
@@ -2509,10 +2632,20 @@ fn a_state_list_is_sent_as_the_servers_comma_separated_list() {
 }
 
 #[test]
+fn a_comma_list_of_states_is_refused_where_each_state_is_a_repeat() {
+    use clap::Parser;
+    // The witness: the repeated form parses.
+    assert!(
+        ListProbe::try_parse_from(["marfa", "--state", "active", "--state", "archived"]).is_ok()
+    );
+    assert!(ListProbe::try_parse_from(["marfa", "--state", "active,archived"]).is_err());
+}
+
+#[test]
 fn any_beside_another_state_is_refused_before_a_request() {
     for door in ["items list", "search", "export"] {
         for flags in [
-            &["--state", "any,archived"][..],
+            &["--state", "archived", "--state", "any"][..],
             &["--state", "active", "--state", "any"],
         ] {
             assert!(

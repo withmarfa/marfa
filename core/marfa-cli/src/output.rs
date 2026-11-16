@@ -156,16 +156,28 @@ pub fn line_of<T: Serialize>(
     Ok(())
 }
 
-/// A local list, `{"items": [...], "completeness": ...}` in JSON. As text, a
-/// partial answer says so after its lines.
+/// A list read from this machine, as every list prints under `--json`:
+/// `{"data": [...], "next_cursor": null}`, and the copy's `completeness` where
+/// the core reports one. A local list has no further page to name.
+pub fn list_report<T: Serialize>(
+    rows: &[T],
+    completeness: Option<Completeness>,
+    json: bool,
+    human: impl FnOnce() -> String,
+) -> Result<(), CliError> {
+    let mut answer = serde_json::json!({ "data": rows, "next_cursor": null });
+    if let Some(completeness) = completeness {
+        answer["completeness"] = serde_json::json!(completeness);
+    }
+    report(&answer, json, human)
+}
+
+/// A local list, `{"data": [...], "next_cursor": null, "completeness": ...}` in
+/// JSON. As text, a partial answer says so after its lines.
 pub fn listing(listed: Rows<(Item, Shown)>, json: bool) -> Result<(), CliError> {
     let (items, shown): (Vec<_>, Vec<_>) = listed.rows.into_iter().unzip();
     if json {
-        return report(
-            &serde_json::json!({ "items": items, "completeness": listed.completeness }),
-            true,
-            String::new,
-        );
+        return list_report(&items, Some(listed.completeness), true, String::new);
     }
     item_lines(&items, &shown)?;
     note_partial(listed.completeness);
@@ -266,6 +278,19 @@ pub fn nothing_queued(json: bool) -> Result<(), CliError> {
 /// depend on is read where it stands even when it is not among them. `landing`
 /// names the refused creates whose item no read has found yet, which still hold
 /// the writes that depend on them, each with the item its natural key names.
+/// The queue as a list: under `--json` the shape every list has, and as text
+/// the lines `queued` writes.
+pub fn queue_listing(
+    queue: &[QueuedWrite],
+    landing: &std::collections::HashMap<String, String>,
+    json: bool,
+) -> Result<(), CliError> {
+    if json {
+        return list_report(queue, None, true, String::new);
+    }
+    queued(queue, queue, landing, false)
+}
+
 pub fn queued(
     writes: &[QueuedWrite],
     queue: &[QueuedWrite],
@@ -358,16 +383,12 @@ pub fn queued(
     Ok(())
 }
 
-/// A local search, `{"hits": [...], "completeness": ...}` in JSON. As text, a
-/// partial answer says so after its lines.
+/// A local search, `{"data": [...], "next_cursor": null, "completeness": ...}`
+/// in JSON. As text, a partial answer says so after its lines.
 pub fn found(found: Rows<(SearchHit, Shown)>, json: bool) -> Result<(), CliError> {
     let (hits, shown): (Vec<_>, Vec<_>) = found.rows.into_iter().unzip();
     if json {
-        return report(
-            &serde_json::json!({ "hits": hits, "completeness": found.completeness }),
-            true,
-            String::new,
-        );
+        return list_report(&hits, Some(found.completeness), true, String::new);
     }
     hit_lines(&hits, &shown)?;
     note_partial(found.completeness);

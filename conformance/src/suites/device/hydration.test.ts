@@ -1164,7 +1164,7 @@ describe("an interrupted hydration", () => {
 
     const hydrating = device.hold([
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -1282,7 +1282,7 @@ describe("an interrupted hydration", () => {
     const requestsBefore = server.requests.length;
     const hydrating = device.hold([
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",
@@ -1388,7 +1388,7 @@ describe("an interrupted hydration", () => {
 
     const hydrating = device.hold([
       "hydrate",
-      "--types",
+      "--type",
       "core.note",
       "--tier",
       "library",

@@ -185,7 +185,7 @@ describe("a key sent over plain http", () => {
           "--db",
           join(dir, "copy.sqlite"),
           "hydrate",
-          "--types",
+          "--type",
           "core.note",
           "--tier",
           "library",

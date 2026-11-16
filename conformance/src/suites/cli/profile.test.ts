@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { gif, png } from "../../utils/pictures.js";
+import { gif, png } from "../../utils/avatars.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -53,8 +53,8 @@ it("changes owner through the private socket and profile through its credential"
   );
 });
 
-it("uploads, fetches and removes the owner's picture from a file", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "marfa-cli-picture-"));
+it("uploads, fetches and removes the owner's avatar from a file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "marfa-cli-avatar-"));
   try {
     const sent = png(16, 16);
     const file = join(dir, "me.png");
@@ -64,16 +64,16 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
     expect((await owner()).avatar).toBeNull();
 
     // The witness for the refusals below: this file is taken.
-    const pictured = await local.json<{ avatar: string | null }>([
+    const updated = await local.json<{ avatar: string | null }>([
       "owner",
       "update",
       "--avatar",
       file,
     ]);
-    expect(pictured.avatar).toMatch(/\/owner\/avatar$/);
-    expect((await owner()).avatar).toBe(pictured.avatar);
+    expect(updated.avatar).toMatch(/\/owner\/avatar$/);
+    expect((await owner()).avatar).toBe(updated.avatar);
     const fetched = join(dir, "fetched.png");
-    await local.json(["owner", "picture", "--output", fetched]);
+    await local.json(["owner", "avatar", "--output", fetched]);
     expect((await readFile(fetched)).equals(sent)).toBe(true);
 
     // The name says PNG and the bytes say GIF: the server's word is shown.
@@ -86,7 +86,7 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
       lie,
     ]);
     expect(refusedKind.envelope.error.message).toContain(
-      "Use a PNG, JPEG or WebP picture.",
+      "Use a PNG, JPEG or WebP avatar.",
     );
 
     // A file that cannot be read is refused before anything is sent, so the
@@ -105,7 +105,7 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
       before.name,
     );
     const stillThere = join(dir, "still.png");
-    await local.json(["owner", "picture", "--output", stillThere]);
+    await local.json(["owner", "avatar", "--output", stillThere]);
     expect((await readFile(stillThere)).equals(sent)).toBe(true);
 
     const replaced = png(8, 8, 0x20);
@@ -115,7 +115,7 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
       await delegated.json(["profile", "update", "--avatar", second]),
     ).toMatchObject({ avatar: expect.any(String) });
     const swapped = join(dir, "swapped.png");
-    await local.json(["owner", "picture", "--output", swapped]);
+    await local.json(["owner", "avatar", "--output", swapped]);
     expect((await readFile(swapped)).equals(replaced)).toBe(true);
 
     expect(
@@ -124,7 +124,7 @@ it("uploads, fetches and removes the owner's picture from a file", async () => {
     expect((await owner()).avatar).toBeNull();
     const gone = await local.refused([
       "owner",
-      "picture",
+      "avatar",
       "--output",
       join(dir, "gone.png"),
     ]);
