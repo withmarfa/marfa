@@ -79,8 +79,7 @@ pub fn to_json(checked: Checked) -> Value {
 struct Asking {
     url: Url,
     pinned: Vec<SocketAddr>,
-    /// Without `allow_private_addresses`, an address that is not public tells only whether this
-    /// instance answered.
+    /// Whether a failure may name its reason: not at a private address unless those are allowed.
     told: bool,
     _held: SemaphorePermit<'static>,
 }
@@ -90,8 +89,7 @@ pub async fn check(app: &App, address: &Address) -> Result<(), Failed> {
     sent(app, prepared(app, address).await?).await
 }
 
-/// For the address check: an address that is not public is asked, without
-/// `allow_private_addresses`, only when the caller `may_move` there.
+/// Asks a non-public address, without `allow_private_addresses`, only if the caller `may_move`.
 pub async fn check_for(app: &App, address: &Address, may_move: bool) -> Checked {
     match prepared(app, address).await {
         Err(failed) => Checked::Asked(Err(failed)),

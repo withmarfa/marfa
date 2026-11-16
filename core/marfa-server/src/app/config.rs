@@ -589,8 +589,7 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
-/// Asks a sign-in address the write would move to whether it answers as this instance, after
-/// the refusals the write gives first, in its order. Names the address that answered.
+/// Refuses as the write would, then checks the new sign-in address and names the one that passed.
 async fn check_sign_in(
     app: &Arc<App>,
     caller: &Caller,

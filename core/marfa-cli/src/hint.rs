@@ -52,7 +52,7 @@ pub fn for_error(error: &CliError, aim: &Aim) -> Option<String> {
         CliError::Refused {
             status: 409, code, ..
         } if code == "sign_in_address_check_failed" => Some(
-            "Nothing was changed. Check the address, and that it reaches this server. For a host that answers only once the address has moved, run the same command on the server's private local command (`--socket`) with --skip-sign-in-address-check."
+            "Nothing was changed. Check the address, and that it reaches this server. For a host that answers only once the address has moved, run the same command on the server's private local command (`--socket`) with `--skip-sign-in-address-check`."
                 .into(),
         ),
         CliError::Refused {
