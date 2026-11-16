@@ -2778,9 +2778,19 @@ If `GET /trash` names a `cursor` it did not issue, then the server MUST answer `
 
 ### `items/owner-trash-actions`
 
-When the private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source` and `created_at`.
+When the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source` and `created_at`.
 
-**Tests:** `compliance/owner-trash.test.ts › answers a move to the bin, a restore and a purge with the item's summary`.
+**Reason:** the private local command holds no type map, so it is told an item's name and nothing of its content (`items/local-authority-content`).
+
+**Tests:** `compliance/owner-trash.test.ts › answers a move to the bin, a restore and a purge with the item's summary`, `compliance/local-authority-content.test.ts › admits trash, restore and purge of one item through the private socket and answers its summary alone, where the socket still cannot read it`.
+
+### `items/owner-trash-version-required`
+
+If the private local command sends `DELETE /items/{id}`, `POST /items/{id}/restore` or `POST /items/{id}/purge` without a `version`, then the server MUST answer `400 validation_error` and leave the item.
+
+**Reason:** the local command chooses an item by the name a summary shows, so the `version` it read is what makes sure it acts on the item it named.
+
+**Tests:** `compliance/local-authority-content.test.ts › refuses trash, restore and purge through the private socket that name no version, and changes nothing`.
 
 ### `items/owner-trash-move`
 
@@ -2976,8 +2986,8 @@ If the commit of a purge in an emptying batch cannot be confirmed, or a full vol
 
 ### `items/local-authority-content`
 
-When a request carries only private local authority, with a body the operation takes, to an item, edge, tag, metadata, extension, tombstone, search or occurrence operation, or to `GET /events`, other than `GET /items/summaries`, an owner trash operation, or reading or cancelling a bulk-action job, the server MUST answer `401 unauthorized`.
+When a request carries only private local authority, with a body the operation takes, to an item, edge, tag, metadata, extension, tombstone, search or occurrence operation, or to `GET /events`, other than `GET /items/summaries`, trashing, restoring or purging one item, an owner trash operation, or reading or cancelling a bulk-action job, the server MUST answer `401 unauthorized`.
 
 **Reason:** private local authority is the instance's own authority: setup, recovery, keys, sign-ins, restore, items by name through their summaries and the owner trash, and blob bytes (`blobs/read-blobs-manage-or-local`). It holds no type map, and every content operation, the event stream included, answers within one, so the server account reaches content through a key it mints through the socket, whose map bounds what it reaches and whose ID names it in the audit log. Counts and exports are held closed to it by `search-and-filters/owner-read-boundary`.
 
-**Tests:** `compliance/local-authority-content.test.ts › refuses every item, edge, tag, search and occurrence door through the private socket with 401, where the working key is admitted`, `› refuses item and edge writes through the private socket with 401 and changes nothing, where the working key writes`, `› refuses restore and purge of a binned item through the private socket with 401 on the item doors, where the working key restores`, `› refuses every bulk action through the private socket with 401, purge included, where the working key is admitted`, `› queues no bulk action through the private socket, where the working key's job tags the item`, `› refuses the event stream through the private socket with 401, where the working key opens it`, `› refuses every edge door through the private socket with 401 and changes nothing, where the working key reads and writes`, `› refuses metadata and extension writes through the private socket with 401 and changes nothing, where the working key writes`, `› refuses settling a tombstone through the private socket with 401 and changes nothing, where the working key moves it`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
+**Tests:** `compliance/local-authority-content.test.ts › refuses every item, edge, tag, search and occurrence door through the private socket with 401, where the working key is admitted`, `› refuses item and edge writes through the private socket with 401 and changes nothing, where the working key writes`, `› refuses every bulk action through the private socket with 401, purge included, where the working key is admitted`, `› queues no bulk action through the private socket, where the working key's job tags the item`, `› refuses the event stream through the private socket with 401, where the working key opens it`, `› refuses every edge door through the private socket with 401 and changes nothing, where the working key reads and writes`, `› refuses metadata and extension writes through the private socket with 401 and changes nothing, where the working key writes`, `› refuses settling a tombstone through the private socket with 401 and changes nothing, where the working key moves it`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.

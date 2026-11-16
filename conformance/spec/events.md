@@ -624,19 +624,19 @@ When `PATCH /items/{id}` carries only `edges` that add an edge to the item or re
 
 ### `events/delete-no-state-change`
 
-When `DELETE /items/{id}`, `POST /items/trash` or `POST /items/summaries/{id}/trash` moves an item into the bin, the server MUST NOT announce `item.state_changed` for it.
+When `DELETE /items/{id}` or `POST /items/trash` moves an item into the bin, the server MUST NOT announce `item.state_changed` for it.
 
 **Tests:** `compliance/events-contract.test.ts › announces a delete only as item.trashed and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
 
 ### `events/restore-no-state-change`
 
-When `POST /items/{id}/restore` or `POST /items/summaries/{id}/restore` brings an item back, the server MUST NOT announce `item.state_changed` for it.
+When `POST /items/{id}/restore` brings an item back, the server MUST NOT announce `item.state_changed` for it.
 
 **Tests:** `compliance/events-contract.test.ts › announces a delete only as item.trashed and a restore only as item.restored`, `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
 
 ### `events/owner-trash-announced`
 
-When `POST /items/summaries/{id}/trash`, `POST /items/summaries/{id}/restore`, `POST /items/summaries/{id}/purge` or `POST /trash/empty` moves or purges an item, the server MUST announce `item.trashed`, `item.restored` or `item.purged` for it.
+When the private local command moves an item to the bin with `DELETE /items/{id}`, restores it with `POST /items/{id}/restore`, or purges it with `POST /items/{id}/purge` or `POST /trash/empty`, the server MUST announce `item.trashed`, `item.restored` or `item.purged` for it.
 
 **Tests:** `compliance/owner-trash.test.ts › announces the owner's trash, restore, purge and emptying of the bin as the item events, and nothing else`.
 

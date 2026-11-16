@@ -183,11 +183,9 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items/trash-preview", post(trash::preview))
         .route(
             "/items/{id}",
-            get(items::read).patch(items::update).delete(trash::delete),
+            get(items::read).patch(items::update),
         )
         .route("/items/{id}/transition", post(trash::transition))
-        .route("/items/{id}/restore", post(trash::restore))
-        .route("/items/{id}/purge", post(trash::purge))
         .route("/items/{id}/versions", get(items::versions))
         .route("/items/{id}/tables", get(tables::list))
         .route(
@@ -264,9 +262,9 @@ fn blob_doors() -> Routes {
 fn owner_item_doors() -> Routes {
     Doors::new()
         .route("/items/summaries", get(trash::summaries))
-        .route("/items/summaries/{id}/trash", post(trash::owner_trash))
-        .route("/items/summaries/{id}/restore", post(trash::owner_restore))
-        .route("/items/summaries/{id}/purge", post(trash::owner_purge))
+        .route("/items/{id}", delete(trash::delete))
+        .route("/items/{id}/restore", post(trash::restore))
+        .route("/items/{id}/purge", post(trash::purge))
         .route("/trash", get(trash::bin))
         .route("/trash/empty", post(trash::empty))
 }
