@@ -296,7 +296,13 @@ describe("folder clock and scan boundaries", () => {
     };
     await run(2_000);
     writeFileSync(harness.registry, "not a registry");
+    // The filesystem may report the removal long after it, so the clock stays
+    // put until the watch has taken the change: dated by the clock it meets,
+    // a removal reported after the steps would start its grace past them.
+    await device.hooks.hold("folder-file-changed");
     unlinkSync(join(harness.dir, "note.md"));
+    await untilHeld(device, "folder-file-changed");
+    await device.hooks.release("folder-file-changed");
     await run(30_000);
     expect(
       deletes(),
