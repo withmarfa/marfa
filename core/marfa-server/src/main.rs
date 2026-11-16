@@ -15,7 +15,7 @@ static ALLOCATOR: marfa_allocator::Allocator = marfa_allocator::Allocator;
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Says whether this build opens the database file, reading it only, and ends.
+    /// Says whether this build accepts the environment's settings and opens the database file, reading it only, and ends.
     #[arg(long, value_name = "FILE")]
     can_open: Option<PathBuf>,
 }

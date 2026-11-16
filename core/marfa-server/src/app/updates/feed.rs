@@ -279,6 +279,21 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_release_file_from_another_host_is_refused_before_anything_is_fetched_or_written() {
+        let feed = Feed::new(Arc::default());
+        let to = std::env::temp_dir().join(format!("marfa-feed-{}", std::process::id()));
+        let _ = std::fs::remove_file(&to);
+        let refused = feed.file(
+            &url("https://example.com/a.tar.gz"),
+            &to,
+            1 << 20,
+            Duration::from_secs(5),
+        );
+        assert_eq!(refused, Err(Failed::Unaddressable));
+        assert!(!to.exists());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_fault_that_names_an_address_is_admitted_whatever_its_host() {
         let faults = Arc::new(Faults::default());
         faults
