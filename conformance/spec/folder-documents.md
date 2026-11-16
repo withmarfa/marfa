@@ -1436,13 +1436,13 @@ When the copy cannot determine whether an edge's designated writing end carries 
 
 ### `folder-documents/edge-title-format`
 
-When a to item has a title that link syntax can represent and that no other item the folder's copy holds shares, a device MUST render an edge to item as `[[title]]`.
+When a to item has a title that link syntax can represent and that no other item the folder's copy holds shares, a device MUST render an edge's to item as `[[title]]`.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`.
 
 ### `folder-documents/edge-id-format`
 
-When a to item title is ambiguous or cannot be represented in link syntax, a device MUST render the edge to item as `[[id]]`.
+When a to item title is ambiguous or cannot be represented in link syntax, a device MUST render the edge's to item as `[[id]]`.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes the id form where a name is repeated`, `device/folders-frontmatter.test.ts › writes by id a title a link cannot hold`.
 
@@ -1472,31 +1472,31 @@ When several names in one edge line resolve to the same item, a device MUST trea
 
 ### `folder-documents/edge-name-syntax-ambiguity`
 
-If an edge-line to item resolves as its full text to one item and as a name with a heading or alias to a different item, then a device MUST flag the line `edges` instead of choosing a to item.
+If the to item an edge line names resolves as its full text to one item and as a name with a heading or alias to a different item, then a device MUST flag the line `edges` instead of choosing a to item.
 
 **Tests:** `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
 
 ### `folder-documents/edge-name-unmatched`
 
-If a typed edge to item matches no readable item, then a device MUST flag the file `edges` with the unmatched name.
+If the to item a typed edge names matches no readable item, then a device MUST flag the file `edges` with the unmatched name.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags an unmatched name and leaves it as typed`.
 
 ### `folder-documents/edge-name-ambiguous`
 
-If a typed edge to item matches more than one readable item, then a device MUST flag the file `edges` with the ambiguity.
+If the to item a typed edge names matches more than one readable item, then a device MUST flag the file `edges` with the ambiguity.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags an ambiguous name and leaves it as typed`, `device/fidelity.test.ts › matches the title lookup a folder asks the server for typed names`.
 
 ### `folder-documents/edge-name-kept`
 
-When an edge line already resolves to its item, a device MUST preserve the typed to item through a pull that rewrites the file.
+When an edge line already resolves to its item, a device MUST preserve the typed edge's to item through a pull that rewrites the file.
 
 **Tests:** `device/folders-frontmatter.test.ts › resolves a name by its file's name, and keeps it as typed`, `device/folders-frontmatter.test.ts › keeps a typed alias as typed, and flags a name that reads two ways`.
 
 ### `folder-documents/edge-new-namesake`
 
-When another item takes an existing edge to item's name, a device MUST retain the existing edge to item.
+When another item takes the name of an existing edge's to item, a device MUST retain that to item.
 
 **Tests:** `device/folders-frontmatter.test.ts › leaves an existing link unchanged when a same-named item appears`, `device/folders-retitled-links.test.ts › keeps naming the item when another takes its old title`.
 
@@ -1622,13 +1622,13 @@ If the copy holds two or more items under a name, then a device MUST flag the na
 
 ### `folder-documents/edge-lookup-states`
 
-When resolving an edge to item by name, a device MUST consider archived items and exclude trashed items.
+When resolving an edge's to item by name, a device MUST consider archived items and exclude trashed items.
 
 **Tests:** `device/folders-frontmatter.test.ts › counts an archived match only the server holds, and none in the bin`.
 
 ### `folder-documents/edge-lookup-title-field`
 
-When resolving an edge to item by title, a device MUST match the property that its type uses as the title.
+When resolving an edge's to item by title, a device MUST match the property that its type uses as the title.
 
 **Tests:** `device/folders-frontmatter.test.ts › matches a title only in the property its type keeps it in`.
 
