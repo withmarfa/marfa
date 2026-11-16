@@ -69,8 +69,7 @@ impl Concern {
         })
     }
 
-    /// What an event says of the entry: no title or description, which can name a path or an
-    /// error, only a sentence fixed for its kind.
+    /// The entry without its title or description, which can name a path or an error.
     fn to_event(&self) -> Value {
         let description = match self.kind {
             "health" => "A part of the server is degraded or down.",
@@ -482,8 +481,7 @@ struct Gathered {
 }
 
 impl Gathered {
-    /// The entries an event may name. A job whose failure the health check would tell is held
-    /// back while that check cannot answer, so one fault is never announced twice.
+    /// Holds back a covered job while health cannot answer, so one fault is announced once.
     fn announceable(&self) -> impl Iterator<Item = &Concern> {
         let health_unknown = self.unknown.contains(&"health");
         self.concerns.iter().filter(move |concern| {
@@ -569,8 +567,7 @@ fn forgotten(tx: &Transaction<'_>, gathered: &Gathered) -> Result<Vec<(String, S
         .collect())
 }
 
-/// Writes only when an entry is new or gone, and decides that again inside the write, where a
-/// check that a newer one has overtaken writes nothing.
+/// Writes only when an entry is new or gone, decided again in the write unless a newer check looked.
 async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     let looking = gathered.clone();
     let changed = app

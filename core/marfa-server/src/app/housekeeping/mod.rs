@@ -362,8 +362,7 @@ impl Ended {
 }
 
 /// The claim and the run are one task, so a caller who goes away leaves neither half done.
-/// The caller's `instance.maintain` is decided in the claim's write; once claimed, the run is the
-/// server's.
+/// `instance.maintain` is decided in the claim's write; once claimed, the run is the server's.
 pub async fn run_now(app: &Arc<App>, caller: &Caller, name: &str) -> Result<Ended> {
     let job = JOBS
         .iter()

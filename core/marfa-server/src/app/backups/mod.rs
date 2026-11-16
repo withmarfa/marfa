@@ -1579,7 +1579,6 @@ fn counted(count: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 /// Whether the caller who asked for a backup still holds `backups.manage`, as committed now.
 async fn stands(app: &App, asker: &Caller) -> Result<()> {
     let (asker, at) = (asker.clone(), app.clock.stamp());
@@ -1588,7 +1587,7 @@ async fn stands(app: &App, asker: &Caller) -> Result<()> {
         .await
 }
 
-/// A backup a caller asked for is put and recorded only while that caller holds `backups.manage`.
+/// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<Outcome> {
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {

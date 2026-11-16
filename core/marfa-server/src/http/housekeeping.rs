@@ -27,8 +27,7 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     ))
 }
 
-/// The caller is judged here and again as the run is claimed; a key revoked once
-/// the run is claimed does not stop it.
+/// Judged here and again at the claim; a key revoked after the claim does not stop the run.
 pub async fn run(
     State(app): State<Arc<App>>,
     caller: Caller,
