@@ -302,7 +302,9 @@ describe("a write that names an instance", () => {
   it("refuses another instance on every write operation the document publishes outside /auth, /oauth and /grants", async () => {
     const writes = (await publishedOperations()).filter(
       (op) =>
-        op.method !== "GET" && !/^\/(auth|oauth|grants)(\/|$)/.test(op.path),
+        op.method !== "GET" &&
+        op.method !== "HEAD" &&
+        !/^\/(auth|oauth|grants)(\/|$)/.test(op.path),
     );
     // The positive control: an empty walk would pass the loop below.
     expect(writes.length).toBeGreaterThan(50);

@@ -238,7 +238,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
         for (const name of HELD_JOBS) {
           const run = await runJob(server, name);
           expect(run.outcome, `${name} at ${String(days)} days`).toBe(
-            held ? "held" : "ok",
+            held ? "held" : "succeeded",
           );
           if (held) expect(run.result).toEqual({ held: "clock_ahead" });
         }

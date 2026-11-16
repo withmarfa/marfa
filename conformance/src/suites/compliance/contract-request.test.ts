@@ -233,7 +233,10 @@ describe("a request that names a contract", () => {
       for (const credential of [true, false]) {
         const res = await send(path, {
           method: operation.method,
-          body: operation.method === "GET" ? undefined : {},
+          body:
+            operation.method === "GET" || operation.method === "HEAD"
+              ? undefined
+              : {},
           headers: { [HEADER]: other },
           credential,
         });

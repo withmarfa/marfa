@@ -27,7 +27,7 @@ beforeAll(async () => {
   annotated = await create("annotated");
   const tagged = await keyed({
     method: "PUT",
-    path: `/items/${annotated}/metadata`,
+    path: `/items/${annotated}/tags`,
     body: { tags: ["annotated-tag"] },
   });
   expect(tagged.status).toBe(200);
@@ -367,7 +367,7 @@ it("refuses every edge door through the private socket with 401 and changes noth
 it("refuses metadata and extension writes through the private socket with 401 and changes nothing, where the working key writes", async () => {
   const state = async (): Promise<unknown> => {
     const [metadata, extension] = await Promise.all([
-      keyed({ method: "GET", path: `/items/${annotated}/metadata` }),
+      keyed({ method: "GET", path: `/items/${annotated}/tags` }),
       keyed({
         method: "GET",
         path: `/items/${annotated}/extensions/${EXTENSION}`,
@@ -380,7 +380,7 @@ it("refuses metadata and extension writes through the private socket with 401 an
   const before = await state();
   const replace: Door = {
     method: "PUT",
-    path: `/items/${annotated}/metadata`,
+    path: `/items/${annotated}/tags`,
     body: { tags: ["socket-tag"] },
   };
   const extend: Door = {

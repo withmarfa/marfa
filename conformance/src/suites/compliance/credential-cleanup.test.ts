@@ -116,7 +116,7 @@ describe("the credential clean-up", () => {
       const run = await runJob(server, "credential-cleanup");
       expect(run.outcome, String(run.error)).toBe("succeeded");
       expect((await jobs(server))["credential-cleanup"]?.last_outcome).toBe(
-        "ok",
+        "succeeded",
       );
     },
     4 * FRESH_SERVER_TIMEOUT_MS,

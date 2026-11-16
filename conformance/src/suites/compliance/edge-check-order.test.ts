@@ -349,7 +349,7 @@ describe("the order POST /edges asks its refusals in", () => {
       edge_type: "in-folder",
     });
     expect(alone.status).toBe(400);
-    expect(alone.error?.error.code).toBe("validation_error");
+    expect(alone.error?.error.code).toBe("invalid_properties");
   });
 
   it("refuses bad properties before it looks for the to item", async () => {
@@ -362,7 +362,7 @@ describe("the order POST /edges asks its refusals in", () => {
       properties: { path: "../outside.md" },
     });
     expect(bad.status).toBe(400);
-    expect(bad.error?.error.code).toBe("validation_error");
+    expect(bad.error?.error.code).toBe("invalid_properties");
 
     // The witness: a good path to the same absent target is a not-found.
     const alone = await client.createEdge({
@@ -385,7 +385,7 @@ describe("the order POST /edges asks its refusals in", () => {
       properties: { path: "../outside.md" },
     });
     expect(bad.status).toBe(400);
-    expect(bad.error?.error.code).toBe("validation_error");
+    expect(bad.error?.error.code).toBe("invalid_properties");
 
     // The witness: a good path to the same target is the endpoint's refusal.
     const alone = await client.createEdge({
@@ -900,7 +900,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
       version: edge.version,
     });
     expect(alone.status).toBe(400);
-    expect(alone.error?.error.code).toBe("validation_error");
+    expect(alone.error?.error.code).toBe("invalid_properties");
   });
 
   it("refuses a move of both ends before it looks up the edge type", async () => {

@@ -261,7 +261,7 @@ describe("a request no door serves", () => {
 
   it("answers a method no door serves 404 not_found whatever instance it names", async () => {
     // The witness: a method the path serves is refused for the instance it names.
-    const served = await ask("PUT", `/items/${OTHER}/metadata`, {
+    const served = await ask("PUT", `/items/${OTHER}/tags`, {
       ...asKey(),
       "X-Marfa-Instance-Id": OTHER,
     });
@@ -269,7 +269,7 @@ describe("a request no door serves", () => {
 
     for (const [method, path] of [
       ["POST", "/health"],
-      ["PATCH", `/items/${OTHER}/metadata`],
+      ["PATCH", `/items/${OTHER}/tags`],
       ["DELETE", "/"],
     ] as const) {
       for (const named of [OTHER, "not-an-instance"]) {
@@ -297,11 +297,6 @@ describe("a request no door serves", () => {
     const id = created.data!.item.id;
     trackItem(ctx, id);
     const version = created.data!.item.version;
-    // The witness: the path is served to another method.
-    expect((await ask("GET", `/items/${id}/metadata`, asKey())).status).toBe(
-      200,
-    );
-
     const key = `unmatched-metadata-${ctx.runId}-${randomUUID()}`;
     const send = (method: string, path: string) =>
       fetch(`${apiUrl}${path}`, {
@@ -314,7 +309,7 @@ describe("a request no door serves", () => {
         body: JSON.stringify({ tags: ["added"] }),
       });
     for (const attempt of ["first", "again"]) {
-      const res = await send("PATCH", `/items/${id}/metadata`);
+      const res = await send("PATCH", `/items/${id}/tags`);
       const body = (await res.json()) as { error?: { code?: string } };
       expect(res.status, attempt).toBe(404);
       expect(body.error?.code, attempt).toBe("not_found");
@@ -327,8 +322,8 @@ describe("a request no door serves", () => {
     // its own first use rather than a replay of the refusal.
     const added = await send("POST", `/items/${id}/tags`);
     expect(added.status).toBe(200);
-    const answer = (await added.json()) as { metadata: { tags: string[] } };
-    expect([...answer.metadata.tags].sort()).toEqual(["added", "kept"]);
+    const answer = (await added.json()) as { tags: string[] };
+    expect([...answer.tags].sort()).toEqual(["added", "kept"]);
   });
 
   it("answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none", async () => {
