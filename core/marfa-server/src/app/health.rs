@@ -301,7 +301,7 @@ async fn disk(app: &Arc<App>) -> Component {
                 size(Volume::Database, &database_folder),
             ),
             (
-                "blobs",
+                "blob",
                 free(Volume::Blobs, blob_folder),
                 size(Volume::Blobs, blob_folder),
             ),

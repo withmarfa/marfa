@@ -81,7 +81,7 @@ fn not_listening(origin: &str) -> String {
                 install.command("status"),
                 install.command("start")
             ),
-            None => "Nothing is listening at that address, and no install made with `marfa server install` on this machine serves it. Start the server where it runs, or check the address.".into(),
+            None => "Nothing is listening at that address, and no install in the default folder, or run by a service on this machine, serves it. Start the server where it runs, or check the address. An install in another folder with no service is not found from here, so start that one by naming its folder.".into(),
         }
     } else {
         "Nothing answered at that address. Check the address and this machine's network.".into()
@@ -123,7 +123,7 @@ fn needs_local(aim: &Aim) -> String {
         )
     } else {
         format!(
-            "{cannot}, which runs on the server's own machine, as `marfa --socket <path>` followed by this command. No install made with `marfa server install` on this machine serves this address; one on the server's machine keeps its socket under its install folder, in data/control/marfa.sock."
+            "{cannot}, which runs on the server's own machine, as `marfa --socket <path>` followed by this command. No install in the default folder, or run by a service on this machine, serves this address; one on the server's machine keeps its socket under its install folder, in data/control/marfa.sock."
         )
     }
 }

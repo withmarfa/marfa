@@ -162,7 +162,7 @@ fn a_refused_connection_to_this_machine_asks_whether_the_server_runs() {
     );
     assert!(
         ran.stderr
-            .contains("no install made with `marfa server install` on this machine serves it")
+            .contains("no install in the default folder, or run by a service on this machine, serves it")
             && !ran.stderr.contains("marfa server status"),
         "no install serves it, so no command to run: {}",
         ran.stderr
