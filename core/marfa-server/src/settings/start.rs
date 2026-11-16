@@ -438,7 +438,7 @@ impl Fixed {
                     .to_string(),
             );
         }
-        let database = DatabasePath::named_by(&environment);
+        let database = DatabasePath::named_by(environment);
         let control_socket = environment
             .get("MARFA_CONTROL_SOCKET")
             .map(PathBuf::from)
