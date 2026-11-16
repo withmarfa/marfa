@@ -142,9 +142,9 @@ describe("a page under atomic: false whose commit cannot be confirmed", () => {
     await server.setFault("fail:commit=edges.bulk");
     const page = await working.bulkEdges({
       atomic: false,
-      edges: targets.map((target_id) => ({
-        source_id: source,
-        target_id,
+      edges: targets.map((to_id) => ({
+        from_id: source,
+        to_id,
         edge_type: "references",
       })),
     });
@@ -247,9 +247,9 @@ describe("a change that has committed", () => {
     await server.setFault("fail:commit-ack=edges.bulk");
     const page = await working.bulkEdges({
       atomic: false,
-      edges: targets.map((target_id) => ({
-        source_id: source,
-        target_id,
+      edges: targets.map((to_id) => ({
+        from_id: source,
+        to_id,
         edge_type: "references",
       })),
     });

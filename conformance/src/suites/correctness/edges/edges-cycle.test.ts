@@ -30,11 +30,11 @@ async function makeItem(label: string): Promise<string> {
 }
 
 async function makeEdge(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ): Promise<{ ok: boolean; id?: string; code?: string; status: number }> {
-  const r = await client.createEdge({ source_id, target_id, edge_type });
+  const r = await client.createEdge({ from_id, to_id, edge_type });
   if (r.ok) {
     trackEdge(ctx, r.data.edge.id);
     return { ok: true, id: r.data.edge.id, status: r.status };
@@ -125,12 +125,12 @@ describe("a cycle through each write path that refuses one", () => {
   async function stored(source: string, edgeType: string): Promise<string[]> {
     const r = await client.listItemEdges(source, { edge_type: edgeType });
     expect(r.status).toBe(200);
-    return r.data.data.map((e) => e.target_id).sort();
+    return r.data.data.map((e) => e.to_id).sort();
   }
 
   /** What a refused cycle names: the type and the two ends the caller gave. */
   function cycle(edgeType: string, source: string, target: string) {
-    return { edge_type: edgeType, source_id: source, target_id: target };
+    return { edge_type: edgeType, from_id: source, to_id: target };
   }
 
   it("refuses a PATCH /edges/{id} move that closes a cycle, and moves a free edge", async () => {
@@ -142,8 +142,8 @@ describe("a cycle through each write path that refuses one", () => {
       const free = await makeItem(`${edgeType}-mv-free`);
       expect((await makeEdge(target, source, edgeType)).ok).toBe(true);
       const moving = await client.createEdge({
-        source_id: other,
-        target_id: target,
+        from_id: other,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(moving.status, edgeType).toBe(201);
@@ -152,7 +152,7 @@ describe("a cycle through each write path that refuses one", () => {
 
       const refused = await client.updateEdge(id, {
         version,
-        source_id: source,
+        from_id: source,
       });
       expect(refused.status, edgeType).toBe(400);
       expect(refused.error?.error.code, edgeType).toBe("edge_cycle");
@@ -161,15 +161,15 @@ describe("a cycle through each write path that refuses one", () => {
       );
       const kept = await client.getEdge(id);
       expect(kept.data.edge, edgeType).toMatchObject({
-        source_id: other,
-        target_id: target,
+        from_id: other,
+        to_id: target,
         version,
       });
 
       // The witness: the same edge moves to a source with no path back.
-      const moved = await client.updateEdge(id, { version, source_id: free });
+      const moved = await client.updateEdge(id, { version, from_id: free });
       expect(moved.status, edgeType).toBe(200);
-      expect(moved.data.edge.source_id, edgeType).toBe(free);
+      expect(moved.data.edge.from_id, edgeType).toBe(free);
     }
   });
 
@@ -184,8 +184,8 @@ describe("a cycle through each write path that refuses one", () => {
       const partial = await client.bulkEdges({
         atomic: false,
         edges: [
-          { source_id: b, target_id: a, edge_type: edgeType },
-          { source_id: c, target_id: d, edge_type: edgeType },
+          { from_id: b, to_id: a, edge_type: edgeType },
+          { from_id: c, to_id: d, edge_type: edgeType },
         ],
       });
       expect(partial.status, edgeType).toBe(200);
@@ -202,8 +202,8 @@ describe("a cycle through each write path that refuses one", () => {
       const f = await makeItem(`${edgeType}-bk-f`);
       const rolled = await client.bulkEdges({
         edges: [
-          { source_id: e, target_id: f, edge_type: edgeType },
-          { source_id: b, target_id: a, edge_type: edgeType },
+          { from_id: e, to_id: f, edge_type: edgeType },
+          { from_id: b, to_id: a, edge_type: edgeType },
         ],
       });
       expect(rolled.status, edgeType).toBe(400);
@@ -226,8 +226,8 @@ describe("a cycle through each write path that refuses one", () => {
       const refused = await client.bulkEdges({
         atomic: true,
         edges: [
-          { source_id: a, target_id: b, edge_type: edgeType },
-          { source_id: b, target_id: a, edge_type: edgeType },
+          { from_id: a, to_id: b, edge_type: edgeType },
+          { from_id: b, to_id: a, edge_type: edgeType },
         ],
       });
       expect(refused.status, edgeType).toBe(400);
@@ -244,7 +244,7 @@ describe("a cycle through each write path that refuses one", () => {
       // listing that showed nothing above shows it.
       const alone = await client.bulkEdges({
         atomic: true,
-        edges: [{ source_id: a, target_id: b, edge_type: edgeType }],
+        edges: [{ from_id: a, to_id: b, edge_type: edgeType }],
       });
       expect(alone.status, edgeType).toBe(200);
       trackEdge(ctx, alone.data.results[0]!.id!);
@@ -257,8 +257,8 @@ describe("a cycle through each write path that refuses one", () => {
     const pair = await client.bulkEdges({
       atomic: true,
       edges: [
-        { source_id: a, target_id: b, edge_type: "about" },
-        { source_id: b, target_id: a, edge_type: "about" },
+        { from_id: a, to_id: b, edge_type: "about" },
+        { from_id: b, to_id: a, edge_type: "about" },
       ],
     });
     expect(pair.status).toBe(200);

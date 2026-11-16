@@ -448,8 +448,8 @@ describe("trash-purge and the parts a host's trash took", () => {
       };
       const link = async (part: string, host: string): Promise<void> => {
         const r = await writer.createEdge({
-          source_id: part,
-          target_id: host,
+          from_id: part,
+          to_id: host,
           edge_type: "comments-on",
         });
         expect(r.ok, JSON.stringify(r.error)).toBe(true);

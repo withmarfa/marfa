@@ -54,13 +54,13 @@ async function bin(client: MarfaClient) {
   const child = await note(client, "child");
   const grandchild = await note(client, "grandchild");
   const alone = await note(client, "alone");
-  for (const [source_id, target_id] of [
+  for (const [from_id, to_id] of [
     [parent, child],
     [child, grandchild],
   ]) {
     const made = await client.createEdge({
-      source_id: source_id!,
-      target_id: target_id!,
+      from_id: from_id!,
+      to_id: to_id!,
       edge_type: "parent-of",
     });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
@@ -124,8 +124,8 @@ describe("a restore of items a cascade trashed", () => {
     expect(
       (
         await source.createEdge({
-          source_id: parent,
-          target_id: child,
+          from_id: parent,
+          to_id: child,
           edge_type: "parent-of",
         })
       ).status,
@@ -164,13 +164,13 @@ async function taskBin(client: MarfaClient) {
   const parent = made.data.item.id;
   const child = await note(client, "child");
   const grandchild = await note(client, "grandchild");
-  for (const [source_id, target_id] of [
+  for (const [from_id, to_id] of [
     [parent, child],
     [child, grandchild],
   ]) {
     const edge = await client.createEdge({
-      source_id: source_id!,
-      target_id: target_id!,
+      from_id: from_id!,
+      to_id: to_id!,
       edge_type: "parent-of",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -304,10 +304,10 @@ describe("a restore of a part a with-hosts edge took into the bin", () => {
     const part = await note(source, "part");
     const first = await note(source, "first host");
     const last = await note(source, "last host");
-    for (const target_id of [first, last]) {
+    for (const to_id of [first, last]) {
       const made = await source.createEdge({
-        source_id: part,
-        target_id,
+        from_id: part,
+        to_id,
         edge_type: "attached-to",
       });
       expect(made.status, JSON.stringify(made.error)).toBe(201);

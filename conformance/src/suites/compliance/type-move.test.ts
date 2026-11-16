@@ -691,8 +691,8 @@ describe("moving a type's items", () => {
     expect(child.ok, JSON.stringify(child.error)).toBe(true);
     trackItem(ctx, child.data.item.id);
     const edge = await client.createEdge({
-      source_id: root,
-      target_id: child.data.item.id,
+      from_id: root,
+      to_id: child.data.item.id,
       edge_type: "parent-of",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

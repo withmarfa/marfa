@@ -71,8 +71,8 @@ async function holdingThree(label: string): Promise<BindingHarness> {
         data: [
           wireEdge({
             id: "photo-on-note",
-            source_id: "photo",
-            target_id: "note",
+            from_id: "photo",
+            to_id: "note",
             edge_type: "attached-to",
           }),
         ],

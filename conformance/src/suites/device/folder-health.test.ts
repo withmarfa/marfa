@@ -342,8 +342,8 @@ function conflictPairs() {
         "edge.created",
         wireEdge({
           id: `01a00000-0000-7000-8000-${String(500 + copy).padStart(12, "0")}`,
-          source_id: id(copy),
-          target_id: id(original),
+          from_id: id(copy),
+          to_id: id(original),
           edge_type: "derived-from",
         }),
       ),

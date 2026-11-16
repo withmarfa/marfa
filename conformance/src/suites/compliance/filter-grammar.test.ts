@@ -62,11 +62,11 @@ async function seed(
 }
 
 async function link(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ): Promise<void> {
-  const made = await client.createEdge({ source_id, target_id, edge_type });
+  const made = await client.createEdge({ from_id, to_id, edge_type });
   expect(made.ok, JSON.stringify(made.error)).toBe(true);
   trackEdge(ctx, made.data.edge.id);
 }

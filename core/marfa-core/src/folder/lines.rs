@@ -15,7 +15,7 @@ use crate::body::resolve::{self, Names, Paths, Resolved, Resolver, is_id, resolv
 use crate::body::text::{self, Typed};
 use crate::model::{Edge, EdgeDraft, EdgeEdit, EdgeOp, Item};
 use marfa_rules::catalog::Catalog;
-use marfa_rules::catalog::{EdgeType, End, WrittenAt};
+use marfa_rules::catalog::{EdgeType, End, WrittenFrom};
 
 /// A file's links and lines, read once every file in the scan is bound.
 pub(super) struct EdgeWork {
@@ -162,7 +162,7 @@ fn front_groups<'t>(
         let Some((def, end)) = types.named(key) else {
             continue;
         };
-        if def.written_at == WrittenAt::None {
+        if def.written_from == WrittenFrom::None {
             reasons.push(if def.id == PLACEMENT_EDGE {
                 format!("its {key} line is not read: a file's place in the folder is where it sits")
             } else {
@@ -228,12 +228,12 @@ impl Folder {
         let Some(def) = types.get(&edge.edge_type) else {
             return Ok(None);
         };
-        let Some(named) = def.written_at.end() else {
+        let Some(named) = def.written_from.end() else {
             return Ok(None);
         };
         let at = |end: End| match end {
-            End::Source => edge.source_id.clone(),
-            End::Target => edge.target_id.clone(),
+            End::From => edge.from_id.clone(),
+            End::To => edge.to_id.clone(),
         };
         if self.carries(&at(named), catalog)? != Some(false) {
             return Ok(Some((at(named), named)));
@@ -266,8 +266,8 @@ impl Folder {
         for edge in self.edges_at(&item.id)? {
             if let Some(end) = self.writes(&item.id, &edge, types, catalog, recorded)? {
                 ends.push(match end {
-                    End::Source => edge.target_id,
-                    End::Target => edge.source_id,
+                    End::From => edge.to_id,
+                    End::To => edge.from_id,
                 });
             }
         }
@@ -292,8 +292,8 @@ impl Folder {
         }
         let mine = end.other();
         let other = match mine {
-            End::Source => &edge.target_id,
-            End::Target => &edge.source_id,
+            End::From => &edge.to_id,
+            End::To => &edge.from_id,
         };
         let typed_here = recorded.iter().any(|line| {
             line.edge_type == edge.edge_type && line.end == mine && &line.other == other
@@ -327,10 +327,10 @@ impl Folder {
                 continue;
             };
             let other = match end {
-                End::Source => edge.target_id.clone(),
-                End::Target => edge.source_id.clone(),
+                End::From => edge.to_id.clone(),
+                End::To => edge.from_id.clone(),
             };
-            if edge.edge_type == LINK_EDGE && end == End::Source && body_links.contains(&other) {
+            if edge.edge_type == LINK_EDGE && end == End::From && body_links.contains(&other) {
                 continue;
             }
             // The body's embed attaches a file the query does not hold, so
@@ -338,7 +338,7 @@ impl Folder {
             // embed out leaves the attachment, which a line then shows. A file
             // the query holds is attached only by its line.
             if edge.edge_type == ATTACHMENT_EDGE
-                && end == End::Target
+                && end == End::To
                 && embedded_outside.contains(&other)
             {
                 continue;
@@ -482,7 +482,7 @@ impl Folder {
         let edges = self.edges_at(item_id)?;
         let references: Vec<&Edge> = edges
             .iter()
-            .filter(|edge| edge.edge_type == LINK_EDGE && edge.source_id == item_id)
+            .filter(|edge| edge.edge_type == LINK_EDGE && edge.from_id == item_id)
             .collect();
         let mut named: Vec<String> = Vec::new();
         let mut links_resolved = true;
@@ -493,7 +493,7 @@ impl Folder {
         };
         let standing: Vec<String> = references
             .iter()
-            .map(|edge| edge.target_id.clone())
+            .map(|edge| edge.to_id.clone())
             .collect();
         for raw in links {
             let typed = Typed::new(raw);
@@ -503,7 +503,7 @@ impl Folder {
                     self.resolve_typed(
                         text,
                         &references,
-                        &|edge| edge.target_id.clone(),
+                        &|edge| edge.to_id.clone(),
                         catalog,
                         resolver,
                         &mut unresolved,
@@ -571,10 +571,10 @@ impl Folder {
             || !work.embeds.is_empty()
             || !work.had_embeds.is_empty()
         {
-            wanted_keys.insert((LINK_EDGE.to_string(), End::Source));
+            wanted_keys.insert((LINK_EDGE.to_string(), End::From));
         }
         if !attach.is_empty() {
-            wanted_keys.insert((ATTACHMENT_EDGE.to_string(), End::Target));
+            wanted_keys.insert((ATTACHMENT_EDGE.to_string(), End::To));
         }
         for (edge_type, end) in wanted_keys {
             let Some(def) = types.get(&edge_type) else {
@@ -599,16 +599,16 @@ impl Folder {
         for ((edge_type, end), group) in &groups {
             let (edge_type, end) = (edge_type.as_str(), *end);
             let other_of = |edge: &Edge| match end {
-                End::Source => edge.target_id.clone(),
-                End::Target => edge.source_id.clone(),
+                End::From => edge.to_id.clone(),
+                End::To => edge.from_id.clone(),
             };
             let current: Vec<&Edge> = edges
                 .iter()
                 .filter(|edge| {
                     edge.edge_type == edge_type
                         && match end {
-                            End::Source => edge.source_id == item_id,
-                            End::Target => edge.target_id == item_id,
+                            End::From => edge.from_id == item_id,
+                            End::To => edge.to_id == item_id,
                         }
                 })
                 .collect();
@@ -628,8 +628,8 @@ impl Folder {
                 &mut reasons,
                 &mut unresolved,
             )?;
-            let links_group = edge_type == LINK_EDGE && end == End::Source;
-            let embeds_group = edge_type == ATTACHMENT_EDGE && end == End::Target;
+            let links_group = edge_type == LINK_EDGE && end == End::From;
+            let embeds_group = edge_type == ATTACHMENT_EDGE && end == End::To;
             if removals.is_some() && (links_group || embeds_group) {
                 continue;
             }
@@ -683,15 +683,15 @@ impl Folder {
                 })
                 .collect();
             let draft = |other: &str| match end {
-                End::Source => EdgeDraft {
-                    source_id: item_id.to_string(),
-                    target_id: other.to_string(),
+                End::From => EdgeDraft {
+                    from_id: item_id.to_string(),
+                    to_id: other.to_string(),
                     edge_type: edge_type.to_string(),
                     ..Default::default()
                 },
-                End::Target => EdgeDraft {
-                    source_id: other.to_string(),
-                    target_id: item_id.to_string(),
+                End::To => EdgeDraft {
+                    from_id: other.to_string(),
+                    to_id: item_id.to_string(),
                     edge_type: edge_type.to_string(),
                     ..Default::default()
                 },
@@ -735,8 +735,8 @@ impl Folder {
                     // Unchanged on the version named, and what remakes the edge if another machine deleted it.
                     properties: old.properties.clone(),
                     base_version: Some(old.version),
-                    source_id: (end == End::Target).then_some(moved.source_id),
-                    target_id: (end == End::Source).then_some(moved.target_id),
+                    from_id: (end == End::To).then_some(moved.from_id),
+                    to_id: (end == End::From).then_some(moved.to_id),
                 };
                 // The end moved to differs from the one the edge holds, so
                 // the edit is always a write. Refused, the edge stays where it
@@ -888,8 +888,8 @@ impl Folder {
         let mut edges = Vec::new();
         for ((edge_type, end), group) in &front_groups(front, types, &mut reasons) {
             let other_of = |edge: &Edge| match end {
-                End::Source => edge.target_id.clone(),
-                End::Target => edge.source_id.clone(),
+                End::From => edge.to_id.clone(),
+                End::To => edge.from_id.clone(),
             };
             let desired = self.desired(
                 group,
@@ -965,7 +965,7 @@ impl Folder {
         }
         // At the end its type does not name, a line is the fallback for an
         // item that cannot carry frontmatter, and nothing else.
-        if let Some(written) = group.edge_type.written_at.end()
+        if let Some(written) = group.edge_type.written_from.end()
             && group.end != written
         {
             let belongs = group
@@ -1002,7 +1002,7 @@ impl Folder {
             .edges_from(&item.id)?
             .into_iter()
             .filter(|edge| edge.edge_type == LINK_EDGE)
-            .map(|edge| edge.target_id)
+            .map(|edge| edge.to_id)
             .collect();
         let mut found = Vec::new();
         for raw in text::links(body) {

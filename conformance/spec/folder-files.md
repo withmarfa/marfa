@@ -292,7 +292,7 @@ When a file is moved or renamed without a content change, a device MUST send onl
 
 When a device renders a file, a device MUST omit its `in-folder` edge from frontmatter and body links.
 
-**Reason:** the `in-folder` edge type's `written_at` is `none` (`folder-documents/edge-written-nowhere`), since a file's place is where it sits.
+**Reason:** the `in-folder` edge type's `written_from` is `none` (`folder-documents/edge-written-nowhere`), since a file's place is where it sits.
 
 **Tests:** `device/folders-placement.test.ts › writes the in-folder edge for a file made in the folder`.
 

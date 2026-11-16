@@ -500,8 +500,8 @@ async function probeEdgeUpdatedAfter(args: {
   trackItem(ctx, source.data.item.id);
   trackItem(ctx, target.data.item.id);
   const seed = await client.createEdge({
-    source_id: source.data.item.id,
-    target_id: target.data.item.id,
+    from_id: source.data.item.id,
+    to_id: target.data.item.id,
     edge_type: "about",
   });
   if (!seed.ok) {
@@ -754,8 +754,8 @@ async function probeEdgeVersion(args: {
   trackItem(ctx, target.data.item.id);
 
   const edge = await client.createEdge({
-    source_id: source.data.item.id,
-    target_id: target.data.item.id,
+    from_id: source.data.item.id,
+    to_id: target.data.item.id,
     edge_type: "about",
   });
   if (!edge.ok) {
@@ -929,8 +929,8 @@ async function probeEdgeEventsUnderFilter(args: {
       trackItem(ctx, source.data.item.id);
       trackItem(ctx, target.data.item.id);
       const edge = await client.createEdge({
-        source_id: source.data.item.id,
-        target_id: target.data.item.id,
+        from_id: source.data.item.id,
+        to_id: target.data.item.id,
         edge_type: "about",
       });
       if (!edge.ok) {

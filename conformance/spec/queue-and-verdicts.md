@@ -2920,7 +2920,7 @@ If an edge write would leave an end the copy holds, or the item a create makes, 
 
 ### `queue-and-verdicts/edge-nesting-refused`
 
-If an edge write would leave an edge of a type the held catalog marks `flat` running from an end the copy holds, or from the item a create makes, whose type the edge type's `target_type_constraints` admit (`edges/collection-no-nesting`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `nesting` with the `edge_type`, `source_id` and `source_type`, queueing nothing.
+If an edge write would leave an edge of a type the held catalog marks `flat` running from an end the copy holds, or from the item a create makes, whose type the edge type's `to_type_constraints` admit (`edges/collection-no-nesting`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `nesting` with the `edge_type`, `from_id` and `source_type`, queueing nothing.
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
 
@@ -2934,7 +2934,7 @@ If an edge write would leave an end at an item the copy holds in the bin, then a
 
 ### `queue-and-verdicts/edge-duplicate-refused`
 
-If an edge write would leave a second edge of one type between one source and one target, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `duplicate` with the `edge_type`, `source_id` and `target_id`, queueing nothing.
+If an edge write would leave a second edge of one type between one source and one target, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `duplicate` with the `edge_type`, `from_id` and `to_id`, queueing nothing.
 
 **Reason:** the server refuses a second edge of a triple (`edges/create-duplicate`), and `details.constraint` is how an idempotent writer tells a duplicate, which it may treat as success, from a full end. An edge create that names the id of the edge the copy holds with that triple is not a second edge, since the server acknowledges it by its id (`edges/id-repeat`).
 
@@ -2942,7 +2942,7 @@ If an edge write would leave a second edge of one type between one source and on
 
 ### `queue-and-verdicts/edge-cardinality-refused`
 
-If an edge write would leave a second edge of a type at an end the held catalog holds that type to one edge at, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `cardinality` with the `edge_type` and the full end's `source_id` or `target_id`, queueing nothing.
+If an edge write would leave a second edge of a type at an end the held catalog holds that type to one edge at, beside an edge the copy holds or another inline edge of the same item create, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `cardinality` with the `edge_type` and the full end's `from_id` or `to_id`, queueing nothing.
 
 **Reason:** the server holds the source of a `one-to-one` or `many-to-one` type to one outbound edge and the target of a `one-to-one` or `one-to-many` type to one inbound edge (`edges/card-source-held`, `edges/card-target-held`, `edges/card-inline` and `edges/move-cardinality`). A move does not count the edge it moves. An item create does not count the edges of a type it names that the item it lands on holds, since the server replaces them.
 
@@ -2966,7 +2966,7 @@ When an edge write breaks more than one of the rules in this section, a device M
 
 ### `queue-and-verdicts/edge-cycle-refused`
 
-If an edge write would leave an edge of a type the held catalog marks `acyclic` closing a cycle through other edges of that type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle` and the server's `details` for it, the `edge_type`, `source_id` and `target_id`, queueing nothing.
+If an edge write would leave an edge of a type the held catalog marks `acyclic` closing a cycle through other edges of that type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_cycle` and the server's `details` for it, the `edge_type`, `from_id` and `to_id`, queueing nothing.
 
 **Reason:** the server refuses such an edge `400 edge_cycle` (`edges/cycle` and `edges/move-cycle`), and every edge the copy holds is one the server holds or one the copy will send before it.
 
@@ -2974,7 +2974,7 @@ If an edge write would leave an edge of a type the held catalog marks `acyclic` 
 
 ### `queue-and-verdicts/edge-parts-cycle-refused`
 
-If an edge write of a type the held catalog gives `cascade_on_delete` `with-hosts` would close a cycle through `with-hosts` edges of any type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, `source_id`, `target_id` and `constraint` `cycle`, queueing nothing.
+If an edge write of a type the held catalog gives `cascade_on_delete` `with-hosts` would close a cycle through `with-hosts` edges of any type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, `from_id`, `to_id` and `constraint` `cycle`, queueing nothing.
 
 **Reason:** the server refuses such an edge `400 edge_constraint_violation` (`edges/parts-cycle`), and every edge the copy holds is one the server holds or one the copy will send before it.
 

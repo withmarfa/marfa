@@ -122,7 +122,7 @@ pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
 };
-pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenAt};
+pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenFrom};
 pub use marfa_rules::contract;
 pub use marfa_rules::display::ItemDisplay;
 pub use marfa_rules::thumbnail::Thumbnail;
@@ -1799,13 +1799,13 @@ impl Core {
     /// `edges_from`, but an edge whose stored properties cannot be read stays
     /// in the answer with no properties, beside why.
     pub fn edges_from_kept(&self, id: &str) -> Result<Vec<(Edge, Option<String>)>> {
-        self.edges_kept("source_id", id)
+        self.edges_kept("from_id", id)
     }
 
     /// `edges_to`, keeping an edge whose stored properties cannot be read as
     /// `edges_from_kept` does.
     pub fn edges_to_kept(&self, id: &str) -> Result<Vec<(Edge, Option<String>)>> {
-        self.edges_kept("target_id", id)
+        self.edges_kept("to_id", id)
     }
 
     /// `edges_of_type`, keeping an edge whose stored properties cannot be
@@ -1844,7 +1844,7 @@ impl Core {
         Ok(store::edges_from(&conn, id)?
             .into_iter()
             .find(|edge| edge.edge_type == CONFLICTED_COPY_EDGE)
-            .map(|edge| edge.target_id))
+            .map(|edge| edge.to_id))
     }
 
     /// The held conflicted copies made from `id`, oldest link first: rows
@@ -2496,7 +2496,7 @@ impl Core {
             &store::NewWrite {
                 kind: WriteKind::RestoreItem,
                 item_id: Some(id),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,
@@ -2595,7 +2595,7 @@ impl Core {
             &store::NewWrite {
                 kind,
                 item_id: Some(id),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,
@@ -2696,12 +2696,12 @@ impl Core {
         let held = held_edge(&conn, id)?;
         let to = Some(to.to_string());
         let edit = match end {
-            End::Source => EdgeEdit {
-                source_id: to,
+            End::From => EdgeEdit {
+                from_id: to,
                 ..EdgeEdit::default()
             },
-            End::Target => EdgeEdit {
-                target_id: to,
+            End::To => EdgeEdit {
+                to_id: to,
                 ..EdgeEdit::default()
             },
         };
@@ -2768,7 +2768,7 @@ impl Core {
             &store::NewWrite {
                 kind,
                 item_id: Some(id),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag,
@@ -2838,7 +2838,7 @@ impl Core {
             &store::NewWrite {
                 kind,
                 item_id: Some(id),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: Some(namespace),
                 tag: None,
@@ -3085,8 +3085,8 @@ impl Core {
             let edge = queue_edge(
                 tx,
                 &EdgeDraft {
-                    source_id: file.clone(),
-                    target_id: target.to_string(),
+                    from_id: file.clone(),
+                    to_id: target.to_string(),
                     edge_type: body::rule::ATTACHMENT_EDGE.into(),
                     ..Default::default()
                 },
@@ -4194,18 +4194,18 @@ fn queue_create(
         .id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-    let source_id = target.as_ref().map_or(id.as_str(), |held| held.id.as_str());
+    let from_id = target.as_ref().map_or(id.as_str(), |held| held.id.as_str());
     let inline: Vec<_> = draft
         .edges
         .iter()
         .flat_map(|(edge_type, targets)| {
-            targets.iter().map(|target_id| edge_rules::Proposed {
+            targets.iter().map(|to_id| edge_rules::Proposed {
                 edge_type,
                 source: edge_rules::Source::Made {
-                    id: source_id,
+                    id: from_id,
                     r#type: &draft.r#type,
                 },
-                target_id,
+                to_id,
                 replacing: None,
             })
         })
@@ -4266,7 +4266,7 @@ fn queue_create(
         &store::NewWrite {
             kind: WriteKind::CreateItem,
             item_id: Some(&id),
-            target_id: None,
+            to_id: None,
             edge_id: None,
             namespace: None,
             tag: None,
@@ -4290,7 +4290,7 @@ fn queue_create(
             &store::NewWrite {
                 kind: WriteKind::AddTag,
                 item_id: Some(&id),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: Some(tag),
@@ -4562,7 +4562,7 @@ fn queue_update(
         &store::NewWrite {
             kind: WriteKind::UpdateItem,
             item_id: Some(id),
-            target_id: None,
+            to_id: None,
             edge_id: None,
             namespace: None,
             tag: None,
@@ -4578,12 +4578,12 @@ fn queue_update(
     Ok(queued)
 }
 
-fn refuse_self_loop(edge_type: &str, source_id: &str, target_id: &str) -> Result<()> {
-    if source_id == target_id {
+fn refuse_self_loop(edge_type: &str, from_id: &str, to_id: &str) -> Result<()> {
+    if from_id == to_id {
         return Err(CoreError::Validation {
             server: None,
             code: "edge_cycle".into(),
-            message: format!("an edge from {source_id} to itself closes a cycle"),
+            message: format!("an edge from {from_id} to itself closes a cycle"),
             details: Some(Box::new(serde_json::json!({ "edge_type": edge_type }))),
         });
     }
@@ -4596,11 +4596,11 @@ fn refuse_self_loop(edge_type: &str, source_id: &str, target_id: &str) -> Result
 /// the copy holds already is not sent.
 fn ends_moved(held: &model::Edge, edit: &EdgeEdit) -> EdgeEdit {
     let mut edit = edit.clone();
-    if edit.source_id.as_deref() == Some(held.source_id.as_str()) {
-        edit.source_id = None;
+    if edit.from_id.as_deref() == Some(held.from_id.as_str()) {
+        edit.from_id = None;
     }
-    if edit.target_id.as_deref() == Some(held.target_id.as_str()) {
-        edit.target_id = None;
+    if edit.to_id.as_deref() == Some(held.to_id.as_str()) {
+        edit.to_id = None;
     }
     edit
 }
@@ -4610,7 +4610,7 @@ fn ends_moved(held: &model::Edge, edit: &EdgeEdit) -> EdgeEdit {
 /// from the catalog the copy holds; one it does not hold is left to the
 /// server.
 fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> Result<()> {
-    let (moved, source_id, target_id) = match (edit.source_id.as_deref(), edit.target_id.as_deref())
+    let (moved, from_id, to_id) = match (edit.from_id.as_deref(), edit.to_id.as_deref())
     {
         (None, None) => return Ok(()),
         (Some(_), Some(_)) => {
@@ -4625,13 +4625,13 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
             });
         }
         (Some(source), None) => (
-            marfa_rules::catalog::End::Source,
+            marfa_rules::catalog::End::From,
             source,
-            held.target_id.as_str(),
+            held.to_id.as_str(),
         ),
         (None, Some(target)) => (
-            marfa_rules::catalog::End::Target,
-            held.source_id.as_str(),
+            marfa_rules::catalog::End::To,
+            held.from_id.as_str(),
             target,
         ),
     };
@@ -4650,13 +4650,13 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
         Ok(_) | Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => {}
         Err(error) => return Err(error),
     }
-    refuse_self_loop(&held.edge_type, source_id, target_id)?;
+    refuse_self_loop(&held.edge_type, from_id, to_id)?;
     edge_rules::refuse_unwritable_edges(
         conn,
         &[edge_rules::Proposed {
             edge_type: &held.edge_type,
-            source: edge_rules::Source::Held(source_id),
-            target_id,
+            source: edge_rules::Source::Held(from_id),
+            to_id,
             replacing: Some(&held.id),
         }],
     )
@@ -4669,17 +4669,17 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
     if let Some(id) = &draft.id {
         marfa_rules::validation::id("id", id)?;
     }
-    refuse_self_loop(&draft.edge_type, &draft.source_id, &draft.target_id)?;
+    refuse_self_loop(&draft.edge_type, &draft.from_id, &draft.to_id)?;
     marfa_rules::integers::refuse_in_value(&draft.properties)?;
     if !store::takes_edge(
         conn,
-        &draft.source_id,
+        &draft.from_id,
         &draft.edge_type,
         &store::whole_edge_types(conn)?,
     )? {
         return Err(CoreError::Invalid(format!(
             "{source} is not a row this copy holds, and {edge_type} is not an edge type its slice holds whole, so the copy cannot hold an edge from it",
-            source = draft.source_id,
+            source = draft.from_id,
             edge_type = draft.edge_type,
         )));
     }
@@ -4687,8 +4687,8 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
         conn,
         &[edge_rules::Proposed {
             edge_type: &draft.edge_type,
-            source: edge_rules::Source::Held(&draft.source_id),
-            target_id: &draft.target_id,
+            source: edge_rules::Source::Held(&draft.from_id),
+            to_id: &draft.to_id,
             replacing: draft.id.as_deref(),
         }],
     )
@@ -4703,7 +4703,7 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let payload = draft.payload(&id)?;
     let mut depends_on: Vec<String> = after.to_vec();
-    for endpoint in [&draft.source_id, &draft.target_id] {
+    for endpoint in [&draft.from_id, &draft.to_id] {
         for id in store::untaken_creates_for_item(tx, endpoint)? {
             if !depends_on.contains(&id) {
                 depends_on.push(id);
@@ -4715,8 +4715,8 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
         tx,
         &store::NewWrite {
             kind: WriteKind::CreateEdge,
-            item_id: Some(&draft.source_id),
-            target_id: Some(&draft.target_id),
+            item_id: Some(&draft.from_id),
+            to_id: Some(&draft.to_id),
             edge_id: Some(&id),
             namespace: None,
             tag: None,
@@ -4754,14 +4754,14 @@ fn update_edge_in(tx: &Connection, id: &str, edit: &EdgeEdit) -> Result<Option<Q
     for (key, value) in &edit.properties {
         next.properties.insert(key.clone(), value.clone());
     }
-    if let Some(source) = &edit.source_id {
-        next.source_id = source.clone();
+    if let Some(source) = &edit.from_id {
+        next.from_id = source.clone();
     }
-    if let Some(target) = &edit.target_id {
-        next.target_id = target.clone();
+    if let Some(target) = &edit.to_id {
+        next.to_id = target.clone();
     }
     // An end moved to is an item the server has to hold first.
-    for moved in [&edit.source_id, &edit.target_id].into_iter().flatten() {
+    for moved in [&edit.from_id, &edit.to_id].into_iter().flatten() {
         for waited in store::untaken_creates_for_item(tx, moved)? {
             if !depends_on.contains(&waited) {
                 depends_on.push(waited);
@@ -4774,8 +4774,8 @@ fn update_edge_in(tx: &Connection, id: &str, edit: &EdgeEdit) -> Result<Option<Q
         tx,
         &store::NewWrite {
             kind: WriteKind::UpdateEdge,
-            item_id: Some(&held.source_id),
-            target_id: Some(&held.target_id),
+            item_id: Some(&held.from_id),
+            to_id: Some(&held.to_id),
             edge_id: Some(id),
             namespace: None,
             tag: None,
@@ -4799,10 +4799,10 @@ fn conflicted_copies_in(
     id: &str,
     unreadable: &mut store::Unreadable,
 ) -> Result<Vec<Item>> {
-    let sources: Vec<String> = store::edges_at(conn, "target_id", id, unreadable)?
+    let sources: Vec<String> = store::edges_at(conn, "to_id", id, unreadable)?
         .into_iter()
         .filter(|edge| edge.edge_type == CONFLICTED_COPY_EDGE)
-        .map(|edge| edge.source_id)
+        .map(|edge| edge.from_id)
         .collect();
     Ok(store::items_by_ids_with(conn, &sources, unreadable)?
         .into_iter()
@@ -4838,8 +4838,8 @@ fn queue_edge_delete(tx: &Connection, held: &model::Edge, after: &[String]) -> R
         tx,
         &store::NewWrite {
             kind: WriteKind::DeleteEdge,
-            item_id: Some(&held.source_id),
-            target_id: Some(&held.target_id),
+            item_id: Some(&held.from_id),
+            to_id: Some(&held.to_id),
             edge_id: Some(&held.id),
             namespace: None,
             tag: None,
@@ -4894,7 +4894,7 @@ fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<Queued
         &store::NewWrite {
             kind: WriteKind::UploadBlob,
             item_id: None,
-            target_id: None,
+            to_id: None,
             edge_id: None,
             namespace: None,
             tag: None,
@@ -5948,8 +5948,8 @@ mod tests {
             ..Default::default()
         };
         let edge = |arrays: usize| EdgeDraft {
-            source_id: "row".into(),
-            target_id: "other".into(),
+            from_id: "row".into(),
+            to_id: "other".into(),
             edge_type: "references".into(),
             properties: nested(arrays),
             ..Default::default()
@@ -6032,7 +6032,7 @@ mod tests {
         let edges = core.edges_from(&id).unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(
-            (edges[0].target_id.as_str(), edges[0].edge_type.as_str()),
+            (edges[0].to_id.as_str(), edges[0].edge_type.as_str()),
             (target.as_str(), "references")
         );
     }
@@ -6124,8 +6124,8 @@ mod tests {
         )
         .unwrap();
         let edge = |properties: serde_json::Value| EdgeDraft {
-            source_id: "row".into(),
-            target_id: "other".into(),
+            from_id: "row".into(),
+            to_id: "other".into(),
             edge_type: "references".into(),
             properties: properties.as_object().unwrap().clone(),
             ..Default::default()
@@ -7385,7 +7385,7 @@ mod tests {
             "link",
             &EdgeEdit {
                 base_version: Some(1),
-                source_id: Some("other".into()),
+                from_id: Some("other".into()),
                 ..EdgeEdit::default()
             },
         )
@@ -7395,7 +7395,7 @@ mod tests {
         assert_eq!(
             store::edge_by_id(&conn, "link")
                 .unwrap()
-                .map(|edge| edge.source_id),
+                .map(|edge| edge.from_id),
             Some("other".to_string()),
             "a row leaving took an edge a waiting write moved to a row the copy holds"
         );
@@ -7420,11 +7420,11 @@ mod tests {
         core
     }
 
-    fn moving(source_id: Option<&str>, target_id: Option<&str>) -> EdgeEdit {
+    fn moving(from_id: Option<&str>, to_id: Option<&str>) -> EdgeEdit {
         EdgeEdit {
             base_version: Some(1),
-            source_id: source_id.map(str::to_string),
-            target_id: target_id.map(str::to_string),
+            from_id: from_id.map(str::to_string),
+            to_id: to_id.map(str::to_string),
             ..EdgeEdit::default()
         }
     }
@@ -7446,8 +7446,8 @@ mod tests {
 
     fn reference(source: &str, target: &str) -> EdgeDraft {
         EdgeDraft {
-            source_id: source.into(),
-            target_id: target.into(),
+            from_id: source.into(),
+            to_id: target.into(),
             edge_type: "references".into(),
             ..EdgeDraft::default()
         }
@@ -7639,8 +7639,8 @@ mod tests {
         }
         let failure = core
             .create_edge(&EdgeDraft {
-                source_id: "row".into(),
-                target_id: "row".into(),
+                from_id: "row".into(),
+                to_id: "row".into(),
                 edge_type: "references".into(),
                 ..EdgeDraft::default()
             })
@@ -7653,7 +7653,7 @@ mod tests {
         let conn = core.conn().unwrap();
         let link = store::edge_by_id(&conn, "link").unwrap().unwrap();
         assert_eq!(
-            (link.source_id.as_str(), link.target_id.as_str()),
+            (link.from_id.as_str(), link.to_id.as_str()),
             ("row", "older")
         );
 
@@ -7663,7 +7663,7 @@ mod tests {
             .update_edge("link", &moving(Some("other"), None))
             .unwrap()
             .unwrap();
-        assert_eq!(moved.body["source_id"], "other");
+        assert_eq!(moved.body["from_id"], "other");
     }
 
     #[test]
@@ -7673,12 +7673,12 @@ mod tests {
             .update_edge("link", &moving(Some("row"), Some("other")))
             .unwrap()
             .unwrap();
-        assert_eq!(edit.body.get("source_id"), None, "{}", edit.body);
-        assert_eq!(edit.body["target_id"], "other");
+        assert_eq!(edit.body.get("from_id"), None, "{}", edit.body);
+        assert_eq!(edit.body["to_id"], "other");
         let conn = core.conn().unwrap();
         let link = store::edge_by_id(&conn, "link").unwrap().unwrap();
         assert_eq!(
-            (link.source_id.as_str(), link.target_id.as_str()),
+            (link.from_id.as_str(), link.to_id.as_str()),
             ("row", "other")
         );
     }
@@ -7783,9 +7783,9 @@ mod tests {
         store::adopt_answered_id(&conn, &local, "answered").unwrap();
         let row = store::queued_write(&conn, &moved.id).unwrap().unwrap();
         let body = &row.body;
-        assert_eq!(body["source_id"], "answered");
+        assert_eq!(body["from_id"], "answered");
         assert_eq!(
-            store::edge_by_id(&conn, "link").unwrap().unwrap().source_id,
+            store::edge_by_id(&conn, "link").unwrap().unwrap().from_id,
             "answered"
         );
     }
@@ -7815,7 +7815,7 @@ mod tests {
         assert_eq!(row.verdict, None);
         assert!(row.depends_on.is_empty());
         let body = &row.body;
-        assert_eq!(body["source_id"], "other");
+        assert_eq!(body["from_id"], "other");
     }
 
     #[test]
@@ -8114,8 +8114,8 @@ mod tests {
         }
         let queued = core
             .create_edge(&EdgeDraft {
-                source_id: "root".into(),
-                target_id: "first".into(),
+                from_id: "root".into(),
+                to_id: "first".into(),
                 edge_type: "in-thread".into(),
                 ..Default::default()
             })

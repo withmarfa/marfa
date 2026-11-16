@@ -273,18 +273,18 @@ CREATE TABLE IF NOT EXISTS table_rows_purging (
 CREATE TABLE IF NOT EXISTS edges (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
-    source_id TEXT NOT NULL REFERENCES items (id),
-    target_id TEXT NOT NULL REFERENCES items (id),
+    from_id TEXT NOT NULL REFERENCES items (id),
+    to_id TEXT NOT NULL REFERENCES items (id),
     edge_type TEXT NOT NULL,
     properties BLOB NOT NULL,
     version INTEGER NOT NULL CHECK (version >= 1),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (source_id, target_id, edge_type)
+    UNIQUE (from_id, to_id, edge_type)
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type, created_at, id);
-CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type, created_at, id);
+CREATE INDEX IF NOT EXISTS edges_from ON edges (from_id, edge_type, created_at, id);
+CREATE INDEX IF NOT EXISTS edges_to ON edges (to_id, edge_type, created_at, id);
 CREATE INDEX IF NOT EXISTS edges_type ON edges (edge_type, created_at, id);
 CREATE INDEX IF NOT EXISTS edges_newest ON edges (created_at, id);
 CREATE INDEX IF NOT EXISTS edges_changed ON edges (updated_at, id);
@@ -920,13 +920,13 @@ BEGIN
     UPDATE blob_references SET item_type = NEW.type
     WHERE kind IN ('item', 'extension') AND seq = NEW.seq;
     UPDATE blob_references SET item_type = NEW.type
-    WHERE kind = 'edge' AND seq IN (SELECT seq FROM edges WHERE source_id = NEW.id);
+    WHERE kind = 'edge' AND seq IN (SELECT seq FROM edges WHERE from_id = NEW.id);
 END;
-CREATE TRIGGER IF NOT EXISTS blob_references_edge_moved AFTER UPDATE OF source_id, edge_type ON edges
-WHEN NEW.source_id IS NOT OLD.source_id OR NEW.edge_type IS NOT OLD.edge_type
+CREATE TRIGGER IF NOT EXISTS blob_references_edge_moved AFTER UPDATE OF from_id, edge_type ON edges
+WHEN NEW.from_id IS NOT OLD.from_id OR NEW.edge_type IS NOT OLD.edge_type
 BEGIN
     UPDATE blob_references
-    SET item_type = (SELECT type FROM items WHERE id = NEW.source_id), edge_type = NEW.edge_type
+    SET item_type = (SELECT type FROM items WHERE id = NEW.from_id), edge_type = NEW.edge_type
     WHERE kind = 'edge' AND seq = NEW.seq;
 END;
 

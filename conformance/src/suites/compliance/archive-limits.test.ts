@@ -92,8 +92,8 @@ describe("the counts an archive carries", () => {
       const wanted = 20_001;
       const edges = Array.from({ length: 4 }, (_, k) =>
         ids.map((id, at) => ({
-          source_id: id,
-          target_id: ids[(at + k + 1) % items]!,
+          from_id: id,
+          to_id: ids[(at + k + 1) % items]!,
           edge_type: "about",
         })),
       )
@@ -167,8 +167,8 @@ describe("the size of an item or edge an archive carries", () => {
         ? `${JSON.stringify({
             edge: {
               id: edge,
-              source_id: first,
-              target_id: second,
+              from_id: first,
+              to_id: second,
               edge_type: "about",
               properties: propertiesOf(bytes),
             },

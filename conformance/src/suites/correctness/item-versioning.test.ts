@@ -845,7 +845,7 @@ describe("item versioning", () => {
     const edges = await client.listEdges({ edge_type: "references" });
     expect(edges.ok).toBe(true);
     expect(
-      edges.data.data.filter((edge) => edge.source_id === r.data.item.id),
+      edges.data.data.filter((edge) => edge.from_id === r.data.item.id),
     ).toHaveLength(0);
 
     // A stale write that does not move the item still lands after the
@@ -1263,7 +1263,7 @@ describe("item versioning", () => {
     const edges = await client.listItemEdges(r.data.item.id, {
       edge_type: "references",
     });
-    expect(edges.data.data.map((edge) => edge.target_id)).toEqual([
+    expect(edges.data.data.map((edge) => edge.to_id)).toEqual([
       target.data.item.id,
     ]);
 
@@ -2095,7 +2095,7 @@ describe("item versioning", () => {
     expect(fresh.status).toBe(200);
     expect(fresh.data.item.version).toBe(2);
     const after = await client.listItemEdges(id, { edge_type: "references" });
-    expect(after.data.data.map((edge) => edge.target_id)).toEqual([
+    expect(after.data.data.map((edge) => edge.to_id)).toEqual([
       target.data.item.id,
     ]);
   });
@@ -2172,8 +2172,8 @@ describe("item versioning", () => {
     const parent = await make();
     const child = await make();
     const linked = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(linked.ok, JSON.stringify(linked.error)).toBe(true);

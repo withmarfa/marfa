@@ -443,8 +443,8 @@ fn visit(tx: &Transaction<'_>, claim: &Claim, value: &Value) -> Result<()> {
     }
     if let (Some(name), true, true) = (
         row.get("edge_type").and_then(Value::as_str),
-        row.contains_key("source_id"),
-        row.contains_key("target_id"),
+        row.contains_key("from_id"),
+        row.contains_key("to_id"),
     ) {
         claim.note(Need::Edge {
             name: name.to_string(),

@@ -113,8 +113,8 @@ describe("an item the key cannot read answers as a missing one", () => {
     edgeType = "about",
   ): Promise<string> {
     const r = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(r.status).toBe(201);
@@ -360,7 +360,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       name: "POST /edges, naming the source",
       method: "POST",
       path: () => "/edges",
-      body: (id) => ({ source_id: id, target_id: task, edge_type: "about" }),
+      body: (id) => ({ from_id: id, to_id: task, edge_type: "about" }),
       witness: live,
       served: 201,
     },
@@ -369,7 +369,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       method: "POST",
       path: () => "/edges/bulk",
       body: (id) => ({
-        edges: [{ source_id: id, target_id: task, edge_type: "about" }],
+        edges: [{ from_id: id, to_id: task, edge_type: "about" }],
       }),
       witness: live,
       served: 200,
@@ -381,7 +381,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       path: () => "/edges/bulk",
       body: (id) => ({
         atomic: false,
-        edges: [{ source_id: id, target_id: task, edge_type: "about" }],
+        edges: [{ from_id: id, to_id: task, edge_type: "about" }],
       }),
       witness: live,
       served: 200,
@@ -395,8 +395,8 @@ describe("an item the key cannot read answers as a missing one", () => {
         atomic: false,
         edges: [
           {
-            source_id: id,
-            target_id: task,
+            from_id: id,
+            to_id: task,
             edge_type: "references",
           },
         ],
@@ -463,15 +463,15 @@ describe("an item the key cannot read answers as a missing one", () => {
       const child = await note();
       const parent = await note();
       const made = await ask(key, "POST", "/edges", {
-        source_id: parent,
-        target_id: child,
+        from_id: parent,
+        to_id: child,
         edge_type: "parent-of",
       });
       expect(made.status).toBe(201);
       const id = (made.body as { edge: { id: string } }).edge.id;
       trackEdge(ctx, id);
       return without(
-        await ask(key, "PATCH", `/edges/${id}`, { version: 1, source_id: to }),
+        await ask(key, "PATCH", `/edges/${id}`, { version: 1, from_id: to }),
         to,
       );
     };
@@ -538,8 +538,8 @@ describe("an item the key cannot read answers as a missing one", () => {
     const source = await note();
     const body = (id: string) => ({
       id,
-      source_id: source,
-      target_id: task,
+      from_id: source,
+      to_id: task,
       edge_type: "about",
     });
     const single = await ask(key, "POST", "/edges", body(hiddenEdge));
@@ -573,7 +573,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     const named = await ask(key, "POST", "/edges", body(own));
     expect(named.status).toBe(409);
     expect(named.body).toMatchObject({
-      error: { code: "id_reused", details: { differs: ["source_id"] } },
+      error: { code: "id_reused", details: { differs: ["from_id"] } },
     });
   });
 
@@ -596,7 +596,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     const own = await note();
     const ownEdge = await edge(own, task);
     const entry = (source: string) => ({
-      edges: [{ source_id: source, target_id: task, edge_type: "about" }],
+      edges: [{ from_id: source, to_id: task, edge_type: "about" }],
     });
     // Each door, asked of an item that exists and of an id nothing holds, and
     // what a key reaching one type is answered there.
@@ -738,8 +738,8 @@ describe("an item the key cannot read answers as a missing one", () => {
     const pointer = await note();
     const target = await note();
     const readable = await ask(key, "POST", "/edges", {
-      source_id: pointer,
-      target_id: target,
+      from_id: pointer,
+      to_id: target,
       edge_type: "about",
     });
     expect(readable.status).toBe(201);
@@ -816,8 +816,8 @@ describe("an item the key cannot read answers as a missing one", () => {
     // the term answers from that edge, as a device holding it does.
     const pointer = await note();
     const into = await client.createEdge({
-      source_id: pointer,
-      target_id: hidden,
+      from_id: pointer,
+      to_id: hidden,
       edge_type: "about",
     });
     expect(into.status).toBe(201);
@@ -918,8 +918,8 @@ describe("the neighbors of an item", () => {
     expect(bookmark.status).toBe(201);
     trackItem(ctx, bookmark.data.item.id);
     const edge = await client.createEdge({
-      source_id: note.data.item.id,
-      target_id: bookmark.data.item.id,
+      from_id: note.data.item.id,
+      to_id: bookmark.data.item.id,
       edge_type: "references",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

@@ -229,7 +229,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const edges = new EdgeDoor();
     for (const edge of attachments) edges.hold(edge);
     const drawn = (item: WireItemOptions): WireItemOptions => {
-      const own = attachments.filter((edge) => edge.source_id === item.id);
+      const own = attachments.filter((edge) => edge.from_id === item.id);
       return own.length === 0
         ? item
         : {
@@ -1771,8 +1771,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         [
           {
             id: "01a00000-0000-7000-8000-0000000023d3",
-            source_id: scan.id,
-            target_id: host.id,
+            from_id: scan.id,
+            to_id: host.id,
             edge_type: "attached-to",
           },
         ],
@@ -1832,8 +1832,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         [
           {
             id: "01a00000-0000-7000-8000-0000000023d6",
-            source_id: scan.id,
-            target_id: plan.id,
+            from_id: scan.id,
+            to_id: plan.id,
             edge_type: "attached-to",
           },
         ],
@@ -2783,7 +2783,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         (request) => request.method === "POST" && request.pathname === "/edges",
       )
       .map((request) => JSON.parse(request.body) as Record<string, unknown>);
-    expect(placed.map((edge) => [edge.source_id, edge.properties])).toEqual([
+    expect(placed.map((edge) => [edge.from_id, edge.properties])).toEqual([
       [early, { path: "Early.txt" }],
     ]);
   });

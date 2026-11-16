@@ -16,7 +16,7 @@ import type {
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
-  EdgeWrittenAt,
+  EdgeWrittenFrom,
   EntryMember,
   FieldDefinition,
   FieldFormat,
@@ -2345,26 +2345,26 @@ export function validateEdgeTypeSchema(
   }
 
   if (
-    obj.written_at !== undefined &&
-    obj.written_at !== "source" &&
-    obj.written_at !== "target" &&
-    obj.written_at !== "none"
+    obj.written_from !== undefined &&
+    obj.written_from !== "from" &&
+    obj.written_from !== "to" &&
+    obj.written_from !== "none"
   ) {
     errors.push(
       issue({
-        field: "written_at",
-        expected: 'one of: "source", "target", "none"',
-        actual: describe(obj.written_at),
-        hint: 'Name the end whose file writes the edge, "none" if no file does, or omit it for the source.',
+        field: "written_from",
+        expected: 'one of: "from", "to", "none"',
+        actual: describe(obj.written_from),
+        hint: 'Name the end whose file writes the edge, "none" if no file does, or omit it for the from end.',
       }),
     );
-  } else if (obj.written_at === "target" && obj.reverse_name === undefined) {
+  } else if (obj.written_from === "to" && obj.reverse_name === undefined) {
     errors.push(
       issue({
-        field: "written_at",
-        expected: "a reverse_name beside written_at: target",
+        field: "written_from",
+        expected: "a reverse_name beside written_from: to",
         actual: "no reverse_name",
-        hint: "The target's file writes the edge under the name read from the target.",
+        hint: "The to end's file writes the edge under the name read from that end.",
       }),
     );
   }
@@ -2409,8 +2409,8 @@ export function validateEdgeTypeSchema(
   }
 
   for (const side of [
-    "source_type_constraints",
-    "target_type_constraints",
+    "from_type_constraints",
+    "to_type_constraints",
   ] as const) {
     const value = obj[side];
     if (value === undefined) continue;
@@ -2518,14 +2518,14 @@ export function validateEdgeTypeSchema(
     id: obj.id as string,
     label: obj.label as string,
     cardinality: obj.cardinality as EdgeCardinality,
-    source_type_constraints: (obj.source_type_constraints as
+    from_type_constraints: (obj.from_type_constraints as
       string[] | undefined) ?? ["*"],
-    target_type_constraints: (obj.target_type_constraints as
+    to_type_constraints: (obj.to_type_constraints as
       string[] | undefined) ?? ["*"],
     cascade_on_delete:
       (obj.cascade_on_delete as EdgeCascade | undefined) ?? "orphan",
     property_schema: propertySchema,
-    written_at: (obj.written_at as EdgeWrittenAt | undefined) ?? "source",
+    written_from: (obj.written_from as EdgeWrittenFrom | undefined) ?? "from",
   };
   if (typeof obj.reverse_label === "string") {
     data.reverse_label = obj.reverse_label;
@@ -2649,12 +2649,12 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
     reverse_label: true,
     description: true,
     cardinality: true,
-    source_type_constraints: true,
-    target_type_constraints: true,
+    from_type_constraints: true,
+    to_type_constraints: true,
     cascade_on_delete: true,
     property_schema: true,
     reverse_name: true,
-    written_at: true,
+    written_from: true,
   } satisfies Record<keyof EdgeTypeSchema, true>),
 );
 

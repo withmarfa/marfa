@@ -78,8 +78,8 @@ function note(id: string): { item: WireItemOptions } {
 function attachedEdge(file: string, target: string): Record<string, unknown> {
   return wireEdge({
     id: `${file}-on-${target}`,
-    source_id: file,
-    target_id: target,
+    from_id: file,
+    to_id: target,
     edge_type: "attached-to",
   });
 }
@@ -790,7 +790,7 @@ describe("the attachments of a copy", () => {
       items: { "core.note": [note("note")] },
       edges: {
         "attached-to": [
-          { id: "outside-on-note", source_id: "outside", target_id: "note" },
+          { id: "outside-on-note", from_id: "outside", to_id: "note" },
         ],
       },
     });

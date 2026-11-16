@@ -761,11 +761,11 @@ pub(super) fn moved_to_bin(unit: &Unit<'_, '_>, moving: &[Moving]) -> Result<Vec
 pub(crate) fn settle_late_part(
     unit: &Unit<'_, '_>,
     catalog: &Catalog,
-    source_id: &str,
-    target_id: &str,
+    from_id: &str,
+    to_id: &str,
 ) -> Result<()> {
     let tx = unit.tx();
-    let (Some(source), Some(host)) = (rows::by_id(tx, source_id)?, rows::by_id(tx, target_id)?)
+    let (Some(source), Some(host)) = (rows::by_id(tx, from_id)?, rows::by_id(tx, to_id)?)
     else {
         return Ok(());
     };

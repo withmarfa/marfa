@@ -104,11 +104,11 @@ async function task(tag: string): Promise<string> {
 }
 
 async function edge(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ): Promise<string> {
-  const r = await client.createEdge({ source_id, target_id, edge_type });
+  const r = await client.createEdge({ from_id, to_id, edge_type });
   expect(r.ok).toBe(true);
   return r.data.edge.id;
 }
@@ -1137,7 +1137,7 @@ describe("a purge says which edges it took, a conflicted copy's link among them"
     const links = await client.listItemEdges(copy!, {
       edge_type: "derived-from",
     });
-    expect(links.data.data.map((e) => e.target_id)).toEqual([original]);
+    expect(links.data.data.map((e) => e.to_id)).toEqual([original]);
     const link = links.data.data[0]!.id;
     expect((await client.deleteItem(original)).ok).toBe(true);
 

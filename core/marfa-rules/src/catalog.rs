@@ -63,35 +63,35 @@ pub fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum End {
-    Source,
-    Target,
+    From,
+    To,
 }
 
 /// Which end of an edge has the file that writes it in a folder, or neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum WrittenAt {
-    Source,
-    Target,
+pub enum WrittenFrom {
+    From,
+    To,
     /// No file writes the edge, and a folder never renders it.
     None,
 }
 
-impl WrittenAt {
+impl WrittenFrom {
     pub fn end(self) -> Option<End> {
         match self {
-            WrittenAt::Source => Some(End::Source),
-            WrittenAt::Target => Some(End::Target),
-            WrittenAt::None => None,
+            WrittenFrom::From => Some(End::From),
+            WrittenFrom::To => Some(End::To),
+            WrittenFrom::None => None,
         }
     }
 }
 
-impl From<End> for WrittenAt {
-    fn from(end: End) -> WrittenAt {
+impl From<End> for WrittenFrom {
+    fn from(end: End) -> WrittenFrom {
         match end {
-            End::Source => WrittenAt::Source,
-            End::Target => WrittenAt::Target,
+            End::From => WrittenFrom::From,
+            End::To => WrittenFrom::To,
         }
     }
 }
@@ -99,8 +99,8 @@ impl From<End> for WrittenAt {
 impl End {
     pub fn other(self) -> End {
         match self {
-            End::Source => End::Target,
-            End::Target => End::Source,
+            End::From => End::To,
+            End::To => End::From,
         }
     }
 }
@@ -151,35 +151,35 @@ pub struct EdgeType {
     pub description: Option<String>,
     pub cardinality: String,
     pub reverse_name: Option<String>,
-    pub written_at: WrittenAt,
-    pub source_type_constraints: Vec<String>,
-    pub target_type_constraints: Vec<String>,
+    pub written_from: WrittenFrom,
+    pub from_type_constraints: Vec<String>,
+    pub to_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
     pub properties: Vec<TypeField>,
     pub shipped: bool,
     /// Whether an edge of this type that closes a cycle through edges of the type is refused.
     pub acyclic: bool,
-    /// Whether a source its own target constraints admit is refused.
+    /// Whether an edge whose from end its own to constraints admit is refused.
     pub flat: bool,
 }
 
 impl EdgeType {
     /// The name a file at `end` writes an edge of this type under, if any.
     pub fn name_at(&self, end: End) -> Option<&str> {
-        if self.written_at == WrittenAt::None {
+        if self.written_from == WrittenFrom::None {
             return None;
         }
         match end {
-            End::Source => Some(&self.id),
-            End::Target => self.reverse_name.as_deref(),
+            End::From => Some(&self.id),
+            End::To => self.reverse_name.as_deref(),
         }
     }
 
     pub fn one_at(&self, end: End) -> bool {
         matches!(
             (end, self.cardinality.as_str()),
-            (End::Source, "one-to-one" | "many-to-one")
-                | (End::Target, "one-to-one" | "one-to-many")
+            (End::From, "one-to-one" | "many-to-one")
+                | (End::To, "one-to-one" | "one-to-many")
         )
     }
 }
@@ -198,9 +198,9 @@ impl EdgeType {
             description: wire.description,
             cardinality: wire.cardinality,
             reverse_name: wire.reverse_name,
-            written_at: wire.written_at,
-            source_type_constraints: wire.source_type_constraints,
-            target_type_constraints: wire.target_type_constraints,
+            written_from: wire.written_from,
+            from_type_constraints: wire.from_type_constraints,
+            to_type_constraints: wire.to_type_constraints,
             cascade_on_delete: wire.cascade_on_delete,
             properties,
             shipped: wire.shipped,

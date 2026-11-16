@@ -436,7 +436,7 @@ fn the_body_write_a_waiting_link_edge_was_read_from_stays() {
         let conn = folder.core.conn().unwrap();
         // As `body::rule::derive` queues it: waiting on the body write.
         conn.execute(
-            "INSERT INTO queue (id, kind, item_id, target_id, idempotency_key, payload, queued_at, depends_on)
+            "INSERT INTO queue (id, kind, item_id, to_id, idempotency_key, payload, queued_at, depends_on)
              VALUES ('link', 'create_edge', ?1, ?2, 'link', '{\"edge_type\":\"references\"}',
                      '2026-01-01T00:00:02Z', json_array(?3))",
             [&host, &other, &ids[0]],

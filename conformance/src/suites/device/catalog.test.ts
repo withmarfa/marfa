@@ -55,10 +55,10 @@ const MENTOR = edgeType("mentor-of", {
   label: "Mentees",
   reverse_label: "Mentor",
   cardinality: "one-to-many",
-  source_type_constraints: ["core.note"],
+  from_type_constraints: ["core.note"],
   property_schema: { since: { type: "string", description: "When it began" } },
   reverse_name: "mentored-by",
-  written_at: "target",
+  written_from: "to",
 });
 
 function value<T>(outcome: Outcome<T>, what: string): T {
@@ -196,9 +196,9 @@ describe("The type catalog a working copy holds", () => {
       description: null,
       cardinality: "one-to-many",
       reverse_name: "mentored-by",
-      written_at: "target",
-      source_type_constraints: ["core.note"],
-      target_type_constraints: ["*"],
+      written_from: "to",
+      from_type_constraints: ["core.note"],
+      to_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       properties: [
         {
@@ -220,7 +220,7 @@ describe("The type catalog a working copy holds", () => {
       "the registered edge type, its reverse name and the end that writes it did not reach the caller unchanged",
     ).toEqual(mentorRead);
     expect(
-      [parent.reverse_name, parent.written_at, parent.shipped],
+      [parent.reverse_name, parent.written_from, parent.shipped],
       "a shipped edge type's reverse name did not reach the caller",
     ).toEqual(["child-of", "target", true]);
     const collected = edges.find((type) => type.id === "in-collection");

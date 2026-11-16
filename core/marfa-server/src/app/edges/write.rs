@@ -53,24 +53,24 @@ pub enum By {
 
 pub struct Create {
     pub id: Option<String>,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     pub properties: Map<String, Value>,
-    pub source_version: Option<i64>,
+    pub from_version: Option<i64>,
 }
 
 pub struct Update {
     pub id: String,
     pub version: i64,
-    pub source_id: Option<String>,
-    pub target_id: Option<String>,
+    pub from_id: Option<String>,
+    pub to_id: Option<String>,
     pub properties: Option<Map<String, Value>>,
 }
 
 pub struct Delete {
     pub id: String,
-    pub source_version: Option<i64>,
+    pub from_version: Option<i64>,
 }
 
 pub enum Op {
@@ -166,29 +166,29 @@ pub(crate) fn judge_restored_ends(
     source: (&str, &str),
     target_type: &str,
 ) -> Result<()> {
-    let (source_id, source_type) = source;
+    let (from_id, source_type) = source;
     let lineage = |type_id: &str| lineage_of(catalog.types.rows(), type_id);
     let held = lineage(source_type);
     if let Some(held) = &held
-        && !lineage_admits(held, &kind.source_type_constraints)
+        && !lineage_admits(held, &kind.from_type_constraints)
     {
         return Err(constraint(edges::refused_end(
             kind,
-            End::Source,
+            End::From,
             source_type,
         )));
     }
     if let Some(target) = lineage(target_type)
-        && !lineage_admits(&target, &kind.target_type_constraints)
+        && !lineage_admits(&target, &kind.to_type_constraints)
     {
         return Err(constraint(edges::refused_end(
             kind,
-            End::Target,
+            End::To,
             target_type,
         )));
     }
-    if kind.flat && held.is_some_and(|held| lineage_admits(&held, &kind.target_type_constraints)) {
-        let mut nesting = edges::refused_nesting(&kind.id, source_id, source_type);
+    if kind.flat && held.is_some_and(|held| lineage_admits(&held, &kind.to_type_constraints)) {
+        let mut nesting = edges::refused_nesting(&kind.id, from_id, source_type);
         nesting.message = format!(
             "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",
             kind.id
@@ -201,7 +201,7 @@ pub(crate) fn judge_restored_ends(
 struct Stands<'a> {
     kind: &'a EdgeType,
     source: &'a Item,
-    target_id: &'a str,
+    to_id: &'a str,
     properties: &'a Map<String, Value>,
     moving: Option<&'a str>,
     by: By,
@@ -309,7 +309,7 @@ impl<'c> Writing<'_, '_, 'c> {
         let Some(edge) = held else {
             return Err(not_found(id));
         };
-        let source = items::row(self.tx(), &edge.source_id)?
+        let source = items::row(self.tx(), &edge.from_id)?
             .ok_or_else(|| Refusal::internal("an edge outlived its source"))?;
         if !self
             .caller()
@@ -371,15 +371,15 @@ impl<'c> Writing<'_, '_, 'c> {
         &self,
         kind: &EdgeType,
         source: (&str, &str),
-        target_id: &str,
+        to_id: &str,
         properties: &Map<String, Value>,
         by: By,
     ) -> Result<()> {
-        if source.0 == target_id {
+        if source.0 == to_id {
             return Err(self_loop(kind));
         }
         self.judge_properties(kind, properties, by)?;
-        let target = self.target_row(kind, target_id)?;
+        let target = self.target_row(kind, to_id)?;
         self.judge_cascade(kind, &target)?;
         self.judge_ends(kind, source, &target)
     }
@@ -399,27 +399,27 @@ impl<'c> Writing<'_, '_, 'c> {
         let Stands {
             kind,
             source,
-            target_id,
+            to_id,
             ..
         } = *edge;
         if edge.by != By::Inline {
             let ends = (source.id.as_str(), source.type_id.as_str());
-            self.judge_stated(kind, ends, target_id, edge.properties, edge.by)?;
+            self.judge_stated(kind, ends, to_id, edge.properties, edge.by)?;
         }
         let proposed = Proposed {
             edge_type: &kind.id,
             source: &source.id,
-            target: target_id,
+            target: to_id,
             moving: edge.moving,
         };
         let store = self.store();
         if edges::duplicate(&store, &proposed)?.is_some() {
-            return Err(duplicate(&kind.id, &source.id, target_id));
+            return Err(duplicate(&kind.id, &source.id, to_id));
         }
         if let Some(end) = edges::full_end(&store, kind, &proposed)? {
             let at = match end {
-                End::Source => &source.id,
-                End::Target => target_id,
+                End::From => &source.id,
+                End::To => to_id,
             };
             return Err(constraint(edges::refused_cardinality(kind, end, at)));
         }
@@ -429,32 +429,32 @@ impl<'c> Writing<'_, '_, 'c> {
                 format!("Edge \"{}\" would close a cycle", kind.id),
             )
             .with_detail("edge_type", kind.id.as_str())
-            .with_detail("source_id", source.id.as_str())
-            .with_detail("target_id", target_id));
+            .with_detail("from_id", source.id.as_str())
+            .with_detail("to_id", to_id));
         }
         let parts =
             |held: &str| marfa_rules::edges::Graph::on_delete(&store, held) == OnDelete::WithHosts;
         if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
             return Err(constraint(edges::refused_parts_cycle(
-                &kind.id, &source.id, target_id,
+                &kind.id, &source.id, to_id,
             )));
         }
         Ok(())
     }
 
     fn judge_ends(&self, kind: &EdgeType, source: (&str, &str), target: &Item) -> Result<()> {
-        let (source_id, source_type) = source;
-        if !admitted(self.catalog, &kind.source_type_constraints, source_type) {
+        let (from_id, source_type) = source;
+        if !admitted(self.catalog, &kind.from_type_constraints, source_type) {
             return Err(constraint(edges::refused_end(
                 kind,
-                End::Source,
+                End::From,
                 source_type,
             )));
         }
-        if !admitted(self.catalog, &kind.target_type_constraints, &target.type_id) {
+        if !admitted(self.catalog, &kind.to_type_constraints, &target.type_id) {
             return Err(constraint(edges::refused_end(
                 kind,
-                End::Target,
+                End::To,
                 &target.type_id,
             )));
         }
@@ -464,11 +464,11 @@ impl<'c> Writing<'_, '_, 'c> {
                 format!("Folder {} is revoked and takes no new placement", target.id),
             )
             .with_detail("edge_type", kind.id.as_str())
-            .with_detail("target_id", target.id.as_str())
+            .with_detail("to_id", target.id.as_str())
             .with_detail("constraint", "revoked"));
         }
-        if kind.flat && admitted(self.catalog, &kind.target_type_constraints, source_type) {
-            let mut nesting = edges::refused_nesting(&kind.id, source_id, source_type);
+        if kind.flat && admitted(self.catalog, &kind.to_type_constraints, source_type) {
+            let mut nesting = edges::refused_nesting(&kind.id, from_id, source_type);
             nesting.message = format!(
                 "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",
                 kind.id
@@ -480,18 +480,18 @@ impl<'c> Writing<'_, '_, 'c> {
 
     fn create(&self, create: Create, by: By) -> Result<Wrote> {
         if matches!(by, By::Caller | By::Inline) {
-            check_id("source_id", &create.source_id)?;
-            check_id("target_id", &create.target_id)?;
+            check_id("from_id", &create.from_id)?;
+            check_id("to_id", &create.to_id)?;
             if let Some(id) = &create.id {
                 check_id("id", id)?;
             }
         }
-        let source = self.source_row(&create.source_id)?;
+        let source = self.source_row(&create.from_id)?;
         if by != By::Link {
             self.require_row_write(&source)?;
             self.require_edge_write(&create.edge_type)?;
         }
-        items::require_version(&source, create.source_version)?;
+        items::require_version(&source, create.from_version)?;
         let held = match &create.id {
             Some(id) => rows::by_id(self.tx(), id)?,
             None => None,
@@ -501,8 +501,8 @@ impl<'c> Writing<'_, '_, 'c> {
         {
             repeat(
                 held,
-                &create.source_id,
-                &create.target_id,
+                &create.from_id,
+                &create.to_id,
                 &create.edge_type,
             )?;
             self.note_edge(&held.id, &source);
@@ -515,7 +515,7 @@ impl<'c> Writing<'_, '_, 'c> {
         self.judge(&Stands {
             kind,
             source: &source,
-            target_id: &create.target_id,
+            to_id: &create.to_id,
             properties: &create.properties,
             moving: None,
             by,
@@ -546,8 +546,8 @@ impl<'c> Writing<'_, '_, 'c> {
             self.tx(),
             &NewEdge {
                 id: create.id.as_deref().unwrap_or(&minted),
-                source_id: &source.id,
-                target_id: &create.target_id,
+                from_id: &source.id,
+                to_id: &create.to_id,
                 edge_type: &create.edge_type,
                 properties: &number::object(&create.properties),
                 at: &self.unit.at,
@@ -560,12 +560,12 @@ impl<'c> Writing<'_, '_, 'c> {
             &edge.id,
             json!({
                 "edge_type": edge.edge_type,
-                "source_id": edge.source_id,
-                "target_id": edge.target_id,
+                "from_id": edge.from_id,
+                "to_id": edge.to_id,
             }),
         )?;
         if matches!(by, By::Caller | By::Link) {
-            self.settle(kind, &source, &edge.target_id)?;
+            self.settle(kind, &source, &edge.to_id)?;
         }
         self.note_edge(&edge.id, &source);
         Ok(Wrote::Created(edge))
@@ -579,14 +579,14 @@ impl<'c> Writing<'_, '_, 'c> {
             return skip("malformed");
         };
         let text = |key: &str| edge.get(key).and_then(Value::as_str);
-        let (Some(source_id), Some(target_id), Some(edge_type)) =
-            (text("source_id"), text("target_id"), text("edge_type"))
+        let (Some(from_id), Some(to_id), Some(edge_type)) =
+            (text("from_id"), text("to_id"), text("edge_type"))
         else {
             return skip("malformed");
         };
         let (Some(source), Some(target)) = (
-            items::row(self.tx(), source_id)?,
-            items::row(self.tx(), target_id)?,
+            items::row(self.tx(), from_id)?,
+            items::row(self.tx(), to_id)?,
         ) else {
             return skip("endpoint_missing");
         };
@@ -616,8 +616,8 @@ impl<'c> Writing<'_, '_, 'c> {
             self.tx(),
             &NewEdge {
                 id: text("id").unwrap_or(&minted),
-                source_id,
-                target_id,
+                from_id,
+                to_id,
                 edge_type,
                 properties: &number::object(&properties),
                 at: &created_at,
@@ -685,8 +685,8 @@ impl<'c> Writing<'_, '_, 'c> {
         }
         if let Some(end) = edges::full_end(&store, kind, &proposed)? {
             let at = match end {
-                End::Source => &source.id,
-                End::Target => &target.id,
+                End::From => &source.id,
+                End::To => &target.id,
             };
             return Err(constraint(edges::refused_cardinality(kind, end, at)));
         }
@@ -708,7 +708,7 @@ impl<'c> Writing<'_, '_, 'c> {
     }
 
     pub(super) fn may_read(&self, edge: &Edge) -> Result<bool> {
-        Ok(items::type_of(self.tx(), &edge.source_id)?
+        Ok(items::type_of(self.tx(), &edge.from_id)?
             .is_some_and(|source| self.caller().may_read_edge(&edge.edge_type, &source)))
     }
 
@@ -719,11 +719,11 @@ impl<'c> Writing<'_, '_, 'c> {
         Ok(())
     }
 
-    fn settle(&self, kind: &EdgeType, source: &Item, target_id: &str) -> Result<()> {
+    fn settle(&self, kind: &EdgeType, source: &Item, to_id: &str) -> Result<()> {
         if OnDelete::of(Some(&kind.cascade_on_delete)) != OnDelete::WithHosts {
             return Ok(());
         }
-        items::settle_late_part(self.unit, self.catalog, &source.id, target_id)
+        items::settle_late_part(self.unit, self.catalog, &source.id, to_id)
     }
 
     fn update(&self, update: Update) -> Result<Wrote> {
@@ -733,17 +733,17 @@ impl<'c> Writing<'_, '_, 'c> {
         if update.version != edge.version {
             return Err(stale(&edge, update.version)?);
         }
-        let new_source = update.source_id.filter(|id| *id != edge.source_id);
-        let new_target = update.target_id.filter(|id| *id != edge.target_id);
+        let new_source = update.from_id.filter(|id| *id != edge.from_id);
+        let new_target = update.to_id.filter(|id| *id != edge.to_id);
         if let Some(id) = &new_source {
-            check_id("source_id", id)?;
+            check_id("from_id", id)?;
         }
         if let Some(id) = &new_target {
-            check_id("target_id", id)?;
+            check_id("to_id", id)?;
         }
         if new_source.is_some() && new_target.is_some() {
             return Err(at_path(
-                "source_id",
+                "from_id",
                 "An update moves one end of an edge at a time; delete it and create the edge wanted"
                     .to_string(),
             ));
@@ -753,9 +753,9 @@ impl<'c> Writing<'_, '_, 'c> {
         if moved {
             let kind = kind.ok_or_else(|| unknown_kind(&edge.edge_type))?;
             let (field, kept) = if new_source.is_some() {
-                ("source_id", End::Target)
+                ("from_id", End::To)
             } else {
-                ("target_id", End::Source)
+                ("to_id", End::From)
             };
             if !kind.one_at(kept) {
                 return Err(at_path(
@@ -772,12 +772,12 @@ impl<'c> Writing<'_, '_, 'c> {
             stands = self.source_row(id)?;
             self.require_row_write(&stands)?;
         }
-        let target_id = new_target.as_deref().unwrap_or(&edge.target_id).to_string();
+        let to_id = new_target.as_deref().unwrap_or(&edge.to_id).to_string();
         if let (true, Some(kind)) = (moved, kind) {
             if stands.state == "trashed" {
                 return Err(source_missing(&stands.id));
             }
-            self.target_row(kind, &target_id)?;
+            self.target_row(kind, &to_id)?;
         } else if update.properties.is_none() {
             return Err(Refusal::new(
                 Code::MissingRequiredField,
@@ -791,7 +791,7 @@ impl<'c> Writing<'_, '_, 'c> {
             Some(kind) if moved => self.judge(&Stands {
                 kind,
                 source: &stands,
-                target_id: &target_id,
+                to_id: &to_id,
                 properties: &properties,
                 moving: Some(&edge.id),
                 by: By::Caller,
@@ -810,8 +810,8 @@ impl<'c> Writing<'_, '_, 'c> {
             self.tx(),
             &edge,
             &Landed {
-                source_id: &stands.id,
-                target_id: &target_id,
+                from_id: &stands.id,
+                to_id: &to_id,
                 properties: &number::object(&properties),
                 at: &self.unit.at,
             },
@@ -824,15 +824,15 @@ impl<'c> Writing<'_, '_, 'c> {
         let details = if moved {
             json!({
                 "edge_type": written.edge_type,
-                "source_id": written.source_id,
-                "target_id": written.target_id,
+                "from_id": written.from_id,
+                "to_id": written.to_id,
             })
         } else {
             json!({ "edge_type": written.edge_type })
         };
         self.record("edge.update", &written.id, details)?;
         if let (true, Some(kind)) = (moved, kind) {
-            self.settle(kind, &stands, &written.target_id)?;
+            self.settle(kind, &stands, &written.to_id)?;
         }
         Ok(Wrote::Updated(written))
     }
@@ -841,7 +841,7 @@ impl<'c> Writing<'_, '_, 'c> {
         let (edge, source) = self.readable(&delete.id)?;
         self.require_row_write(&source)?;
         self.require_edge_write(&edge.edge_type)?;
-        items::require_version(&source, delete.source_version)?;
+        items::require_version(&source, delete.from_version)?;
         rows::delete(self.tx(), &edge)?;
         announce(self.unit, "edge.deleted", &edge, &source, None)?;
         self.record(
@@ -858,22 +858,22 @@ fn check_id(field: &str, id: &str) -> Result<()> {
 }
 
 pub(super) fn check_entry_ids(entry: &super::bulk::Entry) -> Result<()> {
-    check_id("source_id", &entry.source_id)?;
-    check_id("target_id", &entry.target_id)?;
+    check_id("from_id", &entry.from_id)?;
+    check_id("to_id", &entry.to_id)?;
     match &entry.id {
         Some(id) => check_id("id", id),
         None => Ok(()),
     }
 }
 
-fn duplicate(edge_type: &str, source_id: &str, target_id: &str) -> Refusal {
+fn duplicate(edge_type: &str, from_id: &str, to_id: &str) -> Refusal {
     Refusal::new(
         Code::EdgeConstraintViolation,
         format!("Edge \"{edge_type}\" already exists between these items"),
     )
     .with_detail("edge_type", edge_type)
-    .with_detail("source_id", source_id)
-    .with_detail("target_id", target_id)
+    .with_detail("from_id", from_id)
+    .with_detail("to_id", to_id)
     .with_detail("constraint", "duplicate")
 }
 
@@ -891,11 +891,11 @@ fn stale(edge: &Edge, named: i64) -> Result<Refusal> {
 
 pub(super) fn repeat(held: &Edge, source: &str, target: &str, edge_type: &str) -> Result<()> {
     let mut differs = Vec::new();
-    if held.source_id != source {
-        differs.push("source_id");
+    if held.from_id != source {
+        differs.push("from_id");
     }
-    if held.target_id != target {
-        differs.push("target_id");
+    if held.to_id != target {
+        differs.push("to_id");
     }
     if held.edge_type != edge_type {
         differs.push("edge_type");
@@ -1006,7 +1006,7 @@ pub(crate) fn announce(
     });
     unit.announce(&Event {
         event_type,
-        item_id: &edge.source_id,
+        item_id: &edge.from_id,
         type_id: &source.type_id,
         source: &source.source,
         payload: format!(
@@ -1049,7 +1049,7 @@ pub(crate) fn inline_gates(
 ) -> Result<()> {
     for (edge_type, targets) in inline {
         for target in targets {
-            if validation::id("target_id", target).is_err() {
+            if validation::id("to_id", target).is_err() {
                 return Err(Refusal::new(
                     Code::InvalidId,
                     format!("Invalid target id in edges.{edge_type}: {target}"),
@@ -1072,7 +1072,7 @@ pub(crate) fn inline_gates(
         let held = rows::leaving(writing.tx(), source.0, edge_type)?;
         let (new, kept): (Vec<&String>, Vec<&String>) = once(targets)
             .into_iter()
-            .partition(|target| !held.iter().any(|edge| edge.target_id == **target));
+            .partition(|target| !held.iter().any(|edge| edge.to_id == **target));
         named.push((kind, new, kept));
     }
     for (kind, new, _) in &named {
@@ -1108,15 +1108,15 @@ pub(crate) fn inline_gates(
 /// Whether `inline` leaves out an edge the item holds or names one it does not.
 pub(crate) fn inline_differs(
     writing: &Writing<'_, '_, '_>,
-    source_id: &str,
+    from_id: &str,
     inline: &Inline,
 ) -> Result<bool> {
     for (edge_type, targets) in inline {
-        let held = rows::leaving(writing.tx(), source_id, edge_type)?;
-        let leaves = held.iter().any(|edge| !targets.contains(&edge.target_id));
+        let held = rows::leaving(writing.tx(), from_id, edge_type)?;
+        let leaves = held.iter().any(|edge| !targets.contains(&edge.to_id));
         let adds = targets
             .iter()
-            .any(|target| !held.iter().any(|edge| edge.target_id == *target));
+            .any(|target| !held.iter().any(|edge| edge.to_id == *target));
         if leaves || adds {
             return Ok(true);
         }
@@ -1135,15 +1135,15 @@ pub(crate) fn inline_replace(
     for (edge_type, targets) in inline {
         let held = rows::leaving(writing.tx(), &source.id, edge_type)?;
         for edge in &held {
-            if !targets.contains(&edge.target_id) {
+            if !targets.contains(&edge.to_id) {
                 writing.delete(Delete {
                     id: edge.id.clone(),
-                    source_version: None,
+                    from_version: None,
                 })?;
             }
         }
         for target in once(targets) {
-            if !held.iter().any(|edge| edge.target_id == *target) {
+            if !held.iter().any(|edge| edge.to_id == *target) {
                 wanted.push((edge_type, target));
             }
         }
@@ -1152,11 +1152,11 @@ pub(crate) fn inline_replace(
         writing.create(
             Create {
                 id: None,
-                source_id: source.id.clone(),
-                target_id: (*target).clone(),
+                from_id: source.id.clone(),
+                to_id: (*target).clone(),
                 edge_type: (*edge_type).clone(),
                 properties: Map::new(),
-                source_version: None,
+                from_version: None,
             },
             By::Inline,
         )?;
@@ -1186,18 +1186,18 @@ pub(crate) fn judge_retype(
         let Some(kind) = writing.catalog.edge_kind(&edge.edge_type) else {
             continue;
         };
-        let replaced = edge.source_id == *id
+        let replaced = edge.from_id == *id
             && inline.iter().any(|(edge_type, targets)| {
-                *edge_type == edge.edge_type && !targets.contains(&edge.target_id)
+                *edge_type == edge.edge_type && !targets.contains(&edge.to_id)
             });
         if replaced {
             continue;
         }
         let name = &kind.id;
-        if edge.source_id == *id
-            && !admitted(writing.catalog, &kind.source_type_constraints, next_type)
+        if edge.from_id == *id
+            && !admitted(writing.catalog, &kind.from_type_constraints, next_type)
         {
-            let refusal = edges::refused_end(kind, End::Source, next_type);
+            let refusal = edges::refused_end(kind, End::From, next_type);
             return Err(constraint(Refused {
                 message: format!(
                     "Item {id} can't become \"{next_type}\": {}",
@@ -1206,10 +1206,10 @@ pub(crate) fn judge_retype(
                 details: refusal.details,
             }));
         }
-        if edge.target_id == *id
-            && !admitted(writing.catalog, &kind.target_type_constraints, next_type)
+        if edge.to_id == *id
+            && !admitted(writing.catalog, &kind.to_type_constraints, next_type)
         {
-            let refusal = edges::refused_end(kind, End::Target, next_type);
+            let refusal = edges::refused_end(kind, End::To, next_type);
             return Err(constraint(Refused {
                 message: format!(
                     "Item {id} can't become \"{next_type}\": {}",
@@ -1218,9 +1218,9 @@ pub(crate) fn judge_retype(
                 details: refusal.details,
             }));
         }
-        if edge.source_id == *id
+        if edge.from_id == *id
             && kind.flat
-            && admitted(writing.catalog, &kind.target_type_constraints, next_type)
+            && admitted(writing.catalog, &kind.to_type_constraints, next_type)
         {
             let refusal = edges::refused_nesting(name, id, next_type);
             return Err(constraint(Refused {
@@ -1255,16 +1255,16 @@ pub(crate) fn copy_edges(
         let Some(kind) = writing.catalog.edge_kind(&edge.edge_type) else {
             continue;
         };
-        let outbound = edge.source_id == original.id;
+        let outbound = edge.from_id == original.id;
         let on_delete = OnDelete::of(Some(&kind.cascade_on_delete));
-        let written = match kind.written_at.end() {
-            Some(end) => end == if outbound { End::Source } else { End::Target },
+        let written = match kind.written_from.end() {
+            Some(end) => end == if outbound { End::From } else { End::To },
             None => outbound,
         };
         let other = if outbound {
-            &edge.target_id
+            &edge.to_id
         } else {
-            &edge.source_id
+            &edge.from_id
         };
         if !written
             || marfa_rules::edges::Graph::in_bin(&store, other)?
@@ -1274,19 +1274,19 @@ pub(crate) fn copy_edges(
         {
             continue;
         }
-        let (source_id, target_id) = if outbound {
-            (copy.id.clone(), edge.target_id.clone())
+        let (from_id, to_id) = if outbound {
+            (copy.id.clone(), edge.to_id.clone())
         } else {
-            (edge.source_id.clone(), copy.id.clone())
+            (edge.from_id.clone(), copy.id.clone())
         };
         let made = writing.create(
             Create {
                 id: None,
-                source_id,
-                target_id,
+                from_id,
+                to_id,
                 edge_type: edge.edge_type.clone(),
                 properties: items::parsed(&edge.properties)?,
-                source_version: None,
+                from_version: None,
             },
             By::Copy(edge.seq),
         );
@@ -1301,11 +1301,11 @@ pub(crate) fn copy_edges(
     writing.create(
         Create {
             id: None,
-            source_id: copy.id.clone(),
-            target_id: original.id.clone(),
+            from_id: copy.id.clone(),
+            to_id: original.id.clone(),
             edge_type: DERIVED_FROM.to_string(),
             properties: Map::new(),
-            source_version: None,
+            from_version: None,
         },
         By::Link,
     )?;

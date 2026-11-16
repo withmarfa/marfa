@@ -533,8 +533,8 @@ describe("what a hydration leaves behind", () => {
         [
           wireEdge({
             id: "first",
-            source_id: "outer",
-            target_id: "inner",
+            from_id: "outer",
+            to_id: "inner",
             edge_type: "parent-of",
           }),
         ],
@@ -543,8 +543,8 @@ describe("what a hydration leaves behind", () => {
       edgesPage([
         wireEdge({
           id: "second",
-          source_id: "inner",
-          target_id: "ticket",
+          from_id: "inner",
+          to_id: "ticket",
           edge_type: "parent-of",
         }),
       ]),
@@ -584,8 +584,8 @@ describe("what a hydration leaves behind", () => {
         [
           wireEdge({
             id: "before",
-            source_id: "outer",
-            target_id: "inner",
+            from_id: "outer",
+            to_id: "inner",
             edge_type: "parent-of",
           }),
         ],
@@ -595,8 +595,8 @@ describe("what a hydration leaves behind", () => {
       edgesPage([
         wireEdge({
           id: "after",
-          source_id: "inner",
-          target_id: "ticket",
+          from_id: "inner",
+          to_id: "ticket",
           edge_type: "parent-of",
         }),
       ]),

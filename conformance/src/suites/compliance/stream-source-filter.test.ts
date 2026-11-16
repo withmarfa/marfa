@@ -108,8 +108,8 @@ async function edge(
   target: string,
 ): Promise<string> {
   const r = await writer.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(r.status, JSON.stringify(r.error)).toBe(201);

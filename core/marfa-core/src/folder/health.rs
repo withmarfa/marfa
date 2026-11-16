@@ -641,9 +641,9 @@ impl Folder {
         store::refuse_unless_usable(&read)?;
         let sources = {
             let mut statement = read.prepare(
-                "SELECT DISTINCT source_id FROM edges WHERE edge_type = ?1
-                 AND (source_id IN (SELECT item_id FROM folder_files)
-                      OR target_id IN (SELECT item_id FROM folder_files))",
+                "SELECT DISTINCT from_id FROM edges WHERE edge_type = ?1
+                 AND (from_id IN (SELECT item_id FROM folder_files)
+                      OR to_id IN (SELECT item_id FROM folder_files))",
             )?;
             statement
                 .query_map([crate::CONFLICTED_COPY_EDGE], |row| row.get::<_, String>(0))?
@@ -1768,8 +1768,8 @@ mod tests {
             store::add_tags(&conn, "copy", &[crate::CONFLICTED_COPY_TAG.into()]).unwrap();
             let edge = crate::wire::WireEdge {
                 id: "derivation".into(),
-                source_id: "copy".into(),
-                target_id: "original".into(),
+                from_id: "copy".into(),
+                to_id: "original".into(),
                 edge_type: crate::CONFLICTED_COPY_EDGE.into(),
                 properties: Default::default(),
                 version: 1,

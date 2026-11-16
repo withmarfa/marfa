@@ -14,8 +14,8 @@ const AT = "2026-01-01T00:00:00Z";
 function derivedFrom(id, target) {
   return {
     id: `${id}-link`,
-    source_id: id,
-    target_id: target,
+    from_id: id,
+    to_id: target,
     edge_type: "derived-from",
     properties: {},
     version: 1,

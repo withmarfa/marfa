@@ -4,10 +4,10 @@
   "reverse_label": "Folder contents",
   "description": "Says where an item's file sits in a synced folder.",
   "cardinality": "many-to-many",
-  "source_type_constraints": ["*"],
-  "target_type_constraints": ["system.folder"],
+  "from_type_constraints": ["*"],
+  "to_type_constraints": ["system.folder"],
   "cascade_on_delete": "orphan",
-  "written_at": "none",
+  "written_from": "none",
   "property_schema": {
     "path": {
       "type": "string",

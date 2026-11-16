@@ -77,11 +77,11 @@ pub fn full_end<G: Graph>(
             .iter()
             .any(|link| link.edge_type == edge.edge_type && Some(link.id.as_str()) != edge.moving)
     };
-    if edge_type.one_at(End::Source) && holds_one(graph.outbound(edge.source)?) {
-        return Ok(Some(End::Source));
+    if edge_type.one_at(End::From) && holds_one(graph.outbound(edge.source)?) {
+        return Ok(Some(End::From));
     }
-    if edge_type.one_at(End::Target) && holds_one(graph.inbound(edge.target)?) {
-        return Ok(Some(End::Target));
+    if edge_type.one_at(End::To) && holds_one(graph.inbound(edge.target)?) {
+        return Ok(Some(End::To));
     }
     Ok(None)
 }
@@ -374,8 +374,8 @@ pub struct Refused {
 pub fn refused_end(edge_type: &EdgeType, end: End, item_type: &str) -> Refused {
     let id = &edge_type.id;
     let (end, allowed) = match end {
-        End::Source => ("source", &edge_type.source_type_constraints),
-        End::Target => ("target", &edge_type.target_type_constraints),
+        End::From => ("source", &edge_type.from_type_constraints),
+        End::To => ("target", &edge_type.to_type_constraints),
     };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(id));
@@ -387,27 +387,27 @@ pub fn refused_end(edge_type: &EdgeType, end: End, item_type: &str) -> Refused {
     }
 }
 
-pub fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> Refused {
+pub fn refused_nesting(edge_type: &str, from_id: &str, source_type: &str) -> Refused {
     Refused {
         message: format!(
             "Edge \"{edge_type}\" does not take a source its target constraints admit; use \"parent-of\" for hierarchy"
         ),
         details: json!({
             "edge_type": edge_type,
-            "source_id": source_id,
+            "from_id": from_id,
             "source_type": source_type,
             "constraint": "nesting",
         }),
     }
 }
 
-pub fn refused_parts_cycle(edge_type: &str, source_id: &str, target_id: &str) -> Refused {
+pub fn refused_parts_cycle(edge_type: &str, from_id: &str, to_id: &str) -> Refused {
     Refused {
         message: format!("Edge \"{edge_type}\" would make an item a part of its own part"),
         details: json!({
             "edge_type": edge_type,
-            "source_id": source_id,
-            "target_id": target_id,
+            "from_id": from_id,
+            "to_id": to_id,
             "constraint": "cycle",
         }),
     }
@@ -415,8 +415,8 @@ pub fn refused_parts_cycle(edge_type: &str, source_id: &str, target_id: &str) ->
 
 pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused {
     let (end, edge) = match end {
-        End::Source => ("source", "outbound"),
-        End::Target => ("target", "inbound"),
+        End::From => ("source", "outbound"),
+        End::To => ("target", "inbound"),
     };
     let limit = match edge_type.cardinality.as_str() {
         "one-to-one" => format!("is one-to-one; {end} already has one"),
@@ -540,9 +540,9 @@ mod tests {
         let wire = serde_json::from_value(json!({
             "id": id,
             "cardinality": cardinality,
-            "written_at": "none",
-            "source_type_constraints": [],
-            "target_type_constraints": [],
+            "written_from": "none",
+            "from_type_constraints": [],
+            "to_type_constraints": [],
             "cascade_on_delete": "orphan",
             "property_schema": {},
             "shipped": false,
@@ -584,12 +584,12 @@ mod tests {
         let held = graph(&[("x", "a", "b")], &[]);
         for (cardinality, source, target, moving, full) in [
             ("many-to-many", "a", "c", None, None),
-            ("many-to-one", "a", "c", None, Some(End::Source)),
+            ("many-to-one", "a", "c", None, Some(End::From)),
             ("many-to-one", "c", "b", None, None),
-            ("one-to-many", "c", "b", None, Some(End::Target)),
+            ("one-to-many", "c", "b", None, Some(End::To)),
             ("one-to-many", "a", "c", None, None),
-            ("one-to-one", "a", "c", None, Some(End::Source)),
-            ("one-to-one", "c", "b", None, Some(End::Target)),
+            ("one-to-one", "a", "c", None, Some(End::From)),
+            ("one-to-one", "c", "b", None, Some(End::To)),
             ("one-to-one", "a", "c", Some("e0"), None),
             ("many-to-one", "a", "c", Some("e0"), None),
         ] {

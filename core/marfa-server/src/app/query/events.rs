@@ -50,8 +50,8 @@ fn candidates(from_ms: i64, to_ms: i64) -> Sql {
     sql.push(&format!(
         " UNION SELECT seq FROM items INDEXED BY items_event_always WHERE {} \
          UNION SELECT x.seq FROM (SELECT id FROM items INDEXED BY items_event_always WHERE {}) s \
-           CROSS JOIN edges e INDEXED BY edges_source ON e.source_id = s.id AND e.edge_type = '{PARENT_OF}' \
-           CROSS JOIN items x ON x.id = e.target_id \
+           CROSS JOIN edges e INDEXED BY edges_from ON e.from_id = s.id AND e.edge_type = '{PARENT_OF}' \
+           CROSS JOIN items x ON x.id = e.to_id \
          WHERE json_type(x.properties, '$.original_starts_at') = 'text'",
         always(),
         always()
@@ -150,9 +150,9 @@ pub(crate) fn parents(read: &Reader<'_, '_>, targets: &[&str]) -> Result<Vec<(St
     let mut found: Vec<(i64, String, String)> = Vec::new();
     for batch in targets.chunks(EDGE_BATCH) {
         let mut sql =
-            Sql::new("SELECT e.seq, e.source_id, e.target_id FROM edges e WHERE e.edge_type = ");
+            Sql::new("SELECT e.seq, e.from_id, e.to_id FROM edges e WHERE e.edge_type = ");
         sql.bind(PARENT_OF.to_string());
-        sql.push(" AND e.target_id IN (");
+        sql.push(" AND e.to_id IN (");
         sql.list(batch);
         sql.push(")");
         let mut statement = read.tx.prepare_cached(&sql.text)?;
@@ -269,7 +269,7 @@ mod tests {
         );
         assert!(
             plan.contains("USING INDEX items_event_always")
-                && plan.contains("SEARCH e USING INDEX edges_source")
+                && plan.contains("SEARCH e USING INDEX edges_from")
                 && plan.contains("SEARCH x USING"),
             "{plan}"
         );
@@ -368,7 +368,7 @@ mod tests {
 
     fn bind(db: &Connection, seq: i64, series: i64, exception: i64) {
         db.execute(
-            "INSERT INTO edges (seq, id, source_id, target_id, edge_type, properties, version, created_at, updated_at) \
+            "INSERT INTO edges (seq, id, from_id, to_id, edge_type, properties, version, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, 'parent-of', jsonb('{}'), 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
             params![
                 seq,

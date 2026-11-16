@@ -156,7 +156,7 @@ impl Instance {
     }
 
     async fn edge(&self, source: &str, target: &str, edge_type: &str) -> Value {
-        let body = json!({ "source_id": source, "target_id": target, "edge_type": edge_type });
+        let body = json!({ "from_id": source, "to_id": target, "edge_type": edge_type });
         let made = self.local(Method::POST, "/edges", Some(body)).await;
         made.landed(StatusCode::CREATED)["edge"].clone()
     }
@@ -196,7 +196,7 @@ async fn an_edge_that_cascades_takes_write_on_its_targets_type_at_every_door() {
     let task = instance.task().await;
     let note = instance.note().await;
     let refused = |answer: &Reply| answer.refused(StatusCode::FORBIDDEN, "type_not_permitted");
-    let edge = json!({ "source_id": note, "target_id": task, "edge_type": "parent-of" });
+    let edge = json!({ "from_id": note, "to_id": task, "edge_type": "parent-of" });
 
     refused(
         &instance
@@ -232,7 +232,7 @@ async fn an_edge_that_cascades_takes_write_on_its_targets_type_at_every_door() {
         .landed(StatusCode::CREATED);
     let other = instance.note().await;
     let held = instance.edge(&note, &other, "user.owns").await;
-    let moved = json!({ "version": held["version"], "target_id": task });
+    let moved = json!({ "version": held["version"], "to_id": task });
     let path = format!("/edges/{}", held["id"].as_str().unwrap());
     refused(
         &instance
@@ -333,7 +333,7 @@ async fn two_writes_that_each_look_fine_cannot_close_a_cycle() {
         .await;
     for round in 0..20 {
         let (a, b) = (instance.note().await, instance.note().await);
-        let edge = |source: &str, target: &str| json!({ "source_id": source, "target_id": target, "edge_type": "supersedes" });
+        let edge = |source: &str, target: &str| json!({ "from_id": source, "to_id": target, "edge_type": "supersedes" });
         let (first, second) = tokio::join!(
             instance.call(&token, Method::POST, "/edges", edge(&a, &b)),
             instance.call(&token, Method::POST, "/edges", edge(&b, &a)),
@@ -355,7 +355,7 @@ async fn an_end_purged_while_an_edge_is_made_leaves_no_edge_behind() {
             .await
             .landed(StatusCode::OK);
         let purge = format!("/items/{target}/purge");
-        let edge = json!({ "source_id": note, "target_id": target, "edge_type": "part-of" });
+        let edge = json!({ "from_id": note, "to_id": target, "edge_type": "part-of" });
         let (purged, made) = tokio::join!(
             instance.local(Method::POST, &purge, None),
             instance.local(Method::POST, "/edges", Some(edge)),
@@ -366,7 +366,7 @@ async fn an_end_purged_while_an_edge_is_made_leaves_no_edge_behind() {
     let dangling: i64 = instance
         .db()
         .query_row(
-            "SELECT count(*) FROM edges e LEFT JOIN items i ON i.id = e.target_id \
+            "SELECT count(*) FROM edges e LEFT JOIN items i ON i.id = e.to_id \
              WHERE i.id IS NULL",
             [],
             |row| row.get(0),
@@ -458,7 +458,7 @@ async fn a_bulk_entry_is_judged_on_the_entries_before_it() {
         instance.note().await,
         instance.note().await,
     );
-    let edge = |source: &str, target: &str| json!({ "source_id": source, "target_id": target, "edge_type": "parent-of" });
+    let edge = |source: &str, target: &str| json!({ "from_id": source, "to_id": target, "edge_type": "parent-of" });
     let page = json!({ "atomic": true, "edges": [edge(&a, &b), edge(&b, &c), edge(&c, &a)] });
     let answer = instance
         .call(&token, Method::POST, "/edges/bulk", page)
@@ -511,7 +511,7 @@ async fn a_bulk_write_fans_out_only_when_it_asks() {
         assert_eq!(answer.landed(StatusCode::OK)["counts"]["created"], 1);
     }
     let (a, b) = (instance.note().await, instance.note().await);
-    let edge = json!({ "source_id": a, "target_id": b, "edge_type": "references" });
+    let edge = json!({ "from_id": a, "to_id": b, "edge_type": "references" });
     for (atomic, asked) in [(true, None), (false, Some(false)), (false, Some(true))] {
         let mut page = json!({ "atomic": atomic, "mode": "upsert", "edges": [&edge] });
         if let Some(asked) = asked {
@@ -553,7 +553,7 @@ async fn a_bulk_entry_with_an_inexact_integer_is_refused_by_its_position() {
         .key("writer", json!({ "core.note": "write" }))
         .await;
     let (a, b) = (instance.note().await, instance.note().await);
-    let edge = |properties: Value| json!({ "source_id": a, "target_id": b, "edge_type": "parent-of", "properties": properties });
+    let edge = |properties: Value| json!({ "from_id": a, "to_id": b, "edge_type": "parent-of", "properties": properties });
     let page = json!({ "edges": [edge(json!({})), edge(json!({ "weight": 1_500_000_000_000_000_001u64 }))] });
     let answer = instance
         .call(&token, Method::POST, "/edges/bulk", page)
@@ -773,7 +773,7 @@ async fn an_item_write_names_an_edge_the_edge_checks_refuse_whatever_its_version
             "id": "user.tasks-only",
             "label": "Tasks only",
             "cardinality": "many-to-many",
-            "target_type_constraints": ["core.task"],
+            "to_type_constraints": ["core.task"],
         }),
     )
     .await;

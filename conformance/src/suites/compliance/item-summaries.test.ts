@@ -186,8 +186,8 @@ it("names every shared part case as a device does", async () => {
     const hostId = await made(host);
     const partId = await made(part);
     const edge = await key("/edges", {
-      source_id: partId,
-      target_id: hostId,
+      from_id: partId,
+      to_id: hostId,
       edge_type,
     });
     expect(edge.status, `${description}: ${await edge.text()}`).toBe(201);
@@ -302,8 +302,8 @@ it("names a part with no title after its oldest host out of the bin, at read tim
   };
   const made = async (properties: Record<string, unknown>) =>
     (await send("POST", "/items", { type: "core.note", properties })).item;
-  const edge = (source_id: string, target_id: string, edge_type: string) =>
-    send("POST", "/edges", { source_id, target_id, edge_type });
+  const edge = (from_id: string, to_id: string, edge_type: string) =>
+    send("POST", "/edges", { from_id, to_id, edge_type });
   // Earlier cases write notes too, so every page is read.
   const nameOf = async (id: string) => {
     let cursor: string | null = null;
@@ -420,8 +420,8 @@ it("names a highlight after the item it is an excerpt of, and never by its passa
 
   for (const highlight of [first, second]) {
     await send("POST", "/edges", {
-      source_id: highlight.id,
-      target_id: book.id,
+      from_id: highlight.id,
+      to_id: book.id,
       edge_type: "excerpt-of",
     });
   }

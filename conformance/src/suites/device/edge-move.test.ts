@@ -44,21 +44,21 @@ const LINK = "01a00000-0000-7000-8000-0000000000e3";
  */
 const succession: WireEdgeOptions = {
   id: SUCCESSION,
-  source_id: NEWER,
-  target_id: OLDER,
+  from_id: NEWER,
+  to_id: OLDER,
   edge_type: "supersedes",
   properties: { rank: 1 },
 };
 const parent: WireEdgeOptions = {
   id: PARENT,
-  source_id: NEWER,
-  target_id: OLDEST,
+  from_id: NEWER,
+  to_id: OLDEST,
   edge_type: "parent-of",
 };
 const link: WireEdgeOptions = {
   id: LINK,
-  source_id: NEWER,
-  target_id: OLDER,
+  from_id: NEWER,
+  to_id: OLDER,
   edge_type: "references",
 };
 
@@ -140,7 +140,7 @@ describe("an edit that moves an edge's end", () => {
       harness,
       () => stands,
       () => {
-        stands = { ...succession, target_id: OLDEST, version: 2 };
+        stands = { ...succession, to_id: OLDEST, version: 2 };
         return writeAnswers.edge(stands, 200);
       },
     );
@@ -150,12 +150,12 @@ describe("an edit that moves an edge's end", () => {
         await device.updateEdge(SUCCESSION, {
           properties: {},
           version: 1,
-          target_id: OLDEST,
+          to_id: OLDEST,
         }),
       ),
     );
     expect(
-      [queued.kind, queued.item_id, queued.target_id],
+      [queued.kind, queued.item_id, queued.to_id],
       "the queued row does not name the edge as the copy held it",
     ).toEqual(["update_edge", NEWER, OLDER]);
     expect(
@@ -177,12 +177,12 @@ describe("an edit that moves an edge's end", () => {
     expect(JSON.parse(edgeWrites[0]!.body)).toEqual({
       properties: {},
       version: 1,
-      target_id: OLDEST,
+      to_id: OLDEST,
     });
     const held = value(await device.edgesTo(OLDEST)).filter(
       (edge) => edge.id === SUCCESSION,
     );
-    expect(held.map((edge) => [edge.target_id, edge.version])).toEqual([
+    expect(held.map((edge) => [edge.to_id, edge.version])).toEqual([
       [OLDEST, 2],
     ]);
     expect(await drawnTo(device, OLDER)).toEqual([]);
@@ -243,7 +243,7 @@ describe("an edit that moves an edge's end", () => {
       harness,
       () => stands,
       () => {
-        stands = { ...succession, target_id: THEIRS, version: 2 };
+        stands = { ...succession, to_id: THEIRS, version: 2 };
         return writeAnswers.edge(stands, 200);
       },
     );
@@ -253,7 +253,7 @@ describe("an edit that moves an edge's end", () => {
         await device.updateEdge(SUCCESSION, {
           properties: {},
           version: 1,
-          target_id: local,
+          to_id: local,
         }),
       ),
     );
@@ -275,7 +275,7 @@ describe("an edit that moves an edge's end", () => {
     found = true;
     value(await device.drain());
     expect(
-      patches().map((request) => JSON.parse(request.body).target_id),
+      patches().map((request) => JSON.parse(request.body).to_id),
       "once the item was found, the move did not go naming it",
     ).toEqual([THEIRS]);
   });
@@ -303,11 +303,11 @@ describe("an edit that moves an edge's end", () => {
     for (const [what, edit] of [
       [
         "a move to the target the edge holds",
-        { properties: {}, version: 1, target_id: OLDER },
+        { properties: {}, version: 1, to_id: OLDER },
       ],
       [
         "a move to the source the edge holds",
-        { properties: {}, version: 1, source_id: NEWER },
+        { properties: {}, version: 1, from_id: NEWER },
       ],
       ["an edit naming nothing", { properties: {}, version: 1 }],
     ] as const) {
@@ -332,7 +332,7 @@ describe("an edit that moves an edge's end", () => {
       await device.updateEdge(SUCCESSION, {
         properties: { rank: 2 },
         version: 1,
-        target_id: OLDER,
+        to_id: OLDER,
       }),
     );
     expect(edited?.kind).toBe("update_edge");
@@ -368,7 +368,7 @@ describe("an edit that moves an edge's end", () => {
       await device.updateEdge(SUCCESSION, {
         properties: {},
         version: 1,
-        target_id: OLDEST,
+        to_id: OLDEST,
       }),
     );
     value(await device.drain());
@@ -389,7 +389,7 @@ describe("an edit that moves an edge's end", () => {
       (edge) => edge.id === SUCCESSION,
     );
     expect(
-      held.map((edge) => [edge.target_id, edge.properties.rank]),
+      held.map((edge) => [edge.to_id, edge.properties.rank]),
       "the answer to the edit ahead put the edge back at the end it is moving from",
     ).toEqual([[OLDEST, 2]]);
     expect(await drawnTo(device, OLDEST)).toEqual([SUCCESSION]);
@@ -404,22 +404,22 @@ describe("an edit that moves an edge's end", () => {
     for (const [id, edit, code] of [
       [
         SUCCESSION,
-        { properties: {}, version: 1, source_id: OLDEST, target_id: NEWER },
+        { properties: {}, version: 1, from_id: OLDEST, to_id: NEWER },
         "validation_error",
       ],
       [
         PARENT,
-        { properties: {}, version: 1, target_id: OLDER },
+        { properties: {}, version: 1, to_id: OLDER },
         "validation_error",
       ],
       [
         LINK,
-        { properties: {}, version: 1, source_id: OLDEST },
+        { properties: {}, version: 1, from_id: OLDEST },
         "validation_error",
       ],
       [
         SUCCESSION,
-        { properties: {}, version: 1, target_id: NEWER },
+        { properties: {}, version: 1, to_id: NEWER },
         "edge_cycle",
       ],
     ] as const) {
@@ -444,8 +444,8 @@ describe("an edit that moves an edge's end", () => {
         await device.updateEdge(SUCCESSION, {
           properties: {},
           version: 1,
-          source_id: NEWER,
-          target_id: OLDEST,
+          from_id: NEWER,
+          to_id: OLDEST,
         }),
       ),
     );
@@ -453,7 +453,7 @@ describe("an edit that moves an edge's end", () => {
     expect(
       Object.keys(moved.body as Record<string, unknown>).sort(),
       "the end the edge already holds went into the update, which the server reads as a move of both ends",
-    ).toEqual(["properties", "target_id", "version"]);
+    ).toEqual(["properties", "to_id", "version"]);
     expect(await drawnTo(device, OLDEST)).toEqual([SUCCESSION]);
   });
 });
@@ -474,8 +474,8 @@ const CHILD_EDGES = [
 function childEdge(at: number, source: string, version = 1): WireEdgeOptions {
   return {
     id: CHILD_EDGES[at]!,
-    source_id: source,
-    target_id: CHILDREN[at]!,
+    from_id: source,
+    to_id: CHILDREN[at]!,
     edge_type: "parent-of",
     version,
   };
@@ -561,7 +561,7 @@ describe("a drain that sends moves of an edge's source", () => {
             await device.updateEdge(id, {
               properties: {},
               version: 1,
-              source_id: PARENT_B,
+              from_id: PARENT_B,
             }),
           ),
         ),
@@ -635,10 +635,10 @@ describe("a drain that sends moves of an edge's source", () => {
       writeAnswers.edge(childEdge(2, PARENT_B, 2), 200),
     );
     for (const [id, edit] of [
-      [first, { source_id: PARENT_B }],
+      [first, { from_id: PARENT_B }],
       [first, { properties: { rank: 1 } }],
-      [second, { source_id: PARENT_B }],
-      [third, { source_id: PARENT_B }],
+      [second, { from_id: PARENT_B }],
+      [third, { from_id: PARENT_B }],
     ] as const) {
       value(
         queuedEdit(
@@ -694,7 +694,7 @@ describe("a drain that sends moves of an edge's source", () => {
           await device.updateEdge(id, {
             properties: {},
             version: 1,
-            source_id: PARENT_B,
+            from_id: PARENT_B,
           }),
         ),
       );
@@ -732,7 +732,7 @@ describe("a drain that sends moves of an edge's source", () => {
         await device.updateEdge(first, {
           properties: {},
           version: 1,
-          source_id: PARENT_B,
+          from_id: PARENT_B,
         }),
       ),
     );
@@ -770,7 +770,7 @@ describe("a drain that sends moves of an edge's source", () => {
           await device.updateEdge(id, {
             properties: {},
             version: 1,
-            source_id: PARENT_B,
+            from_id: PARENT_B,
           }),
         ),
       );
@@ -817,7 +817,7 @@ describe("a drain that sends moves of an edge's source", () => {
           await device.updateEdge(id, {
             properties: {},
             version: 1,
-            source_id: PARENT_B,
+            from_id: PARENT_B,
           }),
         ),
       );
@@ -857,7 +857,7 @@ describe("a drain that sends moves of an edge's source", () => {
           await device.updateEdge(id, {
             properties: {},
             version: 1,
-            source_id: PARENT_B,
+            from_id: PARENT_B,
           }),
         ),
       );
@@ -911,7 +911,7 @@ describe("a drain that sends moves of an edge's source", () => {
           await device.updateEdge(id, {
             properties: {},
             version: 1,
-            source_id: PARENT_B,
+            from_id: PARENT_B,
           }),
         ),
       );
@@ -957,7 +957,7 @@ describe("a drain that sends moves of an edge's source", () => {
         await device.updateEdge(moved, {
           properties: {},
           version: 1,
-          source_id: PARENT_B,
+          from_id: PARENT_B,
         }),
       ),
     );

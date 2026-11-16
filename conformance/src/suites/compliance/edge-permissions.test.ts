@@ -75,8 +75,8 @@ describe("per-edge-type permissions", () => {
     const b = await scopedItem(noEdgeClient, "b");
 
     const r1 = await noEdgeClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(r1.ok).toBe(false);
@@ -93,8 +93,8 @@ describe("per-edge-type permissions", () => {
     });
 
     const r2 = await noTypeClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(r2.ok).toBe(false);
@@ -112,8 +112,8 @@ describe("per-edge-type permissions", () => {
     const a2 = await scopedItem(bothClient, "a2");
     const b2 = await scopedItem(bothClient, "b2");
     const r3 = await bothClient.createEdge({
-      source_id: a2,
-      target_id: b2,
+      from_id: a2,
+      to_id: b2,
       edge_type: "about",
     });
     expect(r3.ok).toBe(true);
@@ -125,8 +125,8 @@ describe("per-edge-type permissions", () => {
     const b = await scopedItem(client, "adm-b");
 
     const r = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "parent-of",
     });
     expect(r.ok).toBe(true);
@@ -147,16 +147,16 @@ describe("per-edge-type permissions", () => {
     const b = await scopedItem(narrowClient, "narrow-b");
 
     const about = await narrowClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(about.ok).toBe(true);
     trackEdge(ctx, about.data.edge.id);
 
     const po = await narrowClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "parent-of",
     });
     expect(po.ok).toBe(false);
@@ -181,8 +181,8 @@ describe("per-edge-type permissions", () => {
     ]) {
       const target = await scopedItem(wildClient, `w-t-${edgeType}`);
       const r = await wildClient.createEdge({
-        source_id: a,
-        target_id: target,
+        from_id: a,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(r.ok).toBe(true);
@@ -223,8 +223,8 @@ describe("per-edge-type permissions", () => {
     trackItem(ctx, tgtResp.data.item.id);
 
     const edge = await client.createEdge({
-      source_id: srcResp.data.item.id,
-      target_id: tgtResp.data.item.id,
+      from_id: srcResp.data.item.id,
+      to_id: tgtResp.data.item.id,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -303,8 +303,8 @@ describe("per-edge-type permissions", () => {
     const source = await scopedItem(client, "read-src");
     const target = await scopedItem(client, "read-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -326,8 +326,8 @@ describe("per-edge-type permissions", () => {
     expect(list.data.data.some((e) => e.id === edge.data.edge.id)).toBe(true);
 
     const write = await readClient.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(write.ok).toBe(false);
@@ -339,8 +339,8 @@ describe("per-edge-type permissions", () => {
     const source = await scopedItem(client, "wr-src");
     const target = await scopedItem(client, "wr-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -411,15 +411,15 @@ describe("the edge listing answers only what the credential may read", () => {
     trackItem(ctx, hidden.data.item.id);
 
     const readableEdge = await client.createEdge({
-      source_id: readableSource,
-      target_id: target,
+      from_id: readableSource,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(readableEdge.ok, JSON.stringify(readableEdge.error)).toBe(true);
     trackEdge(ctx, readableEdge.data.edge.id);
     const hiddenEdge = await client.createEdge({
-      source_id: hidden.data.item.id,
-      target_id: target,
+      from_id: hidden.data.item.id,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(hiddenEdge.ok, JSON.stringify(hiddenEdge.error)).toBe(true);
@@ -485,8 +485,8 @@ describe("the edge listing answers only what the credential may read", () => {
     const source = await scopedItem(client, "kind-src");
     const target = await scopedItem(client, "kind-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -544,8 +544,8 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
     trackItem(ctx, hidden.data.item.id);
     const edge = await client.createEdge({
-      source_id: hidden.data.item.id,
-      target_id: target,
+      from_id: hidden.data.item.id,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -614,8 +614,8 @@ describe("the edge listing answers only what the credential may read", () => {
               return r.data.item.id;
             })();
       const edge = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -714,8 +714,8 @@ describe("the doors under an item answer only what the credential may read", () 
     edgeType: string,
   ): Promise<string> {
     const r = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(r.ok, JSON.stringify(r.error)).toBe(true);
@@ -1242,8 +1242,8 @@ describe("an edge write says nothing of a target the credential cannot read", ()
       name: "POST /edges",
       write: (edgeType, target) =>
         writer.createEdge({
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: edgeType,
         }),
     },
@@ -1252,7 +1252,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
       write: (edgeType, target) =>
         writer.bulkEdges({
           edges: [
-            { source_id: source, target_id: target, edge_type: edgeType },
+            { from_id: source, to_id: target, edge_type: edgeType },
           ],
         }),
     },
@@ -1262,7 +1262,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
         writer.bulkEdges({
           atomic: false,
           edges: [
-            { source_id: source, target_id: target, edge_type: edgeType },
+            { from_id: source, to_id: target, edge_type: edgeType },
           ],
         }),
     },
@@ -1365,8 +1365,8 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     const from = await scopedItem(writer, "target-blind-existing");
     for (const target of [readable, unreadable]) {
       const held = await client.createEdge({
-        source_id: from,
-        target_id: target,
+        from_id: from,
+        to_id: target,
         edge_type: "about",
       });
       expect(held.status).toBe(201);
@@ -1380,7 +1380,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
           writer.bulkEdges({
             mode,
             atomic,
-            edges: [{ source_id: from, target_id: target, edge_type: "about" }],
+            edges: [{ from_id: from, to_id: target, edge_type: "about" }],
           });
         // The witness: the matched edge answers for a target the key reads.
         const matched = await write(readable);

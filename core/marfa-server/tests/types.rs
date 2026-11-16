@@ -442,7 +442,7 @@ async fn an_edge_type_registers_widens_by_evolution_and_deletes() {
         "reverse_name": "acme.cited-by",
         "reverse_label": "Cited by",
         "cardinality": "many-to-many",
-        "source_type_constraints": ["core.note"],
+        "from_type_constraints": ["core.note"],
     });
     let created = instance
         .local(Method::POST, "/edge-types", Some(body.clone()))
@@ -467,7 +467,7 @@ async fn an_edge_type_registers_widens_by_evolution_and_deletes() {
 
     let mut evolve = body.clone();
     evolve["evolve_constraints"] = json!(true);
-    evolve["source_type_constraints"] = json!(["core.note", "core.task"]);
+    evolve["from_type_constraints"] = json!(["core.note", "core.task"]);
     let widened = instance
         .local(Method::POST, "/edge-types", Some(evolve))
         .await;

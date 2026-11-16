@@ -72,7 +72,7 @@ fn item_event(kind: &str, item: Value) -> String {
 
 fn edge(id: &str, source: &str, target: &str, version: i64) -> Value {
     json!({
-        "id": id, "source_id": source, "target_id": target, "edge_type": "core.related",
+        "id": id, "from_id": source, "to_id": target, "edge_type": "core.related",
         "properties": {"version": version}, "version": version,
         "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
     })

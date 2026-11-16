@@ -251,8 +251,8 @@ describe("who may read and upload a blob", () => {
     expect(await readingDoors(edgeReader.client, hash)).toEqual(UNKNOWN);
 
     const edge = await client.createEdge({
-      source_id: source.id,
-      target_id: target.id,
+      from_id: source.id,
+      to_id: target.id,
       edge_type: "about",
       properties: { cover: hash },
     });
@@ -334,8 +334,8 @@ describe("who may read and upload a blob", () => {
     const namespace = `planted.${ctx.runId}`;
 
     const edge = await bare.client.createEdge({
-      source_id: source.id,
-      target_id: target.id,
+      from_id: source.id,
+      to_id: target.id,
       edge_type: "about",
       properties: { cover: edgeDigest },
     });
@@ -502,14 +502,14 @@ describe("who may read and upload a blob", () => {
         cover: inExtension,
       }),
       await client.createEdge({
-        source_id: named.id,
-        target_id: other.id,
+        from_id: named.id,
+        to_id: other.id,
         edge_type: "about",
         properties: { cover: inEdge },
       }),
       await planter.client.createEdge({
-        source_id: named.id,
-        target_id: another.id,
+        from_id: named.id,
+        to_id: another.id,
         edge_type: "about",
         properties: { cover: inPlantedEdge },
       }),
@@ -555,8 +555,8 @@ describe("who may read and upload a blob", () => {
     );
     const neither = await keyHolding({ "core.note": "read" });
     const edge = await client.createEdge({
-      source_id: source.id,
-      target_id: target.id,
+      from_id: source.id,
+      to_id: target.id,
       edge_type: "about",
       properties: { cover: viaEdge },
     });
@@ -1325,8 +1325,8 @@ describe("which write that names a digest lends it", () => {
       { edge_permissions: { about: "read" } },
     );
     const edge = await client.createEdge({
-      source_id: source.id,
-      target_id: target.id,
+      from_id: source.id,
+      to_id: target.id,
       edge_type: "about",
       properties: { cover: hash },
     });
@@ -1449,8 +1449,8 @@ describe("which write that names a digest lends it", () => {
           const res = await writer.bulkEdges({
             edges: [
               {
-                source_id: source.id,
-                target_id: target.id,
+                from_id: source.id,
+                to_id: target.id,
                 edge_type: "about",
                 properties: { cover: hash },
               },
@@ -1471,8 +1471,8 @@ describe("which write that names a digest lends it", () => {
         const target = await noteOf(writer, { body: "a bulk edge's target" });
         succeeded(
           await writer.createEdge({
-            source_id: source.id,
-            target_id: target.id,
+            from_id: source.id,
+            to_id: target.id,
             edge_type: "about",
             properties: { title: "before" },
           }),
@@ -1481,8 +1481,8 @@ describe("which write that names a digest lends it", () => {
           const res = await writer.bulkEdges({
             edges: [
               {
-                source_id: source.id,
-                target_id: target.id,
+                from_id: source.id,
+                to_id: target.id,
                 edge_type: "about",
                 properties: { cover: hash },
               },
@@ -1592,8 +1592,8 @@ describe("which write that names a digest lends it", () => {
       { edge_permissions: { about: "read" } },
     );
     const edge = await client.createEdge({
-      source_id: source.id,
-      target_id: target.id,
+      from_id: source.id,
+      to_id: target.id,
       edge_type: "about",
       properties: { cover: hash },
     });
@@ -1725,8 +1725,8 @@ describe("which write that names a digest lends it", () => {
     expect(
       (
         await client.createEdge({
-          source_id: source.id,
-          target_id: target.id,
+          from_id: source.id,
+          to_id: target.id,
           edge_type: "about",
           properties: { cover: inEdge },
         })
@@ -1804,8 +1804,8 @@ describe("which write that names a digest lends it", () => {
     expect(far.ok, JSON.stringify(far.error)).toBe(true);
     trackItem(ctx, far.data.item.id);
     const edge = await planter.client.createEdge({
-      source_id: note.data.item.id,
-      target_id: far.data.item.id,
+      from_id: note.data.item.id,
+      to_id: far.data.item.id,
       edge_type: "about",
       properties: { cover: lendingEdge, alt: plantedEdge },
     });
@@ -1863,14 +1863,14 @@ describe("which write that names a digest lends it", () => {
       { edge_permissions: { about: "read" } },
     );
     const lendingEdge = await client.createEdge({
-      source_id: source.id,
-      target_id: lendingTarget.id,
+      from_id: source.id,
+      to_id: lendingTarget.id,
       edge_type: "about",
       properties: { cover: lending },
     });
     const plantedEdge = await bare.client.createEdge({
-      source_id: source.id,
-      target_id: plantedTarget.id,
+      from_id: source.id,
+      to_id: plantedTarget.id,
       edge_type: "about",
       properties: { cover: planted },
     });
@@ -1960,8 +1960,8 @@ describe("which write that names a digest lends it", () => {
       JSON.stringify({
         edge: {
           id: uuidv7(),
-          source_id: from,
-          target_id: to,
+          from_id: from,
+          to_id: to,
           edge_type: "about",
           properties,
         },

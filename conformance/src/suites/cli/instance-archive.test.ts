@@ -54,15 +54,15 @@ describe("the instance's archive from the terminal", () => {
     for (const line of lines) {
       const record = JSON.parse(line) as {
         item?: { id: string; source: string };
-        edge?: { source_id: string; target_id: string };
+        edge?: { from_id: string; to_id: string };
       };
       if (record.item !== undefined) {
         expect(record.item.source).toBe(c.ctx.source);
         exported.add(record.item.id);
       } else {
         expect(record.edge).toBeDefined();
-        expect(exported.has(record.edge!.source_id)).toBe(true);
-        expect(exported.has(record.edge!.target_id)).toBe(true);
+        expect(exported.has(record.edge!.from_id)).toBe(true);
+        expect(exported.has(record.edge!.to_id)).toBe(true);
       }
     }
     expect(ndjson.stdout).toContain(title);

@@ -348,8 +348,8 @@ describe("a repeated create is acknowledged", () => {
     const id = uuidv7();
     const body = {
       id,
-      source_id: source.data.item.id,
-      target_id: target.data.item.id,
+      from_id: source.data.item.id,
+      to_id: target.data.item.id,
       edge_type: "about",
     };
 
@@ -372,8 +372,8 @@ describe("a repeated create is acknowledged", () => {
         // kinds in id order, so an item would order against the repeat's
         // edge too, and an edge keeps the case to one kind of frame.
         const sentinel = await client.createEdge({
-          source_id: source.data.item.id,
-          target_id: spare.data.item.id,
+          from_id: source.data.item.id,
+          to_id: spare.data.item.id,
           edge_type: "about",
         });
         expect(sentinel.ok).toBe(true);
@@ -442,8 +442,8 @@ describe("a repeated create is acknowledged", () => {
       async (stream) => {
         const first = await client.createEdge({
           id,
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: "about",
           properties: { note: "first" },
         });
@@ -452,15 +452,15 @@ describe("a repeated create is acknowledged", () => {
 
         const repeat = await client.createEdge({
           id,
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: "about",
           properties: { note: "second" },
         });
 
         const sentinel = await client.createEdge({
-          source_id: source,
-          target_id: spare,
+          from_id: source,
+          to_id: spare,
           edge_type: "about",
         });
         expect(sentinel.ok).toBe(true);
@@ -514,8 +514,8 @@ describe("a repeated create is acknowledged", () => {
     const id = uuidv7();
     const first = await client.createEdge({
       id,
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: "about",
     });
     expect(first.ok).toBe(true);
@@ -527,8 +527,8 @@ describe("a repeated create is acknowledged", () => {
     // corrects it.
     const collision = await client.createEdge({
       id,
-      source_id: a.data.item.id,
-      target_id: c.data.item.id,
+      from_id: a.data.item.id,
+      to_id: c.data.item.id,
       edge_type: "about",
     });
     expect(
@@ -539,7 +539,7 @@ describe("a repeated create is acknowledged", () => {
     // `details` names the member of the triple that differed rather than
     // leaving the caller to compare three.
     expect(collision.error?.error.code).toBe("id_reused");
-    expect(collision.error?.error.details?.differs).toEqual(["target_id"]);
+    expect(collision.error?.error.details?.differs).toEqual(["to_id"]);
 
     const stored = await client.listItemEdges(a.data.item.id);
     expect(stored.ok).toBe(true);

@@ -67,8 +67,8 @@ async function makeEdge(): Promise<{
   const created = await client.rawRequest<EdgeEnvelope>("/edges", {
     method: "POST",
     body: {
-      source_id: source.data.item.id,
-      target_id: target.data.item.id,
+      from_id: source.data.item.id,
+      to_id: target.data.item.id,
       edge_type: "about",
       properties: { note: "original" },
     },

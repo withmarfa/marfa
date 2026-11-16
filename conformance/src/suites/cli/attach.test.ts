@@ -55,7 +55,7 @@ describe("attaching a file", () => {
       blob: { hash: string; mime_type: string; size_bytes: number };
       item: { id: string; type: string; properties: Record<string, unknown> };
       edge: {
-        edge: { source_id: string; target_id: string; edge_type: string };
+        edge: { from_id: string; to_id: string; edge_type: string };
       };
     }>(["items", "attach", created.item.id, path]);
     trackItem(c.ctx, attached.item.id);
@@ -66,14 +66,14 @@ describe("attaching a file", () => {
     expect(attached.item.properties.blob_ref).toBe(attached.blob.hash);
     expect(attached.item.properties.mime_type).toBe("image/png");
     expect(attached.item.properties.title).toBe("diagram.png");
-    expect(attached.edge.edge.source_id).toBe(attached.item.id);
-    expect(attached.edge.edge.target_id).toBe(created.item.id);
+    expect(attached.edge.edge.from_id).toBe(attached.item.id);
+    expect(attached.edge.edge.to_id).toBe(created.item.id);
     expect(attached.edge.edge.edge_type).toBe("attached-to");
 
     const inbound = await c.cli.json<{
-      data: Array<{ source_id: string }>;
+      data: Array<{ from_id: string }>;
     }>(["items", "backrefs", created.item.id, "--type", "attached-to"]);
-    expect(inbound.data.map((row) => row.source_id)).toContain(
+    expect(inbound.data.map((row) => row.from_id)).toContain(
       attached.item.id,
     );
     const otherType = await c.cli.json<{

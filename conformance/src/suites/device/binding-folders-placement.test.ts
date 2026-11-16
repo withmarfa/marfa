@@ -242,8 +242,8 @@ async function movedApart(
   try {
     edges.hold({
       id: edgeId,
-      source_id: id,
-      target_id: made.settings.id,
+      from_id: id,
+      to_id: made.settings.id,
       edge_type: "in-folder",
       properties: { path: "Plan.md" },
     });
@@ -416,7 +416,7 @@ describe("placement identity across a rename", () => {
     expect(sent.ok, JSON.stringify(sent)).toBe(true);
     const placed = [...moved.edges.edges.values()].filter(
       (edge) =>
-        edge.source_id === moved.id && edge.target_id === harness!.settings.id,
+        edge.from_id === moved.id && edge.to_id === harness!.settings.id,
     );
     expect(placed.map((edge) => [edge.id, edge.properties?.path])).toEqual([
       [original.id, "Local/Plan.md"],

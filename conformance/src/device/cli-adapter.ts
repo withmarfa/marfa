@@ -933,10 +933,10 @@ export class CliDevice implements DeviceUnderTest {
 
   async checkEdgeMove(
     id: string,
-    to: { source_id: string } | { target_id: string },
+    to: { from_id: string } | { to_id: string },
   ): Promise<Outcome<{ refused: false }>> {
     const [flag, end] =
-      "source_id" in to ? ["--from", to.source_id] : ["--to", to.target_id];
+      "from_id" in to ? ["--from", to.from_id] : ["--to", to.to_id];
     return this.json<{ refused: false }>([
       "edges",
       "check-move",
@@ -952,8 +952,8 @@ export class CliDevice implements DeviceUnderTest {
       properties: Record<string, unknown>;
       propertiesText?: string;
       version?: number;
-      source_id?: string;
-      target_id?: string;
+      from_id?: string;
+      to_id?: string;
     },
   ): Promise<Outcome<QueuedWrite | null>> {
     const args = [
@@ -965,8 +965,8 @@ export class CliDevice implements DeviceUnderTest {
     ];
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
-    if (edit.source_id !== undefined) args.push("--from", edit.source_id);
-    if (edit.target_id !== undefined) args.push("--to", edit.target_id);
+    if (edit.from_id !== undefined) args.push("--from", edit.from_id);
+    if (edit.to_id !== undefined) args.push("--to", edit.to_id);
     return this.json<QueuedWrite | null>(args);
   }
 

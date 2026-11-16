@@ -35,8 +35,8 @@ const BINNED = "01b00000-0000-7000-8000-0000000000a4";
 const AB = "01b00000-0000-7000-8000-0000000000e1";
 const BA = "01b00000-0000-7000-8000-0000000000e2";
 
-const ab: WireEdgeOptions = { id: AB, source_id: A, target_id: B };
-const ba: WireEdgeOptions = { id: BA, source_id: B, target_id: A };
+const ab: WireEdgeOptions = { id: AB, from_id: A, to_id: B };
+const ba: WireEdgeOptions = { id: BA, from_id: B, to_id: A };
 
 function note(id: string, title: string, body: string): WireItemOptions {
   return { id, properties: { title, body } };
@@ -165,7 +165,7 @@ describe("a read of edges by id", () => {
     const { device } = harness;
 
     const one = value(await device.edge(AB));
-    expect([one.source_id, one.target_id, one.version]).toEqual([A, B, 1]);
+    expect([one.from_id, one.to_id, one.version]).toEqual([A, B, 1]);
     const absent = await device.edge("01b00000-0000-7000-8000-0000000000ef");
     expect(code(absent)).toBe("not_found");
     expect(absent.ok ? null : absent.refusal.local).toBe("not_held");
@@ -191,14 +191,14 @@ describe("a read of edges by id", () => {
       edgeEvent(
         "11",
         "edge.updated",
-        wireEdge({ ...ab, target_id: C, version: 2 }),
+        wireEdge({ ...ab, to_id: C, version: 2 }),
       ),
     ]);
     value(await device.catchUp());
 
     const moved = value(await device.edge(AB));
     expect(
-      [moved.target_id, moved.version],
+      [moved.to_id, moved.version],
       "the read answered the edge where it was before the move",
     ).toEqual([C, 2]);
     expect(value(await device.bulkGetEdges([AB]))).toEqual([moved]);
@@ -302,7 +302,7 @@ describe("what changed since a cursor", () => {
       edgeEvent(
         "12",
         "edge.updated",
-        wireEdge({ ...ab, target_id: C, version: 2 }),
+        wireEdge({ ...ab, to_id: C, version: 2 }),
       ),
       copyItemEvent(
         "13",

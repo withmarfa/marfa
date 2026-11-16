@@ -1157,7 +1157,7 @@ describe("what a folder is", () => {
       .filter((edge) => edge.edge_type !== "in-folder")
       .map(
         (edge) =>
-          `${String(edge.source_id)} ${String(edge.edge_type)} ${String(edge.target_id)}`,
+          `${String(edge.from_id)} ${String(edge.edge_type)} ${String(edge.to_id)}`,
       )
       .sort();
     expect(
@@ -1283,8 +1283,8 @@ describe("what a folder's query holds", () => {
   const root = "01a00000-0000-7000-8000-0000000002f2";
   const parentOf = (id: string, source: string, child: string) => ({
     id,
-    source_id: source,
-    target_id: child,
+    from_id: source,
+    to_id: child,
     edge_type: "parent-of",
   });
 
@@ -1429,8 +1429,8 @@ describe("what a folder's query holds", () => {
                 data: [
                   wireEdge({
                     id: "01a00000-0000-7000-8000-0000000002e1",
-                    source_id: "01a00000-0000-7000-8000-000000000261",
-                    target_id: target,
+                    from_id: "01a00000-0000-7000-8000-000000000261",
+                    to_id: target,
                   }),
                 ],
                 next_cursor: null,
@@ -1713,8 +1713,8 @@ describe("what a folder's query holds", () => {
           "edge.created",
           wireEdge({
             id: "01a00000-0000-7000-8000-0000000002e4",
-            source_id: joining,
-            target_id: target,
+            from_id: joining,
+            to_id: target,
           }),
         ),
     },
@@ -2255,7 +2255,7 @@ describe("files and items", () => {
     const other = sentCreates(harness).find(
       (sent) => (sent.properties as Record<string, unknown>).title === "Other",
     );
-    const toOther = made.find((row) => row.target_id === other?.id);
+    const toOther = made.find((row) => row.to_id === other?.id);
     expect(toOther).toBeDefined();
     expect(
       withoutPlacements(harness, after.value)
@@ -2344,7 +2344,7 @@ describe("files and items", () => {
     // A second edge between the same two, of a kind a folder never writes.
     const made = await device.createEdge({
       source: edge!.item_id as string,
-      target: edge!.target_id as string,
+      target: edge!.to_id as string,
       type: "mentions",
     });
     expect(made.ok, `the edge was refused: ${JSON.stringify(made)}`).toBe(true);
@@ -3926,7 +3926,7 @@ describe("files and items", () => {
 
     const bound = queued.value.find(
       (row) =>
-        row.kind === "create_item" && row.item_id === edges[0]?.target_id,
+        row.kind === "create_item" && row.item_id === edges[0]?.to_id,
     );
     expect(
       bound,
@@ -3962,8 +3962,8 @@ describe("files and items", () => {
                   data: [
                     {
                       id: "01a00000-0000-7000-8000-0000000000e1",
-                      source_id: "01a00000-0000-7000-8000-0000000000a1",
-                      target_id: "01a00000-0000-7000-8000-0000000000a2",
+                      from_id: "01a00000-0000-7000-8000-0000000000a1",
+                      to_id: "01a00000-0000-7000-8000-0000000000a2",
                       edge_type: "references",
                       properties: {},
                       version: 1,

@@ -125,8 +125,8 @@ describe("an edge that cascades on delete takes write on its target's type", () 
       name: "POST /edges",
       write: (edgeType, target) =>
         writer.createEdge({
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: edgeType,
         }),
     },
@@ -136,7 +136,7 @@ describe("an edge that cascades on delete takes write on its target's type", () 
         writer.bulkEdges({
           atomic: true,
           edges: [
-            { source_id: source, target_id: target, edge_type: edgeType },
+            { from_id: source, to_id: target, edge_type: edgeType },
           ],
         }),
     },
@@ -146,7 +146,7 @@ describe("an edge that cascades on delete takes write on its target's type", () 
         writer.bulkEdges({
           atomic: false,
           edges: [
-            { source_id: source, target_id: target, edge_type: edgeType },
+            { from_id: source, to_id: target, edge_type: edgeType },
           ],
         }),
     },
@@ -254,8 +254,8 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     const id = `mock.cascades-target.${ctx.runId}`;
     await registerCascading(id);
     const refused = await writer.createEdge({
-      source_id: source,
-      target_id: readOnlyTarget,
+      from_id: source,
+      to_id: readOnlyTarget,
       edge_type: id,
     });
     expect(refused.status).toBe(403);
@@ -265,8 +265,8 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     });
     const writable = await noteBy(writer);
     const accepted = await writer.createEdge({
-      source_id: source,
-      target_id: writable,
+      from_id: source,
+      to_id: writable,
       edge_type: id,
     });
     expect(accepted.status).toBe(201);
@@ -278,8 +278,8 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     // target is judged again. The admin made the edge: this key could not.
     const writable = await noteBy(writer);
     const held = await client.createEdge({
-      source_id: writable,
-      target_id: readOnlyTarget,
+      from_id: writable,
+      to_id: readOnlyTarget,
       edge_type: "parent-of",
     });
     expect(held.status).toBe(201);
@@ -287,29 +287,29 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     const elsewhere = await noteBy(writer);
     const sourceMove = await writer.updateEdge(held.data.edge.id, {
       version: 1,
-      source_id: elsewhere,
+      from_id: elsewhere,
     });
     expect(sourceMove.status).toBe(403);
     expect(refusal(sourceMove)).toEqual({
       code: "type_not_permitted",
       grant: bookmarkWrite,
     });
-    expect((await client.getEdge(held.data.edge.id)).data.edge.source_id).toBe(
+    expect((await client.getEdge(held.data.edge.id)).data.edge.from_id).toBe(
       writable,
     );
 
     // The same move of an edge whose target the key may write is accepted.
     const okTarget = await noteBy(writer);
     const own = await writer.createEdge({
-      source_id: writable,
-      target_id: okTarget,
+      from_id: writable,
+      to_id: okTarget,
       edge_type: "parent-of",
     });
     expect(own.status).toBe(201);
     trackEdge(ctx, own.data.edge.id);
     const moved = await writer.updateEdge(own.data.edge.id, {
       version: 1,
-      source_id: elsewhere,
+      from_id: elsewhere,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
 
@@ -319,15 +319,15 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     await registerCascading(id, { cardinality: "many-to-one" });
     const first = await noteBy(writer);
     const link = await writer.createEdge({
-      source_id: writable,
-      target_id: first,
+      from_id: writable,
+      to_id: first,
       edge_type: id,
     });
     expect(link.status).toBe(201);
     trackEdge(ctx, link.data.edge.id);
     const targetMove = await writer.updateEdge(link.data.edge.id, {
       version: 1,
-      target_id: readOnlyTarget,
+      to_id: readOnlyTarget,
     });
     expect(targetMove.status).toBe(403);
     expect(refusal(targetMove)).toEqual({
@@ -337,18 +337,18 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     const second = await noteBy(writer);
     const accepted = await writer.updateEdge(link.data.edge.id, {
       version: 1,
-      target_id: second,
+      to_id: second,
     });
     expect(accepted.status, JSON.stringify(accepted.error)).toBe(200);
   });
 
   it("refuses write on a cascading target's type after it finds the target of a create and before it checks the endpoint types", async () => {
     const id = `mock.cascades-order.${ctx.runId}`;
-    await registerCascading(id, { target_type_constraints: ["core.note"] });
+    await registerCascading(id, { to_type_constraints: ["core.note"] });
     const create = (target: string) =>
       writer.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: id,
       });
 
@@ -362,8 +362,8 @@ describe("an edge that cascades on delete takes write on its target's type", () 
       edge_permissions: { "*": "write" },
     });
     const widened = await wide.createEdge({
-      source_id: await noteBy(wide),
-      target_id: readOnlyTarget,
+      from_id: await noteBy(wide),
+      to_id: readOnlyTarget,
       edge_type: id,
     });
     expect(widened.error?.error.code).toBe("edge_constraint_violation");
@@ -380,18 +380,18 @@ describe("an edge that cascades on delete takes write on its target's type", () 
     const id = `mock.cascades-order-move.${ctx.runId}`;
     await registerCascading(id, {
       cardinality: "many-to-one",
-      target_type_constraints: ["core.note"],
+      to_type_constraints: ["core.note"],
     });
     const home = await noteBy(writer);
     const held = await writer.createEdge({
-      source_id: source,
-      target_id: home,
+      from_id: source,
+      to_id: home,
       edge_type: id,
     });
     expect(held.status).toBe(201);
     trackEdge(ctx, held.data.edge.id);
     const move = (target: string, c: MarfaClient = writer) =>
-      c.updateEdge(held.data.edge.id, { version: 1, target_id: target });
+      c.updateEdge(held.data.edge.id, { version: 1, to_id: target });
 
     const missing = await move(generateId());
     expect(missing.status).toBe(404);
@@ -428,8 +428,8 @@ describe("registering an edge type that cascades over stored edges", () => {
     expect(made.status).toBe(201);
     const from = await noteBy(client);
     const edge = await client.createEdge({
-      source_id: from,
-      target_id: target,
+      from_id: from,
+      to_id: target,
       edge_type: id,
     });
     expect(edge.status).toBe(201);
@@ -495,8 +495,8 @@ describe("registering an edge type that cascades over stored edges", () => {
     expect(made.status).toBe(201);
     trackEdgeType(ctx, id);
     const edge = await client.createEdge({
-      source_id: await noteBy(client),
-      target_id: target,
+      from_id: await noteBy(client),
+      to_id: target,
       edge_type: id,
     });
     expect(edge.status).toBe(201);

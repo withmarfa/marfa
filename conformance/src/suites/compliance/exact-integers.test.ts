@@ -167,7 +167,7 @@ describe("a whole number a 64-bit float would change", () => {
       const created = await send(
         "POST",
         "/edges",
-        `{"edge_type":"about","source_id":"${from}","target_id":"${to}","properties":{"list":[${digits}]}}`,
+        `{"edge_type":"about","from_id":"${from}","to_id":"${to}","properties":{"list":[${digits}]}}`,
       );
       await refusedAt(created, "list.0", digits);
       expect(await edgesFrom()).toBe(0);
@@ -175,7 +175,7 @@ describe("a whole number a 64-bit float would change", () => {
       const bulk = await send(
         "POST",
         "/edges/bulk",
-        `{"edges":[{"edge_type":"about","source_id":"${from}","target_id":"${to}"},{"edge_type":"about","source_id":"${from}","target_id":"${other}","properties":{"weight":${digits}}}]}`,
+        `{"edges":[{"edge_type":"about","from_id":"${from}","to_id":"${to}"},{"edge_type":"about","from_id":"${from}","to_id":"${other}","properties":{"weight":${digits}}}]}`,
       );
       await refusedAt(bulk, "weight", digits);
       expect(bulk.error?.error.details?.index).toBe(1);
@@ -185,7 +185,7 @@ describe("a whole number a 64-bit float would change", () => {
       const taken = await send(
         "POST",
         "/edges",
-        `{"edge_type":"about","source_id":"${from}","target_id":"${to}","properties":{"weight":9007199254740991}}`,
+        `{"edge_type":"about","from_id":"${from}","to_id":"${to}","properties":{"weight":9007199254740991}}`,
       );
       expect(taken.status, JSON.stringify(taken.error)).toBe(201);
       const edge = (

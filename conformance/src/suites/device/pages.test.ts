@@ -218,7 +218,7 @@ class Door {
   private edgesFrom(source: string): Record<string, unknown> {
     const byType: Record<string, unknown[]> = {};
     for (const edge of this.edges.values()) {
-      if (edge.source_id !== source || this.unlisted.has(edge.id)) continue;
+      if (edge.from_id !== source || this.unlisted.has(edge.id)) continue;
       const type = edge.edge_type ?? "references";
       (byType[type] ??= []).push(wireEdge(edge));
     }
@@ -1110,7 +1110,7 @@ describe("a folder's first sync", () => {
       [...edges.edges.values()].filter(
         (edge) =>
           edge.edge_type === "in-folder" &&
-          edge.target_id === folder?.settings.id,
+          edge.to_id === folder?.settings.id,
       ),
     ).toHaveLength(60);
   });

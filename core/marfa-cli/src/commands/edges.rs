@@ -121,8 +121,8 @@ pub fn get_request(id: &str) -> Request {
 pub fn create_request(args: &EdgeCreateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     insert_opt(&mut body, "id", args.id.clone());
-    body.insert("source_id".into(), Value::String(args.source.clone()));
-    body.insert("target_id".into(), Value::String(args.target.clone()));
+    body.insert("from_id".into(), Value::String(args.source.clone()));
+    body.insert("to_id".into(), Value::String(args.target.clone()));
     body.insert("edge_type".into(), Value::String(args.type_.clone()));
     if let Some(properties) = &args.properties {
         body.insert(
@@ -148,8 +148,8 @@ pub fn update_request(
             Value::Object(object(properties, "--properties")?),
         );
     }
-    insert_opt(&mut body, "source_id", ends.0);
-    insert_opt(&mut body, "target_id", ends.1);
+    insert_opt(&mut body, "from_id", ends.0);
+    insert_opt(&mut body, "to_id", ends.1);
     body.insert("version".into(), json!(version));
     Ok(Request::patch(&["edges", id]).json(Value::Object(body)))
 }
@@ -235,8 +235,8 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
             format!(
                 "updated {} edge {id}: {} -> {} (version {})",
                 text("edge_type"),
-                text("source_id"),
-                text("target_id"),
+                text("from_id"),
+                text("to_id"),
                 edge.get("version").and_then(Value::as_u64).unwrap_or(0)
             )
         }),

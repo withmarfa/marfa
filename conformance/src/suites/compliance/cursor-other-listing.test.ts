@@ -75,14 +75,14 @@ beforeAll(async () => {
   }
   for (const target of [second, third]) {
     await made("/edges", {
-      source_id: first,
-      target_id: target,
+      from_id: first,
+      to_id: target,
       edge_type: "about",
     });
   }
   await made("/edges", {
-    source_id: third,
-    target_id: second,
+    from_id: third,
+    to_id: second,
     edge_type: "about",
   });
   const view = await made("/views", { title: "every note" });

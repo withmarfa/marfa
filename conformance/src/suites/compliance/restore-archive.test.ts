@@ -1296,11 +1296,11 @@ describe("what a restore answers", () => {
     id,
     label: "Test edge type",
     cardinality: "many-to-many",
-    source_type_constraints: ["*"],
-    target_type_constraints: ["*"],
+    from_type_constraints: ["*"],
+    to_type_constraints: ["*"],
     cascade_on_delete: "orphan",
     property_schema: {},
-    written_at: "source",
+    written_from: "from",
   });
 
   /** A type, an edge type, a blob, two notes and an edge between them. */
@@ -1329,7 +1329,7 @@ describe("what a restore answers", () => {
     );
     const edges = (extra: Record<string, unknown>[] = []) =>
       [
-        { id: edgeId, source_id: a, target_id: b, edge_type: ids.edgeType },
+        { id: edgeId, from_id: a, to_id: b, edge_type: ids.edgeType },
         ...extra,
       ]
         .map((edge) => `${JSON.stringify({ edge })}\n`)
@@ -1449,11 +1449,11 @@ describe("what a restore answers", () => {
       rows.archive([
         {
           id: uuidv7(),
-          source_id: rows.a,
-          target_id: uuidv7(),
+          from_id: rows.a,
+          to_id: uuidv7(),
           edge_type: ids.edgeType,
         },
-        { id: uuidv7(), source_id: rows.a, target_id: rows.b },
+        { id: uuidv7(), from_id: rows.a, to_id: rows.b },
       ]),
     );
     expect(again.ok, JSON.stringify(again.error)).toBe(true);
@@ -1513,8 +1513,8 @@ describe("what a restore answers", () => {
     );
     const edge = (id: string, target: string, properties: object) => ({
       id,
-      source_id: a,
-      target_id: target,
+      from_id: a,
+      to_id: target,
       edge_type: edgeTypeId,
       properties,
     });
@@ -1577,17 +1577,17 @@ describe("what a restore answers", () => {
       ),
       "edges",
       [
-        { id: fits, source_id: a, target_id: b, edge_type: "references" },
-        { id: loop, source_id: a, target_id: a, edge_type: "references" },
+        { id: fits, from_id: a, to_id: b, edge_type: "references" },
+        { id: loop, from_id: a, to_id: a, edge_type: "references" },
         {
           id: unknown,
-          source_id: b,
-          target_id: a,
+          from_id: b,
+          to_id: a,
           edge_type: `restorekept.${ctx.runId}`,
         },
         // A registered edge type still holds its constraints: a note is no
         // collection.
-        { id: bound, source_id: a, target_id: b, edge_type: "in-collection" },
+        { id: bound, from_id: a, to_id: b, edge_type: "in-collection" },
       ]
         .map((edge) => `${JSON.stringify({ edge })}\n`)
         .join(""),
@@ -1924,11 +1924,11 @@ describe("a restore refused after it began", () => {
               id: ids.edgeType,
               label: "Test edge type",
               cardinality: "many-to-many",
-              source_type_constraints: ["*"],
-              target_type_constraints: ["*"],
+              from_type_constraints: ["*"],
+              to_type_constraints: ["*"],
               cascade_on_delete: "orphan",
               property_schema: {},
-              written_at: "source",
+              written_from: "from",
             },
           },
         ]
@@ -2202,7 +2202,7 @@ describe("lines an archive holds that no instance writes", () => {
     const [a, b] = [uuidv7(), uuidv7()];
     const items = itemsArchive([note(a), note(b)]);
     const edge = (id: unknown) =>
-      `${JSON.stringify({ edge: { id, source_id: a, target_id: b, edge_type: "references" } })}\n`;
+      `${JSON.stringify({ edge: { id, from_id: a, to_id: b, edge_type: "references" } })}\n`;
     for (const id of ["x", 7, uuidv7().toUpperCase(), ""]) {
       const refused = await owner.restoreArchive(
         withLines(items, "edges", edge(id)),
@@ -2245,11 +2245,11 @@ describe("lines an archive holds that no instance writes", () => {
         id: `twice.x${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
         label: "Twice",
         cardinality: "many-to-many",
-        source_type_constraints: ["*"],
-        target_type_constraints: ["*"],
+        from_type_constraints: ["*"],
+        to_type_constraints: ["*"],
         cascade_on_delete: "orphan",
         property_schema: {},
-        written_at: "source",
+        written_from: "from",
       },
     };
     for (const line of [type, edgeType]) {

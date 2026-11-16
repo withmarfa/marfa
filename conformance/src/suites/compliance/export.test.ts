@@ -182,8 +182,8 @@ describe("export", () => {
     trackItem(ctx, b.data.item.id);
 
     const edge = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -206,8 +206,8 @@ describe("export", () => {
       (line) => line.edge?.id === edge.data.edge.id,
     );
     expect(edgeIndex).not.toBe(-1);
-    expect(lines[edgeIndex].edge?.source_id).toBe(a.data.item.id);
-    expect(lines[edgeIndex].edge?.target_id).toBe(b.data.item.id);
+    expect(lines[edgeIndex].edge?.from_id).toBe(a.data.item.id);
+    expect(lines[edgeIndex].edge?.to_id).toBe(b.data.item.id);
     expect(lines[edgeIndex].edge?.edge_type).toBe("about");
 
     const lastItemIndex = lines.reduce(
@@ -259,15 +259,15 @@ describe("export", () => {
     trackItem(ctx, b.data.item.id);
 
     const visible = await writer.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: seenKind,
     });
     expect(visible.ok, JSON.stringify(visible.error)).toBe(true);
     trackEdge(ctx, visible.data.edge.id);
     const hidden = await writer.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: unseenKind,
     });
     expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
@@ -584,8 +584,8 @@ describe("the archive's contents", () => {
     const a = await noteIn(writer, source);
     const b = await noteIn(writer, source);
     const edge = await writer.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -843,8 +843,8 @@ describe("an archive is the selection as it stood when its headers arrived", () 
     const a = await noteIn(writer, source);
     const b = await noteIn(writer, source);
     const edge = await writer.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -905,8 +905,8 @@ describe("an archive is the selection as it stood when its headers arrived", () 
     const a = await noteIn(writer, source);
     const b = await noteIn(writer, source);
     const early = await writer.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(early.ok, JSON.stringify(early.error)).toBe(true);
@@ -915,8 +915,8 @@ describe("an archive is the selection as it stood when its headers arrived", () 
     let lateId = "";
     const archive = await archiveWrittenToAfterHeaders(source, async () => {
       const late = await writer.createEdge({
-        source_id: b,
-        target_id: a,
+        from_id: b,
+        to_id: a,
         edge_type: "about",
       });
       expect(late.ok, JSON.stringify(late.error)).toBe(true);

@@ -227,8 +227,8 @@ it("authorizes occurrence parent relationships with their source state", async (
     await server.waitForHold("hold:read-hydration");
     await makePrivate(series, "fixture.private_event");
     const created = await call("POST", "/edges", {
-      source_id: series.id,
-      target_id: exception.id,
+      from_id: series.id,
+      to_id: exception.id,
       edge_type: "parent-of",
     });
     expect(created.status).toBe(201);
@@ -298,8 +298,8 @@ it("withholds occurrence fields derived from an unreadable relationship", async 
   }
   const [seriesId, exceptionId] = items;
   const created = await call("POST", "/edges", {
-    source_id: seriesId,
-    target_id: exceptionId,
+    from_id: seriesId,
+    to_id: exceptionId,
     edge_type: "parent-of",
   });
   expect(created.status).toBe(201);
@@ -372,8 +372,8 @@ it(
       expect(
         (
           await call("POST", "/edges", {
-            source_id: item.id,
-            target_id: target.id,
+            from_id: item.id,
+            to_id: target.id,
             edge_type: "about",
           })
         ).status,
@@ -424,8 +424,8 @@ it(
         expect(
           (
             await call("POST", "/edges", {
-              source_id: target.id,
-              target_id: item.id,
+              from_id: target.id,
+              to_id: item.id,
               edge_type: "about",
               properties: { detail: "private-relation" },
             })

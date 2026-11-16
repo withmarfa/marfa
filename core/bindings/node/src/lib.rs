@@ -90,8 +90,8 @@ pub struct Item {
 #[napi(object)]
 pub struct Edge {
     pub id: String,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     #[napi(ts_type = "Record<string, unknown>")]
     pub properties: serde_json::Value,
@@ -511,9 +511,9 @@ pub enum EdgeEnd {
 
 /// Which end of an edge has the file that writes it in a folder, or neither.
 #[napi(string_enum = "snake_case")]
-pub enum EdgeWrittenAt {
-    Source,
-    Target,
+pub enum EdgeWrittenFrom {
+    From,
+    To,
     None,
 }
 
@@ -529,9 +529,9 @@ pub struct EdgeType {
     pub cardinality: String,
     /// The name the edge goes by read from its target.
     pub reverse_name: Option<String>,
-    pub written_at: EdgeWrittenAt,
-    pub source_type_constraints: Vec<String>,
-    pub target_type_constraints: Vec<String>,
+    pub written_from: EdgeWrittenFrom,
+    pub from_type_constraints: Vec<String>,
+    pub to_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
     pub properties: Vec<TypeField>,
     pub shipped: bool,
@@ -610,13 +610,13 @@ fn edge_type(held: marfa_core::EdgeType) -> EdgeType {
         description: held.description,
         cardinality: held.cardinality,
         reverse_name: held.reverse_name,
-        written_at: match held.written_at {
-            marfa_core::WrittenAt::Source => EdgeWrittenAt::Source,
-            marfa_core::WrittenAt::Target => EdgeWrittenAt::Target,
-            marfa_core::WrittenAt::None => EdgeWrittenAt::None,
+        written_from: match held.written_from {
+            marfa_core::WrittenFrom::From => EdgeWrittenFrom::From,
+            marfa_core::WrittenFrom::To => EdgeWrittenFrom::To,
+            marfa_core::WrittenFrom::None => EdgeWrittenFrom::None,
         },
-        source_type_constraints: held.source_type_constraints,
-        target_type_constraints: held.target_type_constraints,
+        from_type_constraints: held.from_type_constraints,
+        to_type_constraints: held.to_type_constraints,
         cascade_on_delete: held.cascade_on_delete,
         properties: held.properties.into_iter().map(type_field).collect(),
         shipped: held.shipped,
@@ -819,8 +819,8 @@ pub struct Edit {
 /// An edge, before it is queued.
 #[napi(object)]
 pub struct EdgeDraft {
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     #[napi(ts_type = "Record<string, unknown>")]
     pub properties: Option<serde_json::Value>,
@@ -850,7 +850,7 @@ pub struct QueuedWrite {
     pub id: String,
     pub kind: WriteKind,
     pub item_id: Option<String>,
-    pub target_id: Option<String>,
+    pub to_id: Option<String>,
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
@@ -1306,7 +1306,7 @@ pub(crate) fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedW
         id: write.id,
         kind: write.kind.into(),
         item_id: write.item_id,
-        target_id: write.target_id,
+        to_id: write.to_id,
         edge_id: write.edge_id,
         namespace: write.namespace,
         tag: write.tag,
@@ -1485,8 +1485,8 @@ fn item(item: marfa_core::Item) -> Item {
 fn edge(edge: marfa_core::Edge) -> Edge {
     Edge {
         id: edge.id,
-        source_id: edge.source_id,
-        target_id: edge.target_id,
+        from_id: edge.from_id,
+        to_id: edge.to_id,
         edge_type: edge.edge_type,
         properties: serde_json::Value::Object(edge.properties),
         version: edge.version,
@@ -3099,8 +3099,8 @@ impl MarfaCore {
     #[napi]
     pub fn check_edge(&self, env: Env, draft: EdgeDraft) -> Result<()> {
         let draft = marfa_core::EdgeDraft {
-            source_id: draft.source_id,
-            target_id: draft.target_id,
+            from_id: draft.from_id,
+            to_id: draft.to_id,
             edge_type: draft.edge_type,
             properties: object(draft.properties)?,
             id: draft.id,
@@ -3117,8 +3117,8 @@ impl MarfaCore {
     #[napi]
     pub fn check_edge_move(&self, env: Env, id: String, moves: EdgeMove) -> Result<()> {
         let end = match moves.end {
-            EdgeEnd::Source => marfa_core::End::Source,
-            EdgeEnd::Target => marfa_core::End::Target,
+            EdgeEnd::Source => marfa_core::End::From,
+            EdgeEnd::Target => marfa_core::End::To,
         };
         self.inner
             .check_edge_move(&id, end, &moves.to)
@@ -3129,8 +3129,8 @@ impl MarfaCore {
     #[napi]
     pub fn create_edge(&self, env: Env, draft: EdgeDraft) -> Result<QueuedWrite> {
         let draft = marfa_core::EdgeDraft {
-            source_id: draft.source_id,
-            target_id: draft.target_id,
+            from_id: draft.from_id,
+            to_id: draft.to_id,
             edge_type: draft.edge_type,
             properties: object(draft.properties)?,
             id: draft.id,
@@ -3147,7 +3147,7 @@ impl MarfaCore {
     /// queues no write.
     #[napi]
     pub fn update_edge(&self, env: Env, id: String, edit: EdgeEdit) -> Result<Option<QueuedWrite>> {
-        let (source_id, target_id) = match edit.moves {
+        let (from_id, to_id) = match edit.moves {
             None => (None, None),
             Some(EdgeMove {
                 end: EdgeEnd::Source,
@@ -3161,8 +3161,8 @@ impl MarfaCore {
         let edit = marfa_core::EdgeEdit {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
-            source_id,
-            target_id,
+            from_id,
+            to_id,
         };
         self.inner
             .update_edge(&id, &edit)

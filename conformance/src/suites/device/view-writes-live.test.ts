@@ -261,8 +261,8 @@ it("preserves a revoked view when its change is refused and permits its deletion
   expect(parent.ok, JSON.stringify(parent.error)).toBe(true);
   trackItem(ctx, parent.data.item.id);
   const edge = await client.createEdge({
-    source_id: parent.data.item.id,
-    target_id: created.id,
+    from_id: parent.data.item.id,
+    to_id: created.id,
     edge_type: "parent-of",
   });
   expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

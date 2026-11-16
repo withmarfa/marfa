@@ -767,7 +767,7 @@ export interface paths {
         put?: never;
         /**
          * Create an edge
-         * @description Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.
+         * @description Creates an edge between two existing items. After any `from_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -815,7 +815,7 @@ export interface paths {
         put?: never;
         /**
          * Upsert edges in bulk
-         * @description Creates or updates up to 5,000 edges in one call, matching existing edges on `(source_id, target_id, edge_type)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.
+         * @description Creates or updates up to 5,000 edges in one call, matching existing edges on `(from_id, to_id, edge_type)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.
          */
         post: operations["bulkUpsertEdges"];
         delete?: never;
@@ -2569,9 +2569,9 @@ export interface components {
              */
             cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
             /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. */
-            source_type_constraints: string[];
-            /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
-            target_type_constraints: string[];
+            from_type_constraints: string[];
+            /** @description The types an edge's target item can have, in the same form as `from_type_constraints`. */
+            to_type_constraints: string[];
             /**
              * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any.
              * @enum {string}
@@ -2587,12 +2587,12 @@ export interface components {
              * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it.
              * @enum {string}
              */
-            written_at: "source" | "target" | "none";
+            written_from: "from" | "to" | "none";
             /** @description `true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`. */
             shipped: boolean;
             /** @description `true` if the server refuses an edge of this type that closes a cycle through other edges of the type. Every edge type refuses an edge from an item to itself. */
             acyclic: boolean;
-            /** @description `true` if the server refuses an edge of this type whose source type its `target_type_constraints` admit, so an item that can be a target is never a source. */
+            /** @description `true` if the server refuses an edge of this type whose source type its `to_type_constraints` admit, so an item that can be a target is never a source. */
             flat: boolean;
         };
         /** @description One property an edge of an edge type can carry. */
@@ -2687,9 +2687,9 @@ export interface components {
             /** @description Unique identifier for the edge. */
             id: string;
             /** @description The ID of the item the edge starts from. */
-            source_id: string;
+            from_id: string;
             /** @description The ID of the item the edge points to. */
-            target_id: string;
+            to_id: string;
             /** @description The identifier of the edge type, such as `parent-of`. */
             edge_type: string;
             /** @description The edge's properties, by name. */
@@ -4345,9 +4345,9 @@ export interface components {
              */
             cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
             /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. Leave it out to allow any type. */
-            source_type_constraints?: string[];
-            /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type. */
-            target_type_constraints?: string[];
+            from_type_constraints?: string[];
+            /** @description The types an edge's target item can have, in the same form as `from_type_constraints`. Leave it out to allow any type. */
+            to_type_constraints?: string[];
             /**
              * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any. Leave it out for `orphan`.
              * @enum {string}
@@ -4363,7 +4363,7 @@ export interface components {
              * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it. `target` needs a `reverse_name`. Leave it out for `source`.
              * @enum {string}
              */
-            written_at?: "source" | "target" | "none";
+            written_from?: "from" | "to" | "none";
             /** @description `true` updates a registered type in place: widen its endpoints (keep every constraint token, or allow all types with `[]` or `*`) and change its labels. Other members stay unchanged. Omit or `false` to register a new type. Not stored. */
             evolve_constraints?: boolean;
         };
@@ -15576,7 +15576,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
-                source_version?: number;
+                from_version?: number;
             };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
@@ -15593,9 +15593,9 @@ export interface operations {
                     /** @description A UUIDv7 you choose for the edge. Leave it out and Marfa creates one. */
                     id?: string;
                     /** @description The ID of the item the edge starts from. */
-                    source_id: string;
+                    from_id: string;
                     /** @description The ID of the item the edge points to. */
-                    target_id: string;
+                    to_id: string;
                     /** @description The identifier of the edge type, such as `parent-of`. */
                     edge_type: string;
                     /** @description The edge's properties. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string. */
@@ -15606,7 +15606,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
+            /** @description Returns the stored edge with `acknowledged: true` after any `from_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15635,8 +15635,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.
-             *     - `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.
+             * @description - `missing_required_field`: `from_id`, `to_id` or `edge_type` is missing.
+             *     - `invalid_id`: `from_id`, `to_id` or `id` isn't a valid ID.
              *     - `validation_error`, `invalid_properties`: a field is invalid or undeclared, or a property breaks its schema.
              *     - `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.
              */
@@ -15708,7 +15708,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `source_version` differs; `current` is the source now.
+             * @description - `version_conflict`: `from_version` differs; `current` is the source now.
              *     - `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.
              */
             409: {
@@ -15977,7 +15977,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
-                source_version?: number;
+                from_version?: number;
             };
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
@@ -16058,7 +16058,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed. */
+            /** @description `version_conflict`: `from_version` differs from the source item. `current` is the source now; no edge changed. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16191,9 +16191,9 @@ export interface operations {
                         [key: string]: unknown;
                     };
                     /** @description The ID of the source item to move the edge to. Only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time. */
-                    source_id?: string;
+                    from_id?: string;
                     /** @description The ID of the target item to move the edge to. Only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time. */
-                    target_id?: string;
+                    to_id?: string;
                     /** @description The version of the edge your change is based on, from a read. If the edge has moved on, the update fails with `version_conflict`. */
                     version: number;
                 };
@@ -16215,7 +16215,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.
              *     - `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.
-             *     - `invalid_id`: `source_id` or `target_id` isn't a valid ID.
+             *     - `invalid_id`: `from_id` or `to_id` isn't a valid ID.
              *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.
              */
             400: {
@@ -16414,9 +16414,9 @@ export interface operations {
                         /** @description A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one. */
                         id?: string;
                         /** @description The ID of the item the edge starts from. */
-                        source_id: string;
+                        from_id: string;
                         /** @description The ID of the item the edge points to. */
-                        target_id: string;
+                        to_id: string;
                         /** @description The identifier of the edge type, such as `parent-of`. */
                         edge_type: string;
                         /** @description The edge's properties. On an existing edge they merge over its own. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string. */
@@ -18800,7 +18800,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.
+             * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_from: target` with no `reverse_name`, or `extends` is set.
              *     - `missing_required_field`: `id` or `cardinality` is missing.
              *     - `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).
              */

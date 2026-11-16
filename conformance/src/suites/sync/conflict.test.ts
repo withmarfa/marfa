@@ -75,11 +75,11 @@ describe("the server resolves a conflict", () => {
     const successor = await make("successor");
     const older = await make("older");
     const link = async (
-      source_id: string,
-      target_id: string,
+      from_id: string,
+      to_id: string,
       edge_type: string,
     ) => {
-      const r = await client.createEdge({ source_id, target_id, edge_type });
+      const r = await client.createEdge({ from_id, to_id, edge_type });
       expect(r.ok, edge_type).toBe(true);
       trackEdge(ctx, r.data.edge.id);
     };
@@ -121,8 +121,8 @@ describe("the server resolves a conflict", () => {
     const out = await client.listItemEdges(copy!);
     const back = await client.listItemBackrefs(copy!);
     expect(out.ok && back.ok).toBe(true);
-    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
-    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.to_id}`);
+    const inbound = back.data.data.map((e) => `${e.from_id}>${e.edge_type}`);
     // Its place under the same parent, and what it is about.
     expect(inbound).toContain(`${parent.id}>parent-of`);
     expect(outbound).toContain(`about>${topic.id}`);
@@ -136,9 +136,9 @@ describe("the server resolves a conflict", () => {
     expect(outbound).not.toContain(`supersedes>${older.id}`);
     const originalOut = await client.listItemEdges(original.id);
     const originalBack = await client.listItemBackrefs(original.id);
-    expect(originalOut.data.data.map((e) => e.target_id)).toContain(child.id);
-    expect(originalOut.data.data.map((e) => e.target_id)).toContain(older.id);
-    expect(originalBack.data.data.map((e) => e.source_id)).toContain(
+    expect(originalOut.data.data.map((e) => e.to_id)).toContain(child.id);
+    expect(originalOut.data.data.map((e) => e.to_id)).toContain(older.id);
+    expect(originalBack.data.data.map((e) => e.from_id)).toContain(
       successor.id,
     );
   });
@@ -176,11 +176,11 @@ describe("the server resolves a conflict", () => {
       return r.data.item;
     };
     const link = async (
-      source_id: string,
-      target_id: string,
+      from_id: string,
+      to_id: string,
       edge_type: string,
     ) => {
-      const r = await client.createEdge({ source_id, target_id, edge_type });
+      const r = await client.createEdge({ from_id, to_id, edge_type });
       expect(r.ok, edge_type).toBe(true);
       trackEdge(ctx, r.data.edge.id);
     };
@@ -209,8 +209,8 @@ describe("the server resolves a conflict", () => {
       const back = await client.listItemBackrefs(copy!);
       const out = await client.listItemEdges(copy!);
       return {
-        inbound: back.data.data.map((e) => `${e.source_id}>${e.edge_type}`),
-        outbound: out.data.data.map((e) => `${e.edge_type}>${e.target_id}`),
+        inbound: back.data.data.map((e) => `${e.from_id}>${e.edge_type}`),
+        outbound: out.data.data.map((e) => `${e.edge_type}>${e.to_id}`),
       };
     };
 
@@ -276,8 +276,8 @@ describe("the server resolves a conflict", () => {
     const stale = await make("stale");
     const fresh = await make("fresh");
     const old = await client.createEdge({
-      source_id: original.id,
-      target_id: stale.id,
+      from_id: original.id,
+      to_id: stale.id,
       edge_type: edgeType,
       properties: { weight: "heavy" },
     });
@@ -292,8 +292,8 @@ describe("the server resolves a conflict", () => {
     });
     expect(again.ok, JSON.stringify(again.error)).toBe(true);
     const fitting = await client.createEdge({
-      source_id: original.id,
-      target_id: fresh.id,
+      from_id: original.id,
+      to_id: fresh.id,
       edge_type: edgeType,
       properties: { weight: 2 },
     });
@@ -325,7 +325,7 @@ describe("the server resolves a conflict", () => {
 
     const out = await client.listItemEdges(copy!, { edge_type: edgeType });
     const byTarget = new Map(
-      out.data.data.map((e) => [e.target_id, e.properties]),
+      out.data.data.map((e) => [e.to_id, e.properties]),
     );
     expect([...byTarget.keys()].sort()).toEqual([fresh.id, stale.id].sort());
     expect(byTarget.get(stale.id)).toEqual({ weight: "heavy" });
@@ -353,7 +353,7 @@ describe("the server resolves a conflict", () => {
       label: "Test edge type",
       id: unwritten,
       cardinality: "many-to-many",
-      written_at: "none",
+      written_from: "none",
     });
     expect(
       registeredUnwritten.ok,
@@ -365,7 +365,7 @@ describe("the server resolves a conflict", () => {
       id: under,
       cardinality: "many-to-many",
       reverse_name: `mock.copy-over.${ctx.runId}`,
-      written_at: "target",
+      written_from: "to",
     });
     expect(registeredUnder.ok, JSON.stringify(registeredUnder.error)).toBe(
       true,
@@ -392,11 +392,11 @@ describe("the server resolves a conflict", () => {
     const part = await make("core.note", "part");
     const held = await make("core.note", "held");
     const link = async (
-      source_id: string,
-      target_id: string,
+      from_id: string,
+      to_id: string,
       edge_type: string,
     ) => {
-      const r = await client.createEdge({ source_id, target_id, edge_type });
+      const r = await client.createEdge({ from_id, to_id, edge_type });
       expect(r.ok, edge_type).toBe(true);
       trackEdge(ctx, r.data.edge.id);
     };
@@ -439,8 +439,8 @@ describe("the server resolves a conflict", () => {
 
     const out = await client.listItemEdges(copy!);
     const back = await client.listItemBackrefs(copy!);
-    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
-    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.to_id}`);
+    const inbound = back.data.data.map((e) => `${e.from_id}>${e.edge_type}`);
     // The witness: an edge the album's own file writes comes with the copy.
     expect(outbound).toContain(`about>${topic.id}`);
     // An inbound edge the album's own file writes comes with it, and not
@@ -1402,7 +1402,7 @@ describe("a conflicted copy names its original", () => {
       edge_type: "derived-from",
     });
     expect(back.ok, JSON.stringify(back.error)).toBe(true);
-    return back.data.data.map((edge) => edge.source_id);
+    return back.data.data.map((edge) => edge.from_id);
   };
 
   it("links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds", async () => {
@@ -1436,8 +1436,8 @@ describe("a conflicted copy names its original", () => {
     trackItem(ctx, origin.data.item.id);
     const original = await collidingNote("derived original");
     const provenance = await client.createEdge({
-      source_id: original.id,
-      target_id: origin.data.item.id,
+      from_id: original.id,
+      to_id: origin.data.item.id,
       edge_type: "derived-from",
     });
     expect(provenance.ok).toBe(true);
@@ -1445,8 +1445,8 @@ describe("a conflicted copy names its original", () => {
 
     // The control: the writer may not draw the edge itself.
     const drawn = await writer.createEdge({
-      source_id: original.id,
-      target_id: origin.data.item.id,
+      from_id: original.id,
+      to_id: origin.data.item.id,
       edge_type: "derived-from",
     });
     expect(drawn.status).toBe(403);
@@ -1471,7 +1471,7 @@ describe("a conflicted copy names its original", () => {
 
     const links = await derivedFrom(copy!);
     expect(
-      links.map((edge) => edge.target_id),
+      links.map((edge) => edge.to_id),
       "the conflicted copy does not name its original, so nothing finds one from the other once the verdict is gone",
     ).toEqual([original.id]);
     expect(links[0]?.properties).toEqual({});
@@ -1480,7 +1480,7 @@ describe("a conflicted copy names its original", () => {
     // The witness that a derived-from edge on the original is one the copy
     // could have taken: the original still holds it.
     expect(
-      (await derivedFrom(original.id)).map((edge) => edge.target_id),
+      (await derivedFrom(original.id)).map((edge) => edge.to_id),
     ).toEqual([origin.data.item.id]);
 
     // The same write again under the same key is its first answer, and
@@ -1505,8 +1505,8 @@ describe("a conflicted copy names its original", () => {
     trackItem(ctx, origin.data.item.id);
     const original = await collidingNote("provenance original");
     const provenance = await client.createEdge({
-      source_id: original.id,
-      target_id: origin.data.item.id,
+      from_id: original.id,
+      to_id: origin.data.item.id,
       edge_type: "derived-from",
     });
     expect(provenance.ok).toBe(true);
@@ -1523,8 +1523,8 @@ describe("a conflicted copy names its original", () => {
     expect(topic.ok).toBe(true);
     trackItem(ctx, topic.data.item.id);
     const mention = await client.createEdge({
-      source_id: original.id,
-      target_id: topic.data.item.id,
+      from_id: original.id,
+      to_id: topic.data.item.id,
       edge_type: "references",
     });
     expect(mention.ok).toBe(true);
@@ -1546,11 +1546,11 @@ describe("a conflicted copy names its original", () => {
 
     const out = await client.listItemEdges(copy!);
     expect(out.ok).toBe(true);
-    expect(out.data.data.map((e) => `${e.edge_type}>${e.target_id}`)).toContain(
+    expect(out.data.data.map((e) => `${e.edge_type}>${e.to_id}`)).toContain(
       `references>${topic.data.item.id}`,
     );
     expect(
-      (await derivedFrom(copy!)).map((edge) => edge.target_id),
+      (await derivedFrom(copy!)).map((edge) => edge.to_id),
       "the copy took the original's own derived-from edge, so its derived-from edges no longer name its original alone",
     ).toEqual([original.id]);
   });
@@ -1575,7 +1575,7 @@ describe("a conflicted copy names its original", () => {
 
     expect((await client.deleteItem(original.id)).ok).toBe(true);
     expect(
-      (await derivedFrom(copy!)).map((edge) => edge.target_id),
+      (await derivedFrom(copy!)).map((edge) => edge.to_id),
       "trashing the original took the link, so restoring it would not bring its copy back beside it",
     ).toEqual([original.id]);
 
@@ -1628,8 +1628,8 @@ describe("a conflicted copy names its original", () => {
       ["references", topic.data.item.id],
     ] as const) {
       const drawn = await client.createEdge({
-        source_id: original.id,
-        target_id: target,
+        from_id: original.id,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(drawn.ok, edgeType).toBe(true);
@@ -1651,13 +1651,13 @@ describe("a conflicted copy names its original", () => {
     expect(copy, "no conflicted copy was written").toBeTruthy();
 
     const links = await derivedFrom(copy!);
-    expect(links.map((edge) => edge.target_id)).toEqual([original.id]);
+    expect(links.map((edge) => edge.to_id)).toEqual([original.id]);
     expect(links[0]?.properties).toEqual({});
     expect(links[0]?.version).toBe(1);
     const references = await client.listItemEdges(copy!, {
       edge_type: "references",
     });
-    expect(references.data.data.map((edge) => edge.target_id)).toEqual([
+    expect(references.data.data.map((edge) => edge.to_id)).toEqual([
       topic.data.item.id,
     ]);
     expect(await copiesOf(original.id)).toEqual([copy]);
@@ -1686,8 +1686,8 @@ describe("a conflicted copy names its original", () => {
     expect(topic.ok).toBe(true);
     trackItem(ctx, topic.data.item.id);
     const mention = await client.createEdge({
-      source_id: original.id,
-      target_id: topic.data.item.id,
+      from_id: original.id,
+      to_id: topic.data.item.id,
       edge_type: "references",
     });
     expect(mention.ok).toBe(true);
@@ -1720,7 +1720,7 @@ describe("a conflicted copy names its original", () => {
       return {
         item: { ...read.data.item, edges: undefined },
         tags: read.data.metadata.tags,
-        edges: edges.data.data.map((e) => `${e.edge_type}>${e.target_id}`),
+        edges: edges.data.data.map((e) => `${e.edge_type}>${e.to_id}`),
       };
     };
     const before = await stand();

@@ -324,7 +324,7 @@ fn enqueue(
         &store::NewWrite {
             kind,
             item_id: Some(item),
-            target_id: None,
+            to_id: None,
             edge_id: None,
             namespace: None,
             tag: None,

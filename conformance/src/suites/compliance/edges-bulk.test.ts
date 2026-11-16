@@ -57,13 +57,13 @@ describe("edges.bulk", () => {
     const res = await client.bulkEdges({
       edges: [
         {
-          source_id: a.sourceId,
-          target_id: a.targetId,
+          from_id: a.sourceId,
+          to_id: a.targetId,
           edge_type: "about",
         },
         {
-          source_id: b.sourceId,
-          target_id: b.targetId,
+          from_id: b.sourceId,
+          to_id: b.targetId,
           edge_type: "about",
         },
       ],
@@ -86,8 +86,8 @@ describe("edges.bulk", () => {
     const first = await client.bulkEdges({
       edges: [
         {
-          source_id: sourceId,
-          target_id: targetId,
+          from_id: sourceId,
+          to_id: targetId,
           edge_type: "about",
           properties: { a: 1, b: "kept", nested: { x: 1, y: 2 } },
         },
@@ -103,8 +103,8 @@ describe("edges.bulk", () => {
     const second = await client.bulkEdges({
       edges: [
         {
-          source_id: sourceId,
-          target_id: targetId,
+          from_id: sourceId,
+          to_id: targetId,
           edge_type: "about",
           properties: { a: 99, nested: { x: 5 } },
         },
@@ -131,8 +131,8 @@ describe("edges.bulk", () => {
     const first = await client.bulkEdges({
       edges: [
         {
-          source_id: sourceId,
-          target_id: targetId,
+          from_id: sourceId,
+          to_id: targetId,
           edge_type: "about",
         },
       ],
@@ -146,8 +146,8 @@ describe("edges.bulk", () => {
     const second = await client.bulkEdges({
       edges: [
         {
-          source_id: sourceId,
-          target_id: targetId,
+          from_id: sourceId,
+          to_id: targetId,
           edge_type: "about",
           properties: { should_not_apply: true },
         },
@@ -164,7 +164,7 @@ describe("edges.bulk", () => {
   it("matches an entry to the edge an earlier entry of the same request wrote", async () => {
     for (const atomic of [true, false]) {
       const { sourceId, targetId } = await makePair();
-      const triple = { source_id: sourceId, target_id: targetId };
+      const triple = { from_id: sourceId, to_id: targetId };
       const res = await client.bulkEdges({
         atomic,
         edges: [
@@ -211,13 +211,13 @@ describe("edges.bulk", () => {
     const res = await client.bulkEdges({
       edges: [
         {
-          source_id: a.sourceId,
-          target_id: a.targetId,
+          from_id: a.sourceId,
+          to_id: a.targetId,
           edge_type: "about",
         },
         {
-          source_id: a.sourceId,
-          target_id: "not-a-valid-id",
+          from_id: a.sourceId,
+          to_id: "not-a-valid-id",
           edge_type: "about",
         },
       ],
@@ -242,8 +242,8 @@ describe("edges.bulk", () => {
     // The rollback is asserted as an absence, so the listing has to be shown
     // to return something first — an edge made outside the batch.
     const outside = await client.createEdge({
-      source_id: a.sourceId,
-      target_id: control.targetId,
+      from_id: a.sourceId,
+      to_id: control.targetId,
       edge_type: "about",
     });
     expect(outside.status).toBe(201);
@@ -252,13 +252,13 @@ describe("edges.bulk", () => {
     const res = await client.bulkEdges({
       edges: [
         {
-          source_id: a.sourceId,
-          target_id: a.targetId,
+          from_id: a.sourceId,
+          to_id: a.targetId,
           edge_type: "about",
         },
         {
-          source_id: a.sourceId,
-          target_id: "00000000-0000-7000-8000-000000000000",
+          from_id: a.sourceId,
+          to_id: "00000000-0000-7000-8000-000000000000",
           edge_type: "about",
         },
       ],
@@ -273,7 +273,7 @@ describe("edges.bulk", () => {
       edge_type: "about",
     });
     expect(listRes.ok).toBe(true);
-    const targets = listRes.data.data.map((e) => e.target_id);
+    const targets = listRes.data.data.map((e) => e.to_id);
     expect(targets).toEqual([control.targetId]);
   });
 
@@ -284,18 +284,18 @@ describe("edges.bulk", () => {
     const res = await client.bulkEdges({
       edges: [
         {
-          source_id: a.sourceId,
-          target_id: a.targetId,
+          from_id: a.sourceId,
+          to_id: a.targetId,
           edge_type: "about",
         },
         {
-          source_id: a.sourceId,
-          target_id: "not-a-valid-id",
+          from_id: a.sourceId,
+          to_id: "not-a-valid-id",
           edge_type: "about",
         },
         {
-          source_id: b.sourceId,
-          target_id: b.targetId,
+          from_id: b.sourceId,
+          to_id: b.targetId,
           edge_type: "about",
         },
       ],
@@ -315,13 +315,13 @@ describe("edges.bulk", () => {
     const edgesOf = async (id: string): Promise<string[]> => {
       const list = await client.listItemEdges(id, { edge_type: "about" });
       expect(list.ok).toBe(true);
-      return list.data.data.map((e) => e.target_id);
+      return list.data.data.map((e) => e.to_id);
     };
     const a = await makePair();
     const b = await makePair();
     const about = (pair: { sourceId: string; targetId: string }) => ({
-      source_id: pair.sourceId,
-      target_id: pair.targetId,
+      from_id: pair.sourceId,
+      to_id: pair.targetId,
       edge_type: "about",
     });
 
@@ -371,19 +371,19 @@ describe("edges.bulk", () => {
     const a = await makePair();
     const b = await makePair();
     const page = (undeclared: boolean) => [
-      { source_id: "not-an-id", target_id: a.targetId, edge_type: "about" },
+      { from_id: "not-an-id", to_id: a.targetId, edge_type: "about" },
       {
-        source_id: a.sourceId,
-        target_id: a.targetId,
+        from_id: a.sourceId,
+        to_id: a.targetId,
         edge_type: "about",
         ...(undeclared && { weight: 1 }),
       },
-      { source_id: b.sourceId, target_id: b.targetId, edge_type: "about" },
+      { from_id: b.sourceId, to_id: b.targetId, edge_type: "about" },
     ];
     const edgesOf = async (id: string): Promise<string[]> => {
       const list = await client.listItemEdges(id, { edge_type: "about" });
       expect(list.ok).toBe(true);
-      return list.data.data.map((e) => e.target_id);
+      return list.data.data.map((e) => e.to_id);
     };
 
     const atomic = await client.rawRequest<unknown>("/edges/bulk", {
@@ -430,8 +430,8 @@ describe("edges.bulk", () => {
     const res = await client.bulkEdges({
       edges: [
         {
-          source_id: sourceId,
-          target_id: targetId,
+          from_id: sourceId,
+          to_id: targetId,
           edge_type: "nonexistent-edge-type",
         },
       ],
@@ -461,7 +461,7 @@ describe("edges.bulk", () => {
     const a = await makePair();
     const ok = await writer.bulkEdges({
       edges: [
-        { source_id: a.sourceId, target_id: a.targetId, edge_type: "about" },
+        { from_id: a.sourceId, to_id: a.targetId, edge_type: "about" },
       ],
     });
     expect(ok.ok).toBe(true);
@@ -485,7 +485,7 @@ describe("edges.bulk", () => {
     const b = await makePair();
     const rejected = await denied.bulkEdges({
       edges: [
-        { source_id: b.sourceId, target_id: b.targetId, edge_type: "about" },
+        { from_id: b.sourceId, to_id: b.targetId, edge_type: "about" },
       ],
     });
     expect(rejected.ok).toBe(false);
@@ -515,8 +515,8 @@ describe("edges.bulk", () => {
 
     const seeded = await client.createEdge({
       id,
-      source_id: first.sourceId,
-      target_id: first.targetId,
+      from_id: first.sourceId,
+      to_id: first.targetId,
       edge_type: "about",
     });
     expect(seeded.ok, JSON.stringify(seeded.error)).toBe(true);
@@ -526,8 +526,8 @@ describe("edges.bulk", () => {
       edges: [
         {
           id,
-          source_id: second.sourceId,
-          target_id: second.targetId,
+          from_id: second.sourceId,
+          to_id: second.targetId,
           edge_type: "about",
         },
       ],
@@ -537,15 +537,15 @@ describe("edges.bulk", () => {
     const entry = collision.data.results[0];
     expect(entry.outcome).toBe("errored");
     expect(entry.error?.code).toBe("id_reused");
-    expect(entry.error?.details?.differs).toEqual(["source_id", "target_id"]);
+    expect(entry.error?.details?.differs).toEqual(["from_id", "to_id"]);
 
     // Under the default `atomic` the page rolls back at the refusal's 409.
     const rolledBack = await client.bulkEdges({
       edges: [
         {
           id,
-          source_id: second.sourceId,
-          target_id: second.targetId,
+          from_id: second.sourceId,
+          to_id: second.targetId,
           edge_type: "about",
         },
       ],
@@ -559,8 +559,8 @@ describe("edges.bulk", () => {
     const accepted = await client.bulkEdges({
       edges: [
         {
-          source_id: second.sourceId,
-          target_id: second.targetId,
+          from_id: second.sourceId,
+          to_id: second.targetId,
           edge_type: "about",
         },
       ],
@@ -577,8 +577,8 @@ describe("edges.bulk", () => {
     const id = uuidv7();
     const held = await client.createEdge({
       id,
-      source_id: sourceId,
-      target_id: targetId,
+      from_id: sourceId,
+      to_id: targetId,
       edge_type: "about",
       properties: { n: 1 },
     });
@@ -586,8 +586,8 @@ describe("edges.bulk", () => {
     trackEdge(ctx, id);
     const entry = {
       id,
-      source_id: sourceId,
-      target_id: targetId,
+      from_id: sourceId,
+      to_id: targetId,
       edge_type: "about",
       properties: { n: 2 },
     };
@@ -638,8 +638,8 @@ describe("edges.bulk", () => {
     const refused = await makePair();
     const page = (pair: { sourceId: string; targetId: string }, n: number) => ({
       edges: Array.from({ length: n }, () => ({
-        source_id: pair.sourceId,
-        target_id: pair.targetId,
+        from_id: pair.sourceId,
+        to_id: pair.targetId,
         edge_type: "about",
       })),
       mode: "create_only" as const,
@@ -688,13 +688,13 @@ describe("edges.bulk", () => {
     const bad = await makePair();
     const edges = [
       {
-        source_id: good.sourceId,
-        target_id: good.targetId,
+        from_id: good.sourceId,
+        to_id: good.targetId,
         edge_type: "about",
       },
       {
-        source_id: bad.sourceId,
-        target_id: "not-a-valid-id",
+        from_id: bad.sourceId,
+        to_id: "not-a-valid-id",
         edge_type: "about",
       },
     ];

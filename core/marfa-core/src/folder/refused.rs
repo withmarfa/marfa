@@ -455,12 +455,12 @@ mod tests {
     fn a_refused_write_to_an_item_a_file_is_bound_to_does_not_keep_its_store_refused() {
         let line = state::Line {
             edge_type: "references".into(),
-            end: marfa_rules::catalog::End::Source,
+            end: marfa_rules::catalog::End::From,
             other: "other".into(),
         };
-        let edge = "{\"edge_type\":\"references\",\"source_id\":\"note\",\"target_id\":\"other\"}";
+        let edge = "{\"edge_type\":\"references\",\"from_id\":\"note\",\"to_id\":\"other\"}";
         let to_note =
-            "{\"edge_type\":\"references\",\"source_id\":\"other\",\"target_id\":\"note\"}";
+            "{\"edge_type\":\"references\",\"from_id\":\"other\",\"to_id\":\"note\"}";
         for (kind, extra) in [
             ("update_item", vec![]),
             ("add_tag", vec![("tag", "kept")]),
@@ -471,26 +471,26 @@ mod tests {
             ),
             (
                 "create_edge",
-                vec![("target_id", "other"), ("payload", edge)],
+                vec![("to_id", "other"), ("payload", edge)],
             ),
             (
                 "create_edge",
                 vec![
                     ("item_id", "other"),
-                    ("target_id", "note"),
+                    ("to_id", "note"),
                     ("payload", to_note),
                 ],
             ),
             (
                 "delete_edge",
-                vec![("target_id", "other"), ("payload", edge)],
+                vec![("to_id", "other"), ("payload", edge)],
             ),
             (
                 "update_edge",
                 vec![
-                    ("target_id", "was"),
+                    ("to_id", "was"),
                     ("edge_id", "e"),
-                    ("payload", "{\"target_id\":\"other\"}"),
+                    ("payload", "{\"to_id\":\"other\"}"),
                 ],
             ),
         ] {
@@ -561,7 +561,7 @@ mod tests {
                 "refused",
                 &[
                     ("item_id", item),
-                    ("target_id", FOLDER),
+                    ("to_id", FOLDER),
                     (
                         "payload",
                         "{\"edge_type\":\"in-folder\",\"properties\":{\"path\":\"Note.md\"}}",

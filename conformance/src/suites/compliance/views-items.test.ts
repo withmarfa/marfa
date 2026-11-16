@@ -147,8 +147,8 @@ async function keyWith(
 
 async function edge(parent: string, child: string): Promise<void> {
   const r = await client.createEdge({
-    source_id: parent,
-    target_id: child,
+    from_id: parent,
+    to_id: child,
     edge_type: "parent-of",
   });
   expect(r.status, JSON.stringify(r.error)).toBe(201);

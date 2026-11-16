@@ -36,7 +36,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **extension**: A namespaced JSON object of metadata attached to an item by something other than the key that wrote the item, read and written per namespace. Not a blob and not a property.
 - **edge**: A directed relationship between two items, named by its **edge type**. An edge has properties and a version of its own.
 - **reverse name**: The name an edge type may declare for its edges read from the target, such as `child-of` for `parent-of`, used as a frontmatter key. Never "inverse". Not a reverse label.
-- **written at**: The end of an edge type whose file writes its edges in a folder, `source` or `target`, or `none` where no file does (`written_at`).
+- **written at**: The end of an edge type whose file writes its edges in a folder, `source` or `target`, or `none` where no file does (`written_from`).
 - **label**: The heading a type, a field or an edge type shows for itself. An edge type's label heads the source end of its edges, such as `Children` on `parent-of`. Not the `id` and not a reverse name.
 - **plural**: The name of a list of a type's items, such as `People` for `core.entity.person`.
 - **reverse label**: The heading an edge type shows for the target end of its edges, such as `Parent` on `parent-of`. Not a reverse name, which is a frontmatter key.

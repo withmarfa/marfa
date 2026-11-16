@@ -39,8 +39,8 @@ describe("edge cascade semantics", () => {
     const child = await makeItem("child");
 
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -67,14 +67,14 @@ describe("edge cascade semantics", () => {
     const child = await makeItem("r-child");
     const grandchild = await makeItem("r-grandchild");
     const alone = await makeItem("r-alone");
-    for (const [source_id, target_id] of [
+    for (const [from_id, to_id] of [
       [parent, child],
       [child, grandchild],
       [parent, alone],
     ] as const) {
       const edge = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok).toBe(true);
@@ -104,8 +104,8 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("t-parent");
     const child = await makeItem("t-child");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -122,14 +122,14 @@ describe("edge cascade semantics", () => {
     const middle = await makeItem("m-middle");
     const beneath = await makeItem("m-beneath");
     const sibling = await makeItem("m-sibling");
-    for (const [source_id, target_id] of [
+    for (const [from_id, to_id] of [
       [parent, middle],
       [middle, beneath],
       [parent, sibling],
     ] as const) {
       const edge = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok).toBe(true);
@@ -148,10 +148,10 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("p-parent");
     const purged = await makeItem("p-purged");
     const kept = await makeItem("p-kept");
-    for (const target_id of [purged, kept]) {
+    for (const to_id of [purged, kept]) {
       const edge = await client.createEdge({
-        source_id: parent,
-        target_id,
+        from_id: parent,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok).toBe(true);
@@ -169,13 +169,13 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("g-parent");
     const middle = await makeItem("g-middle");
     const beneath = await makeItem("g-beneath");
-    for (const [source_id, target_id] of [
+    for (const [from_id, to_id] of [
       [parent, middle],
       [middle, beneath],
     ] as const) {
       const edge = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok).toBe(true);
@@ -195,8 +195,8 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("o-parent");
     const child = await makeItem("o-child");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -216,10 +216,10 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("c-parent");
     const child = await makeItem("c-child");
     const sibling = await makeItem("c-sibling");
-    for (const target_id of [child, sibling]) {
+    for (const to_id of [child, sibling]) {
       const edge = await client.createEdge({
-        source_id: parent,
-        target_id,
+        from_id: parent,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok).toBe(true);
@@ -243,8 +243,8 @@ describe("edge cascade semantics", () => {
     const head = await makeItem("head");
 
     const edge = await client.createEdge({
-      source_id: head,
-      target_id: predecessor,
+      from_id: head,
+      to_id: predecessor,
       edge_type: "supersedes",
     });
     expect(edge.ok).toBe(true);
@@ -263,8 +263,8 @@ describe("edge cascade semantics", () => {
     const target = await makeItem("about-tgt");
 
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -286,8 +286,8 @@ describe("edge cascade semantics", () => {
     const host = await makeItem("host");
 
     const edge = await client.createEdge({
-      source_id: attachment,
-      target_id: host,
+      from_id: attachment,
+      to_id: host,
       edge_type: "attached-to",
     });
     expect(edge.ok).toBe(true);
@@ -306,8 +306,8 @@ describe("edge cascade semantics", () => {
     const target = await makeItem("ref-tgt");
 
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "references",
     });
     expect(edge.ok).toBe(true);
@@ -336,8 +336,8 @@ describe("edge cascade semantics", () => {
     const target = await makeItem("cc-tgt");
 
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: etId,
     });
     expect(edge.ok).toBe(true);
@@ -372,8 +372,8 @@ describe("edge cascade semantics", () => {
     const target = await makeItem("bl-tgt");
 
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: etId,
     });
     expect(edge.ok).toBe(true);
@@ -409,8 +409,8 @@ describe("edge cascade semantics", () => {
     const child = await makeItem("deep-child");
     const other = await makeItem("deep-other");
     const held = await client.createEdge({
-      source_id: root,
-      target_id: child,
+      from_id: root,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(held.status, JSON.stringify(held.error)).toBe(201);
@@ -418,8 +418,8 @@ describe("edge cascade semantics", () => {
     const blockers: string[] = [];
     for (const source of [root, child]) {
       const edge = await client.createEdge({
-        source_id: source,
-        target_id: other,
+        from_id: source,
+        to_id: other,
         edge_type: etId,
       });
       expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -455,8 +455,8 @@ describe("edge cascade semantics", () => {
     const child = await makeItem("deep-transition-child");
     const other = await makeItem("deep-transition-other");
     const held = await client.createEdge({
-      source_id: root,
-      target_id: child,
+      from_id: root,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(held.status, JSON.stringify(held.error)).toBe(201);
@@ -464,8 +464,8 @@ describe("edge cascade semantics", () => {
     const blockers: string[] = [];
     for (const source of [root, child]) {
       const edge = await client.createEdge({
-        source_id: source,
-        target_id: other,
+        from_id: source,
+        to_id: other,
         edge_type: etId,
       });
       expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -525,18 +525,18 @@ describe("edge cascade semantics", () => {
     const unrelatedFrom = await makeItem("pb-other-from");
     const unrelatedTo = await makeItem("pb-other-to");
     const inbound = await client.createEdge({
-      source_id: upstream,
-      target_id: held,
+      from_id: upstream,
+      to_id: held,
       edge_type: etId,
     });
     const outbound = await client.createEdge({
-      source_id: held,
-      target_id: downstream,
+      from_id: held,
+      to_id: downstream,
       edge_type: etId,
     });
     const unrelated = await client.createEdge({
-      source_id: unrelatedFrom,
-      target_id: unrelatedTo,
+      from_id: unrelatedFrom,
+      to_id: unrelatedTo,
       edge_type: etId,
     });
     for (const e of [inbound, outbound, unrelated]) {
@@ -577,8 +577,8 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("t-parent");
     const child = await makeItem("t-child");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -611,8 +611,8 @@ describe("edge cascade semantics", () => {
     const source = await makeItem("tb-src");
     const target = await makeItem("tb-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: etId,
     });
     expect(edge.ok).toBe(true);
@@ -656,8 +656,8 @@ describe("edge cascade semantics", () => {
     const parent = await makeItem("bt-parent");
     const child = await makeItem("bt-child");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -706,13 +706,13 @@ describe("edge cascade semantics", () => {
     trackEdgeType(ctx, etId);
 
     const edgeBetween = async (
-      source_id: string,
-      target_id: string,
+      from_id: string,
+      to_id: string,
       edge_type: string,
     ): Promise<string> => {
       const made = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type,
       });
       expect(made.ok, JSON.stringify(made.error)).toBe(true);

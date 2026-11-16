@@ -248,8 +248,8 @@ describe("event stream contract", () => {
         { query: [["edges", mode]], signal },
         async (stream) => {
           const edge = await client.createEdge({
-            source_id: a,
-            target_id: b,
+            from_id: a,
+            to_id: b,
             edge_type: "references",
           });
           expect(edge.ok).toBe(true);
@@ -309,8 +309,8 @@ describe("event stream contract", () => {
     const parent = await seed("restored-parent");
     const child = await seed("restored-child");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -334,13 +334,13 @@ describe("event stream contract", () => {
     const parent = await seed("moved-parent");
     const child = await seed("moved-child");
     const grandchild = await seed("moved-grandchild");
-    for (const [source_id, target_id] of [
+    for (const [from_id, to_id] of [
       [parent, child],
       [child, grandchild],
     ] as const) {
       const edge = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok).toBe(true);
@@ -384,8 +384,8 @@ describe("event stream contract", () => {
     const parent = await seed("copy-parent");
     const original = await seed("copy-original");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: original,
+      from_id: parent,
+      to_id: original,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -418,7 +418,7 @@ describe("event stream contract", () => {
           evts.some(
             (e) =>
               e.event === "edge.created" &&
-              (e.data as { edge?: { target_id?: string } }).edge?.target_id ===
+              (e.data as { edge?: { to_id?: string } }).edge?.to_id ===
                 copy,
           ),
         `edge.created for the copy ${String(copy)}`,
@@ -427,13 +427,13 @@ describe("event stream contract", () => {
       const created = events.find(
         (e) =>
           e.event === "edge.created" &&
-          (e.data as { edge?: { target_id?: string } }).edge?.target_id ===
+          (e.data as { edge?: { to_id?: string } }).edge?.to_id ===
             copy,
       );
       const data = created?.data as {
-        edge: { source_id: string; edge_type: string };
+        edge: { from_id: string; edge_type: string };
       };
-      expect(data.edge.source_id).toBe(parent);
+      expect(data.edge.from_id).toBe(parent);
       expect(data.edge.edge_type).toBe("parent-of");
     } finally {
       await stream.close();
@@ -485,11 +485,11 @@ describe("event stream contract", () => {
         if (!/^(item|edge)\./.test(e.event)) return [];
         const data = e.data as {
           item?: { id: string };
-          edge?: { source_id: string; edge_type: string; target_id: string };
+          edge?: { from_id: string; edge_type: string; to_id: string };
         };
         if (data.edge !== undefined)
           return [
-            `${e.event} ${data.edge.source_id} ${data.edge.edge_type} ${data.edge.target_id}`,
+            `${e.event} ${data.edge.from_id} ${data.edge.edge_type} ${data.edge.to_id}`,
           ];
         const id = data.item?.id;
         if (id !== undefined && (id === copy || id === original))
@@ -512,8 +512,8 @@ describe("event stream contract", () => {
     const parent = await seed("ordered-parent");
     const original = await seed("ordered-original");
     const edge = await client.createEdge({
-      source_id: parent,
-      target_id: original,
+      from_id: parent,
+      to_id: original,
       edge_type: "parent-of",
     });
     expect(edge.ok).toBe(true);
@@ -557,12 +557,12 @@ describe("event stream contract", () => {
       const order = events.flatMap((e) => {
         const data = e.data as {
           item?: { id: string };
-          edge?: { source_id: string; edge_type: string; target_id: string };
+          edge?: { from_id: string; edge_type: string; to_id: string };
         };
         if (
           e.event === "edge.created" &&
           data.edge !== undefined &&
-          (data.edge.target_id === copy || data.edge.source_id === copy)
+          (data.edge.to_id === copy || data.edge.from_id === copy)
         )
           return [`edge ${data.edge.edge_type}`];
         if (e.event === "item.created" && data.item?.id === copy)
@@ -696,8 +696,8 @@ describe("event stream contract", () => {
     const a = await seed("edge-a");
     const b = await seed("edge-b");
     const edge = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
       properties: { note: "before" },
     });
@@ -743,8 +743,8 @@ describe("event stream contract", () => {
       const a = await seed("event-type-a");
       const b = await seed("event-type-b");
       const edge = await client.createEdge({
-        source_id: a,
-        target_id: b,
+        from_id: a,
+        to_id: b,
         edge_type: "about",
       });
       expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -1346,12 +1346,12 @@ describe("which event each write announces", () => {
   it("announces each edge a POST /edges/bulk entry creates or writes, however little it changes", async ({
     signal,
   }) => {
-    const source_id = await seed("bulk-edge-source");
-    const target_id = await seed("bulk-edge-target");
+    const from_id = await seed("bulk-edge-source");
+    const to_id = await seed("bulk-edge-target");
     const send = async (n: number, outcome: string): Promise<string> => {
       const r = await client.bulkEdges({
         edges: [
-          { source_id, target_id, edge_type: "about", properties: { n } },
+          { from_id, to_id, edge_type: "about", properties: { n } },
         ],
       });
       expect(r.status, JSON.stringify(r.error)).toBe(200);
@@ -1393,7 +1393,7 @@ describe("which event each write announces", () => {
     }, signal);
     const edgeFrames = frames.filter(
       (e) =>
-        (e.data as { edge?: { source_id?: string } }).edge?.source_id === id,
+        (e.data as { edge?: { from_id?: string } }).edge?.from_id === id,
     );
     expect(edgeFrames.map((e) => e.event).sort()).toEqual([
       "edge.created",
@@ -1430,7 +1430,7 @@ describe("which event each write announces", () => {
     }, signal);
     const edgeFrames = frames.filter(
       (e) =>
-        (e.data as { edge?: { source_id?: string } }).edge?.source_id === id,
+        (e.data as { edge?: { from_id?: string } }).edge?.from_id === id,
     );
     expect(edgeFrames.map((e) => e.event).sort()).toEqual([
       "edge.created",

@@ -250,12 +250,12 @@ describe("unreadKeys", () => {
       reverse_label: "Cited by",
       description: "One item cites another.",
       cardinality: "many-to-many",
-      source_type_constraints: ["*"],
-      target_type_constraints: ["*"],
+      from_type_constraints: ["*"],
+      to_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       property_schema: {},
       reverse_name: "cited-by",
-      written_at: "source",
+      written_from: "from",
     };
     expect(Object.keys(full).sort()).toEqual([...EDGE_TYPE_SCHEMA_KEYS].sort());
     expect(keysRead(full, validateEdgeTypeSchema)).toEqual(

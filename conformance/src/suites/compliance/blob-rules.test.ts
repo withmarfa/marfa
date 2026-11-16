@@ -599,8 +599,8 @@ describe("the rules that keep a blob's bytes", () => {
       ids.push(note.data.item.id);
     }
     const edge = await client.createEdge({
-      source_id: ids[0]!,
-      target_id: ids[1]!,
+      from_id: ids[0]!,
+      to_id: ids[1]!,
       edge_type: "about",
       properties: { cover: whole, caption: `see ![it](${linked})` },
     });

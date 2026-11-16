@@ -459,7 +459,7 @@ async fn the_layout_is_pinned_to_its_version() {
         .keyed(
             Method::POST,
             "/edges",
-            json!({ "source_id": note, "target_id": conversation, "edge_type": "references" }),
+            json!({ "from_id": note, "to_id": conversation, "edge_type": "references" }),
         )
         .await;
     assert_eq!(edge.status, StatusCode::CREATED, "{}", edge.body);
@@ -1078,7 +1078,7 @@ impl Instance {
             .keyed(
                 Method::POST,
                 "/edges",
-                json!({ "source_id": source, "target_id": target, "edge_type": "parent-of" }),
+                json!({ "from_id": source, "to_id": target, "edge_type": "parent-of" }),
             )
             .await;
         assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);

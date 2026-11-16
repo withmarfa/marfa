@@ -31,15 +31,15 @@ test("a move is checked as its update would be, and queues nothing", () => {
     core.createEdge(supersedes(c, d));
     const queued = core.queue().length;
 
-    assert.throws(() => core.checkEdge(supersedes(a, b)), constraint({ edge_type: "supersedes", source_id: a, target_id: b, constraint: "duplicate" }));
+    assert.throws(() => core.checkEdge(supersedes(a, b)), constraint({ edge_type: "supersedes", from_id: a, to_id: b, constraint: "duplicate" }));
     assert.throws(
       () => core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: d }),
-      constraint({ edge_type: "supersedes", target_id: d, constraint: "cardinality" }),
+      constraint({ edge_type: "supersedes", to_id: d, constraint: "cardinality" }),
       "d already has an inbound supersedes edge",
     );
     assert.throws(
       () => core.checkEdgeMove(moving, { end: EdgeEnd.Source, to: c }),
-      constraint({ edge_type: "supersedes", source_id: c, constraint: "cardinality" }),
+      constraint({ edge_type: "supersedes", from_id: c, constraint: "cardinality" }),
       "c already has an outbound supersedes edge",
     );
     core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: b });

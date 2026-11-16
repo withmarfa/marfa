@@ -1404,13 +1404,13 @@ When an edge line is removed, a device MUST retain a pin for its target that the
 
 ### `folder-documents/edge-writing-end`
 
-When rendering an edge whose type's `written_at` is `source` or `target`, a device MUST write its frontmatter line only at that end, using its forward name at the source or reverse name at the target.
+When rendering an edge whose type's `written_from` is `source` or `target`, a device MUST write its frontmatter line only at that end, using its forward name at the source or reverse name at the target.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`, `device/folders-frontmatter.test.ts › writes parent-of as child-of in the child`.
 
 ### `folder-documents/edge-written-nowhere`
 
-When rendering an edge whose type's `written_at` is `none`, a device MUST write no frontmatter line or body link for it, at either end.
+When rendering an edge whose type's `written_from` is `none`, a device MUST write no frontmatter line or body link for it, at either end.
 
 **Reason:** no file writes such an edge, and the server keeps it. `in-folder` is one, since a file's place is where it sits.
 
@@ -1418,7 +1418,7 @@ When rendering an edge whose type's `written_at` is `none`, a device MUST write 
 
 ### `folder-documents/edge-unwritten-line-flagged`
 
-If a document has a frontmatter line named for an edge type whose `written_at` is `none`, then a device MUST flag the document and send no edge write for the line.
+If a document has a frontmatter line named for an edge type whose `written_from` is `none`, then a device MUST flag the document and send no edge write for the line.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an edge of a type no file writes in no file, and flags a line naming it`, `› flags an in-folder line and a line naming its own item`.
 

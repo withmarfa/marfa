@@ -567,7 +567,7 @@ fn an_owed_read_back_with_no_receipt_that_fails_records_a_warning_with_its_code(
         &crate::store::Owed {
             subject: crate::model::Subject::Item,
             id: "owed".into(),
-            source_id: None,
+            from_id: None,
             edge_type: None,
             moved: false,
         },

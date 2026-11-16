@@ -504,7 +504,7 @@ When `GET /export?format=archive` selects an edge whose edge type is not registe
 
 ### `archive/archive-edges-end-unregistered`
 
-When `GET /export?format=archive` selects an edge with an end that is an item of a type that is not registered, the server MUST NOT refuse the export because the edge type's `source_type_constraints` or `target_type_constraints` do not admit that end.
+When `GET /export?format=archive` selects an edge with an end that is an item of a type that is not registered, the server MUST NOT refuse the export because the edge type's `from_type_constraints` or `to_type_constraints` do not admit that end.
 
 **Reason:** the export checks the selection with the restore's checks (`archive/archive-restorable`), and a restore takes such an edge (`archive/restore-edges-end-unregistered`). A forced delete leaves the items of a type and the edges between them (`types/delete-force`), so an instance that refused to export them could not be backed up.
 
@@ -1126,7 +1126,7 @@ If an archived edge carries an `id` that is not a UUIDv7 in lowercase, then the 
 
 ### `archive/restore-edges-end-unregistered`
 
-When `POST /restore` meets an edge with an end that is an item of a type that is not registered once the archive's own types are, the server MUST NOT refuse the edge because the edge type's `source_type_constraints` or `target_type_constraints` do not admit that end.
+When `POST /restore` meets an edge with an end that is an item of a type that is not registered once the archive's own types are, the server MUST NOT refuse the edge because the edge type's `from_type_constraints` or `to_type_constraints` do not admit that end.
 
 **Reason:** a forced delete removes a type and keeps its items and the edges between them (`types/delete-force`), and the type's parent and roles go with it, so no entry in the list, whether it names a registered type or not, can be judged against the end. `POST /edges` still refuses such an end (`edges/endpoint-unregistered`), and every other refusal of a restored edge is unchanged (`archive/restore-edge-skips`).
 

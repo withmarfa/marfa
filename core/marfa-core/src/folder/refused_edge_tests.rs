@@ -120,8 +120,8 @@ fn seeded_at(
     let edge = format!("{id}-edge");
     let payload = json!({
         "id": edge,
-        "source_id": fixture.source,
-        "target_id": fixture.target,
+        "from_id": fixture.source,
+        "to_id": fixture.target,
         "edge_type": edge_type,
         "properties": properties,
     });
@@ -131,7 +131,7 @@ fn seeded_at(
         .conn()
         .unwrap()
         .execute(
-            "INSERT INTO queue (id, kind, item_id, target_id, edge_id, idempotency_key, payload,
+            "INSERT INTO queue (id, kind, item_id, to_id, edge_id, idempotency_key, payload,
                                 sent, verdict, reason, answer, queued_at, answered_at)
              VALUES (?1, 'create_edge', ?2, ?3, ?4, ?1, ?5, ?6, ?7, ?8, '{}',
                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z')",
@@ -179,7 +179,7 @@ fn edges_of(folder: &Folder) -> Vec<(String, String, String, String, i64, String
     let conn = folder.core.conn().unwrap();
     let mut statement = conn
         .prepare(
-            "SELECT id, source_id, target_id, edge_type, version, properties FROM edges ORDER BY id",
+            "SELECT id, from_id, to_id, edge_type, version, properties FROM edges ORDER BY id",
         )
         .unwrap();
     statement
@@ -323,8 +323,8 @@ fn a_refused_create_of_an_edge_the_copy_does_not_hold_stays_until_it_is_discarde
         store::testing::wire_edge("other-target", &fixture.source, "elsewhere", ONE_TO_ONE);
     store::put_server_edge(&folder.core.conn().unwrap(), &other_target).unwrap();
     other_target.id = "other-source".into();
-    other_target.source_id = "elsewhere".into();
-    other_target.target_id = fixture.target.clone();
+    other_target.from_id = "elsewhere".into();
+    other_target.to_id = fixture.target.clone();
     store::put_server_edge(&folder.core.conn().unwrap(), &other_target).unwrap();
     held(&fixture, "other-type", "references", json!({}));
 
@@ -345,7 +345,7 @@ fn a_refused_write_of_another_kind_stays_though_the_edge_is_held() {
     let create = seeded(&fixture, "create", ONE_TO_ONE, json!({}));
     let conn = folder.core.conn().unwrap();
     conn.execute(
-        "INSERT INTO queue (id, kind, item_id, target_id, edge_id, idempotency_key, payload,
+        "INSERT INTO queue (id, kind, item_id, to_id, edge_id, idempotency_key, payload,
                             sent, verdict, reason, answer, queued_at, answered_at)
          VALUES ('moved', 'update_edge', ?1, ?2, 'edge', 'moved', ?4,
                  1, 'refused', ?3, '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z')",
@@ -356,8 +356,8 @@ fn a_refused_write_of_another_kind_stays_though_the_edge_is_held() {
             // Shaped as a create's, so only its kind keeps it.
             &json!({
                 "id": "edge",
-                "source_id": fixture.source,
-                "target_id": fixture.target,
+                "from_id": fixture.source,
+                "to_id": fixture.target,
                 "edge_type": ONE_TO_ONE,
                 "properties": {},
             })
@@ -450,8 +450,8 @@ fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
         end,
         other: other.into(),
     };
-    let on_source = line(End::Source, &fixture.target);
-    let on_target = line(End::Target, &fixture.source);
+    let on_source = line(End::From, &fixture.target);
+    let on_target = line(End::To, &fixture.source);
     held(&fixture, "edge", ONE_TO_ONE, json!({}));
 
     let shown_by = [
@@ -497,7 +497,7 @@ fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
         folder,
         "a.md",
         state::Change::Edge {
-            line: line(End::Source, "elsewhere"),
+            line: line(End::From, "elsewhere"),
             shown: true,
         },
     );
@@ -507,7 +507,7 @@ fn a_refused_create_a_files_flag_shows_stays_with_its_reason() {
         state::Change::Edge {
             line: state::Line {
                 edge_type: "references".into(),
-                end: End::Source,
+                end: End::From,
                 other: fixture.target.clone(),
             },
             shown: true,
@@ -573,12 +573,12 @@ fn only_an_edge_the_server_gave_the_copy_proves_a_refused_create_satisfied() {
     store::put_server_edge(&folder.core.conn().unwrap(), &moved).unwrap();
     execute(
         folder,
-        "UPDATE edges SET target_id = ?1 WHERE id = 'moved'",
+        "UPDATE edges SET to_id = ?1 WHERE id = 'moved'",
         [&fixture.target],
     );
     execute(
         folder,
-        "INSERT INTO queue (id, kind, item_id, target_id, edge_id, idempotency_key, payload,
+        "INSERT INTO queue (id, kind, item_id, to_id, edge_id, idempotency_key, payload,
                             verdict, reason, queued_at, base_version)
          VALUES ('move', 'update_edge', ?1, ?2, 'moved', 'move', '{}', 'blocked', 'conflict_unresolved',
                  '2026-01-01T00:00:00Z', 3)",

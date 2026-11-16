@@ -59,8 +59,8 @@ describe("edge events", () => {
       const src = await makeItem("sse-src");
       const tgt = await makeItem("sse-tgt");
       const edge = await client.createEdge({
-        source_id: src,
-        target_id: tgt,
+        from_id: src,
+        to_id: tgt,
         edge_type: "about",
       });
       expect(edge.ok).toBe(true);
@@ -91,8 +91,8 @@ describe("edge events", () => {
       const src = await makeItem("double-delete-src");
       const tgt = await makeItem("double-delete-tgt");
       const edge = await client.createEdge({
-        source_id: src,
-        target_id: tgt,
+        from_id: src,
+        to_id: tgt,
         edge_type: "about",
       });
       expect(edge.ok).toBe(true);
@@ -114,8 +114,8 @@ describe("edge events", () => {
       // A later write, so the stream has carried everything the deletes
       // announced once its frame arrives.
       const marker = await client.createEdge({
-        source_id: tgt,
-        target_id: src,
+        from_id: tgt,
+        to_id: src,
         edge_type: "about",
       });
       expect(marker.ok).toBe(true);
@@ -148,8 +148,8 @@ describe("edge events", () => {
       const src = await makeItem("source-type-src");
       const tgt = await makeItem("source-type-tgt");
       const edge = await client.createEdge({
-        source_id: src,
-        target_id: tgt,
+        from_id: src,
+        to_id: tgt,
         edge_type: "about",
       });
       expect(edge.ok).toBe(true);
@@ -258,15 +258,15 @@ describe("edge events", () => {
     // an edge of another type, written and deleted first, is one a subscriber
     // reading every edge type would be sent twice.
     const other = await client.createEdge({
-      source_id: src,
-      target_id: tgt,
+      from_id: src,
+      to_id: tgt,
       edge_type: "about",
     });
     expect(other.ok).toBe(true);
     expect((await client.deleteEdge(other.data.edge.id)).ok).toBe(true);
     const edge = await client.createEdge({
-      source_id: src,
-      target_id: tgt,
+      from_id: src,
+      to_id: tgt,
       edge_type: edgeType,
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -323,8 +323,8 @@ describe("edge events", () => {
     const src = await makeItem("audit-src");
     const tgt = await makeItem("audit-tgt");
     const edge = await client.createEdge({
-      source_id: src,
-      target_id: tgt,
+      from_id: src,
+      to_id: tgt,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -366,8 +366,8 @@ describe("edge events", () => {
     trackItem(ctx, bookmark.data.item.id);
     const place = async (source: string, target: string, edgeType: string) => {
       const r = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(r.status).toBe(201);
@@ -453,8 +453,8 @@ describe("the stream answers only the edges a subscriber may read", () => {
 
     const make = async (source: string, edgeType: string): Promise<string> => {
       const r = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(r.ok, JSON.stringify(r.error)).toBe(true);
@@ -611,8 +611,8 @@ describe("the stream answers only the edges a subscriber may read", () => {
     const bookmarkId = bookmark.data.item.id;
     const target = await makeItem(`${label}-purged-target`);
     const edge = await client.createEdge({
-      source_id: bookmarkId,
-      target_id: target,
+      from_id: bookmarkId,
+      to_id: target,
       edge_type: "references",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

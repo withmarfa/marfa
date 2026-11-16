@@ -163,8 +163,8 @@ pub struct BinPage {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Edge {
     pub id: String,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     /// Empty where `unreadable_properties` is set.
     pub properties: JsonObject,
@@ -708,9 +708,9 @@ pub enum EdgeEnd {
 
 /// Which end of an edge has the file that writes it in a folder, or neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum EdgeWrittenAt {
-    Source,
-    Target,
+pub enum EdgeWrittenFrom {
+    From,
+    To,
     None,
 }
 
@@ -726,9 +726,9 @@ pub struct EdgeType {
     pub cardinality: String,
     /// The name the edge goes by read from its target.
     pub reverse_name: Option<String>,
-    pub written_at: EdgeWrittenAt,
-    pub source_type_constraints: Vec<String>,
-    pub target_type_constraints: Vec<String>,
+    pub written_from: EdgeWrittenFrom,
+    pub from_type_constraints: Vec<String>,
+    pub to_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
     pub properties: Vec<TypeField>,
     pub shipped: bool,
@@ -796,13 +796,13 @@ impl From<marfa_core::EdgeType> for EdgeType {
             description: held.description,
             cardinality: held.cardinality,
             reverse_name: held.reverse_name,
-            written_at: match held.written_at {
-                marfa_core::WrittenAt::Source => EdgeWrittenAt::Source,
-                marfa_core::WrittenAt::Target => EdgeWrittenAt::Target,
-                marfa_core::WrittenAt::None => EdgeWrittenAt::None,
+            written_from: match held.written_from {
+                marfa_core::WrittenFrom::From => EdgeWrittenFrom::From,
+                marfa_core::WrittenFrom::To => EdgeWrittenFrom::To,
+                marfa_core::WrittenFrom::None => EdgeWrittenFrom::None,
             },
-            source_type_constraints: held.source_type_constraints,
-            target_type_constraints: held.target_type_constraints,
+            from_type_constraints: held.from_type_constraints,
+            to_type_constraints: held.to_type_constraints,
             cascade_on_delete: held.cascade_on_delete,
             properties: held.properties.into_iter().map(Into::into).collect(),
             shipped: held.shipped,
@@ -1066,8 +1066,8 @@ impl Edit {
 /// An edge, before it is queued.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct EdgeDraft {
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     #[uniffi(default)]
     pub properties: JsonObject,
@@ -1101,7 +1101,7 @@ pub struct QueuedWrite {
     pub id: String,
     pub kind: WriteKind,
     pub item_id: Option<String>,
-    pub target_id: Option<String>,
+    pub to_id: Option<String>,
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
@@ -1994,8 +1994,8 @@ fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
 fn edge(edge: marfa_core::Edge, unreadable_properties: Option<String>) -> Edge {
     Edge {
         id: edge.id,
-        source_id: edge.source_id,
-        target_id: edge.target_id,
+        from_id: edge.from_id,
+        to_id: edge.to_id,
         edge_type: edge.edge_type,
         properties: edge.properties.into(),
         version: edge.version,
@@ -2200,7 +2200,7 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
         id: write.id,
         kind: write.kind.into(),
         item_id: write.item_id,
-        target_id: write.target_id,
+        to_id: write.to_id,
         edge_id: write.edge_id,
         namespace: write.namespace,
         tag: write.tag,
@@ -2943,8 +2943,8 @@ impl Core {
     pub fn check_edge(&self, draft: EdgeDraft) -> Result<(), MarfaError> {
         let draft = marfa_core::EdgeDraft {
             properties: draft.properties.into_map()?,
-            source_id: draft.source_id,
-            target_id: draft.target_id,
+            from_id: draft.from_id,
+            to_id: draft.to_id,
             edge_type: draft.edge_type,
             id: draft.id,
         };
@@ -2957,8 +2957,8 @@ impl Core {
     /// Returning is not the server's verdict, which a queued move still meets.
     pub fn check_edge_move(&self, id: String, moves: EdgeMove) -> Result<(), MarfaError> {
         let end = match moves.end {
-            EdgeEnd::Source => marfa_core::End::Source,
-            EdgeEnd::Target => marfa_core::End::Target,
+            EdgeEnd::Source => marfa_core::End::From,
+            EdgeEnd::Target => marfa_core::End::To,
         };
         Ok(self.inner.check_edge_move(&id, end, &moves.to)?)
     }
@@ -2967,8 +2967,8 @@ impl Core {
     pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
         let draft = marfa_core::EdgeDraft {
             properties: draft.properties.into_map()?,
-            source_id: draft.source_id,
-            target_id: draft.target_id,
+            from_id: draft.from_id,
+            to_id: draft.to_id,
             edge_type: draft.edge_type,
             id: draft.id,
         };
@@ -2982,7 +2982,7 @@ impl Core {
         id: String,
         edit: EdgeEdit,
     ) -> Result<Option<QueuedWrite>, MarfaError> {
-        let (source_id, target_id) = match edit.moves {
+        let (from_id, to_id) = match edit.moves {
             None => (None, None),
             Some(EdgeMove {
                 end: EdgeEnd::Source,
@@ -2996,8 +2996,8 @@ impl Core {
         let edit = marfa_core::EdgeEdit {
             properties: edit.properties.into_map()?,
             base_version: Some(edit.base_version),
-            source_id,
-            target_id,
+            from_id,
+            to_id,
         };
         self.inner.update_edge(&id, &edit)?.map(queued).transpose()
     }
@@ -4560,9 +4560,9 @@ mod tests {
             description: None,
             cardinality: "one-to-many".into(),
             reverse_name: Some("mentored-by".into()),
-            written_at: marfa_core::WrittenAt::Target,
-            source_type_constraints: vec!["*".into()],
-            target_type_constraints: vec!["*".into()],
+            written_from: marfa_core::WrittenFrom::To,
+            from_type_constraints: vec!["*".into()],
+            to_type_constraints: vec!["*".into()],
             cascade_on_delete: "orphan".into(),
             properties: vec![marfa_core::TypeField {
                 name: "since".into(),
@@ -4581,18 +4581,18 @@ mod tests {
         assert_eq!(crossed.reverse_name.as_deref(), Some("mentored-by"));
         assert_eq!(crossed.label, "Mentees");
         assert_eq!(crossed.reverse_label, "Mentors");
-        assert_eq!(crossed.written_at, EdgeWrittenAt::Target);
+        assert_eq!(crossed.written_from, EdgeWrittenFrom::To);
         assert_eq!(
             text(&crossed.properties[0].definition),
             r#"{"type":"string"}"#
         );
-        held.written_at = marfa_core::WrittenAt::Source;
+        held.written_from = marfa_core::WrittenFrom::From;
         assert_eq!(
-            EdgeType::from(held.clone()).written_at,
-            EdgeWrittenAt::Source
+            EdgeType::from(held.clone()).written_from,
+            EdgeWrittenFrom::From
         );
-        held.written_at = marfa_core::WrittenAt::None;
-        assert_eq!(EdgeType::from(held).written_at, EdgeWrittenAt::None);
+        held.written_from = marfa_core::WrittenFrom::None;
+        assert_eq!(EdgeType::from(held).written_from, EdgeWrittenFrom::None);
     }
 
     #[test]
@@ -5408,8 +5408,8 @@ mod tests {
             (note("first"), note("second"), note("third"), note("child"));
         let edge = core
             .create_edge(EdgeDraft {
-                source_id: first.clone(),
-                target_id: child.clone(),
+                from_id: first.clone(),
+                to_id: child.clone(),
                 edge_type: "parent-of".into(),
                 properties: JsonObject::default(),
                 id: None,
@@ -5428,13 +5428,13 @@ mod tests {
             .unwrap()
             .expect("a move of an end was not queued");
         let body = serde_json::Value::Object(moved.body.clone().into_map().unwrap());
-        assert_eq!(body["source_id"], serde_json::json!(second));
-        assert_eq!(body.get("target_id"), None);
+        assert_eq!(body["from_id"], serde_json::json!(second));
+        assert_eq!(body.get("to_id"), None);
         let parents: Vec<String> = core
             .edges_to(child.clone())
             .unwrap()
             .into_iter()
-            .map(|edge| edge.source_id)
+            .map(|edge| edge.from_id)
             .collect();
         assert_eq!(parents, vec![second.clone()]);
         assert!(core.edges_from(first.clone()).unwrap().is_empty());
@@ -5462,8 +5462,8 @@ mod tests {
             }
         }
         let parent = |source: &str| EdgeDraft {
-            source_id: source.into(),
-            target_id: child.clone(),
+            from_id: source.into(),
+            to_id: child.clone(),
             edge_type: "parent-of".into(),
             properties: JsonObject::default(),
             id: None,
@@ -5473,8 +5473,8 @@ mod tests {
                 &second,
                 serde_json::json!({
                     "edge_type": "parent-of",
-                    "source_id": second,
-                    "target_id": child,
+                    "from_id": second,
+                    "to_id": child,
                     "constraint": "duplicate",
                 }),
             ),
@@ -5482,7 +5482,7 @@ mod tests {
                 &third,
                 serde_json::json!({
                     "edge_type": "parent-of",
-                    "target_id": child,
+                    "to_id": child,
                     "constraint": "cardinality",
                 }),
             ),
@@ -6019,8 +6019,8 @@ mod tests {
         let (reply, root, other) = (item("reply"), item("root"), item("other"));
         let thread = core
             .create_edge(EdgeDraft {
-                source_id: reply.clone(),
-                target_id: root.clone(),
+                from_id: reply.clone(),
+                to_id: root.clone(),
                 edge_type: "in-thread".into(),
                 properties: parsed(r#"{"position":1}"#),
                 id: None,
@@ -6030,8 +6030,8 @@ mod tests {
             .unwrap();
         let plain = core
             .create_edge(EdgeDraft {
-                source_id: other.clone(),
-                target_id: root.clone(),
+                from_id: other.clone(),
+                to_id: root.clone(),
                 edge_type: "in-thread".into(),
                 properties: JsonObject::default(),
                 id: None,
@@ -6078,7 +6078,7 @@ mod tests {
                 id: "q".into(),
                 kind: marfa_core::WriteKind::UpdateItem,
                 item_id: None,
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,

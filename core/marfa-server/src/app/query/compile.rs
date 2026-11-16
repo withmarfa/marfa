@@ -225,8 +225,8 @@ fn beneath(sql: &mut Sql, root: &str, reach: &Reach) {
     sql.push("i.id IN (WITH RECURSIVE beneath(id) AS (SELECT ");
     sql.bind(root.to_string());
     sql.push(
-        " UNION SELECT e.target_id FROM edges e JOIN beneath b ON e.source_id = b.id \
-         JOIN items s ON s.id = e.source_id WHERE e.edge_type = ",
+        " UNION SELECT e.to_id FROM edges e JOIN beneath b ON e.from_id = b.id \
+         JOIN items s ON s.id = e.from_id WHERE e.edge_type = ",
     );
     sql.bind(PARENT_OF.to_string());
     sql.push(" AND ");
@@ -267,18 +267,18 @@ fn expression(
                 sql.push(if negated { "NOT EXISTS (" } else { "EXISTS (" });
                 if backref {
                     sql.push(
-                        "SELECT 1 FROM edges e JOIN items s ON s.id = e.source_id \
-                         WHERE e.target_id = i.id AND e.edge_type = ",
+                        "SELECT 1 FROM edges e JOIN items s ON s.id = e.from_id \
+                         WHERE e.to_id = i.id AND e.edge_type = ",
                     );
                 } else {
-                    sql.push("SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = ");
+                    sql.push("SELECT 1 FROM edges e WHERE e.from_id = i.id AND e.edge_type = ");
                 }
                 sql.bind(edge_type.to_string());
                 if let Some(value) = to {
                     sql.push(if backref {
-                        " AND e.source_id = "
+                        " AND e.from_id = "
                     } else {
-                        " AND e.target_id = "
+                        " AND e.to_id = "
                     });
                     sql.bind(value_of(sql::bound(value)));
                 }
@@ -302,7 +302,7 @@ fn expression(
 fn part(sql: &mut Sql, catalog: &Catalog) {
     sql.push(
         "(i.state <> 'trashed' AND EXISTS (SELECT 1 FROM edges e \
-         JOIN items h ON h.id = e.target_id WHERE e.source_id = i.id AND e.edge_type IN (",
+         JOIN items h ON h.id = e.to_id WHERE e.from_id = i.id AND e.edge_type IN (",
     );
     sql.list(&catalog.with_hosts_types());
     sql.push(") AND h.state <> 'trashed'))");

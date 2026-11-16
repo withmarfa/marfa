@@ -34,11 +34,11 @@ async function makeItem(body: string = "card-test"): Promise<string> {
 }
 
 async function makeEdge(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ): Promise<{ ok: boolean; id?: string; code?: string; status: number }> {
-  const r = await client.createEdge({ source_id, target_id, edge_type });
+  const r = await client.createEdge({ from_id, to_id, edge_type });
   if (r.ok) {
     trackEdge(ctx, r.data.edge.id);
     return { ok: true, id: r.data.edge.id, status: r.status };
@@ -165,8 +165,8 @@ describe("cardinality on every write path", () => {
     edgeType: string,
   ): Promise<string> {
     const r = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(r.status).toBe(201);
@@ -177,7 +177,7 @@ describe("cardinality on every write path", () => {
   /** What a refused cardinality names: the type, the end that is full and the constraint. */
   function full(
     edgeType: string,
-    end: "source_id" | "target_id",
+    end: "from_id" | "to_id",
     id: string,
   ): Record<string, string> {
     return { edge_type: edgeType, [end]: id, constraint: "cardinality" };
@@ -189,7 +189,7 @@ describe("cardinality on every write path", () => {
   ): Promise<string[]> {
     const r = await client.listItemEdges(source, { edge_type: edgeType });
     expect(r.status).toBe(200);
-    return r.data.data.map((e) => e.target_id).sort();
+    return r.data.data.map((e) => e.to_id).sort();
   }
 
   it("refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it", async () => {
@@ -203,36 +203,36 @@ describe("cardinality on every write path", () => {
 
     await place(a, b, oneToOne);
     const outbound = await client.createEdge({
-      source_id: a,
-      target_id: c,
+      from_id: a,
+      to_id: c,
       edge_type: oneToOne,
     });
     expect(outbound.status).toBe(400);
     expect(outbound.error?.error.code).toBe("edge_constraint_violation");
     expect(outbound.error?.error.details).toEqual(
-      full(oneToOne, "source_id", a),
+      full(oneToOne, "from_id", a),
     );
     const inbound = await client.createEdge({
-      source_id: d,
-      target_id: b,
+      from_id: d,
+      to_id: b,
       edge_type: oneToOne,
     });
     expect(inbound.status).toBe(400);
     expect(inbound.error?.error.code).toBe("edge_constraint_violation");
     expect(inbound.error?.error.details).toEqual(
-      full(oneToOne, "target_id", b),
+      full(oneToOne, "to_id", b),
     );
 
     await place(a, b, oneToMany);
     const second = await client.createEdge({
-      source_id: d,
-      target_id: b,
+      from_id: d,
+      to_id: b,
       edge_type: oneToMany,
     });
     expect(second.status).toBe(400);
     expect(second.error?.error.code).toBe("edge_constraint_violation");
     expect(second.error?.error.details).toEqual(
-      full(oneToMany, "target_id", b),
+      full(oneToMany, "to_id", b),
     );
 
     expect(await targetsOf(a, oneToOne)).toEqual([b]);
@@ -256,8 +256,8 @@ describe("cardinality on every write path", () => {
     const d = await makeItem("mv-d");
     const e = await makeItem("mv-e");
     const moving = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: edgeType,
     });
     expect(moving.status).toBe(201);
@@ -265,29 +265,29 @@ describe("cardinality on every write path", () => {
     await place(c, d, edgeType);
     const { id, version } = moving.data.edge;
 
-    const toHeldSource = await client.updateEdge(id, { version, source_id: c });
+    const toHeldSource = await client.updateEdge(id, { version, from_id: c });
     expect(toHeldSource.status).toBe(400);
     expect(toHeldSource.error?.error.code).toBe("edge_constraint_violation");
     expect(toHeldSource.error?.error.details).toEqual(
-      full(edgeType, "source_id", c),
+      full(edgeType, "from_id", c),
     );
-    const toHeldTarget = await client.updateEdge(id, { version, target_id: d });
+    const toHeldTarget = await client.updateEdge(id, { version, to_id: d });
     expect(toHeldTarget.status).toBe(400);
     expect(toHeldTarget.error?.error.code).toBe("edge_constraint_violation");
     expect(toHeldTarget.error?.error.details).toEqual(
-      full(edgeType, "target_id", d),
+      full(edgeType, "to_id", d),
     );
     const stored = await client.getEdge(id);
     expect(stored.data.edge).toMatchObject({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       version,
     });
 
     // The witness: the same edge moves onto an end that holds none.
-    const moved = await client.updateEdge(id, { version, target_id: e });
+    const moved = await client.updateEdge(id, { version, to_id: e });
     expect(moved.status).toBe(200);
-    expect(moved.data.edge).toMatchObject({ source_id: a, target_id: e });
+    expect(moved.data.edge).toMatchObject({ from_id: a, to_id: e });
   });
 
   it("refuses a second edge at a held end in a POST /edges/bulk entry, as an errored entry or a rollback", async () => {
@@ -306,10 +306,10 @@ describe("cardinality on every write path", () => {
       client.bulkEdges({
         atomic,
         edges: [
-          { source_id: c, target_id: d, edge_type: manyToMany },
-          { source_id: a, target_id: c, edge_type: oneToOne },
-          { source_id: e, target_id: b, edge_type: oneToOne },
-          { source_id: e, target_id: b, edge_type: oneToMany },
+          { from_id: c, to_id: d, edge_type: manyToMany },
+          { from_id: a, to_id: c, edge_type: oneToOne },
+          { from_id: e, to_id: b, edge_type: oneToOne },
+          { from_id: e, to_id: b, edge_type: oneToMany },
         ],
       });
 
@@ -321,7 +321,7 @@ describe("cardinality on every write path", () => {
       code: "edge_constraint_violation",
     });
     expect(rolled.error?.error.details?.details).toEqual(
-      full(oneToOne, "source_id", a),
+      full(oneToOne, "from_id", a),
     );
     // The entry ahead of the refused one is rolled back with it.
     expect(await targetsOf(c, manyToMany)).toEqual([]);
@@ -333,9 +333,9 @@ describe("cardinality on every write path", () => {
     expect(witness?.outcome).toBe("created");
     trackEdge(ctx, witness!.id!);
     for (const [entry, edgeType, end, id] of [
-      [outbound, oneToOne, "source_id", a],
-      [inbound, oneToOne, "target_id", b],
-      [many, oneToMany, "target_id", b],
+      [outbound, oneToOne, "from_id", a],
+      [inbound, oneToOne, "to_id", b],
+      [many, oneToMany, "to_id", b],
     ] as const) {
       expect(entry?.outcome, edgeType).toBe("errored");
       expect(entry?.error?.code, edgeType).toBe("edge_constraint_violation");
@@ -349,8 +349,8 @@ describe("cardinality on every write path", () => {
     const inPage = await client.bulkEdges({
       atomic: false,
       edges: [
-        { source_id: f, target_id: g, edge_type: oneToMany },
-        { source_id: e, target_id: g, edge_type: oneToMany },
+        { from_id: f, to_id: g, edge_type: oneToMany },
+        { from_id: e, to_id: g, edge_type: oneToMany },
       ],
     });
     expect(inPage.status).toBe(200);
@@ -358,7 +358,7 @@ describe("cardinality on every write path", () => {
     trackEdge(ctx, inPage.data.results[0]!.id!);
     expect(inPage.data.results[1]?.outcome).toBe("errored");
     expect(inPage.data.results[1]?.error?.details).toEqual(
-      full(oneToMany, "target_id", g),
+      full(oneToMany, "to_id", g),
     );
   });
 
@@ -381,13 +381,13 @@ describe("cardinality on every write path", () => {
     expect(inbound.status).toBe(400);
     expect(inbound.error?.error.code).toBe("edge_constraint_violation");
     expect(inbound.error?.error.details).toEqual(
-      full(oneToOne, "target_id", held),
+      full(oneToOne, "to_id", held),
     );
     const many = await create({ [oneToMany]: [held] });
     expect(many.status).toBe(400);
     expect(many.error?.error.code).toBe("edge_constraint_violation");
     expect(many.error?.error.details).toEqual(
-      full(oneToMany, "target_id", held),
+      full(oneToMany, "to_id", held),
     );
     // The new item is the source, and one set names it twice.
     const minted = generateId();
@@ -395,7 +395,7 @@ describe("cardinality on every write path", () => {
     expect(outbound.status).toBe(400);
     expect(outbound.error?.error.code).toBe("edge_constraint_violation");
     expect(outbound.error?.error.details).toEqual(
-      full(oneToOne, "source_id", minted),
+      full(oneToOne, "from_id", minted),
     );
     expect((await client.getItem(minted)).status).toBe(404);
 

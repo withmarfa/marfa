@@ -300,7 +300,7 @@ it("reads the server's catalog before its first hydration, leaving the copy's ow
   const parent = value(await device.servedEdgeTypes()).find(
     (type) => type.id === "parent-of",
   );
-  expect([parent?.reverse_name, parent?.written_at]).toEqual([
+  expect([parent?.reverse_name, parent?.written_from]).toEqual([
     "child-of",
     "target",
   ]);

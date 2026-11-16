@@ -91,8 +91,8 @@ describe("edges CRUD", () => {
       const targetId = await target();
 
       const created = await client.createEdge({
-        source_id: sourceId,
-        target_id: targetId,
+        from_id: sourceId,
+        to_id: targetId,
         edge_type: edgeType,
         ...(properties !== undefined && { properties }),
       });
@@ -100,8 +100,8 @@ describe("edges CRUD", () => {
       trackEdge(ctx, created.data.edge.id);
       await expectMatchesSchema("POST", "/edges", 201, created.data);
       expect(created.data.edge.edge_type).toBe(edgeType);
-      expect(created.data.edge.source_id).toBe(sourceId);
-      expect(created.data.edge.target_id).toBe(targetId);
+      expect(created.data.edge.from_id).toBe(sourceId);
+      expect(created.data.edge.to_id).toBe(targetId);
       expect(created.data.edge.version).toBe(1);
       expect(typeof created.data.edge.created_at).toBe("string");
       expect(typeof created.data.edge.updated_at).toBe("string");
@@ -131,10 +131,10 @@ describe("edges CRUD", () => {
       const paged = await client.bulkEdges({
         mode,
         edges: [
-          { source_id: source, target_id: target, edge_type: "references" },
+          { from_id: source, to_id: target, edge_type: "references" },
           {
-            source_id: source,
-            target_id: folder,
+            from_id: source,
+            to_id: folder,
             edge_type: "in-folder",
             properties: { path: "bulk.md" },
           },
@@ -208,8 +208,8 @@ describe("edges CRUD", () => {
     const sourceId = await makeItem();
     const targetId = await makeItem();
     const created = await client.createEdge({
-      source_id: sourceId,
-      target_id: targetId,
+      from_id: sourceId,
+      to_id: targetId,
       edge_type: "about",
       properties: { note: "first" },
     });
@@ -258,8 +258,8 @@ describe("edges CRUD", () => {
     const targetId = await makeItem();
 
     const created = await client.createEdge({
-      source_id: sourceId,
-      target_id: targetId,
+      from_id: sourceId,
+      to_id: targetId,
       edge_type: "about",
       properties: { note: "initial", position: 1 },
     });
@@ -276,8 +276,8 @@ describe("edges CRUD", () => {
       note: "updated",
       position: 2,
     });
-    expect(updated.data.edge.source_id).toBe(sourceId);
-    expect(updated.data.edge.target_id).toBe(targetId);
+    expect(updated.data.edge.from_id).toBe(sourceId);
+    expect(updated.data.edge.to_id).toBe(targetId);
     expect(updated.data.edge.edge_type).toBe("about");
   });
 
@@ -293,8 +293,8 @@ describe("edges CRUD", () => {
     const targetId = await makeItem();
 
     const created = await client.createEdge({
-      source_id: sourceId,
-      target_id: targetId,
+      from_id: sourceId,
+      to_id: targetId,
       edge_type: "about",
       properties: { note: "kept", position: 1 },
     });
@@ -327,15 +327,15 @@ describe("edges CRUD", () => {
 
     const otherTarget = await makeItem();
     const created = await client.createEdge({
-      source_id: sourceId,
-      target_id: targetId,
+      from_id: sourceId,
+      to_id: targetId,
       edge_type: "about",
     });
     expect(created.ok).toBe(true);
     const edgeId = created.data.edge.id;
     const kept = await client.createEdge({
-      source_id: sourceId,
-      target_id: otherTarget,
+      from_id: sourceId,
+      to_id: otherTarget,
       edge_type: "about",
     });
     expect(kept.ok).toBe(true);
@@ -356,8 +356,8 @@ describe("edges CRUD", () => {
     const target = await makeItem();
 
     const noSource = await client.createEdge({
-      source_id: undefined as unknown as string,
-      target_id: target,
+      from_id: undefined as unknown as string,
+      to_id: target,
       edge_type: "about",
     });
     expect(noSource.ok).toBe(false);
@@ -366,8 +366,8 @@ describe("edges CRUD", () => {
 
     const src = await makeItem();
     const noTarget = await client.createEdge({
-      source_id: src,
-      target_id: undefined as unknown as string,
+      from_id: src,
+      to_id: undefined as unknown as string,
       edge_type: "about",
     });
     expect(noTarget.ok).toBe(false);
@@ -393,9 +393,9 @@ describe("edges CRUD", () => {
     const hydrated = created.data.item.edges;
     expect(hydrated).toBeDefined();
     expect(hydrated!.about.data.length).toBe(1);
-    expect(hydrated!.about.data[0].target_id).toBe(aboutTarget);
+    expect(hydrated!.about.data[0].to_id).toBe(aboutTarget);
     expect(hydrated!["parent-of"].data.length).toBe(1);
-    expect(hydrated!["parent-of"].data[0].target_id).toBe(parentTarget);
+    expect(hydrated!["parent-of"].data[0].to_id).toBe(parentTarget);
 
     const list = await client.listItemEdges(created.data.item.id);
     expect(list.ok).toBe(true);
@@ -438,7 +438,7 @@ describe("edges CRUD", () => {
     const byType: Record<string, string[]> = {};
     for (const edge of all.data.data) {
       byType[edge.edge_type] = byType[edge.edge_type] ?? [];
-      byType[edge.edge_type].push(edge.target_id);
+      byType[edge.edge_type].push(edge.to_id);
       trackEdge(ctx, edge.id);
     }
 
@@ -471,7 +471,7 @@ describe("edges CRUD", () => {
       const r = await client.listItemEdges(itemId, { edge_type: edgeType });
       expect(r.ok).toBe(true);
       for (const edge of r.data.data) trackEdge(ctx, edge.id);
-      return r.data.data.map((e) => e.target_id).sort();
+      return r.data.data.map((e) => e.to_id).sort();
     };
 
     const replaced = await client.updateItem(itemId, {
@@ -523,7 +523,7 @@ describe("edges CRUD", () => {
       return r.data.data;
     };
     const held = (await edgesOf("in-collection")).find(
-      (e) => e.target_id === stays,
+      (e) => e.to_id === stays,
     )!;
     const positioned = await client.updateEdge(held.id, {
       properties: { position: 3 },
@@ -533,7 +533,7 @@ describe("edges CRUD", () => {
     const kept = positioned.data.edge;
     expect(kept.properties).toEqual({ position: 3 });
     const droppedEdge = (await edgesOf("in-collection")).find(
-      (e) => e.target_id === dropped,
+      (e) => e.to_id === dropped,
     )!;
     const [referencesEdge] = await edgesOf("references");
 
@@ -553,12 +553,12 @@ describe("edges CRUD", () => {
           event: e.event,
           edge: (
             e.data as {
-              edge: { id: string; source_id: string; target_id: string };
+              edge: { id: string; from_id: string; to_id: string };
             }
           ).edge,
         }))
-        .filter(({ edge }) => edge.source_id === itemId)
-        .map(({ event, edge }) => [event, edge.target_id]);
+        .filter(({ edge }) => edge.from_id === itemId)
+        .map(({ event, edge }) => [event, edge.to_id]);
 
     await withStream(apiUrl, apiKey, {}, async (stream) => {
       await collectUntil(
@@ -590,8 +590,8 @@ describe("edges CRUD", () => {
           seen.some(
             (e) =>
               e.event === "edge.created" &&
-              (e.data as { edge: { source_id: string; target_id: string } })
-                .edge.target_id === added,
+              (e.data as { edge: { from_id: string; to_id: string } })
+                .edge.to_id === added,
           ),
         "the witness write's edge.created",
         signal,
@@ -605,7 +605,7 @@ describe("edges CRUD", () => {
     expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
     expect((await client.getEdge(droppedEdge.id)).status).toBe(404);
     expect(
-      (await edgesOf("in-collection")).map((e) => e.target_id).sort(),
+      (await edgesOf("in-collection")).map((e) => e.to_id).sort(),
     ).toEqual([stays!, added!].sort());
     expect((await client.getEdge(referencesEdge!.id)).data.edge).toEqual(
       referencesEdge,
@@ -654,7 +654,7 @@ describe("edges CRUD", () => {
         for (const edge of r.data.data) trackEdge(ctx, edge.id);
         return r.data.data;
       };
-      const held = (await edgesOf()).find((e) => e.target_id === stays)!;
+      const held = (await edgesOf()).find((e) => e.to_id === stays)!;
       const positioned = await client.updateEdge(held.id, {
         properties: { position: 1 },
         version: held.version,
@@ -680,7 +680,7 @@ describe("edges CRUD", () => {
             seen.some(
               (e) =>
                 e.event === "edge.created" &&
-                (e.data as { edge: { target_id: string } }).edge.target_id ===
+                (e.data as { edge: { to_id: string } }).edge.to_id ===
                   added,
             ),
           "the witness write's edge.created",
@@ -691,18 +691,18 @@ describe("edges CRUD", () => {
             .map((e) => ({
               event: e.event,
               edge: (
-                e.data as { edge: { source_id: string; target_id: string } }
+                e.data as { edge: { from_id: string; to_id: string } }
               ).edge,
             }))
-            .filter(({ edge }) => edge.source_id === itemId)
-            .map(({ event, edge }) => [event, edge.target_id]),
+            .filter(({ edge }) => edge.from_id === itemId)
+            .map(({ event, edge }) => [event, edge.to_id]),
         ).toEqual([
           ["edge.deleted", dropped],
           ["edge.created", added],
         ]);
       });
       expect((await client.getEdge(kept.id)).data.edge).toEqual(kept);
-      expect((await edgesOf()).map((e) => e.target_id).sort()).toEqual(
+      expect((await edgesOf()).map((e) => e.to_id).sort()).toEqual(
         [stays!, added!].sort(),
       );
     },
@@ -729,16 +729,16 @@ describe("edges CRUD", () => {
     trackItem(ctx, sourceId);
 
     const labelled = await client.createEdge({
-      source_id: sourceId,
-      target_id: held,
+      from_id: sourceId,
+      to_id: held,
       edge_type: edgeType,
       properties: { label: "kept" },
     });
     expect(labelled.status, JSON.stringify(labelled.error)).toBe(201);
     trackEdge(ctx, labelled.data.edge.id);
     const placed = await client.createEdge({
-      source_id: sourceId,
-      target_id: folder,
+      from_id: sourceId,
+      to_id: folder,
       edge_type: "in-folder",
       properties: { path: "Notes/held.md" },
     });

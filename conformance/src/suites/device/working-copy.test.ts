@@ -244,11 +244,11 @@ describe("the working copy holds one slice", () => {
       items: { "core.note": [{ item: { id: "ticket" } }] },
       edges: {
         "parent-of": [
-          { id: "project-in-project", source_id: "outer", target_id: "inner" },
+          { id: "project-in-project", from_id: "outer", to_id: "inner" },
           {
             id: "project-over-ticket",
-            source_id: "inner",
-            target_id: "ticket",
+            from_id: "inner",
+            to_id: "ticket",
           },
         ],
       },
@@ -3173,8 +3173,8 @@ describe("a local search narrows as a list does", () => {
 describe("a local read narrows by the listing grammar", () => {
   const edge = (id: string, source: string, target: string, type: string) => ({
     id,
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: type,
     properties: {},
     version: 1,
@@ -3564,8 +3564,8 @@ describe("a local list narrows on the item's own time", () => {
 describe("a local read of edges answers both ends", () => {
   const edge = (id: string, source: string, target: string, type: string) => ({
     id,
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: type,
     properties: {},
     version: 1,
@@ -3649,7 +3649,7 @@ describe("a local read of edges answers both ends", () => {
       items: { "core.note": [{ item: { id: "ticket" } }] },
       edges: {
         "parent-of": [
-          { id: "beneath", source_id: "project", target_id: "ticket" },
+          { id: "beneath", from_id: "project", to_id: "ticket" },
         ],
       },
     });

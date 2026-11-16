@@ -478,8 +478,8 @@ describe("what the move to the bin is", () => {
     } as Parameters<MarfaClient["createItem"]>[0]);
     expect(copy.status, JSON.stringify(copy.error)).toBe(201);
     const edge = await writer.createEdge({
-      source_id: copy.data.item.id,
-      target_id: feed,
+      from_id: copy.data.item.id,
+      to_id: feed,
       edge_type: "derived-from",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -502,8 +502,8 @@ describe("what the move to the bin takes with it", () => {
     child: string,
   ): Promise<void> {
     const edge = await writer.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: "parent-of",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -562,8 +562,8 @@ describe("what the move to the bin takes with it", () => {
       id: edgeType,
       label: "Test edge type",
       cardinality: "many-to-many",
-      source_type_constraints: ["*"],
-      target_type_constraints: ["*"],
+      from_type_constraints: ["*"],
+      to_type_constraints: ["*"],
       cascade_on_delete: "block",
     } as Parameters<MarfaClient["registerEdgeType"]>[0]);
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
@@ -575,8 +575,8 @@ describe("what the move to the bin takes with it", () => {
       properties: { body: "refuses the delete" },
     } as Parameters<MarfaClient["createItem"]>[0]);
     const edge = await writer.createEdge({
-      source_id: other.data.item.id,
-      target_id: held,
+      from_id: other.data.item.id,
+      to_id: held,
       edge_type: edgeType,
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

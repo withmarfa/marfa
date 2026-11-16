@@ -50,19 +50,19 @@
             ],
             "description": "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit."
           },
-          "source_type_constraints": {
+          "from_type_constraints": {
             "type": "array",
             "items": {
               "type": "string"
             },
             "description": "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes."
           },
-          "target_type_constraints": {
+          "to_type_constraints": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The types an edge's target item can have, in the same form as `source_type_constraints`."
+            "description": "The types an edge's target item can have, in the same form as `from_type_constraints`."
           },
           "cascade_on_delete": {
             "type": "string",
@@ -85,7 +85,7 @@
             "type": "string",
             "description": "The name the edge goes by when read from its target, such as `child-of` for `parent-of`."
           },
-          "written_at": {
+          "written_from": {
             "type": "string",
             "enum": [
               "source",
@@ -104,7 +104,7 @@
           },
           "flat": {
             "type": "boolean",
-            "description": "`true` if the server refuses an edge of this type whose source type its `target_type_constraints` admit, so an item that can be a target is never a source."
+            "description": "`true` if the server refuses an edge of this type whose source type its `to_type_constraints` admit, so an item that can be a target is never a source."
           }
         },
         "required": [
@@ -112,11 +112,11 @@
           "label",
           "reverse_label",
           "cardinality",
-          "source_type_constraints",
-          "target_type_constraints",
+          "from_type_constraints",
+          "to_type_constraints",
           "cascade_on_delete",
           "property_schema",
-          "written_at",
+          "written_from",
           "shipped",
           "acyclic",
           "flat"
@@ -355,11 +355,11 @@
             "type": "string",
             "description": "Unique identifier for the edge."
           },
-          "source_id": {
+          "from_id": {
             "type": "string",
             "description": "The ID of the item the edge starts from."
           },
-          "target_id": {
+          "to_id": {
             "type": "string",
             "description": "The ID of the item the edge points to."
           },
@@ -388,8 +388,8 @@
         },
         "required": [
           "id",
-          "source_id",
-          "target_id",
+          "from_id",
+          "to_id",
           "edge_type",
           "properties",
           "created_at",
@@ -4361,7 +4361,7 @@
             ],
             "description": "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit."
           },
-          "source_type_constraints": {
+          "from_type_constraints": {
             "type": "array",
             "items": {
               "type": "string",
@@ -4369,13 +4369,13 @@
             },
             "description": "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. Leave it out to allow any type."
           },
-          "target_type_constraints": {
+          "to_type_constraints": {
             "type": "array",
             "items": {
               "type": "string",
               "minLength": 1
             },
-            "description": "The types an edge's target item can have, in the same form as `source_type_constraints`. Leave it out to allow any type."
+            "description": "The types an edge's target item can have, in the same form as `from_type_constraints`. Leave it out to allow any type."
           },
           "cascade_on_delete": {
             "type": "string",
@@ -4398,7 +4398,7 @@
             "type": "string",
             "description": "The name the edge goes by when read from its target, such as `child-of` for `parent-of`. No other edge type can use it as an ID or reverse name."
           },
-          "written_at": {
+          "written_from": {
             "type": "string",
             "enum": [
               "source",
@@ -27410,7 +27410,7 @@
           "Edges"
         ],
         "summary": "Create an edge",
-        "description": "Creates an edge between two existing items. After any `source_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
+        "description": "Creates an edge between two existing items. After any `from_version` precondition passes, repeating an `id` you already created returns the stored edge with `acknowledged: true` and writes nothing.",
         "security": [
           {
             "bearerAuth": []
@@ -27425,7 +27425,7 @@
             },
             "required": false,
             "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
-            "name": "source_version",
+            "name": "from_version",
             "in": "query"
           },
           {
@@ -27460,11 +27460,11 @@
                     "type": "string",
                     "description": "A UUIDv7 you choose for the edge. Leave it out and Marfa creates one."
                   },
-                  "source_id": {
+                  "from_id": {
                     "type": "string",
                     "description": "The ID of the item the edge starts from."
                   },
-                  "target_id": {
+                  "to_id": {
                     "type": "string",
                     "description": "The ID of the item the edge points to."
                   },
@@ -27479,8 +27479,8 @@
                   }
                 },
                 "required": [
-                  "source_id",
-                  "target_id",
+                  "from_id",
+                  "to_id",
                   "edge_type"
                 ],
                 "additionalProperties": false
@@ -27490,7 +27490,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the stored edge with `acknowledged: true` after any `source_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
+            "description": "Returns the stored edge with `acknowledged: true` after any `from_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27553,7 +27553,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `source_id`, `target_id` or `edge_type` is missing.\n- `invalid_id`: `source_id`, `target_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid or undeclared, or a property breaks its schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
+            "description": "- `missing_required_field`: `from_id`, `to_id` or `edge_type` is missing.\n- `invalid_id`: `from_id`, `to_id` or `id` isn't a valid ID.\n- `validation_error`, `invalid_properties`: a field is invalid or undeclared, or a property breaks its schema.\n- `edge_constraint_violation`, `edge_cycle`: the edge exists (`details.constraint` is `duplicate`), breaks its type's rules or closes a cycle.",
             "content": {
               "application/json": {
                 "schema": {
@@ -27664,7 +27664,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `source_version` differs; `current` is the source now.\n- `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.",
+            "description": "- `version_conflict`: `from_version` differs; `current` is the source now.\n- `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28210,11 +28210,11 @@
                     "additionalProperties": {},
                     "description": "Properties to merge over the edge's. Required unless an end moves. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string."
                   },
-                  "source_id": {
+                  "from_id": {
                     "type": "string",
                     "description": "The ID of the source item to move the edge to. Only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time."
                   },
-                  "target_id": {
+                  "to_id": {
                     "type": "string",
                     "description": "The ID of the target item to move the edge to. Only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time."
                   },
@@ -28255,7 +28255,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.",
+            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.\n- `invalid_id`: `from_id` or `to_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28600,7 +28600,7 @@
             },
             "required": false,
             "description": "The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is.",
-            "name": "source_version",
+            "name": "from_version",
             "in": "query"
           },
           {
@@ -28737,7 +28737,7 @@
             }
           },
           "409": {
-            "description": "`version_conflict`: `source_version` differs from the source item. `current` is the source now; no edge changed.",
+            "description": "`version_conflict`: `from_version` differs from the source item. `current` is the source now; no edge changed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28948,7 +28948,7 @@
           "Edges"
         ],
         "summary": "Upsert edges in bulk",
-        "description": "Creates or updates up to 5,000 edges in one call, matching existing edges on `(source_id, target_id, edge_type)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.",
+        "description": "Creates or updates up to 5,000 edges in one call, matching existing edges on `(from_id, to_id, edge_type)`. The batch is atomic by default: one failed entry rolls it all back. Returns each entry's outcome.",
         "security": [
           {
             "bearerAuth": []
@@ -28970,11 +28970,11 @@
                           "type": "string",
                           "description": "A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one."
                         },
-                        "source_id": {
+                        "from_id": {
                           "type": "string",
                           "description": "The ID of the item the edge starts from."
                         },
-                        "target_id": {
+                        "to_id": {
                           "type": "string",
                           "description": "The ID of the item the edge points to."
                         },
@@ -28994,8 +28994,8 @@
                         }
                       },
                       "required": [
-                        "source_id",
-                        "target_id",
+                        "from_id",
+                        "to_id",
                         "edge_type"
                       ],
                       "description": "One edge to create or update."
@@ -33146,7 +33146,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_at: target` with no `reverse_name`, or `extends` is set.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).",
+            "description": "- `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_from: target` with no `reverse_name`, or `extends` is set.\n- `missing_required_field`: `id` or `cardinality` is missing.\n- `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).",
             "content": {
               "application/json": {
                 "schema": {

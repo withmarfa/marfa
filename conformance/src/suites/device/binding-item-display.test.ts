@@ -101,8 +101,8 @@ describe("an item's name and preview on a device", () => {
         data: [
           wireEdge({
             id: `edge-${id}`,
-            source_id: id,
-            target_id: host,
+            from_id: id,
+            to_id: host,
             edge_type: "comments-on",
           }),
         ],

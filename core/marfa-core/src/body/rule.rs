@@ -41,8 +41,8 @@ pub(crate) struct Placements;
 impl Paths for Placements {
     fn every(&self, conn: &Connection) -> Result<Vec<(String, String)>> {
         let mut statement = conn.prepare(
-            "SELECT json_extract(edges.properties, '$.path'), edges.source_id FROM edges
-               JOIN items ON items.id = edges.source_id
+            "SELECT json_extract(edges.properties, '$.path'), edges.from_id FROM edges
+               JOIN items ON items.id = edges.from_id
               WHERE edges.edge_type = ?1 AND items.state IN ('active', 'archived')
                 AND CASE WHEN json_valid(edges.properties) THEN json_type(edges.properties, '$.path') END = 'text'",
         )?;
@@ -53,8 +53,8 @@ impl Paths for Placements {
     fn of(&self, conn: &Connection, id: &str) -> Result<Vec<String>> {
         let mut statement = conn.prepare_cached(
             "SELECT json_extract(edges.properties, '$.path') FROM edges
-               JOIN items ON items.id = edges.source_id
-              WHERE edges.edge_type = ?1 AND edges.source_id = ?2
+               JOIN items ON items.id = edges.from_id
+              WHERE edges.edge_type = ?1 AND edges.from_id = ?2
                 AND items.state IN ('active', 'archived')
                 AND CASE WHEN json_valid(edges.properties) THEN json_type(edges.properties, '$.path') END = 'text'
               ORDER BY 1",
@@ -202,10 +202,10 @@ fn referenced_files(
 fn attachments(conn: &Connection, catalog: &Catalog, host: &str) -> Result<Vec<Candidate>> {
     let mut found: Vec<Candidate> = Vec::new();
     for edge in store::edges_to(conn, host)? {
-        if edge.edge_type != ATTACHMENT_EDGE || found.iter().any(|held| held.id == edge.source_id) {
+        if edge.edge_type != ATTACHMENT_EDGE || found.iter().any(|held| held.id == edge.from_id) {
             continue;
         }
-        if let Some(item) = store::item_by_id(conn, &edge.source_id)?
+        if let Some(item) = store::item_by_id(conn, &edge.from_id)?
             && bytes_of(&item, catalog).is_some()
         {
             found.push(candidate(conn, catalog, &item)?);
@@ -391,7 +391,7 @@ fn references_of(conn: &Connection, host: &str) -> Result<Vec<String>> {
     Ok(store::edges_from(conn, host)?
         .into_iter()
         .filter(|edge| edge.edge_type == LINK_EDGE)
-        .map(|edge| edge.target_id)
+        .map(|edge| edge.to_id)
         .collect())
 }
 
@@ -400,14 +400,14 @@ fn references_of(conn: &Connection, host: &str) -> Result<Vec<String>> {
 fn held_edges(conn: &Connection, host: &str, other: &str) -> Result<Vec<Edge>> {
     Ok(store::edges_from(conn, host)?
         .into_iter()
-        .filter(|edge| edge.edge_type == LINK_EDGE && edge.target_id == other)
+        .filter(|edge| edge.edge_type == LINK_EDGE && edge.to_id == other)
         .collect())
 }
 
 fn draft(host: &str, other: &str) -> EdgeDraft {
     EdgeDraft {
-        source_id: host.to_string(),
-        target_id: other.to_string(),
+        from_id: host.to_string(),
+        to_id: other.to_string(),
         edge_type: LINK_EDGE.into(),
         ..Default::default()
     }
@@ -800,9 +800,9 @@ pub(crate) fn derive_on_answer(
 /// their attachments first.
 fn linking(conn: &Connection, id: &str) -> Result<Vec<String>> {
     let mut statement = conn.prepare(
-        "SELECT source_id FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3
+        "SELECT from_id FROM edges WHERE edge_type = ?1 AND to_id = ?3 AND from_id <> ?3
          UNION
-         SELECT target_id FROM edges WHERE edge_type = ?2 AND source_id = ?3 AND target_id <> ?3",
+         SELECT to_id FROM edges WHERE edge_type = ?2 AND from_id = ?3 AND to_id <> ?3",
     )?;
     let rows = statement.query_map(params![LINK_EDGE, ATTACHMENT_EDGE, id], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -959,8 +959,8 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
 fn linked(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn
         .prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3)
-             OR EXISTS (SELECT 1 FROM edges WHERE edge_type = ?2 AND source_id = ?3 AND target_id <> ?3)",
+            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = ?1 AND to_id = ?3 AND from_id <> ?3)
+             OR EXISTS (SELECT 1 FROM edges WHERE edge_type = ?2 AND from_id = ?3 AND to_id <> ?3)",
         )?
         .query_row(params![LINK_EDGE, ATTACHMENT_EDGE, id], |row| row.get(0))?)
 }
@@ -972,9 +972,9 @@ fn linked(conn: &Connection, id: &str) -> Result<bool> {
 pub(crate) fn before_rebuild(conn: &Connection) -> Result<()> {
     let hosts: Vec<String> = {
         let mut statement = conn.prepare(
-            "SELECT source_id FROM edges WHERE edge_type = ?1
+            "SELECT from_id FROM edges WHERE edge_type = ?1
              UNION
-             SELECT target_id FROM edges WHERE edge_type = ?2",
+             SELECT to_id FROM edges WHERE edge_type = ?2",
         )?;
         let rows = statement.query_map(params![LINK_EDGE, ATTACHMENT_EDGE], |row| row.get(0))?;
         rows.collect::<rusqlite::Result<_>>()?
@@ -992,23 +992,23 @@ pub(crate) fn before_rebuild(conn: &Connection) -> Result<()> {
 /// so what the affected links and embeds name is recorded first.
 pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
     let (host, other) = match edge.edge_type.as_str() {
-        LINK_EDGE => (&edge.source_id, &edge.target_id),
-        ATTACHMENT_EDGE => (&edge.target_id, &edge.source_id),
+        LINK_EDGE => (&edge.from_id, &edge.to_id),
+        ATTACHMENT_EDGE => (&edge.to_id, &edge.from_id),
         PLACEMENT_EDGE => {
             let held = store::edge_by_id_with(
                 conn,
                 &edge.id,
                 &mut store::Unreadable::Keep(Default::default()),
             )?;
-            let mut moved = vec![edge.source_id.as_str()];
+            let mut moved = vec![edge.from_id.as_str()];
             if let Some(held) = &held {
-                if held.source_id == edge.source_id
+                if held.from_id == edge.from_id
                     && held.properties.get("path") == edge.properties.get("path")
                 {
                     return Ok(());
                 }
-                if held.source_id != edge.source_id {
-                    moved.push(&held.source_id);
+                if held.from_id != edge.from_id {
+                    moved.push(&held.from_id);
                 }
             }
             for item in moved {
@@ -1018,14 +1018,14 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
         }
         _ => return Ok(()),
     };
-    if !recording(conn)? || edge_held(conn, &edge.edge_type, &edge.source_id, &edge.target_id)? {
+    if !recording(conn)? || edge_held(conn, &edge.edge_type, &edge.from_id, &edge.to_id)? {
         return Ok(());
     }
     // A link and an embed alike stand for a `references` edge, so with none
     // yet no link or embed of the body has an edge to be recorded against.
     let any = conn
         .query_row(
-            "SELECT 1 FROM edges WHERE source_id = ?1 AND edge_type = ?2 LIMIT 1",
+            "SELECT 1 FROM edges WHERE from_id = ?1 AND edge_type = ?2 LIMIT 1",
             params![host, LINK_EDGE],
             |_| Ok(()),
         )
@@ -1044,7 +1044,7 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
 fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> Result<bool> {
     Ok(conn
         .query_row(
-            "SELECT 1 FROM edges WHERE edge_type = ?1 AND source_id = ?2 AND target_id = ?3 LIMIT 1",
+            "SELECT 1 FROM edges WHERE edge_type = ?1 AND from_id = ?2 AND to_id = ?3 LIMIT 1",
             params![edge_type, source, target],
             |_| Ok(()),
         )
@@ -1057,7 +1057,7 @@ fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> 
 pub(crate) fn edge_leaving(conn: &Connection, id: &str) -> Result<()> {
     match store::edge_by_id_with(conn, id, &mut store::Unreadable::Keep(Default::default()))? {
         Some(held) if held.edge_type == PLACEMENT_EDGE => {
-            item_changing(conn, &held.source_id, None)
+            item_changing(conn, &held.from_id, None)
         }
         _ => Ok(()),
     }
@@ -1394,8 +1394,8 @@ fn releasable_pins(conn: &Connection) -> Result<Vec<String>> {
     let mut statement = conn.prepare(
         "SELECT item_id FROM body_pins WHERE NOT EXISTS (
            SELECT 1 FROM edges
-            WHERE (edge_type = ?1 AND target_id = body_pins.item_id)
-               OR (edge_type = ?2 AND source_id = body_pins.item_id))",
+            WHERE (edge_type = ?1 AND to_id = body_pins.item_id)
+               OR (edge_type = ?2 AND from_id = body_pins.item_id))",
     )?;
     let rows = statement.query_map([LINK_EDGE, ATTACHMENT_EDGE], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -2052,7 +2052,7 @@ mod tests {
                 (
                     row.kind,
                     row.item_id.unwrap_or_default(),
-                    row.target_id.unwrap_or_default(),
+                    row.to_id.unwrap_or_default(),
                 )
             })
             .collect()
@@ -2084,7 +2084,7 @@ mod tests {
             .find(|row| row.kind == WriteKind::CreateEdge)
             .expect("the link queued no edge");
         assert_eq!(edge.item_id.as_deref(), Some(host.as_str()));
-        assert_eq!(edge.target_id.as_deref(), Some(target.as_str()));
+        assert_eq!(edge.to_id.as_deref(), Some(target.as_str()));
         assert!(edge.depends_on.contains(&created.id));
         assert_eq!(edge_writes(&core).len(), 1, "one target is one edge");
         let held = core.edges_from(&host).unwrap();
@@ -2154,8 +2154,8 @@ mod tests {
         let host = note(&core, "Host", &format!("[[{gone}]] [[{kept}]]"));
         for (target, edge_type) in [(&gone, "about"), (&elsewhere, LINK_EDGE)] {
             core.create_edge(&EdgeDraft {
-                source_id: host.clone(),
-                target_id: target.clone(),
+                from_id: host.clone(),
+                to_id: target.clone(),
                 edge_type: edge_type.into(),
                 ..Default::default()
             })
@@ -2178,7 +2178,7 @@ mod tests {
             .edges_from(&host)
             .unwrap()
             .into_iter()
-            .map(|edge| (edge.edge_type, edge.target_id))
+            .map(|edge| (edge.edge_type, edge.to_id))
             .collect();
         left.sort();
         let mut expected = vec![
@@ -2258,8 +2258,8 @@ mod tests {
         let plan = note(&core, "Plan", "");
         let host = note(&core, "Host", "");
         core.create_edge(&EdgeDraft {
-            source_id: host.clone(),
-            target_id: plan.clone(),
+            from_id: host.clone(),
+            to_id: plan.clone(),
             edge_type: LINK_EDGE.into(),
             ..Default::default()
         })
@@ -2285,8 +2285,8 @@ mod tests {
         let plan = note(core, "Plan", "");
         let host = note(core, "Host", "");
         core.create_edge(&EdgeDraft {
-            source_id: host.clone(),
-            target_id: plan.clone(),
+            from_id: host.clone(),
+            to_id: plan.clone(),
             edge_type: LINK_EDGE.into(),
             ..Default::default()
         })
@@ -2983,7 +2983,7 @@ mod tests {
             })
         };
         let wire_edge = serde_json::json!({
-            "id": edge.id, "source_id": "reader", "target_id": "plan",
+            "id": edge.id, "from_id": "reader", "to_id": "plan",
             "edge_type": LINK_EDGE, "properties": {}, "version": 1,
             "created_at": edge.created_at, "updated_at": edge.updated_at,
         });
@@ -3343,7 +3343,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .filter(|edge| edge.edge_type == edge_type)
-            .map(|edge| edge.target_id)
+            .map(|edge| edge.to_id)
             .collect()
     }
 
@@ -3352,7 +3352,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .filter(|edge| edge.edge_type == edge_type)
-            .map(|edge| edge.source_id)
+            .map(|edge| edge.from_id)
             .collect()
     }
 

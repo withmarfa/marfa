@@ -45,7 +45,7 @@ const BYTES: usize = 4 * 1024 * 1024;
 /// The keys a create takes on its own door that a bulk entry takes the same
 /// way. A create carrying any other is sent on its own door.
 const ITEM_KEYS: &[&str] = &["id", "type", "properties", "tier", "occurred_at", "source"];
-const EDGE_KEYS: &[&str] = &["id", "source_id", "target_id", "edge_type", "properties"];
+const EDGE_KEYS: &[&str] = &["id", "from_id", "to_id", "edge_type", "properties"];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Lane {
@@ -118,7 +118,7 @@ impl Lane {
             Lane::Items => row.item_id.clone(),
             Lane::Edges => row
                 .body
-                .get("source_id")
+                .get("from_id")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
         }

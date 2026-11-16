@@ -42,7 +42,7 @@ pub struct ItemListing {
 }
 
 fn readable(tx: &Transaction<'_>, caller: &Caller, edge: &Edge) -> Result<bool> {
-    Ok(items::type_of(tx, &edge.source_id)?
+    Ok(items::type_of(tx, &edge.from_id)?
         .is_some_and(|source| caller.may_read_edge(&edge.edge_type, &source)))
 }
 
@@ -227,8 +227,8 @@ pub(crate) fn hydrate(
             if readable(tx, caller, edge)? {
                 data.push(edge.answered()?);
                 let far = match reach {
-                    Reach::Outbound => &edge.target_id,
-                    Reach::Inbound => &edge.source_id,
+                    Reach::Outbound => &edge.to_id,
+                    Reach::Inbound => &edge.from_id,
                 };
                 if !far_ends.contains(far) {
                     far_ends.push(far.clone());

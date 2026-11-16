@@ -140,8 +140,8 @@ async function parentOf(
   child: string,
 ): Promise<{ id: string; version: number }> {
   const made = await client.createEdge({
-    source_id: parent,
-    target_id: child,
+    from_id: parent,
+    to_id: child,
     edge_type: "parent-of",
   });
   expect(made.ok, JSON.stringify(made.error)).toBe(true);
@@ -153,7 +153,7 @@ async function parentOf(
 async function serverParents(child: string): Promise<string[]> {
   const read = await client.listItemBackrefs(child, { edge_type: "parent-of" });
   expect(read.ok, JSON.stringify(read.error)).toBe(true);
-  return read.data.data.map((edge) => edge.source_id);
+  return read.data.data.map((edge) => edge.from_id);
 }
 
 it("re-parents a note offline in one write a real server takes, never leaving it without a parent", async ({
@@ -181,14 +181,14 @@ it("re-parents a note offline in one write a real server takes, never leaving it
         await device().updateEdge(edge.id, {
           properties: {},
           version: edge.version,
-          source_id: second,
+          from_id: second,
         }),
       ),
     );
     const offline = value(await device().drain());
     expect(offline.answered, "a drain offline answered something").toBe(0);
     expect(
-      value(await device().edgesTo(child)).map((held) => held.source_id),
+      value(await device().edgesTo(child)).map((held) => held.from_id),
       "the copy did not show the move, offline, after a restart",
     ).toEqual([second]);
     expect(value(await device().edgesFrom(first))).toEqual([]);
@@ -216,8 +216,8 @@ it("re-parents a note offline in one write a real server takes, never leaving it
         events
           .filter(
             (event) =>
-              (event.data as { edge?: { target_id?: string } }).edge
-                ?.target_id === child,
+              (event.data as { edge?: { to_id?: string } }).edge
+                ?.to_id === child,
           )
           .map((event) => event.event),
         "the server announced the move as more than one change",
@@ -232,7 +232,7 @@ it("re-parents a note offline in one write a real server takes, never leaving it
     ).toEqual([`PATCH /edges/${edge.id}`]);
     const moved = await client.getEdge(edge.id);
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
-    expect([moved.data.edge.source_id, moved.data.edge.version]).toEqual([
+    expect([moved.data.edge.from_id, moved.data.edge.version]).toEqual([
       second,
       edge.version + 1,
     ]);
@@ -243,7 +243,7 @@ it("re-parents a note offline in one write a real server takes, never leaving it
     expect(
       value(await device().edgesTo(child)).map((held) => [
         held.id,
-        held.source_id,
+        held.from_id,
         held.version,
       ]),
     ).toEqual([[edge.id, second, edge.version + 1]]);
@@ -280,7 +280,7 @@ it("re-parents several notes in one drain a real server takes, and one hydration
             await device.updateEdge(edge.id, {
               properties: {},
               version: edge.version,
-              source_id: second,
+              from_id: second,
             }),
           ),
         ),
@@ -306,7 +306,7 @@ it("re-parents several notes in one drain a real server takes, and one hydration
     expect(value(await device.status()).hydration).toBe("complete");
     for (const child of children) {
       expect(
-        value(await device.edgesTo(child)).map((held) => held.source_id),
+        value(await device.edgesTo(child)).map((held) => held.from_id),
       ).toEqual([second]);
     }
     expect(value(await device.edgesFrom(first))).toEqual([]);
@@ -352,13 +352,13 @@ it("puts the edge back at its old parent when the server refuses the move for a 
         await device.updateEdge(upper.id, {
           properties: {},
           version: upper.version,
-          source_id: bottom,
+          from_id: bottom,
         }),
       ),
     );
     // The witness: the copy showed the move before the server refused it.
     expect(
-      value(await device.edgesTo(middle)).map((held) => held.source_id),
+      value(await device.edgesTo(middle)).map((held) => held.from_id),
     ).toEqual([bottom]);
 
     const report = value(await device.drain());
@@ -366,7 +366,7 @@ it("puts the edge back at its old parent when the server refuses the move for a 
       report.verdicts.map((row) => [row.id, row.verdict, row.reason]),
     ).toEqual([[queued.id, "refused", "edge_cycle"]]);
     expect(
-      value(await device.edgesTo(middle)).map((held) => held.source_id),
+      value(await device.edgesTo(middle)).map((held) => held.from_id),
       "a refused move left the edge at the parent it was moving to",
     ).toEqual([top]);
     expect(await serverParents(middle)).toEqual([top]);
@@ -415,13 +415,13 @@ it("holds a move onto its own unanswered create, and sends it naming the item th
         await device().updateEdge(edge.id, {
           properties: {},
           version: edge.version,
-          source_id: minted,
+          from_id: minted,
         }),
       ),
     );
     expect(queued.depends_on).toEqual([created.id]);
     expect(
-      value(await device().edgesTo(child)).map((held) => held.source_id),
+      value(await device().edgesTo(child)).map((held) => held.from_id),
     ).toEqual([minted]);
 
     proxy.setOnline(true);
@@ -437,12 +437,12 @@ it("holds a move onto its own unanswered create, and sends it naming the item th
     const moved = await client.getEdge(edge.id);
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
     expect(
-      moved.data.edge.source_id,
+      moved.data.edge.from_id,
       "the move named the id the device minted, not the item its create landed on",
     ).toBe(landing);
     value(await device().hydrate(["core.note"], "library"));
     expect(
-      value(await device().edgesTo(child)).map((held) => held.source_id),
+      value(await device().edgesTo(child)).map((held) => held.from_id),
     ).toEqual([landing]);
   } finally {
     proxy.close();

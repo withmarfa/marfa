@@ -680,11 +680,11 @@ fn select(
             );
             let value = line_value(&text)?;
             let ends = |id: &str| {
-                if id == edge.source_id {
+                if id == edge.from_id {
                     Some(checks::End {
                         type_id: &source.type_id,
                     })
-                } else if id == edge.target_id {
+                } else if id == edge.to_id {
                     Some(checks::End {
                         type_id: &target.type_id,
                     })

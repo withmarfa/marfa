@@ -403,8 +403,8 @@ async fn a_stale_write_and_its_keep_both_copy_credit_only_what_the_base_lacked()
     for cover in [&kept, &fresh] {
         let target = marfa.note(&first, "target").await;
         let about = json!({
-            "source_id": id,
-            "target_id": target,
+            "from_id": id,
+            "to_id": target,
             "edge_type": "about",
             "properties": { "cover": cover },
         });
@@ -442,7 +442,7 @@ async fn a_stale_write_and_its_keep_both_copy_credit_only_what_the_base_lacked()
     assert_eq!(marfa.on_item(&id), vec![item(&kept, true)]);
     let copied = marfa.select(
         "SELECT r.hash, r.kind, r.namespace, r.version, r.lends FROM blob_references r \
-         JOIN edges e ON e.seq = r.seq WHERE e.source_id = ?1 AND r.kind = 'edge' ORDER BY r.hash",
+         JOIN edges e ON e.seq = r.seq WHERE e.from_id = ?1 AND r.kind = 'edge' ORDER BY r.hash",
         &copy,
     );
     assert_eq!(
@@ -639,8 +639,8 @@ async fn an_edge_lends_through_a_source_in_the_bin_until_the_source_is_purged() 
     let source = marfa.note(&owner, "source").await;
     let target = marfa.note(&owner, "target").await;
     let sent = json!({
-        "source_id": source,
-        "target_id": target,
+        "from_id": source,
+        "to_id": target,
         "edge_type": "about",
         "properties": { "cover": hash },
     });
@@ -701,8 +701,8 @@ async fn an_edge_and_a_namespace_keep_the_standing_their_digests_entered_with() 
     let source = marfa.note(&owner, "source").await;
     let target = marfa.note(&owner, "target").await;
     let made = json!({
-        "source_id": source,
-        "target_id": target,
+        "from_id": source,
+        "to_id": target,
         "edge_type": "about",
         "properties": { "cover": lending },
     });
@@ -878,8 +878,8 @@ async fn a_lending_row_is_judged_by_the_types_it_has_now() {
     let source = marfa.note(&owner, "source").await;
     let target = marfa.note(&owner, "target").await;
     let made = json!({
-        "source_id": source,
-        "target_id": target,
+        "from_id": source,
+        "to_id": target,
         "edge_type": "parent-of",
         "properties": { "cover": cover },
     });
@@ -891,7 +891,7 @@ async fn a_lending_row_is_judged_by_the_types_it_has_now() {
     assert_eq!(readers(&cover).await, (false, true));
 
     let moved_to = marfa.note(&owner, "another source").await;
-    let moved = json!({ "version": made["version"], "source_id": moved_to });
+    let moved = json!({ "version": made["version"], "from_id": moved_to });
     let path = format!("/edges/{}", made["id"].as_str().unwrap());
     let moved = marfa.call(&owner, Method::PATCH, &path, moved).await;
     assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);

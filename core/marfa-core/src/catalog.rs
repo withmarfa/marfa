@@ -289,7 +289,7 @@ impl CatalogExt for Catalog {
 pub(crate) fn edge_type_for_tests(
     id: &str,
     reverse_name: Option<&str>,
-    written_at: marfa_rules::catalog::End,
+    written_from: marfa_rules::catalog::End,
     cardinality: &str,
 ) -> EdgeType {
     EdgeType {
@@ -299,9 +299,9 @@ pub(crate) fn edge_type_for_tests(
         description: None,
         cardinality: cardinality.into(),
         reverse_name: reverse_name.map(str::to_string),
-        written_at: written_at.into(),
-        source_type_constraints: vec!["*".into()],
-        target_type_constraints: vec!["*".into()],
+        written_from: written_from.into(),
+        from_type_constraints: vec!["*".into()],
+        to_type_constraints: vec!["*".into()],
         cascade_on_delete: "orphan".into(),
         properties: Vec::new(),
         shipped: false,
@@ -313,7 +313,7 @@ pub(crate) fn edge_type_for_tests(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marfa_rules::catalog::WrittenAt;
+    use marfa_rules::catalog::WrittenFrom;
     use serde_json::json;
 
     fn held(types: serde_json::Value, edge_types: serde_json::Value) -> Connection {
@@ -738,7 +738,7 @@ mod tests {
             types: serde_json::from_value(serde_json::json!([{ "id": "acme.note", "fields": {} }]))
                 .unwrap(),
             edge_types: vec![
-                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced by", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": "source" }),
+                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced by", "cardinality": "many-to-many", "from_type_constraints": ["*"], "to_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_from": "from" }),
             ],
         };
         {
@@ -1060,9 +1060,9 @@ mod tests {
             edge_types: vec![serde_json::json!({
                 "id": "mentor-of", "label": "Mentees", "reverse_label": "Mentors",
                 "cardinality": "one-to-many",
-                "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                "from_type_constraints": ["*"], "to_type_constraints": ["*"],
                 "cascade_on_delete": "orphan", "property_schema": {},
-                "reverse_name": reverse, "written_at": "target", "shipped": false
+                "reverse_name": reverse, "written_from": "to", "shipped": false
             })],
         };
         assert!(
@@ -1085,8 +1085,8 @@ mod tests {
         assert_eq!(store::catalog_version(&conn).unwrap(), Some(2));
         let mentor = edge_type(&conn, "mentor-of").unwrap();
         assert_eq!(
-            (mentor.reverse_name.as_deref(), mentor.written_at),
-            (Some("taught-by"), WrittenAt::Target)
+            (mentor.reverse_name.as_deref(), mentor.written_from),
+            (Some("taught-by"), WrittenFrom::To)
         );
         assert_eq!(
             (mentor.label.as_str(), mentor.reverse_label.as_str()),
@@ -1102,15 +1102,15 @@ mod tests {
             edge_types: vec![
                 serde_json::json!({
                     "id": "acme.mentor-of", "cardinality": "one-to-many",
-                    "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                    "from_type_constraints": ["*"], "to_type_constraints": ["*"],
                     "cascade_on_delete": "orphan", "property_schema": {},
-                    "written_at": "source", "shipped": false
+                    "written_from": "from", "shipped": false
                 }),
                 serde_json::json!({
                     "id": "acme.reviews", "label": "Reviews", "cardinality": "one-to-many",
-                    "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                    "from_type_constraints": ["*"], "to_type_constraints": ["*"],
                     "cascade_on_delete": "orphan", "property_schema": {},
-                    "written_at": "source", "shipped": false
+                    "written_from": "from", "shipped": false
                 }),
             ],
         };

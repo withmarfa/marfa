@@ -169,8 +169,8 @@ describe("a ? inside a value", () => {
 
   it("matches as itself in the anchor of an edge term, on every door that takes one", async () => {
     const edge = await key.createEdge({
-      source_id: plain,
-      target_id: marked,
+      from_id: plain,
+      to_id: marked,
       edge_type: "about",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

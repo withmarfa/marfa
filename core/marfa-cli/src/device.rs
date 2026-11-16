@@ -1966,8 +1966,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     id,
                 } => {
                     let draft = EdgeDraft {
-                        source_id: source,
-                        target_id: target,
+                        from_id: source,
+                        to_id: target,
                         edge_type: type_,
                         properties: item_properties(&props)?,
                         id,
@@ -1982,8 +1982,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     id,
                 } => {
                     let draft = EdgeDraft {
-                        source_id: source,
-                        target_id: target,
+                        from_id: source,
+                        to_id: target,
                         edge_type: type_,
                         properties: item_properties(&props)?,
                         id,
@@ -1996,8 +1996,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 EdgesCommand::CheckMove { id, source, target } => {
                     let (end, to) = match (source, target) {
-                        (Some(source), None) => (marfa_core::End::Source, source),
-                        (None, Some(target)) => (marfa_core::End::Target, target),
+                        (Some(source), None) => (marfa_core::End::From, source),
+                        (None, Some(target)) => (marfa_core::End::To, target),
                         _ => unreachable!("clap requires exactly one end"),
                     };
                     core.check_edge_move(&id, end, &to)?;
@@ -2016,8 +2016,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     let edit = EdgeEdit {
                         properties: item_properties(&props)?,
                         base_version: version,
-                        source_id: source,
-                        target_id: target,
+                        from_id: source,
+                        to_id: target,
                     };
                     match core.update_edge(&id, &edit)? {
                         Some(queued) => output::queued_one(&queued, json),
@@ -2368,8 +2368,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                             edge_type_line(&held),
                             format!(
                                 "  from {} to {}, {} on delete",
-                                printable(&held.source_type_constraints.join(",")),
-                                printable(&held.target_type_constraints.join(",")),
+                                printable(&held.from_type_constraints.join(",")),
+                                printable(&held.to_type_constraints.join(",")),
                                 held.cascade_on_delete
                             ),
                         ];
@@ -2603,10 +2603,10 @@ fn edge_type_line(held: &marfa_core::EdgeType) -> String {
                 "  reverse {}",
                 printable(name)
             )),
-        match held.written_at {
-            marfa_core::WrittenAt::Source => "its source",
-            marfa_core::WrittenAt::Target => "its target",
-            marfa_core::WrittenAt::None => "no end",
+        match held.written_from {
+            marfa_core::WrittenFrom::From => "its source",
+            marfa_core::WrittenFrom::To => "its target",
+            marfa_core::WrittenFrom::None => "no end",
         },
         if held.shipped { "  shipped" } else { "" }
     )
@@ -2642,8 +2642,8 @@ fn edge_line(edge: &marfa_core::Edge) -> String {
     format!(
         "{}  {} -> {}  {}  v{}",
         printable(&edge.id),
-        printable(&edge.source_id),
-        printable(&edge.target_id),
+        printable(&edge.from_id),
+        printable(&edge.to_id),
         printable(&edge.edge_type),
         edge.version
     )

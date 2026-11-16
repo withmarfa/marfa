@@ -35,14 +35,14 @@ async function makeItem(body: string): Promise<string> {
 }
 
 async function makeEdge(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
   properties?: Record<string, unknown>,
 ): Promise<MarfaEdge> {
   const r = await client.createEdge({
-    source_id,
-    target_id,
+    from_id,
+    to_id,
     edge_type,
     ...(properties === undefined ? {} : { properties }),
   });
@@ -55,14 +55,14 @@ async function makeEdge(
 async function parentsOf(child: string, edgeType: string): Promise<string[]> {
   const r = await client.listItemBackrefs(child, { edge_type: edgeType });
   expect(r.ok, JSON.stringify(r.error)).toBe(true);
-  return r.data.data.map((edge) => edge.source_id);
+  return r.data.data.map((edge) => edge.from_id);
 }
 
 /** The targets of an item's outbound edges of one type. */
 async function targetsOf(source: string, edgeType: string): Promise<string[]> {
   const r = await client.listItemEdges(source, { edge_type: edgeType });
   expect(r.ok, JSON.stringify(r.error)).toBe(true);
-  return r.data.data.map((edge) => edge.target_id);
+  return r.data.data.map((edge) => edge.to_id);
 }
 
 describe("moving an edge's end", () => {
@@ -74,15 +74,15 @@ describe("moving an edge's end", () => {
     expect(await parentsOf(child, "parent-of")).toEqual([first]);
 
     const moved = await client.updateEdge(held.id, {
-      source_id: second,
+      from_id: second,
       properties: { note: "moved" },
       version: held.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
     expect(moved.data.edge).toMatchObject({
       id: held.id,
-      source_id: second,
-      target_id: child,
+      from_id: second,
+      to_id: child,
       edge_type: "parent-of",
       properties: { since: "spring", note: "moved" },
       version: held.version + 1,
@@ -90,7 +90,7 @@ describe("moving an edge's end", () => {
     expect(await parentsOf(child, "parent-of")).toEqual([second]);
     expect(await targetsOf(first, "parent-of")).toEqual([]);
     const read = await client.getEdge(held.id);
-    expect(read.data.edge.source_id).toBe(second);
+    expect(read.data.edge.from_id).toBe(second);
   });
 
   it("moves a message to another thread, and a successor onto another predecessor", async () => {
@@ -99,7 +99,7 @@ describe("moving an edge's end", () => {
     const newThread = await makeItem("move-new-thread");
     const joined = await makeEdge(message, oldThread, "in-thread");
     const rethreaded = await client.updateEdge(joined.id, {
-      target_id: newThread,
+      to_id: newThread,
       version: joined.version,
     });
     expect(rethreaded.status, JSON.stringify(rethreaded.error)).toBe(200);
@@ -110,7 +110,7 @@ describe("moving an edge's end", () => {
     const oldest = await makeItem("move-oldest");
     const supersedes = await makeEdge(newer, older, "supersedes");
     const repointed = await client.updateEdge(supersedes.id, {
-      target_id: oldest,
+      to_id: oldest,
       version: supersedes.version,
     });
     expect(repointed.status, JSON.stringify(repointed.error)).toBe(200);
@@ -143,7 +143,7 @@ describe("moving an edge's end", () => {
     try {
       for (let step = 1; step <= 20; step += 1) {
         const moved = await client.updateEdge(held.id, {
-          source_id: parents[step % 2]!,
+          from_id: parents[step % 2]!,
           version,
         });
         expect(moved.status, JSON.stringify(moved.error)).toBe(200);

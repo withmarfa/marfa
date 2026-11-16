@@ -161,11 +161,11 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
             .await;
     }
     for target in &notes[1..] {
-        let edge = json!({ "source_id": first, "target_id": target, "edge_type": "about" });
+        let edge = json!({ "from_id": first, "to_id": target, "edge_type": "about" });
         instance.write(Method::POST, "/edges", edge).await;
     }
     let other = instance.note("another source").await;
-    let edge = json!({ "source_id": other, "target_id": &notes[1], "edge_type": "about" });
+    let edge = json!({ "from_id": other, "to_id": &notes[1], "edge_type": "about" });
     instance.write(Method::POST, "/edges", edge).await;
     for _ in 0..2 {
         let binned = instance.note("binned").await;

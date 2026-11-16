@@ -13,7 +13,7 @@ const COMMITTED = new URL("../../openapi.json", import.meta.url);
 
 /** A member or parameter that holds one version of an item, edge or type. */
 const VERSION_NAME =
-  /^(version|schema_version|requested_version|source_version)$/;
+  /^(version|schema_version|requested_version|from_version)$/;
 
 interface Position {
   name: string;
@@ -79,7 +79,7 @@ describe("the committed API description", () => {
       "version",
       "schema_version",
       "requested_version",
-      "source_version",
+      "from_version",
     ]) {
       expect(names.has(name)).toBe(true);
     }

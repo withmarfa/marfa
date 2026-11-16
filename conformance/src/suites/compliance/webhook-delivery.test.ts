@@ -395,8 +395,8 @@ async function link(
   edgeType: string,
 ): Promise<string> {
   const edge = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -1805,8 +1805,8 @@ describe("outbound webhook delivery", () => {
       edgeType: string,
     ): Promise<string> => {
       const r = await by.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(r.ok, JSON.stringify(r.error)).toBe(true);

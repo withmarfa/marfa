@@ -41,11 +41,11 @@ async function note(tag: string, body = `parts-${tag}`): Promise<string> {
 }
 
 async function edge(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ): Promise<string> {
-  const r = await client.createEdge({ source_id, target_id, edge_type });
+  const r = await client.createEdge({ from_id, to_id, edge_type });
   expect(r.status, JSON.stringify(r.error)).toBe(201);
   trackEdge(ctx, r.data.edge.id);
   return r.data.edge.id;
@@ -441,8 +441,8 @@ describe("a part goes to the bin with its hosts", () => {
       id,
       label: "Part of",
       cardinality: "many-to-many",
-      source_type_constraints: ["*"],
-      target_type_constraints: ["*"],
+      from_type_constraints: ["*"],
+      to_type_constraints: ["*"],
       cascade_on_delete: "with-hosts",
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
@@ -468,8 +468,8 @@ describe("a late part", () => {
 
     // The witness: an edge of another type to the same host is refused.
     const about = await client.createEdge({
-      source_id: part,
-      target_id: host,
+      from_id: part,
+      to_id: host,
       edge_type: "about",
     });
     expect(about.status).toBe(404);
@@ -500,8 +500,8 @@ describe("a late part", () => {
     const part = await note(tag);
     await del(part);
     const r = await client.createEdge({
-      source_id: part,
-      target_id: host,
+      from_id: part,
+      to_id: host,
       edge_type: "attached-to",
     });
     expect(r.status).toBe(404);
@@ -538,7 +538,7 @@ describe("a late part", () => {
     // The bulk door.
     const bulk = await note(tag);
     const sent = await client.bulkEdges({
-      edges: [{ source_id: bulk, target_id: host, edge_type: "attached-to" }],
+      edges: [{ from_id: bulk, to_id: host, edge_type: "attached-to" }],
     });
     expect(sent.status, JSON.stringify(sent.error)).toBe(200);
     expect(sent.data.results[0]?.outcome).toBe("created");
@@ -551,7 +551,7 @@ describe("a late part", () => {
     const id = await edge(moved, elsewhere, "comments-on");
     const read = await client.getEdge(id);
     const move = await client.updateEdge(id, {
-      target_id: host,
+      to_id: host,
       version: read.data.edge.version,
     });
     expect(move.status, JSON.stringify(move.error)).toBe(200);
@@ -643,16 +643,16 @@ describe("a cycle of parts", () => {
     await edge(b, c, "attached-to");
 
     const refused = await client.createEdge({
-      source_id: c,
-      target_id: a,
+      from_id: c,
+      to_id: a,
       edge_type: "attached-to",
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("edge_constraint_violation");
     expect(refused.error?.error.details).toEqual({
       edge_type: "attached-to",
-      source_id: c,
-      target_id: a,
+      from_id: c,
+      to_id: a,
       constraint: "cycle",
     });
 

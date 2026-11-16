@@ -9,7 +9,7 @@ use crate::wire::label_from_id;
 
 const CARDINALITIES: [&str; 4] = ["one-to-one", "one-to-many", "many-to-one", "many-to-many"];
 const CASCADES: [&str; 4] = ["cascade", "orphan", "block", "with-hosts"];
-const WRITTEN_AT: [&str; 3] = ["source", "target", "none"];
+const WRITTEN_FROM: [&str; 3] = ["from", "to", "none"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EdgeIssues {
@@ -82,7 +82,7 @@ pub fn request_shape(body: &Obj) -> Result<(), EdgeIssues> {
     for (key, allowed) in [
         ("cardinality", &CARDINALITIES[..]),
         ("cascade_on_delete", &CASCADES[..]),
-        ("written_at", &WRITTEN_AT[..]),
+        ("written_from", &WRITTEN_FROM[..]),
     ] {
         if body
             .get(key)
@@ -94,7 +94,7 @@ pub fn request_shape(body: &Obj) -> Result<(), EdgeIssues> {
             ));
         }
     }
-    for side in ["source_type_constraints", "target_type_constraints"] {
+    for side in ["from_type_constraints", "to_type_constraints"] {
         let Some(value) = body.get(side) else {
             continue;
         };
@@ -284,10 +284,10 @@ pub fn edge_type_from_request(
             Some("reverse_name"),
         ));
     }
-    if text(body, "written_at") == Some("target") && reverse.is_none() {
+    if text(body, "written_from") == Some("to") && reverse.is_none() {
         return Err(invalid(
-            "written_at: target needs a reverse_name, the name the target's file writes the edge under",
-            Some("written_at"),
+            "written_from: to needs a reverse_name, the name the file at the to end writes the edge under",
+            Some("written_from"),
         ));
     }
     if reverse == Some(id) {
@@ -313,7 +313,7 @@ pub fn edge_type_from_request(
         "cardinality".into(),
         body.get("cardinality").cloned().unwrap_or(Value::Null),
     );
-    for side in ["source_type_constraints", "target_type_constraints"] {
+    for side in ["from_type_constraints", "to_type_constraints"] {
         out.insert(
             side.into(),
             body.get(side).cloned().unwrap_or_else(|| json!(["*"])),
@@ -330,10 +330,10 @@ pub fn edge_type_from_request(
         out.insert("reverse_name".into(), json!(reverse));
     }
     out.insert(
-        "written_at".into(),
-        body.get("written_at")
+        "written_from".into(),
+        body.get("written_from")
             .cloned()
-            .unwrap_or_else(|| json!("source")),
+            .unwrap_or_else(|| json!("from")),
     );
     Ok(out)
 }
@@ -356,12 +356,12 @@ pub fn constraint_evolution_changes(stored: &Obj, next: &Obj) -> Vec<&'static st
         "cascade_on_delete",
         "property_schema",
         "reverse_name",
-        "written_at",
+        "written_from",
     ]
     .into_iter()
     .filter(|key| stored.get(*key) != next.get(*key))
     .collect();
-    for side in ["source_type_constraints", "target_type_constraints"] {
+    for side in ["from_type_constraints", "to_type_constraints"] {
         let (before, after) = (stored.get(side), next.get(side));
         let widens = unrestricted(after) || {
             !unrestricted(before)
@@ -376,10 +376,10 @@ pub fn constraint_evolution_changes(stored: &Obj, next: &Obj) -> Vec<&'static st
                     })
         };
         if !widens {
-            changes.push(if side == "source_type_constraints" {
-                "source_type_constraints"
+            changes.push(if side == "from_type_constraints" {
+                "from_type_constraints"
             } else {
-                "target_type_constraints"
+                "to_type_constraints"
             });
         }
     }

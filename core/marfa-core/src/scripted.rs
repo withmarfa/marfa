@@ -552,15 +552,15 @@ pub fn edge_types(entries: &[(&str, Option<&str>)]) -> Answer {
         .iter()
         .map(|(id, reverse)| {
             let reverse = reverse.map_or(String::new(), |name| {
-                format!(r#","reverse_name":"{name}","written_at":"target""#)
+                format!(r#","reverse_name":"{name}","written_from":"to""#)
             });
             let written = if reverse.is_empty() {
-                r#","written_at":"source""#
+                r#","written_from":"from""#
             } else {
                 ""
             };
             format!(
-                r#"{{"id":"{id}","label":"{id}","reverse_label":"{id}","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"shipped":false{reverse}{written}}}"#
+                r#"{{"id":"{id}","label":"{id}","reverse_label":"{id}","cardinality":"many-to-many","from_type_constraints":["*"],"to_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"shipped":false{reverse}{written}}}"#
             )
         })
         .collect();

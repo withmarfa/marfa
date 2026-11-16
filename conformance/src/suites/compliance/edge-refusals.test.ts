@@ -45,8 +45,8 @@ async function makeEdge(
   properties?: Record<string, unknown>,
 ) {
   const r = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
     ...(properties === undefined ? {} : { properties }),
   });
@@ -87,8 +87,8 @@ describe("POST /edges refusals", () => {
     const refused = await client.rawRequest<unknown>("/edges", {
       method: "POST",
       body: {
-        source_id: a,
-        target_id: b,
+        from_id: a,
+        to_id: b,
         edge_type: "about",
         weight: 5,
         data: {},
@@ -121,8 +121,8 @@ describe("POST /edges refusals", () => {
     const first = await makeEdge(a, b);
 
     const repeat = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(repeat.status).toBe(400);
@@ -130,15 +130,15 @@ describe("POST /edges refusals", () => {
     expect(repeat.error?.error.details).toMatchObject({
       constraint: "duplicate",
       edge_type: "about",
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
     });
 
     // A fresh id names no held edge, so it is not a repeat of the first.
     const otherId = await client.createEdge({
       id: uuidv7(),
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(otherId.status).toBe(400);
@@ -170,8 +170,8 @@ describe("POST /edges refusals", () => {
     await makeEdge(a, b, registered);
 
     const refused = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: unregistered,
     });
     expect(refused.status).toBe(404);
@@ -187,22 +187,22 @@ describe("POST /edges refusals", () => {
       edge_permissions: { about: "write" },
     });
     const unreached = await narrow.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: unregistered,
     });
     expect(unreached.status).toBe(403);
     expect(unreached.error?.error.code).toBe("edge_permission_denied");
   });
 
-  it("refuses a malformed source_id, target_id or edge id with invalid_id", async () => {
+  it("refuses a malformed from_id, to_id or edge id with invalid_id", async () => {
     const a = await makeItem("bad-id-a");
     const b = await makeItem("bad-id-b");
 
     const bodies = [
-      { source_id: "not-an-id", target_id: b },
-      { source_id: a, target_id: "not-an-id" },
-      { id: "not-an-id", source_id: a, target_id: b },
+      { from_id: "not-an-id", to_id: b },
+      { from_id: a, to_id: "not-an-id" },
+      { id: "not-an-id", from_id: a, to_id: b },
     ];
     for (const body of bodies) {
       const r = await client.createEdge({ ...body, edge_type: "about" });
@@ -213,7 +213,7 @@ describe("POST /edges refusals", () => {
     // The same bodies with well-formed ids are accepted, so the refusals
     // above are the ids.
     const ok = await makeEdge(a, b);
-    expect(ok.source_id).toBe(a);
+    expect(ok.from_id).toBe(a);
     const held = await client.listItemEdges(a);
     expect(held.data.data.map((e) => e.id)).toEqual([ok.id]);
   });

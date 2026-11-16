@@ -599,8 +599,8 @@ describe("a whole-day event, single or repeating", () => {
       original_starts_at: "2046-05-13T22:00:00.000Z",
     });
     const edge = await client.createEdge({
-      source_id: series,
-      target_id: moved,
+      from_id: series,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -667,8 +667,8 @@ describe("the window", () => {
       original_starts_at: "2042-08-11T10:00:00.000Z",
     });
     const edge = await client.createEdge({
-      source_id: series,
-      target_id: moved,
+      from_id: series,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status).toBe(201);
@@ -842,8 +842,8 @@ describe("the window", () => {
     };
     const link = async (series: string, moved: string) => {
       const edge = await client.createEdge({
-        source_id: series,
-        target_id: moved,
+        from_id: series,
+        to_id: moved,
         edge_type: "parent-of",
       });
       expect(edge.status).toBe(201);
@@ -928,8 +928,8 @@ describe("the window", () => {
       original_starts_at: "2047-03-11T10:00:00.000Z",
     });
     const edge = await client.createEdge({
-      source_id: series,
-      target_id: moved,
+      from_id: series,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status).toBe(201);
@@ -963,8 +963,8 @@ describe("the window", () => {
       original_starts_at: "2048-08-10T10:00:00.000Z",
     });
     const edge = await client.createEdge({
-      source_id: series,
-      target_id: moved,
+      from_id: series,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status).toBe(201);
@@ -1001,8 +1001,8 @@ describe("the window", () => {
       original_starts_at: "2055-05-02T10:00:00.000Z",
     });
     const edge = await client.createEdge({
-      source_id: series,
-      target_id: moved,
+      from_id: series,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status).toBe(201);
@@ -1877,8 +1877,8 @@ describe("a moved occurrence whose series the credential may not read", () => {
       original_starts_at: "2051-03-10T10:00:00.000Z",
     });
     const edge = await client.createEdge({
-      source_id: series,
-      target_id: moved,
+      from_id: series,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

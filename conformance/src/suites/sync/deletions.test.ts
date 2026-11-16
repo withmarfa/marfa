@@ -57,8 +57,8 @@ describe("deletions reach the stream", () => {
     const source = await makeNote("cascade-source");
     const target = await makeNote("cascade-target");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -116,8 +116,8 @@ describe("deletions reach the stream", () => {
         // in publish order, so once this one is here a cascaded `edge.deleted`
         // that was going to come has come.
         const sentinelEdge = await client.createEdge({
-          source_id: target,
-          target_id: await makeNote("cascade-sentinel-target"),
+          from_id: target,
+          to_id: await makeNote("cascade-sentinel-target"),
           edge_type: "about",
         });
         expect(sentinelEdge.ok).toBe(true);

@@ -918,8 +918,8 @@ export class MarfaClient {
    */
   async createEdge(input: {
     id?: string;
-    source_id: string;
-    target_id: string;
+    from_id: string;
+    to_id: string;
     edge_type: string;
     properties?: Record<string, unknown>;
   }): Promise<ApiResponse<{ edge: MarfaEdge; acknowledged?: boolean }>> {
@@ -938,8 +938,8 @@ export class MarfaClient {
     id: string,
     changes: {
       properties?: Record<string, unknown>;
-      source_id?: string;
-      target_id?: string;
+      from_id?: string;
+      to_id?: string;
       version: number;
     },
     headers?: Record<string, string>,

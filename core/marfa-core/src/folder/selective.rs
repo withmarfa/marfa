@@ -532,8 +532,8 @@ pub(super) const MOST_ATTACHED: usize = 4096;
 fn attached_together(folder: &Folder, read: &mut HashSet<String>) -> Result<bool> {
     let conn = folder.core.conn()?;
     let mut statement = conn.prepare_cached(
-        "SELECT source_id, target_id FROM edges
-          WHERE (source_id = ?1 OR target_id = ?1) AND edge_type = ?2",
+        "SELECT from_id, to_id FROM edges
+          WHERE (from_id = ?1 OR to_id = ?1) AND edge_type = ?2",
     )?;
     let mut next: Vec<String> = read.iter().cloned().collect();
     while let Some(id) = next.pop() {

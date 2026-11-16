@@ -607,8 +607,8 @@ export class FolderDoor {
                 data: [
                   wireEdge({
                     id: row.derivedFrom.id,
-                    source_id: id,
-                    target_id: row.derivedFrom.target,
+                    from_id: id,
+                    to_id: row.derivedFrom.target,
                     edge_type: "derived-from",
                   }),
                 ],

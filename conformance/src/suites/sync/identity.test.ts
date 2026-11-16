@@ -130,8 +130,8 @@ describe("client-minted ids", () => {
       async (stream) => {
         const created = await client.createEdge({
           id,
-          source_id: source.data.item.id,
-          target_id: target.data.item.id,
+          from_id: source.data.item.id,
+          to_id: target.data.item.id,
           edge_type: "about",
         });
         expect(
@@ -147,8 +147,8 @@ describe("client-minted ids", () => {
             evts.some(
               (e) =>
                 e.event === "edge.created" &&
-                (e.data as { edge?: { source_id?: string } })?.edge
-                  ?.source_id === source.data.item.id,
+                (e.data as { edge?: { from_id?: string } })?.edge
+                  ?.from_id === source.data.item.id,
             ),
           `edge.created for the client-minted edge ${id}`,
           context.signal,
@@ -159,7 +159,7 @@ describe("client-minted ids", () => {
 
     const announced = events.find(
       (e) =>
-        (e.data as { edge?: { source_id?: string } })?.edge?.source_id ===
+        (e.data as { edge?: { from_id?: string } })?.edge?.from_id ===
         source.data.item.id,
     );
     expect(announced).toBeDefined();

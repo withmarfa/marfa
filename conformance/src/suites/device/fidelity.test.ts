@@ -820,14 +820,14 @@ describe("the scripted answers match the server's", () => {
         ],
         shape: [
           "item.id",
-          "item.source_id",
+          "item.from_id",
           "item.occurred_at",
           "item.created_at",
           "item.updated_at",
           "metadata.item_id",
           "item.edges.derived-from.data.0.id",
-          "item.edges.derived-from.data.0.source_id",
-          "item.edges.derived-from.data.0.target_id",
+          "item.edges.derived-from.data.0.from_id",
+          "item.edges.derived-from.data.0.to_id",
           "item.edges.derived-from.data.0.created_at",
           "item.edges.derived-from.data.0.updated_at",
         ],
@@ -1602,8 +1602,8 @@ describe("the scripted answers match the server's", () => {
     const linked = await client.rawRequest("/edges", {
       method: "POST",
       body: {
-        source_id: seeded.id,
-        target_id: other.id,
+        from_id: seeded.id,
+        to_id: other.id,
         edge_type: "references",
       },
     });
@@ -1616,13 +1616,13 @@ describe("the scripted answers match the server's", () => {
       { status: linked.status, body: linked.data },
       writeAnswers.edge({
         id: "01a00000-0000-7000-8000-0000000000ee",
-        source_id: seeded.id,
-        target_id: other.id,
+        from_id: seeded.id,
+        to_id: other.id,
       }),
       {
         same: [
-          "edge.source_id",
-          "edge.target_id",
+          "edge.from_id",
+          "edge.to_id",
           "edge.edge_type",
           "edge.properties",
         ],
@@ -1641,8 +1641,8 @@ describe("the scripted answers match the server's", () => {
     const edgeId = String(at(linked.data, "edge.id"));
     const edgeAt = (version: number, properties: Record<string, unknown>) => ({
       id: edgeId,
-      source_id: seeded.id,
-      target_id: other.id,
+      from_id: seeded.id,
+      to_id: other.id,
       version,
       properties,
     });
@@ -1661,8 +1661,8 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "edge.id",
-          "edge.source_id",
-          "edge.target_id",
+          "edge.from_id",
+          "edge.to_id",
           "edge.edge_type",
           "edge.properties",
           "edge.version",
@@ -1691,8 +1691,8 @@ describe("the scripted answers match the server's", () => {
         ],
         shape: [
           "error.message",
-          "current.source_id",
-          "current.target_id",
+          "current.from_id",
+          "current.to_id",
           "current.edge_type",
           "current.created_at",
           "current.updated_at",
@@ -1706,8 +1706,8 @@ describe("the scripted answers match the server's", () => {
       method: "POST",
       body: {
         id: edgeId,
-        source_id: seeded.id,
-        target_id: other.id,
+        from_id: seeded.id,
+        to_id: other.id,
         edge_type: "references",
       },
     });
@@ -1722,8 +1722,8 @@ describe("the scripted answers match the server's", () => {
         same: [
           "acknowledged",
           "edge.id",
-          "edge.source_id",
-          "edge.target_id",
+          "edge.from_id",
+          "edge.to_id",
           "edge.edge_type",
           "edge.properties",
           "edge.version",
@@ -1870,8 +1870,8 @@ describe("the scripted answers match the server's", () => {
     const linked = await client.rawRequest("/edges", {
       method: "POST",
       body: {
-        source_id: parent.id,
-        target_id: child.id,
+        from_id: parent.id,
+        to_id: child.id,
         edge_type: "parent-of",
       },
     });
@@ -1899,8 +1899,8 @@ describe("the scripted answers match the server's", () => {
       edgesPage([
         wireEdge({
           id: edgeId,
-          source_id: parent.id,
-          target_id: child.id,
+          from_id: parent.id,
+          to_id: child.id,
           edge_type: "parent-of",
         }),
       ]),
@@ -1908,8 +1908,8 @@ describe("the scripted answers match the server's", () => {
         same: ["next_cursor", "data.0.edge_type"],
         shape: [
           "data.0.id",
-          "data.0.source_id",
-          "data.0.target_id",
+          "data.0.from_id",
+          "data.0.to_id",
           "data.0.properties",
           "data.0.version",
           "data.0.created_at",
@@ -1935,8 +1935,8 @@ describe("the scripted answers match the server's", () => {
       client.rawRequest("/edges", {
         method: "POST",
         body: {
-          source_id: placed.id,
-          target_id: folderId,
+          from_id: placed.id,
+          to_id: folderId,
           edge_type: "in-folder",
           properties: { path },
         },
@@ -1952,16 +1952,16 @@ describe("the scripted answers match the server's", () => {
       "a second placement",
       { status: again.status, body: again.error },
       answers.edgeDuplicate({
-        source_id: placed.id,
-        target_id: folderId,
+        from_id: placed.id,
+        to_id: folderId,
         edge_type: "in-folder",
       }),
       {
         same: [
           "error.code",
           "error.details.constraint",
-          "error.details.source_id",
-          "error.details.target_id",
+          "error.details.from_id",
+          "error.details.to_id",
           "error.details.edge_type",
         ],
         shape: ["error.message"],
@@ -1985,12 +1985,12 @@ describe("the scripted answers match the server's", () => {
       label: row?.label,
       reverse_label: row?.reverse_label,
       cardinality: row?.cardinality,
-      source_type_constraints: row?.source_type_constraints,
-      target_type_constraints: row?.target_type_constraints,
+      from_type_constraints: row?.from_type_constraints,
+      to_type_constraints: row?.to_type_constraints,
       cascade_on_delete: row?.cascade_on_delete,
       property_schema: row?.property_schema,
       reverse_name: row?.reverse_name,
-      written_at: row?.written_at,
+      written_from: row?.written_from,
       shipped: row?.shipped,
       acyclic: row?.acyclic,
       flat: row?.flat,
@@ -2145,8 +2145,8 @@ describe("the scripted answers match the server's", () => {
       client.rawRequest("/edges", {
         method: "POST",
         body: {
-          source_id: source,
-          target_id: child.id,
+          from_id: source,
+          to_id: child.id,
           edge_type: "parent-of",
         },
       });
@@ -2160,12 +2160,12 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a second parent",
       { status: again.status, body: again.error },
-      answers.edgeCardinality({ target_id: child.id, edge_type: "parent-of" }),
+      answers.edgeCardinality({ to_id: child.id, edge_type: "parent-of" }),
       {
         same: [
           "error.code",
           "error.details.constraint",
-          "error.details.target_id",
+          "error.details.to_id",
           "error.details.edge_type",
         ],
         shape: ["error.message"],
@@ -2176,13 +2176,13 @@ describe("the scripted answers match the server's", () => {
     const edgeId = String(at(held.data, "edge.id"));
     const moved = await client.rawRequest(`/edges/${edgeId}`, {
       method: "PATCH",
-      body: { source_id: second.id, version: 1 },
+      body: { from_id: second.id, version: 1 },
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
     const movedEdge = {
       id: edgeId,
-      source_id: second.id,
-      target_id: child.id,
+      from_id: second.id,
+      to_id: child.id,
       edge_type: "parent-of",
       version: 2,
     };
@@ -2193,8 +2193,8 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "edge.id",
-          "edge.source_id",
-          "edge.target_id",
+          "edge.from_id",
+          "edge.to_id",
           "edge.edge_type",
           "edge.version",
           "edge.properties",
@@ -2206,7 +2206,7 @@ describe("the scripted answers match the server's", () => {
     // Stale and naming the end its type holds many at: the version is judged first.
     const stale = await client.rawRequest(`/edges/${edgeId}`, {
       method: "PATCH",
-      body: { target_id: first.id, version: 1 },
+      body: { to_id: first.id, version: 1 },
     });
     expect(
       stale.status,
@@ -2220,8 +2220,8 @@ describe("the scripted answers match the server's", () => {
         same: [
           "error.code",
           "current.id",
-          "current.source_id",
-          "current.target_id",
+          "current.from_id",
+          "current.to_id",
           "current.version",
         ],
         shape: [
@@ -2238,7 +2238,7 @@ describe("the scripted answers match the server's", () => {
     // parent moves.
     const wrongEnd = await client.rawRequest(`/edges/${edgeId}`, {
       method: "PATCH",
-      body: { target_id: first.id, version: 2 },
+      body: { to_id: first.id, version: 2 },
     });
     expect(
       wrongEnd.status,
@@ -2247,7 +2247,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a move of the end that holds many",
       { status: wrongEnd.status, body: wrongEnd.error },
-      answers.edgeMoveRefused("target_id", "none to replace"),
+      answers.edgeMoveRefused("to_id", "none to replace"),
       {
         same: ["error.code", "error.details.errors.0.path"],
         shape: ["error.message", "error.details.errors.0.message"],
@@ -2269,7 +2269,7 @@ describe("the scripted answers match the server's", () => {
     const missing = uuidv7();
     const nowhere = await client.rawRequest(`/edges/${edgeId}`, {
       method: "PATCH",
-      body: { source_id: missing, version: 2 },
+      body: { from_id: missing, version: 2 },
     });
     expect(nowhere.status, "a move to no item was taken").toBe(404);
     expectFidelity(
@@ -2296,7 +2296,7 @@ describe("the scripted answers match the server's", () => {
     });
     const denied = await narrow.rawRequest(`/edges/${edgeId}`, {
       method: "PATCH",
-      body: { source_id: first.id, version: 2 },
+      body: { from_id: first.id, version: 2 },
     });
     expect(denied.status, "a key without parent-of moved one").toBe(403);
     expectFidelity(
@@ -2573,7 +2573,7 @@ describe("the scripted answers match the server's", () => {
         reverse_label: "Mentor",
         cardinality: "one-to-many",
         reverse_name: `mentee-${ctx.runId}`,
-        written_at: "target",
+        written_from: "to",
         property_schema: { since: { type: "string" } },
       },
     });
@@ -2657,9 +2657,9 @@ describe("the scripted answers match the server's", () => {
         reverse_label: edge.value.reverse_label,
         cardinality: edge.value.cardinality,
         reverse_name: edge.value.reverse_name,
-        written_at: edge.value.written_at,
-        source_type_constraints: edge.value.source_type_constraints,
-        target_type_constraints: edge.value.target_type_constraints,
+        written_from: edge.value.written_from,
+        from_type_constraints: edge.value.from_type_constraints,
+        to_type_constraints: edge.value.to_type_constraints,
         cascade_on_delete: edge.value.cascade_on_delete,
         property_schema: Object.fromEntries(
           edge.value.properties.map((field) => [field.name, field.definition]),
@@ -2672,9 +2672,9 @@ describe("the scripted answers match the server's", () => {
       reverse_label: row?.reverse_label,
       cardinality: row?.cardinality,
       reverse_name: row?.reverse_name,
-      written_at: row?.written_at,
-      source_type_constraints: row?.source_type_constraints,
-      target_type_constraints: row?.target_type_constraints,
+      written_from: row?.written_from,
+      from_type_constraints: row?.from_type_constraints,
+      to_type_constraints: row?.to_type_constraints,
       cascade_on_delete: row?.cascade_on_delete,
       property_schema: row?.property_schema,
       shipped: row?.shipped,

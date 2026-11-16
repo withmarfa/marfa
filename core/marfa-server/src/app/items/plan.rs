@@ -237,8 +237,8 @@ fn blocked(gate: &Gate<'_, '_>, root: &str, held: &[Link]) -> Result<Refusal> {
             named.push(json!({
                 "id": link.id,
                 "edge_type": link.edge_type,
-                "source_id": link.source,
-                "target_id": link.target,
+                "from_id": link.source,
+                "to_id": link.target,
             }));
         }
     }
@@ -390,7 +390,7 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
         held.sort_by(|left, right| left.id.cmp(&right.id));
         for edge in held {
             if taken.insert(edge.id.clone()) {
-                let source = rows::by_id(gate.tx, &edge.source_id)?
+                let source = rows::by_id(gate.tx, &edge.from_id)?
                     .ok_or_else(|| Refusal::internal("an edge outlived its source"))?;
                 edges.push((edge, source));
             }

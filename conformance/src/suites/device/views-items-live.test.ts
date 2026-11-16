@@ -164,8 +164,8 @@ beforeAll(async () => {
     [parent, trashedChild],
   ] as const) {
     const edge = await client.createEdge({
-      source_id: from,
-      target_id: to,
+      from_id: from,
+      to_id: to,
       edge_type: "parent-of",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

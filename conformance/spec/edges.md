@@ -30,7 +30,7 @@ Where one request meets more than one refusal below, `edges/create-order` says w
 
 ### `edges/create-order`
 
-When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a key the operation does not declare; a malformed id; a source no item holds, in the bin or that the key may not read; no write on the source's type; no write on the edge type; a stale `source_version`; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a target no item holds, in the bin or that the key may not read; no write on the target's type, for an edge type that cascades on delete; an endpoint type, a revoked folder or nesting, the source's type before the target's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
+When `POST /edges` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing field; a key the operation does not declare; a malformed id; a source no item holds, in the bin or that the key may not read; no write on the source's type; no write on the edge type; a stale `from_version`; an `id` that an edge the key may read holds, acknowledged under `edges/id-repeat` or refused under `edges/id-reused`; an edge type nothing registered; a self-loop; invalid `properties`; a target no item holds, in the bin or that the key may not read; no write on the target's type, for an edge type that cascades on delete; an endpoint type, a revoked folder or nesting, the source's type before the target's; a duplicate triple; cardinality; a cycle; an `id` that an edge the key may not read holds.
 
 **Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing field and before a malformed id`, `› refuses a malformed id before it looks for the source`, `› answers a source in the bin as missing before it asks for write on the source's type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the target`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing target before it checks the endpoint types`, `› answers a missing target as forbidden when the key lacks write on the edge type`, `› checks the source's type before the target's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `compliance/edge-cascade-target.test.ts › refuses write on a cascading target's type after it finds the target of a create and before it checks the endpoint types`, `compliance/edge-check-order.test.ts › acknowledges a repeated edge id and triple after the target went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
 
@@ -44,7 +44,7 @@ When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names 
 
 ### `edges/create`
 
-When a key sends `POST /edges` naming a `source_id`, a `target_id` and an `edge_type`, and no rule of this chapter refuses the edge, the server MUST answer `201` with an `edge` carrying its `id`, `source_id`, `target_id`, `edge_type`, `properties`, `created_at`, `updated_at` and `version`.
+When a key sends `POST /edges` naming a `from_id`, a `to_id` and an `edge_type`, and no rule of this chapter refuses the edge, the server MUST answer `201` with an `edge` carrying its `id`, `from_id`, `to_id`, `edge_type`, `properties`, `created_at`, `updated_at` and `version`.
 
 **Tests:** `compliance/edge-types.test.ts › registered edge type is usable in POST /edges`, `sync/identity.test.ts › keeps the id a client mints for an edge`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`.
 
@@ -62,7 +62,7 @@ When `POST /edges` creates an edge, the server MUST announce `edge.created`.
 
 ### `edges/create-missing-field`
 
-If `POST /edges` names no `source_id`, no `target_id` or no `edge_type`, then the server MUST answer `400 missing_required_field`.
+If `POST /edges` names no `from_id`, no `to_id` or no `edge_type`, then the server MUST answer `400 missing_required_field`.
 
 **Tests:** `correctness/edges/edges-crud.test.ts › rejects POST /edges missing required fields`, `compliance/edge-gaps.test.ts › refuses a request with no edge type as missing_required_field`.
 
@@ -84,9 +84,9 @@ If `PATCH /edges/{id}` carries a top-level body key the operation does not decla
 
 ### `edges/create-invalid-id`
 
-If `POST /edges` names a `source_id`, a `target_id` or an `id` that is not a lowercase UUIDv7, then the server MUST answer `400 invalid_id`.
+If `POST /edges` names a `from_id`, a `to_id` or an `id` that is not a lowercase UUIDv7, then the server MUST answer `400 invalid_id`.
 
-**Tests:** `compliance/edge-refusals.test.ts › refuses a malformed source_id, target_id or edge id with invalid_id`.
+**Tests:** `compliance/edge-refusals.test.ts › refuses a malformed from_id, to_id or edge id with invalid_id`.
 
 ### `edges/create-type-unknown`
 
@@ -98,7 +98,7 @@ If `POST /edges` names an `edge_type` nothing registered, and the key's edge map
 
 ### `edges/create-duplicate`
 
-If `POST /edges` names a triple of `source_id`, `target_id` and `edge_type` that an edge already holds, and names no `id` that edge holds, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `duplicate` and the `edge_type`, `source_id` and `target_id`.
+If `POST /edges` names a triple of `from_id`, `to_id` and `edge_type` that an edge already holds, and names no `id` that edge holds, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `duplicate` and the `edge_type`, `from_id` and `to_id`.
 
 **Reason:** one triple is one edge, so a second edge naming it is a mistake. A caller that minted the id of the edge it repeats is answered by `edges/id-repeat` instead.
 
@@ -106,13 +106,13 @@ If `POST /edges` names a triple of `source_id`, `target_id` and `edge_type` that
 
 ### `edges/create-end-missing`
 
-If `POST /edges` names a `source_id` or a `target_id` that no item holds, then the server MUST answer `404 item_not_found`.
+If `POST /edges` names a `from_id` or a `to_id` that no item holds, then the server MUST answer `404 item_not_found`.
 
 **Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`, `compliance/unreadable-items.test.ts › $name`.
 
 ### `edges/create-end-in-bin`
 
-If `POST /edges` names a `source_id` whose item is in the bin, or a `target_id` whose item is in the bin for an edge type whose `cascade_on_delete` is not `with-hosts`, then the server MUST answer `404 item_not_found`.
+If `POST /edges` names a `from_id` whose item is in the bin, or a `to_id` whose item is in the bin for an edge type whose `cascade_on_delete` is not `with-hosts`, then the server MUST answer `404 item_not_found`.
 
 **Reason:** an edge of a `with-hosts` type to a host in the bin is a part that arrives late, such as an offline write that syncs after the host's trash (`edges/parts-late-accepted`).
 
@@ -130,7 +130,7 @@ When `POST /edges` names an `id` that is a lowercase UUIDv7 and that no edge hol
 
 ### `edges/id-repeat`
 
-When a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `source_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and the triple of that edge, the server MUST answer `200` with the stored `edge` and `acknowledged: true`.
+When a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `from_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and the triple of that edge, the server MUST answer `200` with the stored `edge` and `acknowledged: true`.
 
 **Reason:** a client that lost the answer to its create sends it again, and gets the edge it made.
 
@@ -158,7 +158,7 @@ If `POST /edges` repeats the `id` and triple of an edge whose source is now in t
 
 ### `edges/id-reused`
 
-If a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `source_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and another triple, then the server MUST answer `409 id_reused`.
+If a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `from_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and another triple, then the server MUST answer `409 id_reused`.
 
 **Reason:** the same code `POST /items` answers for a reused item id, because it is the same mistake: a caller minted an id that names an item it is not describing (`items/create-id-other-type`).
 
@@ -166,7 +166,7 @@ If a key that may write the source's type and the edge type sends `POST /edges` 
 
 ### `edges/id-reused-differs`
 
-When the server refuses an edge id with `id_reused` for an edge the key may read, the server MUST name in `details.differs` each of `source_id`, `target_id` and `edge_type` in which the two triples differ.
+When the server refuses an edge id with `id_reused` for an edge the key may read, the server MUST name in `details.differs` each of `from_id`, `to_id` and `edge_type` in which the two triples differ.
 
 **Tests:** `sync/acknowledged.test.ts › refuses an edge id that names a different triple`, `compliance/edges-bulk.test.ts › refuses a reused edge id here as the single door does, and says what differs`.
 
@@ -308,7 +308,7 @@ While an item is in the bin, the server MUST go on answering the edges it holds 
 
 ### `edges/target-named`
 
-When a key may read an edge's edge type and its source's type, the server MUST answer the edge with its `target_id` whatever the target's type, on `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, the `edges` an item read carries and the `edge.created` event.
+When a key may read an edge's edge type and its source's type, the server MUST answer the edge with its `to_id` whatever the target's type, on `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, the `edges` an item read carries and the `edge.created` event.
 
 **Reason:** a limit accepted: an edge is a statement its source makes about its target, so it names the target even where the key may not read the target.
 
@@ -534,11 +534,11 @@ If `PATCH /edges/{id}` moves no end and names no `properties`, then the server M
 
 ## Moving an end of an edge
 
-A move changes the `source_id` or the `target_id` of an edge in place, so a child changes parent, a message its thread and a successor its predecessor in one write.
+A move changes the `from_id` or the `to_id` of an edge in place, so a child changes parent, a message its thread and a successor its predecessor in one write.
 
 ### `edges/move-target`
 
-When `PATCH /edges/{id}` names a `target_id` for an edge whose type is `one-to-one` or `many-to-one`, the server MUST move the edge's target to it.
+When `PATCH /edges/{id}` names a `to_id` for an edge whose type is `one-to-one` or `many-to-one`, the server MUST move the edge's target to it.
 
 **Reason:** each source holds one edge of such a type, so the end that stays is the one the move leaves whole.
 
@@ -546,7 +546,7 @@ When `PATCH /edges/{id}` names a `target_id` for an edge whose type is `one-to-o
 
 ### `edges/move-source`
 
-When `PATCH /edges/{id}` names a `source_id` for an edge whose type is `one-to-one` or `one-to-many`, the server MUST move the edge's source to it.
+When `PATCH /edges/{id}` names a `from_id` for an edge whose type is `one-to-one` or `one-to-many`, the server MUST move the edge's source to it.
 
 **Reason:** each target holds one edge of such a type, so a child changes parent by moving the edge.
 
@@ -600,13 +600,13 @@ If `PATCH /edges/{id}` moves an end of a `one-to-one` edge onto an item that alr
 
 ### `edges/move-constraint`
 
-If `PATCH /edges/{id}` moves the target onto an item whose type the edge type's `target_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` naming the `target_type`.
+If `PATCH /edges/{id}` moves the target onto an item whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` naming the `target_type`.
 
 **Tests:** `compliance/edge-move.test.ts › refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
 
 ### `edges/move-cycle`
 
-If `PATCH /edges/{id}` moves an end of a `parent-of` or `supersedes` edge so that it closes a cycle through other edges of the type, then the server MUST answer `400 edge_cycle` naming the `edge_type`, `source_id` and `target_id` the move would give the edge.
+If `PATCH /edges/{id}` moves an end of a `parent-of` or `supersedes` edge so that it closes a cycle through other edges of the type, then the server MUST answer `400 edge_cycle` naming the `edge_type`, `from_id` and `to_id` the move would give the edge.
 
 **Tests:** `compliance/edge-move.test.ts › refuses a move that would close a cycle, and moves nothing`, `correctness/edges/edges-cycle.test.ts › refuses a PATCH /edges/{id} move that closes a cycle, and moves a free edge`.
 
@@ -644,7 +644,7 @@ If `PATCH /edges/{id}` moves an end of an edge whose type lets the end that stay
 
 ### `edges/move-both-ends`
 
-If `PATCH /edges/{id}` names both a `source_id` and a `target_id` that differ from the edge's, then the server MUST answer `400 validation_error`.
+If `PATCH /edges/{id}` names both a `from_id` and a `to_id` that differ from the edge's, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/edge-move.test.ts › refuses to move an end of a type that holds many at the end that stays, or both ends at once`.
 
@@ -936,17 +936,17 @@ When `PATCH /items/{id}` names an empty list for an edge type under `edges`, the
 
 ## Endpoint types
 
-An edge type's `source_type_constraints` and `target_type_constraints` each hold `*`, a type identifier or `role:<name>`.
+An edge type's `from_type_constraints` and `to_type_constraints` each hold `*`, a type identifier or `role:<name>`.
 
 ### `edges/endpoint-source`
 
-If `POST /edges` names a source whose type the edge type's `source_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `source_type` and the types `allowed`.
+If `POST /edges` names a source whose type the edge type's `from_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `source_type` and the types `allowed`.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching source type rejected`.
 
 ### `edges/endpoint-target`
 
-If `POST /edges` names a target whose type the edge type's `target_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `target_type` and the types `allowed`.
+If `POST /edges` names a target whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `target_type` and the types `allowed`.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching target type rejected`.
 
@@ -982,7 +982,7 @@ A cardinality says how many edges of one type an end holds: `one-to-one` lets ea
 
 ### `edges/card-target-held`
 
-If `POST /edges` names a target that already holds an inbound edge of the edge type, and the type is `one-to-many` or `one-to-one`, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality` and the `edge_type` and `target_id`.
+If `POST /edges` names a target that already holds an inbound edge of the edge type, and the type is `one-to-many` or `one-to-one`, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality` and the `edge_type` and `to_id`.
 
 **Reason:** a child has one parent at any depth, and a successor has one predecessor.
 
@@ -990,7 +990,7 @@ If `POST /edges` names a target that already holds an inbound edge of the edge t
 
 ### `edges/card-source-held`
 
-If `POST /edges` names a source that already holds an outbound edge of the edge type, and the type is `many-to-one` or `one-to-one`, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality` and the `edge_type` and `source_id`.
+If `POST /edges` names a source that already holds an outbound edge of the edge type, and the type is `many-to-one` or `one-to-one`, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `cardinality` and the `edge_type` and `from_id`.
 
 **Tests:** `correctness/edges/edges-cardinality.test.ts › in-thread is many-to-one: source can only join one thread`, `› supersedes is one-to-one: rejects second outbound from same source`, `› refuses a second edge at a one-to-one or one-to-many end on POST /edges, and a many-to-many type takes it`.
 
@@ -1038,7 +1038,7 @@ If `POST /edges` names a `parent-of` or `supersedes` edge that would close a cyc
 
 ### `edges/cycle-self-loop`
 
-If `POST /edges` names the same item as `source_id` and `target_id`, then the server MUST answer `400 edge_cycle`, on every edge type.
+If `POST /edges` names the same item as `from_id` and `to_id`, then the server MUST answer `400 edge_cycle`, on every edge type.
 
 **Reason:** a self-loop is the shortest cycle, so one edge closes it and the type is not walked.
 
@@ -1046,7 +1046,7 @@ If `POST /edges` names the same item as `source_id` and `target_id`, then the se
 
 ### `edges/cycle-bulk`
 
-If an entry of `POST /edges/bulk` names a `parent-of` or `supersedes` edge that would close a cycle through other edges of the type, then the server MUST refuse the entry `edge_cycle` naming the `edge_type`, `source_id` and `target_id`, as `error` on the entry under `atomic: false` and as `details.details` of the rollback under `atomic: true`.
+If an entry of `POST /edges/bulk` names a `parent-of` or `supersedes` edge that would close a cycle through other edges of the type, then the server MUST refuse the entry `edge_cycle` naming the `edge_type`, `from_id` and `to_id`, as `error` on the entry under `atomic: false` and as `details.details` of the rollback under `atomic: true`.
 
 **Tests:** `correctness/edges/edges-cycle.test.ts › refuses a POST /edges/bulk entry that closes a cycle, as an errored entry or a rollback`.
 
@@ -1068,7 +1068,7 @@ If `POST /edges` names a `parent-of` edge that closes a cycle only through an ed
 
 ### `edges/types-in-folder`
 
-When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_at` `none`, no `reverse_name` and a `path` in its `property_schema`.
+When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_from` `none`, no `reverse_name` and a `path` in its `property_schema`.
 
 **Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folder-files/placement-path`). No file writes the edge (`folder-files/placement-not-document`), so it names no end.
 
@@ -1174,7 +1174,7 @@ If a move names a type that the constraint of an edge at the item does not admit
 
 ### `edges/retype-nesting`
 
-If a move names a type that the `target_type_constraints` of a `flat` edge type admit, and the item is the source of an edge of that type, then the server MUST refuse that item's move `edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`, and leave the item as it was.
+If a move names a type that the `to_type_constraints` of a `flat` edge type admit, and the item is the source of an edge of that type, then the server MUST refuse that item's move `edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`, and leave the item as it was.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses a move that makes a collection member a container, as nesting`, `› refuses a natural-key upsert and a type move job that would move an item out of what its edges admit`.
 
@@ -1518,9 +1518,9 @@ When a credential sends `GET /edge-types`, the server MUST list `reverse_name` `
 
 ### `edges/types-written-at`
 
-When a credential sends `GET /edge-types`, the server MUST list `written_at` `target` on `parent-of`, `source` on `attached-to` and `references`, and `none` on `in-folder`.
+When a credential sends `GET /edge-types`, the server MUST list `written_from` `target` on `parent-of`, `source` on `attached-to` and `references`, and `none` on `in-folder`.
 
-**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folder-documents/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
+**Reason:** `written_from` is the end whose file writes the edge in a folder, and a child names its parent (`folder-documents/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
 
 **Tests:** `compliance/edge-types.test.ts › lists the end whose file writes each shipped edge type`, `› ships in-folder from any item to a system.folder, carrying its path`.
 
@@ -1556,7 +1556,7 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-flat`
 
-When the server answers an edge type, on `GET /edge-types` and on the `201` of `POST /edge-types`, the server MUST give `flat` `true` for an edge type that refuses a source its own `target_type_constraints` admit (`edges/collection-no-nesting`), and `false` for every other.
+When the server answers an edge type, on `GET /edge-types` and on the `201` of `POST /edge-types`, the server MUST give `flat` `true` for an edge type that refuses a source its own `to_type_constraints` admit (`edges/collection-no-nesting`), and `false` for every other.
 
 **Reason:** a device judges nesting from the catalog it holds, not from a list of edge type names.
 
@@ -1756,13 +1756,13 @@ If `POST /edge-types` names an `id` that another edge type holds as its reverse 
 
 ### `edges/types-written-at-listed`
 
-When a key registers an edge type, the server MUST list and answer it with the `written_at` the registration named, `source` where it named no `written_at`.
+When a key registers an edge type, the server MUST list and answer it with the `written_from` the registration named, `source` where it named no `written_from`.
 
 **Tests:** `compliance/edge-types.test.ts › registers an edge type written at its target, and refuses one with no name to write it under`.
 
 ### `edges/types-written-at-none`
 
-If `POST /edge-types` names a `written_at` other than `source`, `target` or `none`, then the server MUST answer `400 validation_error`.
+If `POST /edge-types` names a `written_from` other than `source`, `target` or `none`, then the server MUST answer `400 validation_error`.
 
 **Reason:** `none` is the value for an edge no file writes, and the server keeps such an edge as it keeps any other. A value the server did not know would be listed back and read by a folder as no end at all.
 
@@ -1770,7 +1770,7 @@ If `POST /edge-types` names a `written_at` other than `source`, `target` or `non
 
 ### `edges/types-written-at-target`
 
-If `POST /edge-types` names `written_at` `target` and no `reverse_name`, then the server MUST answer `400 validation_error`.
+If `POST /edge-types` names `written_from` `target` and no `reverse_name`, then the server MUST answer `400 validation_error`.
 
 **Reason:** the target's file has no other name to write the edge under.
 

@@ -150,7 +150,7 @@ impl Instance {
                 Method::POST,
                 "/edges",
                 Some(
-                    json!({ "source_id": source, "target_id": target, "edge_type": "acme.pairs" }),
+                    json!({ "from_id": source, "to_id": target, "edge_type": "acme.pairs" }),
                 ),
             )
             .await;
@@ -316,7 +316,7 @@ async fn an_edge_moves_the_reach_when_its_source_moves_and_not_when_only_its_tar
                     .local(
                         Method::PATCH,
                         &path,
-                        Some(json!({ "version": version, "target_id": c })),
+                        Some(json!({ "version": version, "to_id": c })),
                     )
                     .await;
                 assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
@@ -332,7 +332,7 @@ async fn an_edge_moves_the_reach_when_its_source_moves_and_not_when_only_its_tar
                     .local(
                         Method::PATCH,
                         &path,
-                        Some(json!({ "version": version, "source_id": b })),
+                        Some(json!({ "version": version, "from_id": b })),
                     )
                     .await;
                 assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
@@ -412,7 +412,7 @@ async fn an_edge_type_registered_or_deleted_moves_the_reach_and_one_widened_does
         "reverse_name": "acme.cited-by",
         "reverse_label": "Cited by",
         "cardinality": "many-to-many",
-        "source_type_constraints": ["core.note"],
+        "from_type_constraints": ["core.note"],
     });
     assert!(
         instance
@@ -425,7 +425,7 @@ async fn an_edge_type_registered_or_deleted_moves_the_reach_and_one_widened_does
     );
     let mut widened = body.clone();
     widened["evolve_constraints"] = json!(true);
-    widened["source_type_constraints"] = json!(["core.note", "core.task"]);
+    widened["from_type_constraints"] = json!(["core.note", "core.task"]);
     assert!(
         !instance
             .moves(async {

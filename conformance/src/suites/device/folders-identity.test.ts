@@ -2435,7 +2435,7 @@ describe("what a pull does with a file whose item is purged", () => {
     expect(edges.placements(harness.settings.id).size).toBe(1);
     // The server removes an item's edges with it (`items/purge-edges`).
     for (const [id, edge] of [...edges.edges]) {
-      if (edge.source_id === purged.id) edges.edges.delete(id);
+      if (edge.from_id === purged.id) edges.edges.delete(id);
     }
     edges.events.push(
       copyItemEvent(
@@ -2541,7 +2541,7 @@ describe("what a pull does with a file whose item is purged", () => {
     scriptFolderWrites(harness, { edges });
     expect((await harness.folder.push()).ok).toBe(true);
     for (const [id, edge] of [...edges.edges]) {
-      if (edge.source_id === purged.id) edges.edges.delete(id);
+      if (edge.from_id === purged.id) edges.edges.delete(id);
     }
     edges.events.push(
       copyItemEvent(

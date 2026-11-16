@@ -564,7 +564,7 @@ describe("outbound webhooks", () => {
         trackItem(ctx, item.data.item.id);
         ids.push(item.data.item.id);
       }
-      return { source_id: ids[0]!, target_id: ids[1]!, edge_type: "about" };
+      return { from_id: ids[0]!, to_id: ids[1]!, edge_type: "about" };
     };
     const write = async (enableFanout?: boolean) => {
       const res = await client.bulkEdges({

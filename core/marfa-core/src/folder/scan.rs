@@ -996,7 +996,7 @@ impl Folder {
                             && (shown.contains_key(&file.key)
                                 || bound.lines.iter().any(|line| {
                                     line.edge_type == embeds::ATTACHMENT_EDGE
-                                        && line.end == marfa_rules::catalog::End::Target
+                                        && line.end == marfa_rules::catalog::End::To
                                 }));
                         let unchanged = || {
                             let mut pending = self.edge_work(file, &item_id, Some(&bound));
@@ -1788,26 +1788,26 @@ impl Folder {
                 .map(Vec::as_slice)
                 .unwrap_or_default();
             for edge in candidates {
-                if by_item.contains_key(edge.source_id.as_str()) || taken.contains(&edge.source_id)
+                if by_item.contains_key(edge.from_id.as_str()) || taken.contains(&edge.from_id)
                 {
                     continue;
                 }
-                if !self.holds(&edge.source_id, settings, &members) {
+                if !self.holds(&edge.from_id, settings, &members) {
                     let embedders =
                         embedders.get_or_insert_with(|| embedded_by(files, &claims, shown));
                     let Some(hosts) = embedders.get(&marfa_rules::names::folded(&file.key)) else {
                         continue;
                     };
-                    let attached = self.core.edges_from(&edge.source_id)?.iter().any(|to| {
+                    let attached = self.core.edges_from(&edge.from_id)?.iter().any(|to| {
                         to.edge_type == embeds::ATTACHMENT_EDGE
-                            && hosts.contains(&to.target_id)
-                            && self.holds(&to.target_id, settings, &members)
+                            && hosts.contains(&to.to_id)
+                            && self.holds(&to.to_id, settings, &members)
                     });
                     if !attached {
                         continue;
                     }
                 }
-                let Some(item) = self.core.get(&edge.source_id)? else {
+                let Some(item) = self.core.get(&edge.from_id)? else {
                     continue;
                 };
                 // A note's Markdown file carries its id line, so one without
@@ -1858,7 +1858,7 @@ impl Folder {
                     let Some(error) = edges
                         .iter()
                         .filter(|edge| edge.edge_type == embeds::ATTACHMENT_EDGE)
-                        .find_map(|edge| unread.get(&edge.source_id))
+                        .find_map(|edge| unread.get(&edge.from_id))
                     else {
                         continue;
                     };

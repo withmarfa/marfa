@@ -74,7 +74,7 @@ impl Source<'_> {
 pub(crate) struct Proposed<'a> {
     pub edge_type: &'a str,
     pub source: Source<'a>,
-    pub target_id: &'a str,
+    pub to_id: &'a str,
     /// The held edge the write is: the edge a move changes, or the one a
     /// create names by id, which the server acknowledges or refuses by its
     /// id before it counts edges. The write's own checks leave it out.
@@ -119,8 +119,8 @@ fn refused_end(edge_type: &EdgeType, end: End, r#type: &str) -> CoreError {
     refused(edges::refused_end(edge_type, end, r#type))
 }
 
-fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> CoreError {
-    refused(edges::refused_nesting(edge_type, source_id, source_type))
+fn refused_nesting(edge_type: &str, from_id: &str, source_type: &str) -> CoreError {
+    refused(edges::refused_nesting(edge_type, from_id, source_type))
 }
 
 /// Lineages read once per call, since a retype judges every edge at an item.
@@ -163,14 +163,14 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
         let proposed = edges::Proposed {
             edge_type: edge.edge_type,
             source: edge.source.id(),
-            target: edge.target_id,
+            target: edge.to_id,
             moving: edge.replacing,
         };
         if edges::duplicate(&copy, &proposed)?.is_some()
             || earlier().any(|earlier| {
                 earlier.edge_type == edge.edge_type
                     && earlier.source.id() == edge.source.id()
-                    && earlier.target_id == edge.target_id
+                    && earlier.to_id == edge.to_id
             })
         {
             return Err(constraint_violation(
@@ -180,20 +180,20 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 ),
                 json!({
                     "edge_type": edge.edge_type,
-                    "source_id": edge.source.id(),
-                    "target_id": edge.target_id,
+                    "from_id": edge.source.id(),
+                    "to_id": edge.to_id,
                     "constraint": "duplicate",
                 }),
             ));
         }
         let full = edges::full_end(&copy, edge_type, &proposed)?;
-        for end in [End::Source, End::Target] {
+        for end in [End::From, End::To] {
             if !edge_type.one_at(end) {
                 continue;
             }
             let at = |edge: &Proposed| match end {
-                End::Source => edge.source.id().to_string(),
-                End::Target => edge.target_id.to_string(),
+                End::From => edge.source.id().to_string(),
+                End::To => edge.to_id.to_string(),
             };
             if full == Some(end)
                 || earlier()
@@ -211,8 +211,8 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 message: format!("Edge \"{}\" would close a cycle", edge.edge_type),
                 details: Some(Box::new(json!({
                     "edge_type": edge.edge_type,
-                    "source_id": edge.source.id(),
-                    "target_id": edge.target_id,
+                    "from_id": edge.source.id(),
+                    "to_id": edge.to_id,
                 }))),
             });
         }
@@ -221,7 +221,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
             return Err(refused(edges::refused_parts_cycle(
                 edge.edge_type,
                 edge.source.id(),
-                edge.target_id,
+                edge.to_id,
             )));
         }
     }
@@ -345,14 +345,14 @@ impl Graph for HeldEdges<'_> {
 
     fn outbound(&self, id: &str) -> Result<Vec<Link>> {
         self.links(
-            "SELECT id, edge_type, source_id, target_id FROM edges WHERE source_id = ?1",
+            "SELECT id, edge_type, from_id, to_id FROM edges WHERE from_id = ?1",
             id,
         )
     }
 
     fn inbound(&self, id: &str) -> Result<Vec<Link>> {
         self.links(
-            "SELECT id, edge_type, source_id, target_id FROM edges WHERE target_id = ?1",
+            "SELECT id, edge_type, from_id, to_id FROM edges WHERE to_id = ?1",
             id,
         )
     }
@@ -369,7 +369,7 @@ impl Graph for HeldEdges<'_> {
         }
         let mut statement = self.conn.prepare_cached(
             "SELECT id FROM edges
-              WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3
+              WHERE from_id = ?1 AND edge_type = ?2 AND to_id = ?3
                 AND (?4 IS NULL OR id <> ?4)",
         )?;
         let mut rows = statement.query(params![source, edge_type, target, except])?;
@@ -416,27 +416,27 @@ fn refuse_unfitting_ends(
             None => None,
         },
     };
-    let target_type = match held_row(conn, edge.target_id)? {
-        Some((_, true)) => return Err(end_not_found("target", edge.target_id)),
+    let target_type = match held_row(conn, edge.to_id)? {
+        Some((_, true)) => return Err(end_not_found("target", edge.to_id)),
         Some((r#type, false)) => Some(r#type),
         None => None,
     };
     if let Some(r#type) = &source_type
         && let Some(lineage) = lineages.of(conn, r#type)?
-        && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false)
+        && lineage.admitted_by(&edge_type.from_type_constraints) == Some(false)
     {
-        return Err(refused_end(edge_type, End::Source, r#type));
+        return Err(refused_end(edge_type, End::From, r#type));
     }
     if let Some(r#type) = &target_type
         && let Some(lineage) = lineages.of(conn, r#type)?
-        && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false)
+        && lineage.admitted_by(&edge_type.to_type_constraints) == Some(false)
     {
-        return Err(refused_end(edge_type, End::Target, r#type));
+        return Err(refused_end(edge_type, End::To, r#type));
     }
     if edge_type.flat
         && let Some(r#type) = &source_type
         && let Some(lineage) = lineages.of(conn, r#type)?
-        && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
+        && lineage.admitted_by(&edge_type.to_type_constraints) == Some(true)
     {
         return Err(refused_nesting(edge.edge_type, edge.source.id(), r#type));
     }
@@ -458,8 +458,8 @@ pub(crate) fn refuse_retype_breaking_edges(
     let refused = shown_by_unread_refusals(conn)?;
     let catalog = held_edge_types(conn)?;
     let mut statement = conn.prepare_cached(
-        "SELECT id, edge_type, source_id = ?1, target_id = ?1 FROM edges
-          WHERE (source_id = ?1 OR target_id = ?1) AND source_id != target_id
+        "SELECT id, edge_type, from_id = ?1, to_id = ?1 FROM edges
+          WHERE (from_id = ?1 OR to_id = ?1) AND from_id != to_id
           ORDER BY created_at, id",
     )?;
     let edges = statement
@@ -476,17 +476,17 @@ pub(crate) fn refuse_retype_breaking_edges(
         let Some(edge_type) = catalog.get(&name).filter(|_| !refused.contains(&id)) else {
             continue;
         };
-        if from && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false) {
-            return Err(refused_end(edge_type, End::Source, next_type));
+        if from && lineage.admitted_by(&edge_type.from_type_constraints) == Some(false) {
+            return Err(refused_end(edge_type, End::From, next_type));
         }
         if from
             && edge_type.flat
-            && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
+            && lineage.admitted_by(&edge_type.to_type_constraints) == Some(true)
         {
             return Err(refused_nesting(&name, item_id, next_type));
         }
-        if to && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false) {
-            return Err(refused_end(edge_type, End::Target, next_type));
+        if to && lineage.admitted_by(&edge_type.to_type_constraints) == Some(false) {
+            return Err(refused_end(edge_type, End::To, next_type));
         }
     }
     Ok(())
@@ -522,11 +522,11 @@ mod tests {
         json!({
             "id": id,
             "cardinality": cardinality,
-            "source_type_constraints": ends[0],
-            "target_type_constraints": ends[1],
+            "from_type_constraints": ends[0],
+            "to_type_constraints": ends[1],
             "cascade_on_delete": "orphan",
             "property_schema": {},
-            "written_at": "source",
+            "written_from": "from",
             "shipped": false,
             "acyclic": acyclic,
             "flat": flat,
@@ -663,8 +663,8 @@ mod tests {
 
     fn edge(source: &str, target: &str, edge_type: &str) -> EdgeDraft {
         EdgeDraft {
-            source_id: source.into(),
-            target_id: target.into(),
+            from_id: source.into(),
+            to_id: target.into(),
             edge_type: edge_type.into(),
             ..EdgeDraft::default()
         }
@@ -749,7 +749,7 @@ mod tests {
             Refusal::TargetFull => (false, true),
         };
         assert_eq!(
-            (names("source_id"), names("target_id")),
+            (names("from_id"), names("to_id")),
             ends,
             "{what}: {details}"
         );
@@ -930,7 +930,7 @@ mod tests {
                 core.check_edge(&edge(NOTE_B, NOTE_A, "mock.tree")),
                 "a cycle"
             ),
-            json!({ "edge_type": "mock.tree", "source_id": NOTE_B, "target_id": NOTE_A }),
+            json!({ "edge_type": "mock.tree", "from_id": NOTE_B, "to_id": NOTE_A }),
         );
         assert_eq!(
             cycle(
@@ -1006,7 +1006,7 @@ mod tests {
         hold(&core, "next", NOTE_A, NOTE_B, "mock.next-note");
         let target = |id: &str| EdgeEdit {
             base_version: Some(1),
-            target_id: Some(id.into()),
+            to_id: Some(id.into()),
             ..EdgeEdit::default()
         };
         let before = queued(&core);
@@ -1156,7 +1156,7 @@ mod tests {
         let plan: Vec<String> = conn
             .prepare(
                 "EXPLAIN QUERY PLAN SELECT id FROM edges
-                  WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3
+                  WHERE from_id = ?1 AND edge_type = ?2 AND to_id = ?3
                     AND (?4 IS NULL OR id <> ?4)",
             )
             .unwrap()
@@ -1166,7 +1166,7 @@ mod tests {
             .unwrap();
         let plan = plan.join(" ");
         assert!(
-            plan.contains("source_id=? AND edge_type=? AND target_id=?"),
+            plan.contains("from_id=? AND edge_type=? AND to_id=?"),
             "{plan}"
         );
     }
@@ -1398,7 +1398,7 @@ mod tests {
             core.edges_to(NOTE_B)
                 .unwrap()
                 .iter()
-                .any(|shown| shown.source_id == MADE),
+                .any(|shown| shown.from_id == MADE),
             "the copy put the refused create's edge back before its read landed"
         );
         core.check_edge(&edge(NOTE_C, NOTE_B, "mock.next-note"))
@@ -1453,7 +1453,7 @@ mod tests {
             &store::Owed {
                 subject: crate::model::Subject::Item,
                 id: NOTE_D.into(),
-                source_id: None,
+                from_id: None,
                 edge_type: None,
                 moved: false,
             },
@@ -1472,7 +1472,7 @@ mod tests {
             HELD_EDGE,
             &EdgeEdit {
                 base_version: Some(1),
-                target_id: Some(NOTE_C.into()),
+                to_id: Some(NOTE_C.into()),
                 ..EdgeEdit::default()
             },
         )
@@ -1580,7 +1580,7 @@ mod tests {
                 edge(SERIES, ALBUM, "mock.member"),
                 json!({
                     "edge_type": "mock.member",
-                    "source_id": SERIES,
+                    "from_id": SERIES,
                     "source_type": "core.collection",
                     "constraint": "nesting",
                 }),
@@ -1590,8 +1590,8 @@ mod tests {
                 edge(NOTE_A, NOTE_B, "mock.next-note"),
                 json!({
                     "edge_type": "mock.next-note",
-                    "source_id": NOTE_A,
-                    "target_id": NOTE_B,
+                    "from_id": NOTE_A,
+                    "to_id": NOTE_B,
                     "constraint": "duplicate",
                 }),
                 "a duplicate",
@@ -1600,7 +1600,7 @@ mod tests {
                 edge(NOTE_A, NOTE_C, "mock.next-note"),
                 json!({
                     "edge_type": "mock.next-note",
-                    "source_id": NOTE_A,
+                    "from_id": NOTE_A,
                     "constraint": "cardinality",
                 }),
                 "a second edge from a",
@@ -1609,7 +1609,7 @@ mod tests {
                 edge(NOTE_C, NOTE_B, "mock.next-note"),
                 json!({
                     "edge_type": "mock.next-note",
-                    "target_id": NOTE_B,
+                    "to_id": NOTE_B,
                     "constraint": "cardinality",
                 }),
                 "a second edge to b",
@@ -1625,12 +1625,12 @@ mod tests {
         hold(&core, OTHER_EDGE, NOTE_C, NOTE_D, "mock.next-note");
         assert_eq!(
             details_of(
-                core.check_edge_move(HELD_EDGE, End::Target, NOTE_D),
+                core.check_edge_move(HELD_EDGE, End::To, NOTE_D),
                 "a move onto d"
             ),
             json!({
                 "edge_type": "mock.next-note",
-                "target_id": NOTE_D,
+                "to_id": NOTE_D,
                 "constraint": "cardinality",
             }),
         );
@@ -1669,7 +1669,7 @@ mod tests {
                 "core.collection",
                 json!({
                     "edge_type": "mock.member",
-                    "source_id": TASK,
+                    "from_id": TASK,
                     "source_type": "core.collection",
                     "constraint": "nesting",
                 }),
@@ -1691,26 +1691,26 @@ mod tests {
         hold(&core, OTHER_EDGE, NOTE_C, NOTE_D, "mock.next-note");
         let target = |id: &str| EdgeEdit {
             base_version: Some(1),
-            target_id: Some(id.into()),
+            to_id: Some(id.into()),
             ..EdgeEdit::default()
         };
         let source = |id: &str| EdgeEdit {
             base_version: Some(1),
-            source_id: Some(id.into()),
+            from_id: Some(id.into()),
             ..EdgeEdit::default()
         };
         let before = queued(&core);
         for (edit, end, to, words, what) in [
             (
                 target(NOTE_D),
-                End::Target,
+                End::To,
                 NOTE_D,
                 TARGET_FULL,
                 "onto d, which holds c's edge",
             ),
             (
                 source(NOTE_C),
-                End::Source,
+                End::From,
                 NOTE_C,
                 SOURCE_FULL,
                 "onto c, which holds its own edge",
@@ -1719,7 +1719,7 @@ mod tests {
             assert_refused_for(core.check_edge_move(HELD_EDGE, end, to), words, what);
             assert_refused_for(core.update_edge(HELD_EDGE, &edit), words, what);
         }
-        core.check_edge_move(HELD_EDGE, End::Target, NOTE_B)
+        core.check_edge_move(HELD_EDGE, End::To, NOTE_B)
             .expect("a move onto the end the edge holds");
         assert!(
             core.update_edge(HELD_EDGE, &target(NOTE_B))
@@ -1730,7 +1730,7 @@ mod tests {
         assert_eq!(queued(&core), before, "a refused move was queued");
 
         // The witness: a free end takes the move, and the check queued nothing.
-        core.check_edge_move(HELD_EDGE, End::Target, NOTE_C)
+        core.check_edge_move(HELD_EDGE, End::To, NOTE_C)
             .unwrap();
         assert_eq!(queued(&core), before, "the check queued a write");
         core.update_edge(HELD_EDGE, &target(NOTE_C)).unwrap();
@@ -1743,27 +1743,27 @@ mod tests {
         hold(&core, HELD_EDGE, NOTE_A, NOTE_B, "mock.next-note");
         hold(&core, OTHER_EDGE, NOTE_C, NOTE_D, "mock.notes");
         assert_refused(
-            core.check_edge_move("0190f3a0-0000-7000-8000-0000000000ff", End::Target, NOTE_C),
+            core.check_edge_move("0190f3a0-0000-7000-8000-0000000000ff", End::To, NOTE_C),
             "edge_not_found",
             "a move of an edge the copy does not hold",
         );
         assert_refused(
-            core.check_edge_move(HELD_EDGE, End::Target, TASK),
+            core.check_edge_move(HELD_EDGE, End::To, TASK),
             "edge_constraint_violation",
             "a move onto a task",
         );
         assert_refused(
-            core.check_edge_move(HELD_EDGE, End::Target, BINNED),
+            core.check_edge_move(HELD_EDGE, End::To, BINNED),
             "item_not_found",
             "a move onto an item in the bin",
         );
         assert_refused(
-            core.check_edge_move(HELD_EDGE, End::Target, NOTE_A),
+            core.check_edge_move(HELD_EDGE, End::To, NOTE_A),
             "edge_cycle",
             "a move onto the edge's own source",
         );
         assert_refused(
-            core.check_edge_move(OTHER_EDGE, End::Target, NOTE_A),
+            core.check_edge_move(OTHER_EDGE, End::To, NOTE_A),
             "validation_error",
             "a move of a many-to-many edge, whose end that stays can hold more than it",
         );
@@ -1774,7 +1774,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            core.check_edge_move(HELD_EDGE, End::Target, TASK),
+            core.check_edge_move(HELD_EDGE, End::To, TASK),
             Err(CoreError::HydrationIncomplete),
             "a copy part way through a hydration judged a move"
         );
@@ -1864,8 +1864,8 @@ mod tests {
     fn parts_cycle(draft: &EdgeDraft) -> Value {
         json!({
             "edge_type": draft.edge_type,
-            "source_id": draft.source_id,
-            "target_id": draft.target_id,
+            "from_id": draft.from_id,
+            "to_id": draft.to_id,
             "constraint": "cycle",
         })
     }
@@ -1971,7 +1971,7 @@ mod tests {
         hold(&core, "cd", NOTE_C, NOTE_D, "mock.moving-part");
         let target = |id: &str| EdgeEdit {
             base_version: Some(1),
-            target_id: Some(id.into()),
+            to_id: Some(id.into()),
             ..EdgeEdit::default()
         };
         // c to a is no cycle yet; a to c then closes a, c, a.
@@ -1991,8 +1991,8 @@ mod tests {
             ),
             json!({
                 "edge_type": "mock.moving-part",
-                "source_id": NOTE_A,
-                "target_id": NOTE_C,
+                "from_id": NOTE_A,
+                "to_id": NOTE_C,
                 "constraint": "cycle",
             }),
         );

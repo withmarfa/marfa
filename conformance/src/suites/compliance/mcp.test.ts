@@ -116,8 +116,8 @@ async function family(children: number): Promise<string> {
 async function addChild(parent: { id: string } | string): Promise<string> {
   const child = await note("child");
   const edge = await client.createEdge({
-    source_id: typeof parent === "string" ? parent : parent.id,
-    target_id: child.id,
+    from_id: typeof parent === "string" ? parent : parent.id,
+    to_id: child.id,
     edge_type: "parent-of",
   });
   expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -346,10 +346,10 @@ describe("marfa_find", () => {
         trackItem(ctx, r.data.item.id);
         return r.data.item.id;
       };
-      const on = async (source_id: string, target_id: string) => {
+      const on = async (from_id: string, to_id: string) => {
         const r = await client.createEdge({
-          source_id,
-          target_id,
+          from_id,
+          to_id,
           edge_type: "comments-on",
         });
         expect(r.status, JSON.stringify(r.error)).toBe(201);
@@ -410,8 +410,8 @@ describe("marfa_find", () => {
     expect(part.status, JSON.stringify(part.error)).toBe(201);
     trackItem(ctx, part.data.item.id);
     const edge = await client.createEdge({
-      source_id: part.data.item.id,
-      target_id: host.data.item.id,
+      from_id: part.data.item.id,
+      to_id: host.data.item.id,
       edge_type: "comments-on",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -455,8 +455,8 @@ describe("marfa_find", () => {
     expect(part.status, JSON.stringify(part.error)).toBe(201);
     trackItem(ctx, part.data.item.id);
     const edge = await client.createEdge({
-      source_id: part.data.item.id,
-      target_id: host.data.item.id,
+      from_id: part.data.item.id,
+      to_id: host.data.item.id,
       edge_type: "attached-to",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -499,8 +499,8 @@ describe("marfa_find", () => {
           `${tag}-host`,
         ]);
         const r = await client.createEdge({
-          source_id: part,
-          target_id: host,
+          from_id: part,
+          to_id: host,
           edge_type: "attached-to",
         });
         expect(r.status, JSON.stringify(r.error)).toBe(201);
@@ -706,7 +706,7 @@ describe("marfa_update", () => {
       id: made.id,
       properties: { title: "Renamed" },
       add_tags: ["late"],
-      add_edges: [{ edge_type: "references", target_id: target.id }],
+      add_edges: [{ edge_type: "references", to_id: target.id }],
       state: "archived",
     };
     const error = toolError(
@@ -777,8 +777,8 @@ describe("marfa_delete", () => {
     const shared = (await note("shared")).id;
     for (const parent of [a, b]) {
       const edge = await client.createEdge({
-        source_id: parent.id,
-        target_id: shared,
+        from_id: parent.id,
+        to_id: shared,
         edge_type: edgeType,
       });
       expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

@@ -1165,13 +1165,13 @@ describe("bulk_action", () => {
     // Restoring the parent brings the other two back before the job reaches them.
     const tag = `ba-restore-${ctx.runId}`;
     const [grandchild, child, parent] = await seedTagged(3, tag);
-    for (const [source_id, target_id] of [
+    for (const [from_id, to_id] of [
       [parent!, child!],
       [child!, grandchild!],
     ]) {
       const edge = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

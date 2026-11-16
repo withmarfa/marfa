@@ -73,7 +73,7 @@ describe("a conflicted copy written once", () => {
         edge_type: "derived-from",
       });
       expect(back.ok, JSON.stringify(back.error)).toBe(true);
-      return back.data.data.map((edge) => edge.source_id);
+      return back.data.data.map((edge) => edge.from_id);
     };
 
     const first = await send();
@@ -105,6 +105,6 @@ describe("a conflicted copy written once", () => {
     const edges = await writer.listItemEdges(copy!, {
       edge_type: "derived-from",
     });
-    expect(edges.data.data.map((edge) => edge.target_id)).toEqual([id]);
+    expect(edges.data.data.map((edge) => edge.to_id)).toEqual([id]);
   });
 });

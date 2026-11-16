@@ -91,8 +91,8 @@ it("sends an edge edit after catching up an earlier write whose real answer was 
       items.push(made.data.item.id);
     }
     const made = await client.createEdge({
-      source_id: items[0]!,
-      target_id: items[1]!,
+      from_id: items[0]!,
+      to_id: items[1]!,
       edge_type: "references",
       properties: { weight: 1 },
     });

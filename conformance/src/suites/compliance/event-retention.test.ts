@@ -365,12 +365,12 @@ describe("the trash retention job", () => {
       const bin = await instance("event-retention-trash");
       const [doomed, other, pointing] = await notes(bin, 3, "bin");
       const edgeBetween = async (
-        source_id: string,
-        target_id: string,
+        from_id: string,
+        to_id: string,
       ): Promise<string> => {
         const created = await bin.writer().createEdge({
-          source_id,
-          target_id,
+          from_id,
+          to_id,
           edge_type: "about",
         });
         expect(created.ok, JSON.stringify(created.error)).toBe(true);

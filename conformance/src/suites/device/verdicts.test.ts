@@ -697,8 +697,8 @@ describe("a conflicted copy names its original", () => {
   const link = (original: string) =>
     wireEdge({
       id: LINK,
-      source_id: SIBLING,
-      target_id: original,
+      from_id: SIBLING,
+      to_id: original,
       edge_type: "derived-from",
     });
 
@@ -712,14 +712,14 @@ describe("a conflicted copy names its original", () => {
     expect(from.ok, JSON.stringify(from)).toBe(true);
     if (!from.ok) return;
     expect(
-      from.value.map((edge) => `${edge.edge_type} ${edge.target_id}`),
+      from.value.map((edge) => `${edge.edge_type} ${edge.to_id}`),
       `${when}: the copy holds the conflicted copy and not its link to the original, so an app cannot show the two together`,
     ).toEqual([`derived-from ${original}`]);
     const to = await device.edgesTo(original);
     expect(to.ok, JSON.stringify(to)).toBe(true);
     if (!to.ok) return;
     expect(
-      to.value.map((edge) => edge.source_id),
+      to.value.map((edge) => edge.from_id),
       `${when}: the original does not answer the copy made from it`,
     ).toEqual([SIBLING]);
   }

@@ -602,7 +602,7 @@ fn an_edge_names_its_two_ends_by_from_and_to() {
     let home = scratch("edge-flags");
     let door = Door::open(vec![Answer::json(
         "201 Created",
-        &json!({"edge": {"id": "e1", "edge_type": "about", "source_id": "a", "target_id": "b",
+        &json!({"edge": {"id": "e1", "edge_type": "about", "from_id": "a", "to_id": "b",
                          "version": 1}})
         .to_string(),
     )]);
@@ -615,8 +615,8 @@ fn an_edge_names_its_two_ends_by_from_and_to() {
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let sent: Value = serde_json::from_str(&door.received()[0].body).unwrap();
-    assert_eq!(sent["source_id"], "a");
-    assert_eq!(sent["target_id"], "b");
+    assert_eq!(sent["from_id"], "a");
+    assert_eq!(sent["to_id"], "b");
 
     // The old names are gone, and `--source` is the writer's alone.
     for words in [

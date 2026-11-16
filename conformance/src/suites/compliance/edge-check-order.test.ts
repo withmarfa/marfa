@@ -84,8 +84,8 @@ async function edgeTypeOf(
   label: string,
   rest: {
     cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-    source_type_constraints?: string[];
-    target_type_constraints?: string[];
+    from_type_constraints?: string[];
+    to_type_constraints?: string[];
     property_schema?: Record<string, unknown>;
   },
 ): Promise<string> {
@@ -108,8 +108,8 @@ async function held(
 ): Promise<string> {
   const r = await client.createEdge({
     ...(id !== undefined && { id }),
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(r.status).toBe(201);
@@ -139,9 +139,9 @@ describe("the order POST /edges asks its refusals in", () => {
     const target = await note();
     const absent = generateId();
     for (const body of [
-      { source_id: "not-an-id", target_id: target },
-      { source_id: absent, target_id: "not-an-id" },
-      { source_id: absent, target_id: target, id: "not-an-id" },
+      { from_id: "not-an-id", to_id: target },
+      { from_id: absent, to_id: "not-an-id" },
+      { from_id: absent, to_id: target, id: "not-an-id" },
     ]) {
       const r = await client.createEdge({ ...body, edge_type: "about" });
       expect(r.status, JSON.stringify(body)).toBe(400);
@@ -150,8 +150,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: well formed ids with the same absent source are a not-found.
     const alone = await client.createEdge({
-      source_id: absent,
-      target_id: target,
+      from_id: absent,
+      to_id: target,
       edge_type: "about",
     });
     expect(alone.status).toBe(404);
@@ -162,15 +162,15 @@ describe("the order POST /edges asks its refusals in", () => {
     const target = await note();
     const refused = await client.rawRequest("/edges", {
       method: "POST",
-      body: { source_id: "not-an-id", target_id: target },
+      body: { from_id: "not-an-id", to_id: target },
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("missing_required_field");
 
     // The witness: with an edge type named, the malformed id is refused for itself.
     const alone = await client.createEdge({
-      source_id: "not-an-id",
-      target_id: target,
+      from_id: "not-an-id",
+      to_id: target,
       edge_type: "about",
     });
     expect(alone.status).toBe(400);
@@ -181,7 +181,7 @@ describe("the order POST /edges asks its refusals in", () => {
     const target = await note();
     const missing = await client.rawRequest("/edges", {
       method: "POST",
-      body: { source_id: "not-an-id", target_id: target, weight: 5 },
+      body: { from_id: "not-an-id", to_id: target, weight: 5 },
     });
     expect(missing.status).toBe(400);
     expect(missing.error?.error.code).toBe("missing_required_field");
@@ -189,8 +189,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const undeclared = await client.rawRequest("/edges", {
       method: "POST",
       body: {
-        source_id: "not-an-id",
-        target_id: target,
+        from_id: "not-an-id",
+        to_id: target,
         edge_type: "about",
         weight: 5,
       },
@@ -202,8 +202,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: without the undeclared key, the malformed id is refused
     // for itself.
     const alone = await client.createEdge({
-      source_id: "not-an-id",
-      target_id: target,
+      from_id: "not-an-id",
+      to_id: target,
       edge_type: "about",
     });
     expect(alone.status).toBe(400);
@@ -217,8 +217,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: while the source is live, the same key is refused the write.
     const live = await reader.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(live.status).toBe(403);
@@ -227,8 +227,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     await binned(source);
     const gone = await reader.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(gone.status).toBe(404);
@@ -240,8 +240,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const target = await note();
     const neither = await keyWith({ "core.note": "read" }, { about: "read" });
     const both = await neither.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(both.status).toBe(403);
@@ -250,8 +250,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: write on the type leaves the edge type's refusal alone.
     const typeOnly = await keyWith({ "core.note": "write" }, { about: "read" });
     const alone = await typeOnly.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(alone.status).toBe(403);
@@ -265,8 +265,8 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(source, target, "about", id);
     const repeat = {
       id,
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     };
 
@@ -292,8 +292,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     const reused = await client.createEdge({
       id,
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: unknown,
     });
     expect(reused.status).toBe(409);
@@ -303,8 +303,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: a fresh id with the same unknown type is the type's refusal.
     const alone = await client.createEdge({
       id: generateId(),
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: unknown,
     });
     expect(alone.status).toBe(404);
@@ -314,8 +314,8 @@ describe("the order POST /edges asks its refusals in", () => {
   it("answers an unknown edge type before it judges a self-loop", async () => {
     const item = await note();
     const unknown = await client.createEdge({
-      source_id: item,
-      target_id: item,
+      from_id: item,
+      to_id: item,
       edge_type: `mock.order-unknown.${ctx.runId}`,
     });
     expect(unknown.status).toBe(404);
@@ -323,8 +323,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: a known type on the same ends is the self-loop's refusal.
     const loop = await client.createEdge({
-      source_id: item,
-      target_id: item,
+      from_id: item,
+      to_id: item,
       edge_type: "about",
     });
     expect(loop.status).toBe(400);
@@ -335,8 +335,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const dir = await folder();
     const item = await note();
     const loop = await client.createEdge({
-      source_id: item,
-      target_id: item,
+      from_id: item,
+      to_id: item,
       edge_type: "in-folder",
     });
     expect(loop.status).toBe(400);
@@ -344,8 +344,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: other ends with the same missing path are the property's refusal.
     const alone = await client.createEdge({
-      source_id: item,
-      target_id: dir,
+      from_id: item,
+      to_id: dir,
       edge_type: "in-folder",
     });
     expect(alone.status).toBe(400);
@@ -356,8 +356,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const source = await note();
     const absent = generateId();
     const bad = await client.createEdge({
-      source_id: source,
-      target_id: absent,
+      from_id: source,
+      to_id: absent,
       edge_type: "in-folder",
       properties: { path: "../outside.md" },
     });
@@ -366,8 +366,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: a good path to the same absent target is a not-found.
     const alone = await client.createEdge({
-      source_id: source,
-      target_id: absent,
+      from_id: source,
+      to_id: absent,
       edge_type: "in-folder",
       properties: { path: "Notes/inside.md" },
     });
@@ -379,8 +379,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const source = await note();
     const notAFolder = await note();
     const bad = await client.createEdge({
-      source_id: source,
-      target_id: notAFolder,
+      from_id: source,
+      to_id: notAFolder,
       edge_type: "in-folder",
       properties: { path: "../outside.md" },
     });
@@ -389,8 +389,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: a good path to the same target is the endpoint's refusal.
     const alone = await client.createEdge({
-      source_id: source,
-      target_id: notAFolder,
+      from_id: source,
+      to_id: notAFolder,
       edge_type: "in-folder",
       properties: { path: "Notes/inside.md" },
     });
@@ -401,12 +401,12 @@ describe("the order POST /edges asks its refusals in", () => {
   it("answers a missing target before it checks the endpoint types", async () => {
     const edgeType = await edgeTypeOf("endpoints-missing", {
       cardinality: "many-to-many",
-      source_type_constraints: ["core.bookmark"],
+      from_type_constraints: ["core.bookmark"],
     });
     const source = await note();
     const missing = await client.createEdge({
-      source_id: source,
-      target_id: generateId(),
+      from_id: source,
+      to_id: generateId(),
       edge_type: edgeType,
     });
     expect(missing.status).toBe(404);
@@ -414,8 +414,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: with a target present, the same source meets the constraint.
     const alone = await client.createEdge({
-      source_id: source,
-      target_id: await note(),
+      from_id: source,
+      to_id: await note(),
       edge_type: edgeType,
     });
     expect(alone.status).toBe(400);
@@ -428,8 +428,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const absent = generateId();
     const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
     const refused = await readOnly.createEdge({
-      source_id: source,
-      target_id: absent,
+      from_id: source,
+      to_id: absent,
       edge_type: "about",
     });
     expect(refused.status).toBe(403);
@@ -438,8 +438,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: a key with the grant meets the missing target.
     const writer = await keyWith({ "core.note": "write" }, { about: "write" });
     const alone = await writer.createEdge({
-      source_id: source,
-      target_id: absent,
+      from_id: source,
+      to_id: absent,
       edge_type: "about",
     });
     expect(alone.status).toBe(404);
@@ -449,12 +449,12 @@ describe("the order POST /edges asks its refusals in", () => {
   it("checks the source's type before the target's type", async () => {
     const edgeType = await edgeTypeOf("endpoints-both", {
       cardinality: "many-to-many",
-      source_type_constraints: ["core.bookmark"],
-      target_type_constraints: ["core.bookmark"],
+      from_type_constraints: ["core.bookmark"],
+      to_type_constraints: ["core.bookmark"],
     });
     const both = await client.createEdge({
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       edge_type: edgeType,
     });
     expect(both.status).toBe(400);
@@ -464,8 +464,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: a source of the right type meets the target's constraint.
     const alone = await client.createEdge({
-      source_id: await bookmark(),
-      target_id: await note(),
+      from_id: await bookmark(),
+      to_id: await note(),
       edge_type: edgeType,
     });
     expect(alone.status).toBe(400);
@@ -487,13 +487,13 @@ describe("the order POST /edges asks its refusals in", () => {
       label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.bookmark"],
+      from_type_constraints: ["core.bookmark"],
     });
     expect(again.status).toBe(201);
 
     const refused = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(refused.status).toBe(400);
@@ -504,8 +504,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const admitted = await bookmark();
     await held(admitted, target, edgeType);
     const duplicate = await client.createEdge({
-      source_id: admitted,
-      target_id: target,
+      from_id: admitted,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(duplicate.status).toBe(400);
@@ -522,8 +522,8 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(source, target, edgeType);
 
     const duplicate = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(duplicate.status).toBe(400);
@@ -532,8 +532,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: another target for the same source is the cardinality's refusal.
     const alone = await client.createEdge({
-      source_id: source,
-      target_id: await note(),
+      from_id: source,
+      to_id: await note(),
       edge_type: edgeType,
     });
     expect(alone.status).toBe(400);
@@ -550,8 +550,8 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(top, middle, "parent-of");
     await held(middle, bottom, "parent-of");
     const both = await client.createEdge({
-      source_id: bottom,
-      target_id: middle,
+      from_id: bottom,
+      to_id: middle,
       edge_type: "parent-of",
     });
     expect(both.status).toBe(400);
@@ -563,8 +563,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const leaf = await note();
     await held(root, leaf, "parent-of");
     const alone = await client.createEdge({
-      source_id: leaf,
-      target_id: root,
+      from_id: leaf,
+      to_id: root,
       edge_type: "parent-of",
     });
     expect(alone.status).toBe(400);
@@ -578,8 +578,8 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(source, target, "about", id);
     const repeat = {
       id,
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     };
 
@@ -601,16 +601,16 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(source, target, "about", id);
     const repeat = {
       id,
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     };
 
     // The witness: a fresh edge to the same target in the bin is refused.
     await binned(target);
     const fresh = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "in-thread",
     });
     expect(fresh.status).toBe(404);
@@ -634,8 +634,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     // The witness: the type is gone, so a fresh edge of it is refused.
     const fresh = await client.createEdge({
-      source_id: source,
-      target_id: await note(),
+      from_id: source,
+      to_id: await note(),
       edge_type: edgeType,
     });
     expect(fresh.status).toBe(404);
@@ -643,8 +643,8 @@ describe("the order POST /edges asks its refusals in", () => {
 
     const again = await client.createEdge({
       id,
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(again.status).toBe(200);
@@ -656,8 +656,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const { reader, id, first, second } = await hiddenEdge();
     const unknown = await reader.createEdge({
       id,
-      source_id: first,
-      target_id: second,
+      from_id: first,
+      to_id: second,
       edge_type: `mock.order-unknown.${ctx.runId}`,
     });
     expect(unknown.status).toBe(404);
@@ -666,8 +666,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: with nothing else wrong, the id is the refusal, and it names no edge.
     const alone = await reader.createEdge({
       id,
-      source_id: first,
-      target_id: second,
+      from_id: first,
+      to_id: second,
       edge_type: "references",
     });
     expect(alone.status).toBe(409);
@@ -679,8 +679,8 @@ describe("the order POST /edges asks its refusals in", () => {
     const { reader, id, first, second } = await hiddenEdge();
     const loop = await reader.createEdge({
       id,
-      source_id: first,
-      target_id: first,
+      from_id: first,
+      to_id: first,
       edge_type: "references",
     });
     expect(loop.status).toBe(400);
@@ -689,8 +689,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: other ends on the same id are the id's refusal.
     const alone = await reader.createEdge({
       id,
-      source_id: first,
-      target_id: second,
+      from_id: first,
+      to_id: second,
       edge_type: "references",
     });
     expect(alone.status).toBe(409);
@@ -702,8 +702,8 @@ describe("the order POST /edges asks its refusals in", () => {
     await held(first, second, "about");
     const duplicate = await reader.createEdge({
       id,
-      source_id: first,
-      target_id: second,
+      from_id: first,
+      to_id: second,
       edge_type: "about",
     });
     expect(duplicate.status).toBe(400);
@@ -713,8 +713,8 @@ describe("the order POST /edges asks its refusals in", () => {
     // The witness: another edge type on the same ends is the id's refusal.
     const alone = await reader.createEdge({
       id,
-      source_id: first,
-      target_id: second,
+      from_id: first,
+      to_id: second,
       edge_type: "references",
     });
     expect(alone.status).toBe(409);
@@ -823,7 +823,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const edgeType = await moveable("stale-malformed");
     const id = await held(await note(), await note(), edgeType);
     const edge = (await client.getEdge(id)).data.edge;
-    for (const end of ["source_id", "target_id"] as const) {
+    for (const end of ["from_id", "to_id"] as const) {
       const stale = await client.updateEdge(id, {
         [end]: "not-an-id",
         version: edge.version + 1,
@@ -858,7 +858,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const edgeType = await moveable("malformed");
     const id = await held(await note(), await note(), edgeType);
     const edge = (await client.getEdge(id)).data.edge;
-    for (const end of ["source_id", "target_id"] as const) {
+    for (const end of ["from_id", "to_id"] as const) {
       const refused = await client.updateEdge(id, {
         [end]: "not-an-id",
         version: edge.version,
@@ -869,7 +869,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 
     // The witness: a well formed id for the same end moves it.
     const moved = await client.updateEdge(id, {
-      target_id: await note(),
+      to_id: await note(),
       version: edge.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
@@ -880,8 +880,8 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const id = await held(await note(), await note(), edgeType);
     const edge = (await client.getEdge(id)).data.edge;
     for (const body of [
-      { source_id: await note(), target_id: "not-an-id" },
-      { source_id: "not-an-id", target_id: await note() },
+      { from_id: await note(), to_id: "not-an-id" },
+      { from_id: "not-an-id", to_id: await note() },
     ]) {
       const refused = await client.updateEdge(id, {
         ...body,
@@ -895,8 +895,8 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 
     // The witness: two well formed ends are the refusal of moving both.
     const alone = await client.updateEdge(id, {
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       version: edge.version,
     });
     expect(alone.status).toBe(400);
@@ -909,8 +909,8 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const edge = (await client.getEdge(id)).data.edge;
     expect((await client.deleteEdgeType(edgeType, true)).status).toBe(200);
     const both = await client.updateEdge(id, {
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       version: edge.version,
     });
     expect(both.status).toBe(400);
@@ -918,7 +918,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 
     // The witness: one end of the same edge meets the missing edge type.
     const alone = await client.updateEdge(id, {
-      target_id: await note(),
+      to_id: await note(),
       version: edge.version,
     });
     expect(alone.status).toBe(404);
@@ -933,7 +933,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const edge = (await client.getEdge(id)).data.edge;
     const missing = generateId();
     const refused = await client.updateEdge(id, {
-      source_id: missing,
+      from_id: missing,
       version: edge.version,
     });
     expect(refused.status).toBe(400);
@@ -941,7 +941,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 
     // The witness: the end the type lets move meets the same missing item.
     const alone = await client.updateEdge(id, {
-      target_id: missing,
+      to_id: missing,
       version: edge.version,
     });
     expect(alone.status).toBe(404);
@@ -960,7 +960,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const edge = (await client.getEdge(id)).data.edge;
     const hidden = await bookmark();
     const missing = await blind.updateEdge(id, {
-      source_id: hidden,
+      from_id: hidden,
       version: edge.version,
     });
     expect(missing.status).toBe(404);
@@ -968,7 +968,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 
     // The witness: a key that reads the type is refused the write.
     const alone = await writer.updateEdge(id, {
-      source_id: hidden,
+      from_id: hidden,
       version: edge.version,
     });
     expect(alone.status).toBe(403);
@@ -986,7 +986,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const edge = (await client.getEdge(id)).data.edge;
     await binned(target);
     const refused = await writer.updateEdge(id, {
-      source_id: await bookmark(),
+      from_id: await bookmark(),
       version: edge.version,
     });
     expect(refused.status).toBe(403);
@@ -994,7 +994,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 
     // The witness: a new source the key may write meets the end in the bin.
     const alone = await writer.updateEdge(id, {
-      source_id: await note(),
+      from_id: await note(),
       version: edge.version,
     });
     expect(alone.status).toBe(404);
@@ -1010,7 +1010,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
     const id = await held(await note(), target, "supersedes");
     const edge = (await client.getEdge(id)).data.edge;
     const refused = await reader.updateEdge(id, {
-      source_id: target,
+      from_id: target,
       version: edge.version,
     });
     expect(refused.status).toBe(403);
@@ -1022,7 +1022,7 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
       { "*": "write" },
     );
     const alone = await writer.updateEdge(id, {
-      source_id: target,
+      from_id: target,
       version: edge.version,
     });
     expect(alone.status).toBe(400);
@@ -1171,7 +1171,7 @@ describe("the order an item write asks its inline edges in", () => {
   it("answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version", async () => {
     const edgeType = await edgeTypeOf("stale-ends", {
       cardinality: "many-to-many",
-      target_type_constraints: ["core.bookmark"],
+      to_type_constraints: ["core.bookmark"],
     });
     const item = await note();
     const moved = await client.updateItem(item, {
@@ -1239,8 +1239,8 @@ describe("the order POST /edges/bulk asks its gates and its ends in", () => {
     const writer = await keyWith({ "core.note": "write" }, { about: "write" });
 
     for (const [label, entry] of [
-      ["source", { source_id: hidden, target_id: visible, edge_type: "about" }],
-      ["target", { source_id: visible, target_id: hidden, edge_type: "about" }],
+      ["source", { from_id: hidden, to_id: visible, edge_type: "about" }],
+      ["target", { from_id: visible, to_id: hidden, edge_type: "about" }],
     ] as const) {
       const refused = await readOnly.bulkEdges({
         atomic: false,

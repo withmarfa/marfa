@@ -183,7 +183,7 @@ it("refuses item and edge writes through the private socket with 401 and changes
       door: {
         method: "POST",
         path: "/edges",
-        body: { source_id: kept, target_id: other, edge_type: "references" },
+        body: { from_id: kept, to_id: other, edge_type: "references" },
       },
       status: 201,
     },
@@ -305,7 +305,7 @@ it("refuses every edge door through the private socket with 401 and changes noth
   const created = await keyed({
     method: "POST",
     path: "/edges",
-    body: { source_id: from, target_id: to, edge_type: "references" },
+    body: { from_id: from, to_id: to, edge_type: "references" },
   });
   expect(created.status).toBe(201);
   const edge = ((await created.json()) as { edge: { id: string } }).edge.id;
@@ -323,7 +323,7 @@ it("refuses every edge door through the private socket with 401 and changes noth
     method: "POST",
     path: "/edges/bulk",
     body: {
-      edges: [{ source_id: to, target_id: from, edge_type: "references" }],
+      edges: [{ from_id: to, to_id: from, edge_type: "references" }],
     },
   };
   const patch: Door = {

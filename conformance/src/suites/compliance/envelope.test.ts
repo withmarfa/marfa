@@ -58,8 +58,8 @@ beforeAll(async () => {
   trackItem(ctx, b.data.item.id);
   targetId = b.data.item.id;
   const edge = await client.createEdge({
-    source_id: itemId,
-    target_id: b.data.item.id,
+    from_id: itemId,
+    to_id: b.data.item.id,
     edge_type: "about",
   });
   expect(edge.ok).toBe(true);
@@ -341,7 +341,7 @@ describe("an item's neighbors stand outside the envelope", () => {
     item: {
       edges: Record<
         string,
-        { data: { target_id: string }[]; next_cursor: unknown }
+        { data: { to_id: string }[]; next_cursor: unknown }
       >;
     };
     neighbors?: { item: { id: string } }[];
@@ -375,8 +375,8 @@ describe("an item's neighbors stand outside the envelope", () => {
     const [hub, ...farEnds] = ids;
     const edges = await client.bulkEdges({
       edges: farEnds.map((target, i) => ({
-        source_id: hub!,
-        target_id: target,
+        from_id: hub!,
+        to_id: target,
         edge_type: edgeTypes[i]!,
       })),
     });
@@ -393,7 +393,7 @@ describe("an item's neighbors stand outside the envelope", () => {
     // The blocks name every far end, whatever the list beside them holds.
     expect(
       Object.values(detail.item.edges)
-        .flatMap((block) => block.data.map((edge) => edge.target_id))
+        .flatMap((block) => block.data.map((edge) => edge.to_id))
         .sort(),
     ).toEqual([...farEnds].sort());
     return { detail, farEnds };

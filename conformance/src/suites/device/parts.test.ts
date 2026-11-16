@@ -46,8 +46,8 @@ function on(
     (edges[type] ??= { data: [], next_cursor: null }).data.push(
       wireEdge({
         id: `edge-${source}-${String(at)}`,
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: type,
       }),
     );

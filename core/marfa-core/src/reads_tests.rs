@@ -205,7 +205,7 @@ fn get_edges_answers_each_held_edge_once_and_where_it_was_moved() {
     store::put_server_edge(&core.conn().unwrap(), &moved).unwrap();
     let answered = core.get_edges(&ids(&["ab"])).unwrap();
     assert_eq!(
-        (answered[0].target_id.as_str(), answered[0].version),
+        (answered[0].to_id.as_str(), answered[0].version),
         ("c", 2)
     );
     let kept = core.get_edges_kept(&ids(&["ab"])).unwrap();
@@ -216,7 +216,7 @@ fn get_edges_answers_each_held_edge_once_and_where_it_was_moved() {
 fn get_edge_answers_one_edge_and_keeps_one_it_cannot_read_only_when_kept() {
     let server = Scripted::start();
     let core = notes(&server);
-    assert_eq!(core.get_edge("ab").unwrap().unwrap().target_id, "b");
+    assert_eq!(core.get_edge("ab").unwrap().unwrap().to_id, "b");
     assert_eq!(core.get_edge("gone").unwrap(), None);
     assert_eq!(core.get_edge_kept("gone").unwrap(), None);
     core.conn()
@@ -308,7 +308,7 @@ fn edge_event(kind: &str, id: &str, source: &str, target: &str, version: i64) ->
     json!({
         "event_type": kind,
         "edge": {
-            "id": id, "source_id": source, "target_id": target, "edge_type": "references",
+            "id": id, "from_id": source, "to_id": target, "edge_type": "references",
             "properties": {}, "version": version,
             "created_at": "2026-01-01T00:00:00Z", "updated_at": format!("2026-01-0{version}T00:00:00Z"),
         },
@@ -819,7 +819,7 @@ fn remove_edges(core: &Core, count: usize) {
     let tx = conn.transaction().unwrap();
     tx.execute(
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1)
-         INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
+         INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, created_at, updated_at)
          SELECT 'gone-' || i, 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM n",
         [i64::try_from(count).unwrap()],
     )

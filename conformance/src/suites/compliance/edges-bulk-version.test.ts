@@ -42,8 +42,8 @@ async function editedEdge() {
   const source = await note();
   const target = await note();
   const made = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: "about",
     properties: { weight: 1 },
   });
@@ -72,13 +72,13 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
       atomic: false,
       edges: [
         {
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: "about",
           properties: { weight: 99 },
           version: staleVersion,
         },
-        { source_id: source, target_id: other, edge_type: "about" },
+        { from_id: source, to_id: other, edge_type: "about" },
       ],
     });
     expect(res.status).toBe(200);
@@ -105,10 +105,10 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     const res = await client.bulkEdges({
       atomic: true,
       edges: [
-        { source_id: source, target_id: other, edge_type: "about" },
+        { from_id: source, to_id: other, edge_type: "about" },
         {
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: "about",
           properties: { weight: 99 },
           version: staleVersion,
@@ -139,8 +139,8 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
         atomic,
         edges: [
           {
-            source_id: source,
-            target_id: target,
+            from_id: source,
+            to_id: target,
             edge_type: "about",
             properties: { weight: current.version * 10 },
             version: current.version,
@@ -168,8 +168,8 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
         atomic,
         edges: [
           {
-            source_id: source,
-            target_id: target,
+            from_id: source,
+            to_id: target,
             edge_type: "about",
             properties: { weight: atomic ? 7 : 8 },
           },
@@ -198,8 +198,8 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     const source = await note();
     const target = await note();
     const made = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { weight: 1 },
     });
@@ -211,7 +211,7 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     const unheld = await client.bulkEdges({
       atomic: false,
       edges: [
-        { source_id: source, target_id: await note(), edge_type: edgeType },
+        { from_id: source, to_id: await note(), edge_type: edgeType },
       ],
     });
     expect(unheld.status).toBe(200);
@@ -223,8 +223,8 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
     const res = await client.bulkEdges({
       edges: [
         {
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: edgeType,
           properties: { weight: 2 },
         },
@@ -249,8 +249,8 @@ describe("edges.bulk with a version on an entry that matches no edge", () => {
         mode,
         edges: [
           {
-            source_id: source,
-            target_id: target,
+            from_id: source,
+            to_id: target,
             edge_type: "about",
             properties: { weight: 1 },
             version: 7,
@@ -287,8 +287,8 @@ describe("edges.bulk with a stale version beside other refusals and modes", () =
       apiKey: minted.data.key,
     });
     const stale = {
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
       properties: { weight: 99 },
       version: staleVersion,
@@ -312,8 +312,8 @@ describe("edges.bulk with a stale version beside other refusals and modes", () =
       {
         label: "an edge type the key may not write",
         entry: {
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: "references",
         },
         code: "edge_permission_denied",
@@ -321,8 +321,8 @@ describe("edges.bulk with a stale version beside other refusals and modes", () =
       {
         label: "a source whose type the key may not write",
         entry: {
-          source_id: bookmark.data.item.id,
-          target_id: target,
+          from_id: bookmark.data.item.id,
+          to_id: target,
           edge_type: "about",
         },
         code: "type_not_permitted",
@@ -345,8 +345,8 @@ describe("edges.bulk with a stale version beside other refusals and modes", () =
   it("skips an entry naming a held triple as duplicate_edge under create_only, whatever version it names", async () => {
     const { source, target, edge, staleVersion } = await editedEdge();
     const entry = {
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
       properties: { weight: 99 },
     };

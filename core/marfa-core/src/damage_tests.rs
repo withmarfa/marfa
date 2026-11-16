@@ -677,7 +677,7 @@ fn store_with_a_lost_bodys_edge() -> (tempfile::TempDir, PathBuf, String) {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO queue (id, kind, item_id, target_id, edge_id, idempotency_key, payload, depends_on, queued_at)
+        "INSERT INTO queue (id, kind, item_id, to_id, edge_id, idempotency_key, payload, depends_on, queued_at)
          VALUES ('edge', 'create_edge', ?1, 'other', 'edge-id', 'edge-key', '{}', ?2, '2026-01-01T00:00:00Z')",
         rusqlite::params![item, serde_json::to_string(&[&write.id]).unwrap()],
     )
@@ -1368,8 +1368,8 @@ fn a_write_refused_unsent_whose_record_does_not_read_is_held_past_its_dependency
             conn.execute(
                 "UPDATE queue SET verdict = 'refused', reason = 'the write it depends on died',
                         sent = 0, answered_at = '2026-01-01T00:00:00Z',
-                        payload = json_object('id', edge_id, 'source_id', item_id,
-                          'target_id', target_id, 'edge_type', 'link', 'properties', json('{}'))
+                        payload = json_object('id', edge_id, 'from_id', item_id,
+                          'to_id', to_id, 'edge_type', 'link', 'properties', json('{}'))
                   WHERE id = 'edge'",
                 [],
             )

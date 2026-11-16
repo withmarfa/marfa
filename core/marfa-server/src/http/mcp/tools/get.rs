@@ -285,7 +285,7 @@ fn compact(item: &Value, tags: Vec<String>) -> Value {
                     .and_then(Value::as_array)
                     .map(|data| {
                         data.iter()
-                            .filter_map(|edge| edge.get("target_id").cloned())
+                            .filter_map(|edge| edge.get("to_id").cloned())
                             .collect()
                     })
                     .unwrap_or_default();

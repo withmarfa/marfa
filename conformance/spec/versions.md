@@ -414,7 +414,7 @@ When `POST /items/{id}/transition` names a `version` query parameter other than 
 
 ### `versions/edge-source-exact`
 
-When `POST /edges` or `DELETE /edges/{id}` names a `source_version` query parameter other than the source item's current version, the server MUST answer `409 version_conflict` before changing an edge.
+When `POST /edges` or `DELETE /edges/{id}` names a `from_version` query parameter other than the source item's current version, the server MUST answer `409 version_conflict` before changing an edge.
 
 **Reason:** apps can own some items and observe others under the same type; replacing a whole edge set to check item ownership would risk unrelated edges.
 
@@ -422,13 +422,13 @@ When `POST /edges` or `DELETE /edges/{id}` names a `source_version` query parame
 
 ### `versions/source-exact-envelope`
 
-When a lifecycle or edge write refuses a `version` or `source_version` precondition, the server MUST carry the item whose version was checked in the `current`-only envelope of `versions/exact-envelope`.
+When a lifecycle or edge write refuses a `version` or `from_version` precondition, the server MUST carry the item whose version was checked in the `current`-only envelope of `versions/exact-envelope`.
 
 **Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
 
 ### `versions/source-exact-current`
 
-When an otherwise valid lifecycle or edge write names the current item version in its `version` or `source_version` query parameter, the server MUST apply that individual write.
+When an otherwise valid lifecycle or edge write names the current item version in its `version` or `from_version` query parameter, the server MUST apply that individual write.
 
 **Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
 

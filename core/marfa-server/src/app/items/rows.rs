@@ -380,8 +380,8 @@ pub(super) fn weight(tx: &Transaction<'_>, id: &str, whole: bool) -> Result<i64>
              + CASE WHEN ?2 THEN \
              (SELECT total(?3 + length(v.properties)) FROM item_versions v \
               WHERE v.item_seq = i.seq) \
-             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.source_id = i.id) \
-             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.target_id = i.id) \
+             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.from_id = i.id) \
+             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.to_id = i.id) \
              ELSE 0 END FROM items i WHERE i.id = ?1",
         )?
         .query_row(params![id, whole, ROW_BYTES], |row| row.get(0))

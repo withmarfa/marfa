@@ -212,7 +212,7 @@ fn types(tx: &Transaction<'_>, row: Row<'_>) -> Result<(String, String)> {
             .optional()?,
         Row::Edge(seq) => tx
             .prepare_cached(
-                "SELECT s.type, e.edge_type FROM edges e JOIN items s ON s.id = e.source_id \
+                "SELECT s.type, e.edge_type FROM edges e JOIN items s ON s.id = e.from_id \
                  WHERE e.seq = ?1",
             )?
             .query_row([seq], |row| Ok((row.get(0)?, row.get(1)?)))

@@ -259,7 +259,7 @@ describe("marfa_create with a file", () => {
       const edges = await owner().listItemEdges(args.id, {
         edge_type: "attached-to",
       });
-      expect(edges.data.data.map((edge) => edge.target_id)).toEqual([
+      expect(edges.data.data.map((edge) => edge.to_id)).toEqual([
         note.data.item.id,
       ]);
     } finally {
@@ -592,8 +592,8 @@ describe("marfa_delete", () => {
     });
     await server.waitForHold("hold:write");
     const linked = await owner().createEdge({
-      source_id: second,
-      target_id: late,
+      from_id: second,
+      to_id: late,
       edge_type: "parent-of",
     });
     expect(linked.status, JSON.stringify(linked.error)).toBe(201);

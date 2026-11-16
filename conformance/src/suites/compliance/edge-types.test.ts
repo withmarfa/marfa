@@ -37,8 +37,8 @@ describe("custom edge-type registration", () => {
       label: "Test edge type",
       description: "For edge-type compliance tests",
       cardinality: "many-to-many",
-      source_type_constraints: ["core.note"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(r.status).toBe(201);
@@ -154,8 +154,8 @@ describe("custom edge-type registration", () => {
     trackItem(ctx, b.data.item.id);
 
     const edge = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: etId,
     });
     expect(edge.ok).toBe(true);
@@ -545,10 +545,10 @@ describe("custom edge-type registration", () => {
       | undefined;
     expect(inFolder).toMatchObject({
       cardinality: "many-to-many",
-      source_type_constraints: ["*"],
-      target_type_constraints: ["system.folder"],
+      from_type_constraints: ["*"],
+      to_type_constraints: ["system.folder"],
       cascade_on_delete: "orphan",
-      written_at: "none",
+      written_from: "none",
     });
     expect(inFolder?.reverse_name ?? null).toBeNull();
     expect(inFolder?.property_schema).toHaveProperty("path");
@@ -597,8 +597,8 @@ describe("custom edge-type registration", () => {
     expect(blindNote.status).toBe(201);
     trackItem(ctx, blindNote.data.item.id);
     const unseen = await blind.createEdge({
-      source_id: blindNote.data.item.id,
-      target_id: folderId,
+      from_id: blindNote.data.item.id,
+      to_id: folderId,
       edge_type: "in-folder",
       properties: { path: "Notes/placed.md" },
     });
@@ -606,8 +606,8 @@ describe("custom edge-type registration", () => {
     expect(unseen.error?.error.code).toBe("item_not_found");
 
     const edge = await placer.createEdge({
-      source_id: note.data.item.id,
-      target_id: folderId,
+      from_id: note.data.item.id,
+      to_id: folderId,
       edge_type: "in-folder",
       properties: { path: "Notes/placed.md" },
     });
@@ -637,8 +637,8 @@ describe("custom edge-type registration", () => {
     expect(other.status).toBe(201);
     trackItem(ctx, other.data.item.id);
     const misplaced = await placer.createEdge({
-      source_id: note.data.item.id,
-      target_id: other.data.item.id,
+      from_id: note.data.item.id,
+      to_id: other.data.item.id,
       edge_type: "in-folder",
       properties: { path: "Notes/placed.md" },
     });
@@ -673,8 +673,8 @@ describe("custom edge-type registration", () => {
       [{ path: "a.md", weight: 1 }, "properties.weight"],
     ] as const) {
       const r = await client.createEdge({
-        source_id: source,
-        target_id: folderId,
+        from_id: source,
+        to_id: folderId,
         edge_type: "in-folder",
         ...(properties !== undefined && { properties }),
       });
@@ -688,8 +688,8 @@ describe("custom edge-type registration", () => {
 
     // The witness: the same path without the `..` is taken.
     const placed = await client.createEdge({
-      source_id: source,
-      target_id: folderId,
+      from_id: source,
+      to_id: folderId,
       edge_type: "in-folder",
       properties: { path: "Notes/Tickets/a.md" },
     });
@@ -706,8 +706,8 @@ describe("custom edge-type registration", () => {
       atomic: false,
       edges: [
         {
-          source_id: source,
-          target_id: folderId,
+          from_id: source,
+          to_id: folderId,
           edge_type: "in-folder",
           properties: { path: "../a.md" },
         },
@@ -778,8 +778,8 @@ describe("custom edge-type registration", () => {
     };
     const source = await note();
     const placed = await client.createEdge({
-      source_id: source,
-      target_id: folderId,
+      from_id: source,
+      to_id: folderId,
       edge_type: "in-folder",
       properties: { path: "kept.md" },
     });
@@ -806,8 +806,8 @@ describe("custom edge-type registration", () => {
     // A bulk entry for a triple an edge holds merges, and one for a new
     // triple creates, so each is judged on its own properties.
     const entry = (src: string, properties?: Record<string, unknown>) => ({
-      source_id: src,
-      target_id: folderId,
+      from_id: src,
+      to_id: folderId,
       edge_type: "in-folder",
       ...(properties !== undefined && { properties }),
     });
@@ -889,8 +889,8 @@ describe("custom edge-type registration", () => {
       return r.data.item.id;
     };
     const held = await client.createEdge({
-      source_id: await note(),
-      target_id: folderId,
+      from_id: await note(),
+      to_id: folderId,
       edge_type: "in-folder",
       properties: { path: "held.md" },
     });
@@ -899,8 +899,8 @@ describe("custom edge-type registration", () => {
     expect((await client.revokeFolder(folderId)).status).toBe(200);
 
     const refused = await client.createEdge({
-      source_id: await note(),
-      target_id: folderId,
+      from_id: await note(),
+      to_id: folderId,
       edge_type: "in-folder",
       properties: { path: "new.md" },
     });
@@ -914,8 +914,8 @@ describe("custom edge-type registration", () => {
       atomic: false,
       edges: [
         {
-          source_id: await note(),
-          target_id: folderId,
+          from_id: await note(),
+          to_id: folderId,
           edge_type: "in-folder",
           properties: { path: "new.md" },
         },
@@ -1094,19 +1094,19 @@ describe("custom edge-type registration", () => {
   it("lists the end whose file writes each shipped edge type", async () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
-    const writtenAt = Object.fromEntries(
+    const writtenFrom = Object.fromEntries(
       r.data.data
         .filter((t) => !t.id.includes("."))
-        .map((t) => [t.id, t.written_at]),
+        .map((t) => [t.id, t.written_from]),
     );
     // A child names its parent; everything else is written by its source,
     // an attachment included, which names what it was made for.
-    expect(writtenAt["parent-of"]).toBe("target");
-    expect(writtenAt["attached-to"]).toBe("source");
-    expect(writtenAt["comments-on"]).toBe("source");
-    expect(writtenAt["references"]).toBe("source");
+    expect(writtenFrom["parent-of"]).toBe("target");
+    expect(writtenFrom["attached-to"]).toBe("source");
+    expect(writtenFrom["comments-on"]).toBe("source");
+    expect(writtenFrom["references"]).toBe("source");
     // No file writes the placement of a file, so the edge names no end.
-    expect(writtenAt["in-folder"]).toBe("none");
+    expect(writtenFrom["in-folder"]).toBe("none");
   });
 
   it("registers an edge type with a reverse name and lists it", async () => {
@@ -1177,11 +1177,11 @@ describe("custom edge-type registration", () => {
       id: etId,
       cardinality: "one-to-many",
       reverse_name: reverse,
-      written_at: "target",
+      written_from: "to",
     });
     expect(r.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(r.data.edge_type.written_at).toBe("target");
+    expect(r.data.edge_type.written_from).toBe("target");
 
     // The default is the source, and says so.
     const plainId = `mock.written-default.${ctx.runId}`;
@@ -1192,7 +1192,7 @@ describe("custom edge-type registration", () => {
     });
     expect(plain.status).toBe(201);
     trackEdgeType(ctx, plainId);
-    expect(plain.data.edge_type.written_at).toBe("source");
+    expect(plain.data.edge_type.written_from).toBe("source");
 
     // An edge no file writes names no end, and needs no name to write it under.
     const noneId = `mock.written-none.${ctx.runId}`;
@@ -1200,20 +1200,20 @@ describe("custom edge-type registration", () => {
       label: "Test edge type",
       id: noneId,
       cardinality: "many-to-many",
-      written_at: "none",
+      written_from: "none",
     });
     expect(none.status, JSON.stringify(none.error)).toBe(201);
     trackEdgeType(ctx, noneId);
-    expect(none.data.edge_type.written_at).toBe("none");
+    expect(none.data.edge_type.written_from).toBe("none");
     const listedNone = await client.listEdgeTypes();
-    expect(listedNone.data.data.find((t) => t.id === noneId)?.written_at).toBe(
+    expect(listedNone.data.data.find((t) => t.id === noneId)?.written_from).toBe(
       "none",
     );
     const bogus = await client.registerEdgeType({
       label: "Test edge type",
       id: `mock.written-bogus.${ctx.runId}`,
       cardinality: "many-to-many",
-      written_at: "nowhere" as never,
+      written_from: "nowhere" as never,
     });
     expect(bogus.status).toBe(400);
 
@@ -1223,7 +1223,7 @@ describe("custom edge-type registration", () => {
       label: "Test edge type",
       id: `mock.written-nameless.${ctx.runId}`,
       cardinality: "one-to-many",
-      written_at: "target",
+      written_from: "to",
     });
     expect(nameless.status).toBe(400);
     expect(nameless.error?.error.code).toBe("validation_error");
@@ -1232,7 +1232,7 @@ describe("custom edge-type registration", () => {
       label: "Test edge type",
       id: `mock.written-elsewhere.${ctx.runId}`,
       cardinality: "one-to-many",
-      ...({ written_at: "middle" } as Record<string, unknown>),
+      ...({ written_from: "middle" } as Record<string, unknown>),
     });
     expect(elsewhere.status).toBe(400);
   });
@@ -1295,8 +1295,8 @@ describe("custom edge-type registration", () => {
 
   it("refuses a type constraint naming an unknown role with 400 validation_error, and takes a known one", async () => {
     for (const [field, constraints] of [
-      ["source_type_constraints", ["role:no-such-role"]],
-      ["target_type_constraints", ["core.note", "role:no-such-role"]],
+      ["from_type_constraints", ["role:no-such-role"]],
+      ["to_type_constraints", ["core.note", "role:no-such-role"]],
     ] as const) {
       const r = await client.registerEdgeType({
         label: "Test edge type",
@@ -1317,11 +1317,11 @@ describe("custom edge-type registration", () => {
       label: "Test edge type",
       id: etId,
       cardinality: "many-to-many",
-      target_type_constraints: ["role:container"],
+      to_type_constraints: ["role:container"],
     });
     expect(known.status).toBe(201);
     trackEdgeType(ctx, etId);
-    expect(known.data.edge_type.target_type_constraints).toEqual([
+    expect(known.data.edge_type.to_type_constraints).toEqual([
       "role:container",
     ]);
   });
@@ -1444,20 +1444,20 @@ describe("custom edge-type registration", () => {
     const about = registry.data.data.find((t) => t.id === "about");
     expect(about).toBeDefined();
     expect(about!.cardinality).toBe("many-to-many");
-    expect(about!.source_type_constraints).toEqual(["*"]);
-    expect(about!.target_type_constraints).toEqual(["*"]);
+    expect(about!.from_type_constraints).toEqual(["*"]);
+    expect(about!.to_type_constraints).toEqual(["*"]);
 
     const e1 = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: "about",
     });
     expect(e1.ok).toBe(true);
     trackEdge(ctx, e1.data.edge.id);
     expect(e1.data.edge.edge_type).toBe("about");
     const e2 = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: c.data.item.id,
+      from_id: a.data.item.id,
+      to_id: c.data.item.id,
       edge_type: "about",
     });
     expect(e2.ok).toBe(true);
@@ -1484,8 +1484,8 @@ describe("custom edge-type registration", () => {
     trackItem(ctx, b.data.item.id);
 
     const e = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: etId,
     });
     expect(e.ok).toBe(true);
@@ -1681,8 +1681,8 @@ describe("explicit edge-type constraint evolution", () => {
       id: `mock.evolve.${ctx.runId}`,
       label: "Kept connection",
       cardinality: "many-to-many" as const,
-      source_type_constraints: ["core.note"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
+      to_type_constraints: ["core.note"],
     };
     expect((await client.registerEdgeType(definition)).status).toBe(201);
     trackEdgeType(ctx, definition.id);
@@ -1697,8 +1697,8 @@ describe("explicit edge-type constraint evolution", () => {
     const a = await note();
     const b = await note();
     const made = await client.createEdge({
-      source_id: a.id,
-      target_id: b.id,
+      from_id: a.id,
+      to_id: b.id,
       edge_type: definition.id,
       properties: { note: "Kept" },
     });
@@ -1707,13 +1707,13 @@ describe("explicit edge-type constraint evolution", () => {
     const before = (await client.getEdge(made.data.edge.id)).data.edge;
     const evolution = {
       ...definition,
-      source_type_constraints: ["core.note", "core.task"],
+      from_type_constraints: ["core.note", "core.task"],
       evolve_constraints: true,
     };
     const changed = await client.registerEdgeType(evolution);
     expect(changed.status).toBe(200);
     await expectMatchesSchema("POST", "/edge-types", 200, changed.data);
-    expect(changed.data.edge_type.source_type_constraints).toEqual([
+    expect(changed.data.edge_type.from_type_constraints).toEqual([
       "core.note",
       "core.task",
     ]);
@@ -1771,13 +1771,13 @@ describe("explicit edge-type constraint evolution", () => {
       label: "Kept connection",
       reverse_label: "Kept by",
       cardinality: "many-to-many" as const,
-      source_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
     };
     const twoWay = {
       id: `mock.evolve-labels-two-way.${ctx.runId}`,
       label: "Joined to",
       cardinality: "many-to-many" as const,
-      source_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
     };
     for (const definition of [named, twoWay]) {
       expect((await client.registerEdgeType(definition)).status).toBe(201);
@@ -1786,7 +1786,7 @@ describe("explicit edge-type constraint evolution", () => {
     const bare = (definition: typeof named | typeof twoWay) => ({
       id: definition.id,
       cardinality: definition.cardinality,
-      source_type_constraints: ["*"],
+      from_type_constraints: ["*"],
       evolve_constraints: true,
     });
     for (const definition of [named, twoWay]) {
@@ -1804,7 +1804,7 @@ describe("explicit edge-type constraint evolution", () => {
       "Joined to",
     ]);
     // The witness that the evolution ran: the endpoint is widened.
-    expect(row(named.id)?.source_type_constraints).toEqual(["*"]);
+    expect(row(named.id)?.from_type_constraints).toEqual(["*"]);
   });
 
   it("refuses narrowing, structural changes, and a missing evolution target", async () => {
@@ -1812,7 +1812,7 @@ describe("explicit edge-type constraint evolution", () => {
       id: `mock.evolve-refused.${ctx.runId}`,
       label: "Kept connection",
       cardinality: "many-to-many" as const,
-      source_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
     };
     expect((await client.registerEdgeType(definition)).status).toBe(201);
     trackEdgeType(ctx, definition.id);
@@ -1820,7 +1820,7 @@ describe("explicit edge-type constraint evolution", () => {
       (one) => one.id === definition.id,
     );
     for (const change of [
-      { source_type_constraints: ["core.task"] },
+      { from_type_constraints: ["core.task"] },
       { cardinality: "many-to-one" as const },
       { description: "Changed" },
     ]) {
@@ -1847,19 +1847,19 @@ describe("explicit edge-type constraint evolution", () => {
       id: `mock.evolve-unrestricted.${ctx.runId}`,
       label: "Kept connection",
       cardinality: "many-to-many" as const,
-      source_type_constraints: [],
+      from_type_constraints: [],
     };
     expect((await client.registerEdgeType(definition)).status).toBe(201);
     trackEdgeType(ctx, definition.id);
     const narrowing = {
       ...definition,
-      source_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
       evolve_constraints: true,
     };
     expect((await client.registerEdgeType(narrowing)).status).toBe(409);
     const wildcard = {
       ...definition,
-      source_type_constraints: ["*"],
+      from_type_constraints: ["*"],
       evolve_constraints: true,
     };
     expect((await client.registerEdgeType(wildcard)).status).toBe(200);
@@ -1873,7 +1873,7 @@ it("preserves an admitted addition when constraint evolutions compete", async ()
     id: `mock.evolve-race.${ctx.runId}`,
     label: "Kept connection",
     cardinality: "many-to-many" as const,
-    source_type_constraints: ["core.note"],
+    from_type_constraints: ["core.note"],
   };
   expect((await client.registerEdgeType(definition)).status).toBe(201);
   trackEdgeType(ctx, definition.id);
@@ -1881,7 +1881,7 @@ it("preserves an admitted addition when constraint evolutions compete", async ()
     ["core.task", "core.message"].map((type) => {
       const evolution = {
         ...definition,
-        source_type_constraints: ["core.note", type],
+        from_type_constraints: ["core.note", type],
         evolve_constraints: true,
       };
       return client.registerEdgeType(evolution);
@@ -1891,10 +1891,10 @@ it("preserves an admitted addition when constraint evolutions compete", async ()
   const held = (await client.listEdgeTypes()).data.data.find(
     (one) => one.id === definition.id,
   );
-  expect(held?.source_type_constraints).toHaveLength(2);
+  expect(held?.from_type_constraints).toHaveLength(2);
   const combined = {
     ...definition,
-    source_type_constraints: ["core.note", "core.task", "core.message"],
+    from_type_constraints: ["core.note", "core.task", "core.message"],
     evolve_constraints: true,
   };
   expect((await client.registerEdgeType(combined)).status).toBe(200);

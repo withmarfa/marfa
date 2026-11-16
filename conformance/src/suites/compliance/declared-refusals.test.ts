@@ -110,8 +110,8 @@ async function seedItem(label: string): Promise<string> {
 
 async function seedEdge(): Promise<{ id: string; version: number }> {
   const r = await client.createEdge({
-    source_id: await seedItem("edge-source"),
-    target_id: await seedItem("edge-target"),
+    from_id: await seedItem("edge-source"),
+    to_id: await seedItem("edge-target"),
     edge_type: "about",
   });
   expect(r.ok).toBe(true);
@@ -162,16 +162,16 @@ describe("a key names one request", () => {
         first: async () => ({
           path: "/edges",
           body: {
-            source_id: await seedItem("post-a"),
-            target_id: await seedItem("post-b"),
+            from_id: await seedItem("post-a"),
+            to_id: await seedItem("post-b"),
             edge_type: "about",
           },
         }),
         second: async () => ({
           path: "/edges",
           body: {
-            source_id: await seedItem("post-c"),
-            target_id: await seedItem("post-d"),
+            from_id: await seedItem("post-c"),
+            to_id: await seedItem("post-d"),
             edge_type: "about",
           },
         }),
@@ -446,8 +446,8 @@ describe("an identifier nothing carries", () => {
       "/edges",
       await call("POST", "/edges", {
         body: {
-          source_id: UNKNOWN,
-          target_id: await seedItem("unknown-source"),
+          from_id: UNKNOWN,
+          to_id: await seedItem("unknown-source"),
           edge_type: "about",
         },
       }),
@@ -1106,8 +1106,8 @@ describe("a query key no door declares", () => {
     const about = await seedItem("shorthand-target");
     const source = await seedItem("shorthand-source");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: about,
+      from_id: source,
+      to_id: about,
       edge_type: "about",
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

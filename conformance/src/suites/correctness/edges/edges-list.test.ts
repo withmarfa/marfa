@@ -36,8 +36,8 @@ async function seedItem(label: string): Promise<string> {
 
 async function seedEdge(source: string, target: string, edgeType: string) {
   const r = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(r.ok).toBe(true);
@@ -55,8 +55,8 @@ describe("edge listing and reads", () => {
     expect(r.ok).toBe(true);
     await expectMatchesSchema("GET", "/edges/{id}", 200, r.data);
     expect(r.data.edge.id).toBe(created.id);
-    expect(r.data.edge.source_id).toBe(a);
-    expect(r.data.edge.target_id).toBe(b);
+    expect(r.data.edge.from_id).toBe(a);
+    expect(r.data.edge.to_id).toBe(b);
     expect(r.data.edge.edge_type).toBe("about");
     expect(r.data.edge.version).toBe(1);
   });

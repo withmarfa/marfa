@@ -101,8 +101,8 @@ describe("occurrences", () => {
       original_starts_at: "2041-01-02T09:00:00.500Z",
     });
     const edge = await client.createEdge({
-      source_id: id,
-      target_id: moved,
+      from_id: id,
+      to_id: moved,
       edge_type: "parent-of",
     });
     expect(edge.status).toBe(201);

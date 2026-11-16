@@ -47,8 +47,8 @@ describe("edge type-constraints", () => {
       label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.highlight"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.highlight"],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(reg.ok).toBe(true);
@@ -58,8 +58,8 @@ describe("edge type-constraints", () => {
     const target = await makeItem(createNote({ source: ctx.source }));
 
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeTypeId,
     });
     expect(edge.ok).toBe(true);
@@ -72,8 +72,8 @@ describe("edge type-constraints", () => {
       label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.highlight"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.highlight"],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(reg.ok).toBe(true);
@@ -83,8 +83,8 @@ describe("edge type-constraints", () => {
     const target = await makeItem(createNote({ source: ctx.source }));
 
     const r = await client.createEdge({
-      source_id: wrongSource,
-      target_id: target,
+      from_id: wrongSource,
+      to_id: target,
       edge_type: edgeTypeId,
     });
     expect(r.ok).toBe(false);
@@ -98,8 +98,8 @@ describe("edge type-constraints", () => {
       label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.note"],
-      target_type_constraints: ["core.media.article"],
+      from_type_constraints: ["core.note"],
+      to_type_constraints: ["core.media.article"],
       cascade_on_delete: "orphan",
     });
     expect(reg.ok).toBe(true);
@@ -109,8 +109,8 @@ describe("edge type-constraints", () => {
     const wrongTarget = await makeItem(createNote({ source: ctx.source }));
 
     const r = await client.createEdge({
-      source_id: source,
-      target_id: wrongTarget,
+      from_id: source,
+      to_id: wrongTarget,
       edge_type: edgeTypeId,
     });
     expect(r.ok).toBe(false);
@@ -139,8 +139,8 @@ describe("edge type-constraints", () => {
       label: "Test edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.highlight"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.highlight"],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(edgeReg.ok).toBe(true);
@@ -153,8 +153,8 @@ describe("edge type-constraints", () => {
     const target = await makeItem(createNote({ source: ctx.source }));
 
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeTypeId,
     });
     expect(edge.ok).toBe(true);
@@ -170,8 +170,8 @@ describe("edge type-constraints", () => {
     // The witness: a source that is no container joins the album, so the
     // refusals below are the source and not the edge type or the target.
     const joined = await client.createEdge({
-      source_id: note,
-      target_id: album,
+      from_id: note,
+      to_id: album,
       edge_type: "in-collection",
     });
     expect(joined.status, JSON.stringify(joined.error)).toBe(201);
@@ -183,15 +183,15 @@ describe("edge type-constraints", () => {
     ];
     for (const source of sources) {
       const refused = await client.createEdge({
-        source_id: source.id,
-        target_id: otherAlbum,
+        from_id: source.id,
+        to_id: otherAlbum,
         edge_type: "in-collection",
       });
       expect(refused.status, source.type).toBe(400);
       expect(refused.error?.error.code).toBe("edge_constraint_violation");
       expect(refused.error?.error.details).toEqual({
         edge_type: "in-collection",
-        source_id: source.id,
+        from_id: source.id,
         source_type: source.type,
         constraint: "nesting",
       });
@@ -213,7 +213,7 @@ describe("edge type-constraints", () => {
 
     const bulk = await client.bulkEdges({
       edges: [
-        { source_id: album, target_id: otherAlbum, edge_type: "in-collection" },
+        { from_id: album, to_id: otherAlbum, edge_type: "in-collection" },
       ],
       atomic: false,
     });
@@ -233,8 +233,8 @@ describe("endpoint constraints on every write path", () => {
       label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.highlight"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.highlight"],
+      to_type_constraints: ["core.note"],
     });
     expect(reg.status).toBe(201);
     trackEdgeType(ctx, edgeType);
@@ -255,7 +255,7 @@ describe("endpoint constraints on every write path", () => {
   async function stored(source: string): Promise<string[]> {
     const r = await client.listItemEdges(source, { edge_type: edgeType });
     expect(r.status).toBe(200);
-    return r.data.data.map((e) => e.target_id);
+    return r.data.data.map((e) => e.to_id);
   }
 
   it("refuses an end of the wrong type on POST /edges, naming the type and the types allowed", async () => {
@@ -265,16 +265,16 @@ describe("endpoint constraints on every write path", () => {
     const otherNote = await makeItem(createNote({ source: ctx.source }));
 
     const source = await client.createEdge({
-      source_id: otherNote,
-      target_id: note,
+      from_id: otherNote,
+      to_id: note,
       edge_type: edgeType,
     });
     expect(source.status).toBe(400);
     expect(source.error?.error.code).toBe("edge_constraint_violation");
     expect(source.error?.error.details).toEqual(wrongSource());
     const target = await client.createEdge({
-      source_id: highlight,
-      target_id: bookmark,
+      from_id: highlight,
+      to_id: bookmark,
       edge_type: edgeType,
     });
     expect(target.status).toBe(400);
@@ -284,8 +284,8 @@ describe("endpoint constraints on every write path", () => {
 
     // The witness: the same source and a target of the allowed type.
     const placed = await client.createEdge({
-      source_id: highlight,
-      target_id: note,
+      from_id: highlight,
+      to_id: note,
       edge_type: edgeType,
     });
     expect(placed.status).toBe(201);
@@ -299,9 +299,9 @@ describe("endpoint constraints on every write path", () => {
     const bookmark = await makeItem(createBookmark({ source: ctx.source }));
     const otherNote = await makeItem(createNote({ source: ctx.source }));
     const entries = [
-      { source_id: highlight, target_id: note, edge_type: edgeType },
-      { source_id: otherNote, target_id: note, edge_type: edgeType },
-      { source_id: highlight, target_id: bookmark, edge_type: edgeType },
+      { from_id: highlight, to_id: note, edge_type: edgeType },
+      { from_id: otherNote, to_id: note, edge_type: edgeType },
+      { from_id: highlight, to_id: bookmark, edge_type: edgeType },
     ];
 
     const partial = await client.bulkEdges({ atomic: false, edges: entries });
@@ -321,7 +321,7 @@ describe("endpoint constraints on every write path", () => {
     const rolled = await client.bulkEdges({
       atomic: true,
       edges: [
-        { source_id: other, target_id: note, edge_type: edgeType },
+        { from_id: other, to_id: note, edge_type: edgeType },
         entries[2]!,
       ],
     });
@@ -373,8 +373,8 @@ describe("moving an item that holds edges to another type", () => {
       label: "Retype edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
-      source_type_constraints: ["core.note"],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(reg.ok, JSON.stringify(reg.error)).toBe(true);
@@ -384,8 +384,8 @@ describe("moving an item that holds edges to another type", () => {
     const target = await makeItem(createNote({ source: ctx.source }));
     const loose = await makeItem(createNote({ source: ctx.source }));
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeTypeId,
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -458,8 +458,8 @@ describe("moving an item that holds edges to another type", () => {
     const member = await makeItem(createNote({ source: ctx.source }));
     const loose = await makeItem(createNote({ source: ctx.source }));
     const joined = await client.createEdge({
-      source_id: member,
-      target_id: album,
+      from_id: member,
+      to_id: album,
       edge_type: "in-collection",
     });
     expect(joined.status, JSON.stringify(joined.error)).toBe(201);
@@ -482,7 +482,7 @@ describe("moving an item that holds edges to another type", () => {
     expect(refused.error?.error.code).toBe("edge_constraint_violation");
     expect(refused.error?.error.details).toEqual({
       edge_type: "in-collection",
-      source_id: member,
+      from_id: member,
       source_type: "core.collection",
       constraint: "nesting",
     });
@@ -496,8 +496,8 @@ describe("moving an item that holds edges to another type", () => {
       createNote({ source: ctx.source, source_id: sourceId }),
     );
     const joined = await client.createEdge({
-      source_id: member,
-      target_id: album,
+      from_id: member,
+      to_id: album,
       edge_type: "in-collection",
     });
     expect(joined.status, JSON.stringify(joined.error)).toBe(201);
@@ -524,7 +524,7 @@ describe("moving an item that holds edges to another type", () => {
         code: "edge_constraint_violation",
         details: {
           edge_type: "in-collection",
-          source_id: member,
+          from_id: member,
           constraint: "nesting",
         },
       },
@@ -548,8 +548,8 @@ describe("moving an item that holds edges to another type", () => {
       label: "Retype job edge type",
       id: edgeTypeId,
       cardinality: "many-to-many",
-      source_type_constraints: [from],
-      target_type_constraints: ["core.note"],
+      from_type_constraints: [from],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(reg.ok, JSON.stringify(reg.error)).toBe(true);
@@ -566,8 +566,8 @@ describe("moving an item that holds edges to another type", () => {
       source: ctx.source,
     });
     const edge = await client.createEdge({
-      source_id: linked,
-      target_id: note,
+      from_id: linked,
+      to_id: note,
       edge_type: edgeTypeId,
     });
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);
@@ -596,8 +596,8 @@ describe("moving an item that holds edges to another type", () => {
     const bulked = await makeItem(createNote({ source: ctx.source }));
     for (const member of [patched, bulked]) {
       const joined = await client.createEdge({
-        source_id: member,
-        target_id: album,
+        from_id: member,
+        to_id: album,
         edge_type: "in-collection",
       });
       expect(joined.status, JSON.stringify(joined.error)).toBe(201);

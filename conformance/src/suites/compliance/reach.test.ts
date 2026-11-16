@@ -215,8 +215,8 @@ async function seedEdge(
   by = client,
 ) {
   const result = await by.createEdge({
-    source_id: from,
-    target_id: to,
+    from_id: from,
+    to_id: to,
     edge_type: edgeType,
   });
   expect(result.ok, JSON.stringify(result.error)).toBe(true);
@@ -415,8 +415,8 @@ describe("conditional working-copy reaches", () => {
       await seed("page three"),
     ];
     const edge = await client.createEdge({
-      source_id: rows[0]!.id,
-      target_id: rows[1]!.id,
+      from_id: rows[0]!.id,
+      to_id: rows[1]!.id,
       edge_type: "about",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -625,8 +625,8 @@ describe("conditional working-copy reaches", () => {
     );
     const included = await seed("listed source control");
     const edge = await client.createEdge({
-      source_id: included.id,
-      target_id: excluded.id,
+      from_id: included.id,
+      to_id: excluded.id,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -908,8 +908,8 @@ describe("conditional working-copy reaches", () => {
     const row = await seed("retype witness");
     const target = await seed("retype edge target");
     const edge = await client.createEdge({
-      source_id: row.id,
-      target_id: target.id,
+      from_id: row.id,
+      to_id: target.id,
       edge_type: "about",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -1144,8 +1144,8 @@ describe("conditional working-copy reaches", () => {
     trackItem(ctx, body.item.id);
     const target = await seed("receipt edge target");
     const edge = await write("/edges", {
-      source_id: body.item.id,
-      target_id: target.id,
+      from_id: body.item.id,
+      to_id: target.id,
       edge_type: "about",
     });
     expect(edge.status).toBe(201);
@@ -1335,18 +1335,18 @@ describe("what moves a reach", () => {
     expect((await client.deleteEdge(extra.id)).ok).toBe(true);
     await holds(proof);
     const retargeted = await client.updateEdge(edge.id, {
-      target_id: farther.id,
+      to_id: farther.id,
       version: edge.version,
     });
     expect(retargeted.ok, JSON.stringify(retargeted.error)).toBe(true);
-    expect(retargeted.data.edge.target_id).toBe(farther.id);
+    expect(retargeted.data.edge.to_id).toBe(farther.id);
     await holds(proof);
     const resourced = await client.updateEdge(edge.id, {
-      source_id: elsewhere.id,
+      from_id: elsewhere.id,
       version: retargeted.data.edge.version,
     });
     expect(resourced.ok, JSON.stringify(resourced.error)).toBe(true);
-    expect(resourced.data.edge.source_id).toBe(elsewhere.id);
+    expect(resourced.data.edge.from_id).toBe(elsewhere.id);
     await moves(proof);
   });
 
@@ -1780,7 +1780,7 @@ describe("a copy stream resumed from a cursor and the frames it carries", () => 
       const edge = await seedEdge(from.id, to.id, "supersedes");
       edgeId = edge.id;
       const moved = await client.updateEdge(edge.id, {
-        target_id: farther.id,
+        to_id: farther.id,
         version: edge.version,
       });
       expect(moved.ok, JSON.stringify(moved.error)).toBe(true);

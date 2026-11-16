@@ -23,8 +23,8 @@ pub(crate) use rows::Store;
 pub struct Edge {
     seq: i64,
     pub id: String,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     pub properties: String,
     pub version: i64,
@@ -35,8 +35,8 @@ pub struct Edge {
 #[derive(Serialize)]
 struct EdgeHead<'a> {
     id: &'a str,
-    source_id: &'a str,
-    target_id: &'a str,
+    from_id: &'a str,
+    to_id: &'a str,
     edge_type: &'a str,
     version: i64,
     created_at: &'a str,
@@ -52,8 +52,8 @@ impl Edge {
         with_properties(
             &EdgeHead {
                 id: &self.id,
-                source_id: &self.source_id,
-                target_id: &self.target_id,
+                from_id: &self.from_id,
+                to_id: &self.to_id,
                 edge_type: &self.edge_type,
                 version: self.version,
                 created_at: &self.created_at,
@@ -110,7 +110,7 @@ pub fn naming_host(
 
 pub fn source_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     match rows::by_id(tx, id)? {
-        Some(edge) => super::items::type_of(tx, &edge.source_id),
+        Some(edge) => super::items::type_of(tx, &edge.from_id),
         None => Ok(None),
     }
 }

@@ -87,7 +87,7 @@ function edgeRows(
   > = {};
   for (const item of items) {
     const drawn: Record<string, { data: unknown[]; next_cursor: null }> = {};
-    for (const edge of edges.filter((held) => held.source_id === item.id)) {
+    for (const edge of edges.filter((held) => held.from_id === item.id)) {
       const type = edge.edge_type ?? "references";
       (drawn[type] ??= { data: [], next_cursor: null }).data.push(
         wireEdge(edge),
@@ -189,8 +189,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1e1",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
       ],
@@ -223,8 +223,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1e2",
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -286,14 +286,14 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1e3",
-          source_id: log,
-          target_id: host,
+          from_id: log,
+          to_id: host,
           edge_type: "attached-to",
         },
         {
           id: "01a00000-0000-7000-8000-00000000e1e4",
-          source_id: image,
-          target_id: host,
+          from_id: image,
+          to_id: host,
           edge_type: "attached-to",
         },
       ],
@@ -350,8 +350,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1e5",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
       ],
@@ -375,11 +375,11 @@ describe("edges in frontmatter", () => {
       "folder-edge-line-removed",
       [titled(alpha, "Alpha"), titled(beta, "Beta"), titled(gamma, "Gamma")],
       [
-        { id: edge, source_id: alpha, target_id: beta, edge_type: "about" },
+        { id: edge, from_id: alpha, to_id: beta, edge_type: "about" },
         {
           id: "01a00000-0000-7000-8000-00000000e1e7",
-          source_id: alpha,
-          target_id: gamma,
+          from_id: alpha,
+          to_id: gamma,
           edge_type: "about",
         },
       ],
@@ -408,11 +408,11 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1e9",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
-        { id: edge, source_id: alpha, target_id: gamma, edge_type: "about" },
+        { id: edge, from_id: alpha, to_id: gamma, edge_type: "about" },
       ],
     );
     harness = made.harness;
@@ -459,8 +459,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1ea",
-          source_id: alpha,
-          target_id: gamma,
+          from_id: alpha,
+          to_id: gamma,
           edge_type: "about",
         },
       ],
@@ -855,8 +855,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1eb",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
       ],
@@ -914,14 +914,14 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1eb",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
         {
           id: "01a00000-0000-7000-8000-00000000e1ec",
-          source_id: alpha,
-          target_id: twin,
+          from_id: alpha,
+          to_id: twin,
           edge_type: "about",
         },
       ],
@@ -994,8 +994,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -1038,8 +1038,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1eb",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
       ],
@@ -1138,7 +1138,7 @@ describe("edges in frontmatter", () => {
                 edgeType("mentor-of", {
                   cardinality: "one-to-many",
                   reverse_name: "mentored-by",
-                  written_at: "target",
+                  written_from: "to",
                 }),
               ]
             : []),
@@ -1147,7 +1147,7 @@ describe("edges in frontmatter", () => {
                 edgeType("sponsor-of", {
                   cardinality: "one-to-many",
                   reverse_name: "sponsored-by",
-                  written_at: "target",
+                  written_from: "to",
                 }),
               ]
             : []),
@@ -1209,7 +1209,7 @@ describe("edges in frontmatter", () => {
         data: [
           ...SCRIPTED_EDGE_TYPES,
           edgeType("shelved-in", {
-            target_type_constraints: widened
+            to_type_constraints: widened
               ? ["core.collection", "core.note"]
               : ["core.collection"],
           }),
@@ -1322,8 +1322,8 @@ describe("edges in frontmatter", () => {
   it("flags a new target for an end whose edge the file never showed, and deletes nothing", async () => {
     const parentEdge = {
       id: "01a00000-0000-7000-8000-00000000e1ed",
-      source_id: project,
-      target_id: child,
+      from_id: project,
+      to_id: child,
       edge_type: "parent-of",
     };
     harness = await folderHarness("folder-edge-unshown", {
@@ -1371,8 +1371,8 @@ describe("edges in frontmatter", () => {
   it("flags a held name that resolves at an end whose edge the file never showed, and writes nothing", async () => {
     const parentEdge = {
       id: "01a00000-0000-7000-8000-00000000e1ed",
-      source_id: project,
-      target_id: child,
+      from_id: project,
+      to_id: child,
       edge_type: "parent-of",
     };
     harness = await folderHarness("folder-edge-held-unshown", {
@@ -1623,8 +1623,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1f1",
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -1918,14 +1918,14 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1a1",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "references",
         },
         {
           id: "01a00000-0000-7000-8000-00000000e1a2",
-          source_id: alpha,
-          target_id: gamma,
+          from_id: alpha,
+          to_id: gamma,
           edge_type: "references",
         },
       ],
@@ -2052,8 +2052,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1f1",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
       ],
@@ -2069,12 +2069,12 @@ describe("edges in frontmatter", () => {
   it("writes an edge of a type no file writes in no file, and flags a line naming it", async () => {
     const edge = {
       id: "01a00000-0000-7000-8000-00000000e1e9",
-      source_id: alpha,
-      target_id: beta,
+      from_id: alpha,
+      to_id: beta,
       edge_type: "unwritten",
     };
-    const catalog = (written_at: "none" | "source") =>
-      edgeTypeCatalog([edgeType("unwritten", { written_at })]);
+    const catalog = (written_from: "none" | "source") =>
+      edgeTypeCatalog([edgeType("unwritten", { written_from })]);
     // The witness: the same edge of a type written at its source is a line.
     const witness = await edgeHarness(
       "folder-edge-written",
@@ -2172,8 +2172,8 @@ describe("edges in frontmatter", () => {
       ],
       [alpha, kept, manual, beta].slice(1).map((target, at) => ({
         id: `01a00000-0000-7000-8000-00000000e1f${String(at + 2)}`,
-        source_id: alpha,
-        target_id: target,
+        from_id: alpha,
+        to_id: target,
         edge_type: "about",
       })),
       {
@@ -2269,11 +2269,11 @@ describe("edges in frontmatter", () => {
       [
         {
           id: "01a00000-0000-7000-8000-00000000e1f5",
-          source_id: alpha,
-          target_id: beta,
+          from_id: alpha,
+          to_id: beta,
           edge_type: "about",
         },
-        { id: gone, source_id: alpha, target_id: gamma, edge_type: "about" },
+        { id: gone, from_id: alpha, to_id: gamma, edge_type: "about" },
       ],
     );
     harness = made.harness;
@@ -2305,15 +2305,15 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
           properties: { since: "spring" },
         },
         {
           id: threadEdge,
-          source_id: child,
-          target_id: alpha,
+          from_id: child,
+          to_id: alpha,
           edge_type: "in-thread",
         },
       ],
@@ -2382,14 +2382,14 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
         {
           id: threadEdge,
-          source_id: child,
-          target_id: alpha,
+          from_id: child,
+          to_id: alpha,
           edge_type: "in-thread",
         },
       ],
@@ -2400,8 +2400,8 @@ describe("edges in frontmatter", () => {
 
     // The child's parent moves at the source end, its thread at the target end.
     door.placing = (edge) =>
-      (edge.edge_type === "parent-of" && edge.source_id === other) ||
-      (edge.edge_type === "in-thread" && edge.target_id === beta)
+      (edge.edge_type === "parent-of" && edge.from_id === other) ||
+      (edge.edge_type === "in-thread" && edge.to_id === beta)
         ? answers.edgePermissionDenied(edge.edge_type)
         : undefined;
     edit(harness, "Child.md", "[[One]]", "[[Two]]");
@@ -2468,8 +2468,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -2479,7 +2479,7 @@ describe("edges in frontmatter", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
 
     door.placing = (edge) =>
-      edge.edge_type === "parent-of" && edge.source_id === other
+      edge.edge_type === "parent-of" && edge.from_id === other
         ? answers.edgePermissionDenied("parent-of")
         : undefined;
     // By id, which a scan with no server resolves from the copy.
@@ -2518,8 +2518,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
           properties: { since: "spring" },
         },
@@ -2565,8 +2565,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -2615,8 +2615,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -2670,8 +2670,8 @@ describe("edges in frontmatter", () => {
       [
         {
           id: parentEdge,
-          source_id: project,
-          target_id: child,
+          from_id: project,
+          to_id: child,
           edge_type: "parent-of",
         },
       ],
@@ -2681,7 +2681,7 @@ describe("edges in frontmatter", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
 
     door.placing = (edge) =>
-      edge.edge_type === "parent-of" && edge.source_id === other
+      edge.edge_type === "parent-of" && edge.from_id === other
         ? { kind: "json", status: 200, body: "not json at all" }
         : undefined;
     edit(harness, "Child.md", "[[One]]", "[[Two]]");
@@ -2792,12 +2792,12 @@ describe("embedded files", () => {
 
   /** An `attached-to` edge from a file to the note it is part of. */
   function attached(id: string, file: string, to: string): WireEdgeOptions {
-    return { id, source_id: file, target_id: to, edge_type: "attached-to" };
+    return { id, from_id: file, to_id: to, edge_type: "attached-to" };
   }
 
   /** A `references` edge from a note to the file its body embeds. */
   function referenced(id: string, from: string, file: string): WireEdgeOptions {
-    return { id, source_id: from, target_id: file, edge_type: "references" };
+    return { id, from_id: from, to_id: file, edge_type: "references" };
   }
 
   /** The item the folder created for a file, by the title it sent. */
@@ -2849,8 +2849,8 @@ describe("embedded files", () => {
     for (const [id, path] of Object.entries(paths)) {
       const edge: WireEdgeOptions = {
         id: randomUUID(),
-        source_id: id,
-        target_id: made.settings.id,
+        from_id: id,
+        to_id: made.settings.id,
         edge_type: "in-folder",
         properties: { path },
       };
@@ -2862,7 +2862,7 @@ describe("embedded files", () => {
     ): Record<string, { data: unknown[]; next_cursor: null }> => {
       const drawn: Record<string, { data: unknown[]; next_cursor: null }> = {};
       for (const edge of door.edges.values()) {
-        if (edge.source_id !== id) continue;
+        if (edge.from_id !== id) continue;
         (drawn[edge.edge_type ?? "references"] ??= {
           data: [],
           next_cursor: null,
@@ -3120,10 +3120,10 @@ describe("embedded files", () => {
       try {
         const now = new Date().toISOString();
         db.prepare(
-          "DELETE FROM edges WHERE edge_type IN ('references', 'attached-to') AND (source_id = ? OR target_id = ?)",
+          "DELETE FROM edges WHERE edge_type IN ('references', 'attached-to') AND (from_id = ? OR to_id = ?)",
         ).run(note, note);
         db.prepare(
-          "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at) VALUES (?, ?, ?, 'attached-to', '{}', 1, ?, ?)",
+          "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, created_at, updated_at) VALUES (?, ?, ?, 'attached-to', '{}', 1, ?, ?)",
         ).run(earlier, pic, note, now, now);
         db.prepare(
           "UPDATE folder_files SET links = '[]', embeds = NULL, edge_lines = ? WHERE path = 'Note.md'",
@@ -3146,7 +3146,7 @@ describe("embedded files", () => {
           .flatMap((row) =>
             row.kind === "create_edge"
               ? [
-                  `create ${String(row.item_id)} ${String((row.body as { edge_type?: unknown }).edge_type)} ${String(row.target_id)}`,
+                  `create ${String(row.item_id)} ${String((row.body as { edge_type?: unknown }).edge_type)} ${String(row.to_id)}`,
                 ]
               : row.kind === "delete_edge"
                 ? [`delete ${String(row.edge_id)}`]

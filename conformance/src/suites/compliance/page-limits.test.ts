@@ -247,8 +247,8 @@ beforeAll(async () => {
   trail = third!;
   const edges = await working.bulkEdges({
     edges: notes.flatMap((note) => [
-      { source_id: hub, target_id: note, edge_type: "about" },
-      { source_id: note, target_id: target, edge_type: "about" },
+      { from_id: hub, to_id: note, edge_type: "about" },
+      { from_id: note, to_id: target, edge_type: "about" },
     ]),
   });
   expect(edges.status, JSON.stringify(edges.error)).toBe(200);

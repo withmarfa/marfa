@@ -656,8 +656,8 @@ pub fn edge<'a>(
     {
         return Err(refused);
     }
-    let (Some(source_id), Some(target_id), Some(edge_type)) =
-        (text(edge, "source_id"), text(edge, "target_id"), edge_type)
+    let (Some(from_id), Some(to_id), Some(edge_type)) =
+        (text(edge, "from_id"), text(edge, "to_id"), edge_type)
     else {
         return Err(at.skipped(
             None,
@@ -665,21 +665,21 @@ pub fn edge<'a>(
             "an edge that does not name its ends and type",
         ));
     };
-    let (Some(source), Some(target)) = (ends(source_id), ends(target_id)) else {
+    let (Some(source), Some(target)) = (ends(from_id), ends(to_id)) else {
         return Err(at.skipped(
             None,
             "endpoint_missing",
             "an edge whose end it does not hold",
         ));
     };
-    if source_id == target_id {
+    if from_id == to_id {
         let message = "Edge source and target must be different items";
         return Err(at.skipping(Refusal::new(Code::EdgeCycle, message)));
     }
     let Some(kind) = catalog.edge_kind(edge_type) else {
         return Ok(());
     };
-    judge_restored_ends(catalog, kind, (source_id, source.type_id), target.type_id)
+    judge_restored_ends(catalog, kind, (from_id, source.type_id), target.type_id)
         .map_err(|refusal| at.skipping(refusal))
 }
 
@@ -896,7 +896,7 @@ mod tests {
         };
         let edge_with = |id: Value, edge_type: &str, target: &str| {
             json!({ "edge": {
-                "id": id, "source_id": "a", "target_id": target, "edge_type": edge_type,
+                "id": id, "from_id": "a", "to_id": target, "edge_type": edge_type,
                 "version": 1, "properties": {},
             }, "lending_blobs": [] })
         };

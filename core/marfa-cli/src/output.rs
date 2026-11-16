@@ -962,7 +962,7 @@ fn table(rows: &[Vec<String>]) -> Vec<String> {
 }
 
 fn is_edge(record: &Value) -> bool {
-    ["edge_type", "source_id", "target_id"]
+    ["edge_type", "from_id", "to_id"]
         .iter()
         .all(|name| record.get(name).is_some())
 }
@@ -1014,7 +1014,7 @@ fn record_columns(record: &Value) -> Cols {
                 owned("id"),
                 owned("edge_type"),
                 owned("created_at"),
-                format!("{} -> {}", owned("source_id"), owned("target_id")),
+                format!("{} -> {}", owned("from_id"), owned("to_id")),
             ],
         );
     }
@@ -1359,7 +1359,7 @@ pub fn edges_from(
 }
 
 pub fn other_end(edge: &Value, inbound: bool) -> &str {
-    field(edge, if inbound { "source_id" } else { "target_id" })
+    field(edge, if inbound { "from_id" } else { "to_id" })
 }
 
 pub fn titles(answer: &Value) -> impl Iterator<Item = (String, String)> + '_ {
@@ -1725,8 +1725,8 @@ pub(crate) mod tests {
     fn edge(id: &str, source: &str, target: &str) -> serde_json::Value {
         json!({
             "id": id,
-            "source_id": source,
-            "target_id": target,
+            "from_id": source,
+            "to_id": target,
             "edge_type": "references",
             "properties": {},
             "created_at": "2026-01-01T00:00:00Z",

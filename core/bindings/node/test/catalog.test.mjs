@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { EdgeWrittenAt, MarfaCore, SliceTier } from "../index.js";
+import { EdgeWrittenFrom, MarfaCore, SliceTier } from "../index.js";
 import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const RECIPE = {
@@ -23,12 +23,12 @@ const MENTOR = {
   label: "Mentees",
   reverse_label: "Mentors",
   cardinality: "one-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
   property_schema: {},
   reverse_name: "mentored-by",
-  written_at: "target",
+  written_from: "to",
   shipped: false,
 };
 
@@ -120,7 +120,7 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.throws(() => core.itemType("acme.recipe"), /^Error: not_found: /);
   assert.throws(() => core.edgeType("mentor-of"), /^Error: not_found: /);
   // An edge no file writes: the built-in `in-folder` placement.
-  assert.equal(core.edgeType("in-folder").writtenAt, EdgeWrittenAt.None);
+  assert.equal(core.edgeType("in-folder").writtenFrom, EdgeWrittenFrom.None);
 
   await core.hydrate(["core.note"], SliceTier.Library);
   assert.equal(typeof core.status().catalogVersion, "number");
@@ -145,7 +145,7 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.equal(mentor.reverseName, "mentored-by");
   assert.equal(mentor.label, "Mentees");
   assert.equal(mentor.reverseLabel, "Mentors");
-  assert.equal(mentor.writtenAt, EdgeWrittenAt.Target);
+  assert.equal(mentor.writtenFrom, EdgeWrittenFrom.Target);
   assert.deepEqual(
     core.edgeTypes().map((type) => type.id),
     ["mentor-of"],

@@ -229,14 +229,14 @@ async function task(title = "A task"): Promise<MarfaItem> {
 }
 
 async function link(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
   properties?: Record<string, unknown>,
 ): Promise<MarfaEdge> {
   const made = await client.createEdge({
-    source_id,
-    target_id,
+    from_id,
+    to_id,
     edge_type,
     ...(properties === undefined ? {} : { properties }),
   });
@@ -435,8 +435,8 @@ describe("a retained answer after its credential is narrowed", () => {
     const actor = await mint();
     const [from, to] = [await note(), await note()];
     const ask = keyed(actor, "POST", "/edges", {
-      source_id: from.id,
-      target_id: to.id,
+      from_id: from.id,
+      to_id: to.id,
       edge_type: "about",
     });
     const first = await ask();
@@ -654,7 +654,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
     const moved = await client.updateEdge(edge.id, {
       version: edgeOf(first).version,
-      source_id: (await task()).id,
+      from_id: (await task()).id,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
 
@@ -793,7 +793,7 @@ describe("a retained answer after its credential is narrowed", () => {
     });
     const patchedEdge = await askEdge();
     expectFirst(patchedEdge, 200);
-    expect(edgeOf(patchedEdge).target_id).toBe(target.id);
+    expect(edgeOf(patchedEdge).to_id).toBe(target.id);
     expectReplay(await askEdge(), patchedEdge);
   });
 
@@ -1002,8 +1002,8 @@ async function prepare(door: string): Promise<Prepared> {
         method,
         path: template,
         body: {
-          source_id: (await note()).id,
-          target_id: (await note()).id,
+          from_id: (await note()).id,
+          to_id: (await note()).id,
           edge_type: "about",
         },
       };

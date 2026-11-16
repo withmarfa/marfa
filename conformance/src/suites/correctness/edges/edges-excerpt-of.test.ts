@@ -47,10 +47,10 @@ async function makeHighlight(label: string): Promise<string> {
   return r.data.item.id;
 }
 
-async function link(source_id: string, target_id: string) {
+async function link(from_id: string, to_id: string) {
   const r = await client.createEdge({
-    source_id,
-    target_id,
+    from_id,
+    to_id,
     edge_type: "excerpt-of",
   });
   if (r.ok) trackEdge(ctx, r.data.edge.id);

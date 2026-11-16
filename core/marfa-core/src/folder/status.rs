@@ -417,7 +417,7 @@ impl Folder {
         }
         for row in waiting.iter().filter(|row| {
             row.item_id.as_deref() == Some(bound.item_id.as_str())
-                || row.target_id.as_deref() == Some(bound.item_id.as_str())
+                || row.to_id.as_deref() == Some(bound.item_id.as_str())
         }) {
             named.push(self.wait_of(row));
             if row.verdict == Some(Verdict::Dead) {
@@ -577,7 +577,7 @@ impl Folder {
             WriteKind::TransitionItem => "state",
             WriteKind::AddTag | WriteKind::RemoveTag => "tag",
             WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge
-                if row.target_id.as_deref() == Some(self.folder.as_str()) =>
+                if row.to_id.as_deref() == Some(self.folder.as_str()) =>
             {
                 "placement"
             }
@@ -647,12 +647,12 @@ mod tests {
         atomic::{AtomicBool, Ordering},
     };
 
-    fn wire_catalog(written_at: &str) -> WireCatalog {
+    fn wire_catalog(written_from: &str) -> WireCatalog {
         WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "core.note", "fields": {} }]))
                 .unwrap(),
             edge_types: vec![
-                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced by", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": written_at }),
+                serde_json::json!({ "id": "references", "label": "References", "reverse_label": "Referenced by", "cardinality": "many-to-many", "from_type_constraints": ["*"], "to_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_from": written_from }),
             ],
         }
     }

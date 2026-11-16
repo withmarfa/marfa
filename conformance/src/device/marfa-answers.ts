@@ -75,8 +75,8 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
 
 export interface WireEdgeOptions {
   id: string;
-  source_id: string;
-  target_id: string;
+  from_id: string;
+  to_id: string;
   edge_type?: string;
   version?: number;
   properties?: Record<string, unknown>;
@@ -88,8 +88,8 @@ export interface WireEdgeOptions {
 export function wireEdge(options: WireEdgeOptions): Record<string, unknown> {
   return {
     id: options.id,
-    source_id: options.source_id,
-    target_id: options.target_id,
+    from_id: options.from_id,
+    to_id: options.to_id,
     edge_type: options.edge_type ?? "references",
     properties: options.properties ?? {},
     created_at: options.created_at ?? EPOCH,
@@ -502,12 +502,12 @@ export interface WireEdgeType {
   label: string;
   reverse_label: string;
   cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-  source_type_constraints: string[];
-  target_type_constraints: string[];
+  from_type_constraints: string[];
+  to_type_constraints: string[];
   cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
   property_schema: Record<string, unknown>;
   reverse_name?: string;
-  written_at: "source" | "target" | "none";
+  written_from: "from" | "to" | "none";
   shipped: boolean;
   acyclic: boolean;
   flat: boolean;
@@ -527,11 +527,11 @@ export function edgeType(
     label: id,
     reverse_label: options.label ?? id,
     cardinality: "many-to-many",
-    source_type_constraints: ["*"],
-    target_type_constraints: ["*"],
+    from_type_constraints: ["*"],
+    to_type_constraints: ["*"],
     cascade_on_delete: "orphan",
     property_schema: {},
-    written_at: "source",
+    written_from: "from",
     shipped: false,
     acyclic: false,
     flat: false,
@@ -574,7 +574,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     cardinality: "many-to-one",
   }),
   shipped("in-collection", "In collection", "Contents", {
-    target_type_constraints: ["role:container"],
+    to_type_constraints: ["role:container"],
     flat: true,
     property_schema: {
       position: {
@@ -584,8 +584,8 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     },
   }),
   shipped("in-folder", "In folder", "Folder contents", {
-    written_at: "none",
-    target_type_constraints: ["system.folder"],
+    written_from: "none",
+    to_type_constraints: ["system.folder"],
     property_schema: {
       path: {
         type: "string",
@@ -606,7 +606,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     cardinality: "one-to-many",
     cascade_on_delete: "cascade",
     reverse_name: "child-of",
-    written_at: "target",
+    written_from: "to",
     acyclic: true,
   }),
   shipped("references", "References", "Referenced by"),
@@ -1179,8 +1179,8 @@ export const answers = {
   /** An edge the server already holds between the same two items under the
    *  same type, refused rather than made twice. */
   edgeDuplicate: (edge: {
-    source_id: string;
-    target_id: string;
+    from_id: string;
+    to_id: string;
     edge_type: string;
   }): Answer =>
     refusal(
@@ -1191,7 +1191,7 @@ export const answers = {
     ),
   /** A second edge at an end its type holds one at, a second parent say
    *  (`edges/card-target-held`). */
-  edgeCardinality: (edge: { target_id: string; edge_type: string }): Answer =>
+  edgeCardinality: (edge: { to_id: string; edge_type: string }): Answer =>
     refusal(
       400,
       "edge_constraint_violation",
@@ -1233,7 +1233,7 @@ export const answers = {
   /** A move of an edge end whose type holds more than one at the end that
    *  stays (`edges/move-many`). */
   edgeMoveRefused: (
-    field: "source_id" | "target_id",
+    field: "from_id" | "to_id",
     message: string,
   ): Answer =>
     refusal(400, "validation_error", message, {

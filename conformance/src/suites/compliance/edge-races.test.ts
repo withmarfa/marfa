@@ -50,8 +50,8 @@ describe("concurrent edge writes", () => {
       const answers = await Promise.all(
         parents.map((parent) =>
           client.createEdge({
-            source_id: parent,
-            target_id: child,
+            from_id: parent,
+            to_id: child,
             edge_type: "parent-of",
           }),
         ),
@@ -84,8 +84,8 @@ describe("concurrent edge writes", () => {
       const answers = await Promise.all(
         [0, 1].map(() =>
           client.createEdge({
-            source_id: source,
-            target_id: target,
+            from_id: source,
+            to_id: target,
             edge_type: "about",
           }),
         ),
@@ -109,8 +109,8 @@ describe("concurrent edge writes", () => {
       const source = await note();
       const target = await note();
       const created = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: "about",
         properties: { note: "original" },
       });
@@ -161,8 +161,8 @@ describe("concurrent edge writes", () => {
                 mode,
                 edges: [
                   {
-                    source_id: source,
-                    target_id: target,
+                    from_id: source,
+                    to_id: target,
                     edge_type: "about",
                   },
                 ],
@@ -205,8 +205,8 @@ describe("concurrent edge writes", () => {
       const remove = () => client.deleteEdgeType(edgeType);
       const create = () =>
         client.createEdge({
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: edgeType,
         });
       // Which request leaves first alternates, so both orders get a chance.
