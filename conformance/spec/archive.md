@@ -156,11 +156,11 @@ If the bytes `GET /export?format=archive` reads for a blob do not hash to the bl
 
 ### `archive/archive-bytes-struck`
 
-If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when it is read again under the blob's upload lock, then the server MUST strike that copy from the copy record.
+If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when the server reads it again, then the server MUST remove that copy from the copies `GET /blobs/{hash}/copies` lists.
 
-**Reason:** the next export then reads the blob from another store that holds it, or names it as `not_carried`, as it does once `blob-integrity` has struck the copy. The first read is made without the lock, so the copy is read again before it is struck, in case it was put right in between.
+**Reason:** the next export then reads the blob from another store that holds it, or names it as `not_carried`, as it does once `blob-integrity` has struck the copy. The first read is not held against a replacement of the copy, so the copy is read again before it is removed: a copy put right in between is kept.
 
-**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`.
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`, `› keeps a copy that hashes to the blob's name when the export reads it again, though its first read did not`.
 
 ### `archive/archive-read-fault-kept`
 

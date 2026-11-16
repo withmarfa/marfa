@@ -360,31 +360,31 @@ While a `POST /items/bulk` or `POST /edges/bulk` page holds the write lock and w
 
 ### `errors/contention-read`
 
-When an otherwise permitted read uses a valid API key while another writer holds the write lock, the server MUST serve the read without waiting for the write that records the key's use.
+While writes are held up behind another writer, when an otherwise permitted read uses a valid API key, the server MUST serve the read without waiting for the writes to proceed.
 
-**Reason:** Usage bookkeeping does not establish authority; waiting for it would make a long restore deny reads to every key whose usage record is due.
+**Reason:** Recording a key's use does not establish authority; waiting for it would make a long restore deny reads to every key whose use is due to be recorded.
 
 **Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-stamp-retry`
 
-When an API key authenticates another request more than one second after its usage write failed, the store accepts writes and usage recording is not overloaded, the server MUST retry recording that use asynchronously.
+When writes proceed again and an API key is used more than one second after a use of it went unrecorded because writes were held up, the server MUST set the key's `last_used_at`.
 
 **Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-stamp-once`
 
-When the server has set a key's `last_used_at` in an hour and has not restarted since, the server MUST serve the key's later reads in that hour while another writer holds the write lock.
+When a key's `last_used_at` was set less than an hour ago, the server MUST serve the key's reads while writes are held up behind another writer.
 
-**Reason:** A recorded use is coalesced for one hour; neither a cold nor a warm usage record determines whether a read succeeds.
+**Reason:** A key's use is recorded at most once an hour; neither a key never used nor one used recently has its read decided by whether its use can be recorded.
 
 **Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-session-use`
 
-When an otherwise permitted read uses a live browser session while another writer holds the write lock, the server MUST serve the read without waiting for the session's usage renewal.
+While writes are held up behind another writer, when an otherwise permitted read uses a live browser session, the server MUST serve the read without waiting for the writes to proceed.
 
-**Reason:** A failed renewal leaves the stored expiry unchanged, so contention cannot extend a session's authority or make a readable request depend on a usage write.
+**Reason:** Contention cannot extend a session's authority, and a readable request does not depend on recording the session's use.
 
 **Tests:** `compliance/write-contention.test.ts › serves a session read without waiting for renewal and keeps its durable idle expiry`.
 

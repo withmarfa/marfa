@@ -108,6 +108,8 @@ Statements sit under `##` headings that group them. A `##` section may open with
   - **The CLI** is the `marfa` program, for what only it does.
 - **Observable.** A rule says what a client, a sender or an owner can see: a status, a code, a field, a stored value, a file on disk. It never says how the server does it. A transaction or a lock appears only as the effect a client can see.
 
+The server's log and telemetry output is a surface an operator observes, so a rule may say what that output carries or leaves out. The log lines and request records are what the adapter's `log` command prints, and the exported traces and error reports are what a collector the operator runs receives (`TARGET-INTERFACE.md`, "The adapter", "The request log" and "The clock").
+
 ### The reason
 
 A reason says why the rule exists, in one or two sentences, so that an agent changing the code knows the behavior is meant and what it protects. It holds no requirement and no test. Leave it out when the rule explains itself.

@@ -8,9 +8,9 @@ A blob is read through `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{h
 
 ### `blobs/read-idle-lifetime`
 
-If a blob download makes no progress for the configured blob read idle interval, then the server MUST close the read stream and its file or socket.
+If a client downloading a blob stops reading for the configured blob read idle interval, then the server MUST end the download's connection before the whole body is sent.
 
-**Reason:** a caller that abandons a download cannot leave an open resource behind or cause the server to exit when that resource is garbage collected.
+**Reason:** a caller that abandons a download cannot hold the server's resources open or bring the server down.
 
 **Tests:** `compliance/blob-read-lifetime.test.ts › ends a download that stops reading before the body finishes`.
 

@@ -548,9 +548,9 @@ When a key or app submits a valid nonempty `PATCH /profile` containing only `nam
 
 ### `instance-claim/delegated-profile-atomic`
 
-If any submitted profile field lacks current write permission when the transaction commits, then the server MUST preserve every submitted field's previous value.
+If a key or app submits `PATCH /profile` with a field it lacks current write permission for, or loses write permission for before the server stores the change, then the server MUST refuse the request with `403` and leave every submitted field as it was.
 
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`, `› refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not`.
 
 ### `instance-claim/owner-picture-upload`
 
@@ -636,7 +636,7 @@ If a picture upload ends before its body is whole, then the server MUST store no
 
 ### `instance-claim/picture-replace`
 
-When the server stores a new picture, the server MUST serve only that picture at `/owner/avatar`, and no earlier one after the new picture is removed.
+When the server has stored several pictures in turn, the server MUST serve at `GET /owner/avatar` no picture but the last of them, including once that one is removed.
 
 **Reason:** The owner has one picture, and a replaced one is never served again.
 

@@ -1134,11 +1134,25 @@ If the key sending `POST /types/{id}/move` lacks write on the type or on `to` in
 
 ### `types/move-settings`
 
-When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
+When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
 
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 
 **Tests:** `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`, `› writes nothing on a dry run, and the same move run for real writes`.
+
+### `types/move-settings-atomic`
+
+If the last write of a type move's job fails, then the server MUST leave every folder, view and webhook that write would rewrite as it was.
+
+**Reason:** a folder rewritten without the view beside it, or a webhook rewritten and no folder, would split what the person made to hold one set of items.
+
+**Tests:** `compliance/job-chunk-faults.test.ts › rewrites no setting while the last write of a type move fails every time, and every one in the move run after it`.
+
+### `types/move-settings-retried`
+
+When the last write of a type move's job fails and a later try of it lands, the server MUST rewrite every setting `types/move-settings` names, and set `result.settings_rewritten` to `true`.
+
+**Tests:** `compliance/job-chunk-faults.test.ts › rewrites every setting when a retry of the last write of a type move lands`.
 
 ### `types/move-settings-refused`
 

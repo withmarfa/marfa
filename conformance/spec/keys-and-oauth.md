@@ -2267,7 +2267,7 @@ If `expected_scopes` at `PATCH /grants/{id}` differs from the live consent or pr
 
 ### `keys-and-oauth/grant-narrow-commit`
 
-When `PATCH /grants/{id}` narrows a live grant, the server MUST commit its consent, projection, token withdrawal, pending code withdrawal and audit together under the grant's consent lock.
+If the server cannot write the audit entry of a narrowing of a live grant by `PATCH /grants/{id}`, then the server MUST answer `500` and leave the grant's scopes, its tokens and its pending codes as they were.
 
 **Tests:** `compliance/auth-grants.test.ts › rolls back narrowed access and tokens when its audit cannot be written`.
 
@@ -2513,9 +2513,9 @@ When a device authorization request omits `scope` or names no scope after whites
 
 ### `keys-and-oauth/device-code-at-rest`
 
-The server MUST NOT hold a device code it issued as the code itself.
+The server MUST NOT write a device code it issued, as the code itself, to the database file it keeps its data in, or to the file beside it that holds the writes not yet moved into the database file.
 
-**Reason:** Whoever presents the code once the person approves is handed the tokens, so a copy of the server's database must not be enough to present it. Access and refresh tokens are held the same way.
+**Reason:** Whoever presents the code once the person approves is handed the tokens, so a copy of the database file and of the file beside it must not be enough to present it. Access and refresh tokens are written the same way.
 
 **Tests:** `compliance/device-grant.test.ts › is held by the server as something other than the code it issued, and still polls`.
 
