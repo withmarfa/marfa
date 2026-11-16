@@ -190,24 +190,24 @@ describe("per-edge-type permissions", () => {
     }
   });
 
-  // The type-permission gate on an edge write reads the source item whether
+  // The type-permission gate on an edge write reads the from item whether
   // it is live or trashed.
   it("trashed from item: PATCH/DELETE edge still gated on from item type", async () => {
-    // Register two custom types so we can gate a key strictly on the target
+    // Register two custom types so we can gate a key strictly on the to item's
     // type without granting core.note blanket access through wildcards.
-    const sourceType = `user.evaluator-edgesrc-${ctx.runId}`;
-    const targetType = `user.evaluator-edgetgt-${ctx.runId}`;
+    const fromType = `user.evaluator-edgefrom-${ctx.runId}`;
+    const toType = `user.evaluator-edgeto-${ctx.runId}`;
     await client.registerType({
-      id: sourceType,
+      id: fromType,
       fields: { title: { type: "string", required: true } },
     });
     await client.registerType({
-      id: targetType,
+      id: toType,
       fields: { title: { type: "string", required: true } },
     });
 
     const srcResp = await client.createItem({
-      type: sourceType,
+      type: fromType,
       properties: { title: "src" },
       source: ctx.source,
     });
@@ -215,7 +215,7 @@ describe("per-edge-type permissions", () => {
     trackItem(ctx, srcResp.data.item.id);
 
     const tgtResp = await client.createItem({
-      type: targetType,
+      type: toType,
       properties: { title: "tgt" },
       source: ctx.source,
     });
@@ -236,7 +236,7 @@ describe("per-edge-type permissions", () => {
     // Key scoped to the TARGET type only (plus edge.about read/write so the
     // dual-gate on edge-type isn't what denies). No access to source type.
     const targetOnly = await makeKey("target-only", {
-      type_permissions: { [targetType]: "write" },
+      type_permissions: { [toType]: "write" },
       edge_permissions: { about: "write" },
     });
     const targetOnlyClient = new MarfaClient({
@@ -260,7 +260,7 @@ describe("per-edge-type permissions", () => {
 
     // One that reads the source and does not write it is refused the write.
     const sourceReader = await makeKey("source-reader", {
-      type_permissions: { [sourceType]: "read", [targetType]: "write" },
+      type_permissions: { [fromType]: "read", [toType]: "write" },
       edge_permissions: { about: "write" },
     });
     const sourceReaderClient = new MarfaClient({
@@ -281,7 +281,7 @@ describe("per-edge-type permissions", () => {
     expect(refusedDel.error?.error.code).toBe("type_not_permitted");
 
     const sourceOnly = await makeKey("source-only", {
-      type_permissions: { [sourceType]: "write", [targetType]: "read" },
+      type_permissions: { [fromType]: "write", [toType]: "read" },
       edge_permissions: { about: "write" },
     });
     const sourceOnlyClient = new MarfaClient({

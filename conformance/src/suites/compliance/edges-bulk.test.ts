@@ -446,7 +446,7 @@ describe("edges.bulk", () => {
     // A key may bulk-write edges it holds permission for. POST /edges/bulk
     // authorizes per edge: write on the source item's type plus write on the
     // edge type, and write on the target's type for an edge type that
-    // cascades on delete (compliance/edge-cascade-target.test.ts). A key with
+    // cascades on delete (compliance/edge-cascade-to.test.ts). A key with
     // both write maps succeeds.
     const okKey = await client.createKey({
       label: "edges-bulk-writer",

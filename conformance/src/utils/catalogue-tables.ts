@@ -50,8 +50,8 @@ export interface EdgeTypeRow {
   reverseName?: string;
   cardinality: string;
   cascadeOnDelete: string;
-  sourceTypes: readonly string[];
-  targetTypes: readonly string[];
+  fromTypes: readonly string[];
+  toTypes: readonly string[];
 }
 
 /** One event type: its name and whether a webhook subscription may name it. */
@@ -219,8 +219,8 @@ export function edgeTypesTable(rows: readonly EdgeTypeRow[]): string {
       row.reverseName === undefined ? "None" : code(row.reverseName),
       row.cardinality,
       row.cascadeOnDelete,
-      endpoints(row.sourceTypes),
-      endpoints(row.targetTypes),
+      endpoints(row.fromTypes),
+      endpoints(row.toTypes),
     ]),
   );
 }
