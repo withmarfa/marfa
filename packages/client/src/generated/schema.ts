@@ -2573,7 +2573,7 @@ export interface components {
             /** @description The types the item an edge points to can have, in the same form as `from_type_constraints`. */
             to_type_constraints: string[];
             /**
-             * @description What deleting an item an edge joins does. `cascade`: deleting the item the edge points from trashes the item it points to. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the item the edge points from is trashed with the last item it points to, restored with any.
+             * @description What deleting an edge's end does. `cascade`: deleting the from item trashes the to item. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the from item is trashed with its last to item, restored with any.
              * @enum {string}
              */
             cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
@@ -3935,7 +3935,7 @@ export interface components {
             /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item. */
             id?: string;
             /**
-             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by from item, to item and edge type. Under `upsert`: `trashed`, a trashed item matches, or `unchanged`.
+             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by its ends and edge type. Under `upsert`: `trashed`, a trashed item matches, or `unchanged`.
              * @enum {string}
              */
             reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed" | "unchanged";
@@ -4349,7 +4349,7 @@ export interface components {
             /** @description The types the item an edge points to can have, in the same form as `from_type_constraints`. Leave it out to allow any type. */
             to_type_constraints?: string[];
             /**
-             * @description What deleting an item an edge joins does. `cascade`: deleting the item the edge points from trashes the item it points to. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the item the edge points from is trashed with the last item it points to, restored with any. Leave it out for `orphan`.
+             * @description What deleting an edge's end does. `cascade`: deleting the from item trashes the to item. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the from item is trashed with its last to item, restored with any. Leave it out for `orphan`.
              * @enum {string}
              */
             cascade_on_delete?: "cascade" | "orphan" | "block" | "with-hosts";
@@ -8399,7 +8399,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `version` is missing.
              *     - `validation_error`: the body is malformed or changes nothing.
-             *     - `invalid_id`: the ID or an ID an edge points to isn't valid.
+             *     - `invalid_id`: an ID isn't valid.
              *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `unknown_type`: `type` isn't registered.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.

@@ -209,8 +209,8 @@ export function edgeTypesTable(rows: readonly EdgeTypeRow[]): string {
       "Reverse name",
       "Cardinality",
       "On delete",
-      "Source types",
-      "Target types",
+      "From item types",
+      "To item types",
     ],
     ordered.map((row) => [
       code(row.id),
