@@ -52,7 +52,7 @@ pub async fn address_check(
     let request = Request::from_body(Mode::Patch, &body, &CHECK_FIELDS, app.settings.sealer())?;
     Ok(json_answer(
         StatusCode::OK,
-        &config::check(&app, request).await?,
+        &config::check(&app, &caller, request).await?,
     ))
 }
 

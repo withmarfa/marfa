@@ -2924,7 +2924,7 @@ When the server names why a new sign-in address failed its check, the server MUS
 
 Where `allow_private_addresses` is `false`, if a new sign-in address leads to an address that is not public and fails its check, then the server MUST name `not_this_instance` as the reason, whatever happened.
 
-**Reason:** the instance's own address is often on the loopback or a private network, so the check reaches such an address whatever `allow_private_addresses` says, and tells no more about it than whether this instance answers there.
+**Reason:** the instance's own address is often on the loopback or a private network, so the check of a move reaches such an address whatever `allow_private_addresses` says, and tells no more about it than whether this instance answers there.
 
 **Tests:** `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`.
 
@@ -3020,11 +3020,27 @@ When a key holding `config.manage` sends `POST /config/address-check` with `sign
 
 ### `instance/address-check-instance`
 
-When the server answers `sign_in_address_check` in an address check, the server MUST hold `passed` set to `true` when the new sign-in address passes the check `instance/sign-in-address-check-passed` states, and otherwise `passed` set to `false` with the `reason` that a write of the same change would be refused for.
+When the server asks the new sign-in address in an address check, the server MUST answer `sign_in_address_check` with `passed` set to `true` when the address passes the check `instance/sign-in-address-check-passed` states, and otherwise `passed` set to `false` with the `reason` that a write of the same change would be refused for.
 
 **Reason:** an app shows the person whether the address reaches this instance before it asks them to confirm a move that ends every sign-in.
 
 **Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`, `compliance/step-up.test.ts › names why an address failed the check while private addresses are allowed: unreachable, timed_out or not_this_instance`.
+
+### `instance/address-check-private-unasked`
+
+Where `allow_private_addresses` is `false`, if a caller that neither `keys-and-oauth/step-up-recent` nor `keys-and-oauth/step-up-socket` admits sends `POST /config/address-check` with a new sign-in address that leads to an address that is not public, then the server MUST NOT send a request to that address.
+
+**Reason:** the server asks an address on the loopback or a private network only for a caller who could move the sign-in address there.
+
+**Tests:** `compliance/step-up.test.ts › sends no request to an address that is not public for a caller that could not make the move, and answers needs_recent_sign_in, while an app whose owner signed in just now has it asked`.
+
+### `instance/address-check-private-reason`
+
+When the server does not ask a new sign-in address in an address check, as `instance/address-check-private-unasked` states, the server MUST answer `sign_in_address_check` with `passed` set to `null` and `reason` set to `needs_recent_sign_in`.
+
+**Reason:** the app tells the person to sign in again before the address can be checked, since the move itself would ask the same.
+
+**Tests:** `compliance/step-up.test.ts › sends no request to an address that is not public for a caller that could not make the move, and answers needs_recent_sign_in, while an app whose owner signed in just now has it asked`.
 
 ### `instance/address-check-writes-nothing`
 

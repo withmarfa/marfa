@@ -968,6 +968,57 @@ describe("the check that the new sign-in address answers as this instance", () =
     }
   }, 60_000);
 
+  it("sends no request to an address that is not public for a caller that could not make the move, and answers needs_recent_sign_in, while an app whose owner signed in just now has it asked", async () => {
+    let asked = 0;
+    const counter = await stand((_, response) => {
+      asked += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ instance_id: randomUUID() }));
+    });
+    try {
+      const check = (credential: string) =>
+        call(credential, "POST", "/config/address-check", {
+          sign_in_address: counter.origin,
+        });
+      const app = await registerApp(server, SCOPE);
+      const { access } = await connect(app, await signIn());
+      // The witness: the same check from a recent sign-in reaches the address.
+      const reached = await check(access);
+      expect(reached.status, JSON.stringify(reached.body)).toBe(200);
+      expect(reached.body.sign_in_address_check).toEqual({
+        passed: false,
+        reason: "not_this_instance",
+      });
+      expect(asked).toBe(1);
+
+      const key = await mint(["config.manage"]);
+      await server.advanceClock(6 * MINUTE);
+      for (const [name, credential] of [
+        ["key", key],
+        ["app signed in six minutes ago", access],
+      ] as const) {
+        const unasked = await check(credential);
+        expect(unasked.status, `${name} ${JSON.stringify(unasked.body)}`).toBe(
+          200,
+        );
+        expect(unasked.body.requires_confirmation, name).toBe(true);
+        expect(unasked.body.sign_in_address_check, name).toEqual({
+          passed: null,
+          reason: "needs_recent_sign_in",
+        });
+        await expectMatchesSchema(
+          "POST",
+          "/config/address-check",
+          200,
+          unasked.body,
+        );
+      }
+      expect(asked).toBe(1);
+    } finally {
+      await fold(counter.server);
+    }
+  });
+
   it("is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden", async () => {
     const away = await strangers();
     try {

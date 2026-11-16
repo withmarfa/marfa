@@ -7456,13 +7456,13 @@ export interface components {
             next_steps: components["schemas"]["AddressNextStep"][];
             /** @description Whether the new sign-in address answers as this instance, as a write of the change checks it. Present when `requires_confirmation` is `true`. */
             sign_in_address_check?: {
-                /** @description `true` if the new sign-in address answered `GET /` as this instance. */
-                passed: boolean;
+                /** @description `true` if the new sign-in address answered `GET /` as this instance, and `null` if Marfa didn't ask it. */
+                passed: boolean | null;
                 /**
-                 * @description Why the address failed: `unreachable`, nothing answered; `timed_out`, nothing answered within 5 seconds; `not_this_instance`, something else answered. Present when `passed` is `false`.
+                 * @description Why it didn't pass: `unreachable`, nothing answered; `timed_out`, no answer in 5 seconds; `not_this_instance`, something else answered; `needs_recent_sign_in`, the address isn't public and you couldn't make the move. Present if `passed` isn't `true`.
                  * @enum {string}
                  */
-                reason?: "unreachable" | "timed_out" | "not_this_instance";
+                reason?: "unreachable" | "timed_out" | "not_this_instance" | "needs_recent_sign_in";
             };
         };
         /** @description The address change to check, written as `PATCH /config` writes it. */

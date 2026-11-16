@@ -11418,17 +11418,21 @@
             "type": "object",
             "properties": {
               "passed": {
-                "type": "boolean",
-                "description": "`true` if the new sign-in address answered `GET /` as this instance."
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "`true` if the new sign-in address answered `GET /` as this instance, and `null` if Marfa didn't ask it."
               },
               "reason": {
                 "type": "string",
                 "enum": [
                   "unreachable",
                   "timed_out",
-                  "not_this_instance"
+                  "not_this_instance",
+                  "needs_recent_sign_in"
                 ],
-                "description": "Why the address failed: `unreachable`, nothing answered; `timed_out`, nothing answered within 5 seconds; `not_this_instance`, something else answered. Present when `passed` is `false`."
+                "description": "Why it didn't pass: `unreachable`, nothing answered; `timed_out`, no answer in 5 seconds; `not_this_instance`, something else answered; `needs_recent_sign_in`, the address isn't public and you couldn't make the move. Present if `passed` isn't `true`."
               }
             },
             "required": [

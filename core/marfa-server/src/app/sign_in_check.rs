@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use ureq::Agent;
 use ureq::http::header;
 use ureq::tls::{RootCerts, TlsConfig};
@@ -58,26 +58,54 @@ impl Failed {
     }
 }
 
+/// What the address check found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Checked {
+    Asked(Result<(), Failed>),
+    /// The address is not public, and the caller could not make the move.
+    NotAsked,
+}
+
 /// The address check's own answer.
-pub fn to_json(checked: Result<(), Failed>) -> Value {
+pub fn to_json(checked: Checked) -> Value {
     match checked {
-        Ok(()) => json!({ "passed": true }),
-        Err(failed) => json!({ "passed": false, "reason": failed.word() }),
+        Checked::Asked(Ok(())) => json!({ "passed": true }),
+        Checked::Asked(Err(failed)) => json!({ "passed": false, "reason": failed.word() }),
+        Checked::NotAsked => json!({ "passed": null, "reason": "needs_recent_sign_in" }),
     }
 }
 
-/// Without `allow_private_addresses`, an address that is not public tells only whether this
-/// instance answered.
+/// Where the address leads, held with one of the slots for asking.
+struct Asking {
+    url: Url,
+    pinned: Vec<SocketAddr>,
+    /// Without `allow_private_addresses`, an address that is not public tells only whether this
+    /// instance answered.
+    told: bool,
+    _held: SemaphorePermit<'static>,
+}
+
+/// For a write that moves the sign-in address, which only a caller who may make the move sends.
 pub async fn check(app: &App, address: &Address) -> Result<(), Failed> {
-    let Ok(url) = Url::parse(address.origin()).and_then(|origin| origin.join("/")) else {
-        return Err(Failed::Unreachable);
-    };
-    let Some(port) = url.port_or_known_default() else {
-        return Err(Failed::Unreachable);
-    };
-    let Ok(_held) = IN_FLIGHT.acquire().await else {
-        return Err(Failed::Unreachable);
-    };
+    sent(app, prepared(app, address).await?).await
+}
+
+/// For the address check: an address that is not public is asked, without
+/// `allow_private_addresses`, only when the caller `may_move` there.
+pub async fn check_for(app: &App, address: &Address, may_move: bool) -> Checked {
+    match prepared(app, address).await {
+        Err(failed) => Checked::Asked(Err(failed)),
+        Ok(asking) if !asking.told && !may_move => Checked::NotAsked,
+        Ok(asking) => Checked::Asked(sent(app, asking).await),
+    }
+}
+
+async fn prepared(app: &App, address: &Address) -> Result<Asking, Failed> {
+    let url = Url::parse(address.origin())
+        .and_then(|origin| origin.join("/"))
+        .map_err(|_| Failed::Unreachable)?;
+    let port = url.port_or_known_default().ok_or(Failed::Unreachable)?;
+    let held = IN_FLIGHT.acquire().await.map_err(|_| Failed::Unreachable)?;
     let targets = match outbound::reach(&app.faults, &url, true, Asker::SignInAddress).await {
         Reach::Targets(targets) => targets,
         Reach::Unresolved | Reach::NoSlot | Reach::NotPublic => return Err(Failed::Unreachable),
@@ -86,11 +114,26 @@ pub async fn check(app: &App, address: &Address) -> Result<(), Failed> {
         .iter()
         .any(|target| !outbound::address::is_public(target.checked));
     let told = !private || app.settings.live().get(ALLOW_PRIVATE_ADDRESSES);
-    let pinned: Vec<SocketAddr> = targets
+    let pinned = targets
         .into_iter()
         .take(MOST_ADDRESSES)
         .map(|target| SocketAddr::new(target.connected, port))
         .collect();
+    Ok(Asking {
+        url,
+        pinned,
+        told,
+        _held: held,
+    })
+}
+
+async fn sent(app: &App, asking: Asking) -> Result<(), Failed> {
+    let Asking {
+        url,
+        pinned,
+        told,
+        _held,
+    } = asking;
     let instance_id = app.instance_id.clone();
     let asked = tokio::task::spawn_blocking(move || ask(&url, pinned, &instance_id));
     let answered = match tokio::time::timeout(TIME + Duration::from_secs(1), asked).await {

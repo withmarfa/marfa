@@ -747,7 +747,7 @@ pub async fn adopt_sign_in_address(
 }
 
 /// What a change of address would do, written to nowhere.
-pub async fn check(app: &Arc<App>, request: Request) -> Result<Value> {
+pub async fn check(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
     let checking = app.clone();
     let moved = app
         .db
@@ -771,7 +771,10 @@ pub async fn check(app: &Arc<App>, request: Request) -> Result<Value> {
         "next_steps": next_steps,
     });
     if moved.confirm {
-        let checked = sign_in_check::check(app, &moved.sign_in).await;
+        let may_move = caller
+            .require_step_up(Permission::ConfigManage, &app.clock.stamp())
+            .is_ok();
+        let checked = sign_in_check::check_for(app, &moved.sign_in, may_move).await;
         answer["sign_in_address_check"] = sign_in_check::to_json(checked);
     }
     Ok(answer)
