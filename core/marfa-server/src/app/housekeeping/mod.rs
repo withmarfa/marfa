@@ -16,6 +16,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
+use super::access::{Caller, Permission};
 use super::clock::{Clock, Confirmation, Stamp, Standing};
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, provenance, stored};
@@ -490,18 +491,23 @@ pub fn held(standing: Standing) -> Value {
 }
 
 /// Takes the server's clock as right and lets the jobs a clock ahead held run now.
-pub async fn confirm_clock(app: &App) -> Result<Stamp> {
-    let confirmed = confirm_on(&app.db, &app.clock).await?;
+pub async fn confirm_clock(app: &App, caller: &Caller) -> Result<Stamp> {
+    let confirmed = confirm_on(&app.db, &app.clock, caller.clone()).await?;
     tracing::info!(at = %confirmed, "The owner confirmed the server's clock");
     Ok(confirmed)
 }
 
 /// A deleting job reads the guard inside its own write, so the confirmation reaches the guard only
 /// once its write has committed.
-async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
+async fn confirm_on(db: &Db, clock: &Arc<Clock>, caller: Caller) -> Result<Stamp> {
     let inside = clock.clone();
     let written = db
-        .write(Write::own(), move |tx| confirming(tx, &inside))
+        .write(Write::own(), move |tx| {
+            caller
+                .current(tx, &inside.stamp())?
+                .require(Permission::InstanceMaintain)?;
+            confirming(tx, &inside)
+        })
         .await;
     let confirmation = match written {
         Ok(confirmation) => confirmation,
@@ -567,7 +573,7 @@ mod tests {
         );
         db.keep_clock(clock.clone());
 
-        assert!(confirm_on(&db, &clock).await.is_err());
+        assert!(confirm_on(&db, &clock, Caller::Server).await.is_err());
         assert_eq!(clock.judging(), None);
         assert!(matches!(clock.standing(), Standing::Ahead { .. }));
     }
@@ -604,7 +610,7 @@ mod tests {
             .unwrap();
         assert_eq!(seen, None, "read inside the confirming write");
 
-        let confirmed = confirm_on(&db, &clock).await.unwrap();
+        let confirmed = confirm_on(&db, &clock, Caller::Server).await.unwrap();
         assert_eq!(clock.judging(), Some(confirmed));
         let kept = db.read(crate::app::clock::kept).await.unwrap().unwrap();
         assert_eq!(kept.trusted_at, confirmed);

@@ -1252,9 +1252,13 @@ impl App {
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
         let (forgotten, new_id) = (old_id.clone(), id.clone());
+        let standing = caller.clone();
         let (copies, backups) = self
             .db
             .write(Write::own(), move |tx| {
+                standing
+                    .current(tx, &at)?
+                    .require(Permission::BackupsManage)?;
                 let backups = forget_backups(tx, &forgotten)?;
                 let copies = super::blobs::Blobs::replace_folder_store(
                     tx, &forgotten, &new_id, &locator, &at,

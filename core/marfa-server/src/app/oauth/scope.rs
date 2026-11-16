@@ -315,8 +315,6 @@ impl ScopeSet {
         self.seen.contains(literal)
     }
 
-    /// A request naming this is refused whole, where any other scope that cannot be granted is dropped.
-
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
     }

@@ -10,6 +10,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * The owner's tasks, open to any credential that holds the permission each
@@ -165,7 +166,9 @@ describe("owner tasks", () => {
     expect(await statuses("/owner/sign-ins")).toBe(200);
     expect(await statuses("/owner/passkeys")).toBe(200);
     expect(await statuses("/attention")).toBe(200);
-    expect(await statuses("/clock/confirm", "POST")).toBe(200);
+    const confirmed = await call(key, "POST", "/clock/confirm");
+    expect(confirmed.status).toBe(200);
+    await expectMatchesSchema("POST", "/clock/confirm", 200, confirmed.body);
     expect(await statuses("/backups")).toBe(200);
     expect(await statuses("/backups", "POST")).toBe(200);
     // The folder holds the store's marker already, so adopting it is a
@@ -173,6 +176,7 @@ describe("owner tasks", () => {
     expect(await statuses("/backups/folder/adopt", "POST")).toBe(409);
     const link = await call(key, "GET", "/owner/passkeys/add-url");
     expect(link.status).toBe(200);
+    await expectMatchesSchema("GET", "/owner/passkeys/add-url", 200, link.body);
     const url = new URL(link.body.url as string);
     expect(url.pathname).toBe("/auth/sign-in");
     expect(url.searchParams.get("prompt")).toBe("login");

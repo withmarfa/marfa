@@ -52,7 +52,7 @@ pub async fn run(
 pub async fn confirm_clock(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require(Permission::InstanceMaintain)?;
     query::only(&uri, &[])?;
-    let confirmed = housekeeping::confirm_clock(&app).await?;
+    let confirmed = housekeeping::confirm_clock(&app, &caller).await?;
     Ok(json_answer(
         StatusCode::OK,
         &json!({ "confirmed_at": confirmed }),

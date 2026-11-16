@@ -76,7 +76,7 @@ function serverWords(): {
   );
   const powers = new Map(
     Array.from(
-      source.matchAll(/\(\s*"([a-z.]+)",\s*PowerWords \{\s*title: "([^"]*)"/g),
+      source.matchAll(/\(\s*"([a-z._]+)",\s*PowerWords \{\s*title: "([^"]*)"/g),
       (match): [string, string] => [match[1]!, match[2]!],
     ),
   );
