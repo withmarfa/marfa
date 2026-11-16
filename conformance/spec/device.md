@@ -4388,7 +4388,7 @@ When no name candidate produces nonblank text, a device MUST answer that the ite
 
 When an app asks a device for an item's preview, a device MUST compute it from the string under the type's effective `display_hints.body_field`, or under `body` where no type in its chain declares one.
 
-**Reason:** The server answers no preview. Its item summaries at `GET /items/summaries` serve the private local command and leave item content out by design (`search-and-filters/owner-summaries-projection`).
+**Reason:** The server answers no preview. Its item summaries at `GET /items/summaries` leave item content out by design (`search-and-filters/owner-summaries-projection`).
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 

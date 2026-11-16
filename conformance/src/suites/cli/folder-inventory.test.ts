@@ -16,7 +16,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
-it("pages the server inventory through the private socket without reading the local registry", async () => {
+it("pages the server inventory through the private socket and a key that reads system.folder, without reading the local registry", async () => {
   await key.json(["folders", "create", "--title", "First"]);
   await key.json(["folders", "create", "--title", "Second"]);
   const first = await local.json<{
@@ -36,6 +36,9 @@ it("pages the server inventory through the private socket without reading the lo
   expect(second.data).toHaveLength(1);
   expect(second.data[0]?.id).not.toBe(first.data[0]?.id);
   expect(second.next_cursor).toBeNull();
-  const refused = await key.refused(["folders", "inventory"]);
-  expect(refused.envelope.error.code).toBe("forbidden");
+  const listed = await key.json<typeof first>(["folders", "inventory"]);
+  expect(listed.data.map((row) => row.id)).toEqual([
+    first.data[0]?.id,
+    second.data[0]?.id,
+  ]);
 });

@@ -253,6 +253,19 @@ function tableCodes(): Set<string> {
 /** POST operations that answer a question and write nothing. */
 const CHECKS_WITHOUT_WRITING = new Set(["POST /config/address-check"]);
 
+/**
+ * Operations that take no body and act on the whole instance, sent here only
+ * by credentials they refuse: the keys that hold their permission would
+ * change what other files on the shared server rely on.
+ */
+const WHOLE_INSTANCE_WRITES: Record<string, string> = {
+  "POST /trash/empty":
+    "empties the bin of every type the key reads, other files' items with it",
+  "POST /clock/confirm": "takes the server's clock as right",
+  "POST /backups": "puts a backup of the whole instance",
+};
+const HOLDS_THEIR_PERMISSION = ["a key", "a key holding management grants"];
+
 describe("every refusal's code", () => {
   it("answers every refusal across the published operations with a code from the table", async () => {
     const table = tableCodes();
@@ -371,6 +384,11 @@ describe("every refusal's code", () => {
           for (const bodyIndex of credential.bodies) {
             const body = bodies[bodyIndex]!;
             if (door.reads && bodyIndex > 0) continue;
+            if (
+              door.label in WHOLE_INSTANCE_WRITES &&
+              HOLDS_THEIR_PERMISSION.includes(credential.name)
+            )
+              continue;
             if (`${door.method} ${door.template}` in TAKES_ANY_BODY) {
               if (bodyIndex > 0 && credential.name !== "no credential")
                 continue;

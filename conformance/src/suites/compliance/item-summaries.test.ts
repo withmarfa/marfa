@@ -8,7 +8,6 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 
-type RefusalBody = { error: { details?: unknown } };
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("item-summaries");
@@ -265,21 +264,9 @@ it("pages name matches without leaking content or widening other owner reads", a
   );
   expect(local.status).toBe(200);
   expect(local.body.data).toEqual(rows);
-  const refusedKey = await key("/items/summaries");
-  expect(refusedKey.status).toBe(403);
-  expect(((await refusedKey.json()) as RefusalBody).error.details).toEqual({
-    needs: "local",
-  });
-  expect(
-    (
-      await fetch(`${server.apiUrl}/items/summaries`, {
-        headers: {
-          authorization: `Bearer ${server.workingKey}`,
-          cookie: server.ownerCookie,
-        },
-      })
-    ).status,
-  ).toBe(403);
+  const fromKey = await key("/items/summaries?type=core.note&q=Needle");
+  expect(fromKey.status).toBe(200);
+  expect(((await fromKey.json()) as { data: unknown[] }).data).toEqual(rows);
   expect((await fetch(`${server.apiUrl}/items/summaries`)).status).toBe(401);
   expect((await owner(`/items/${created[0]}`)).status).toBe(401);
   expect(await (await owner("/keys")).json()).toEqual(before);

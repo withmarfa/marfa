@@ -526,8 +526,30 @@
     sync();
   }
 
+  /** One switch turns every permission on or off; each still posts on its own. */
+  function watchPowers() {
+    for (const group of document.querySelectorAll("[data-powers]")) {
+      const all = group.querySelector("[data-powers-all]");
+      const each = [...group.querySelectorAll("[data-powers-each] input[name=scopes]")];
+      if (!all || each.length === 0) continue;
+      all.hidden = false;
+      const sync = () => {
+        const on = each.filter((input) => input.checked).length;
+        all.checked = on === each.length;
+        all.indeterminate = on > 0 && on < each.length;
+      };
+      all.addEventListener("change", () => {
+        for (const input of each) input.checked = all.checked;
+        sync();
+      });
+      for (const input of each) input.addEventListener("change", sync);
+      sync();
+    }
+  }
+
   exchangeHandoff();
   watchChoices();
+  watchPowers();
   watchChanges();
   watchDialog();
   watchPasskeys();

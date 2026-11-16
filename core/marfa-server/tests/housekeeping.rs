@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use marfa_server::app::access::Caller;
 use marfa_server::app::stored::{self, Change};
 use marfa_server::app::{App, housekeeping, webhooks};
 use marfa_server::db::Write;
@@ -124,7 +125,9 @@ impl Instance {
         if job == "event-log-cleanup" {
             self.scheduled().await;
         }
-        let ended = housekeeping::run_now(&self.app, job).await.unwrap();
+        let ended = housekeeping::run_now(&self.app, &Caller::Server, job)
+            .await
+            .unwrap();
         assert_eq!(ended.outcome, "succeeded", "{job}: {:?}", ended.error);
         ended.kept_unread
     }
@@ -285,7 +288,10 @@ async fn trash_purge_reads_the_retention_inside_its_write() {
         .set("hold:write", Some("items.trash_purged"))
         .unwrap();
     let app = instance.app.clone();
-    let run = tokio::spawn(async move { housekeeping::run_now(&app, "trash-purge").await });
+    let run =
+        tokio::spawn(
+            async move { housekeeping::run_now(&app, &Caller::Server, "trash-purge").await },
+        );
     instance.when_held().await;
     instance.store("trash_retention_days", "0").await;
     instance.app.faults.clear(Some("hold:write"));
@@ -308,7 +314,10 @@ async fn trash_purge_keeps_what_a_retention_committed_before_it_is_live_keeps() 
         .set("hold:write", Some("items.trash_purged"))
         .unwrap();
     let app = instance.app.clone();
-    let run = tokio::spawn(async move { housekeeping::run_now(&app, "trash-purge").await });
+    let run =
+        tokio::spawn(
+            async move { housekeeping::run_now(&app, &Caller::Server, "trash-purge").await },
+        );
     instance.when_held().await;
     commit_unpublished(&instance.app, "trash_retention_days", "10").await;
     assert_eq!(instance.app.settings.live().get(TRASH_RETENTION_DAYS), 2);
@@ -333,7 +342,9 @@ async fn thinning_keeps_what_a_policy_committed_before_it_is_live_keeps() {
         .set("hold:write", Some("item.versions_thinned"))
         .unwrap();
     let app = instance.app.clone();
-    let run = tokio::spawn(async move { housekeeping::run_now(&app, "version-thinning").await });
+    let run = tokio::spawn(async move {
+        housekeeping::run_now(&app, &Caller::Server, "version-thinning").await
+    });
     instance.when_held().await;
     commit_unpublished(&instance.app, "version_max_versions", "500").await;
     assert_eq!(instance.app.settings.live().get(VERSION_MAX_VERSIONS), 1);
@@ -437,7 +448,9 @@ async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothin
     ];
     for (job, key) in jobs {
         commit_unpublished(app, key, "soon").await;
-        let ended = housekeeping::run_now(app, job).await.unwrap();
+        let ended = housekeeping::run_now(app, &Caller::Server, job)
+            .await
+            .unwrap();
         assert_eq!(ended.outcome, "failed", "{job}");
         assert!(ended.error.unwrap().contains(key), "{job}");
     }
@@ -987,7 +1000,7 @@ async fn trash_purge_ends_in_error_when_every_row_fails_with_one() {
         .await;
     instance.forward(2 * DAY);
 
-    let ended = housekeeping::run_now(&instance.app, "trash-purge")
+    let ended = housekeeping::run_now(&instance.app, &Caller::Server, "trash-purge")
         .await
         .unwrap();
     assert_eq!(ended.outcome, "failed", "{:?}", ended.result);
@@ -1074,7 +1087,7 @@ async fn thinning_under_the_cap_keeps_a_snapshot_whose_stored_time_does_not_read
         .sql("UPDATE item_versions SET created_at = '' WHERE version = 1".to_string())
         .await;
 
-    let ended = housekeeping::run_now(&instance.app, "version-thinning")
+    let ended = housekeeping::run_now(&instance.app, &Caller::Server, "version-thinning")
         .await
         .unwrap();
     assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
@@ -1091,7 +1104,10 @@ async fn a_second_run_of_a_running_job_is_refused_and_another_job_runs() {
     let held = "hold:housekeeping:audit-cleanup";
     instance.app.faults.set(held, None).unwrap();
     let app = instance.app.clone();
-    let first = tokio::spawn(async move { housekeeping::run_now(&app, "audit-cleanup").await });
+    let first =
+        tokio::spawn(
+            async move { housekeeping::run_now(&app, &Caller::Server, "audit-cleanup").await },
+        );
     instance.when_held().await;
     assert!(instance.job("audit-cleanup").await["running_since"].is_string());
 

@@ -162,7 +162,7 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
 ];
 
 fn owner_tasks(out: &mut String) {
-    out.push_str("## Owner tasks\n\nThe instance draws no owner console, so each task an owner has is a command. Most need `--socket`, the private socket on the server's machine, or a key that holds the permission the command names.\n\n| Task | Commands |\n| --- | --- |\n");
+    out.push_str("## Owner tasks\n\nThe instance draws no owner console, so each task an owner has is a command. Each takes a key or an app that holds the permission the command names, or `--socket`, the private socket on the server's machine. Claiming the instance and recovering the owner's password take `--socket` alone.\n\n| Task | Commands |\n| --- | --- |\n");
     for (task, commands) in OWNER_TASKS {
         let commands: Vec<String> = commands
             .iter()

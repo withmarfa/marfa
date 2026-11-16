@@ -40,7 +40,7 @@ macro_rules! permissions {
         }
 
         impl Permission {
-            pub const ALL: [Permission; 12] = [$(Permission::$variant,)*];
+            pub const ALL: [Permission; 14] = [$(Permission::$variant,)*];
 
             pub const fn word(self) -> &'static str {
                 match self {
@@ -60,6 +60,7 @@ macro_rules! permissions {
 
 permissions! {
     AuditRead = "audit.read";
+    BackupsManage = "backups.manage";
     BlobsManage = "blobs.manage";
     ConfigManage = "config.manage";
     ConnectorsManage = "connectors.manage";
@@ -70,6 +71,7 @@ permissions! {
     KeysManage = "keys.manage";
     KeysMint = "keys.mint";
     SchemaWrite = "schema.write";
+    SignInsManage = "sign_ins.manage";
     WebhooksManage = "webhooks.manage";
 }
 
@@ -292,12 +294,20 @@ impl Caller {
         }
     }
 
-    /// For the owner's passkeys, which the passkey page and the local command manage.
+    /// For adding a passkey, which only the owner's own browser does.
     pub fn require_owner(&self) -> Result<()> {
         if matches!(self, Caller::Local(_) | Caller::Owner(_)) {
             Ok(())
         } else {
             Err(Refusal::new(Code::Forbidden, "Only the owner can do this."))
+        }
+    }
+
+    /// The owner's passkeys, which the passkey page manages as well as any holder of `sign_ins.manage`.
+    pub fn require_passkeys(&self) -> Result<()> {
+        match self {
+            Caller::Owner(_) => Ok(()),
+            _ => self.require(Permission::SignInsManage),
         }
     }
 

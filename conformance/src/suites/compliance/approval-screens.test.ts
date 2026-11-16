@@ -297,7 +297,9 @@ describe("what the approval pages offer", () => {
     for (const [page, html] of await bothPages(
       `core.note:read ${permissions}`,
     )) {
-      const found = readControls(html).filter((c) => c.role === "switch");
+      const found = readControls(html).filter(
+        (c) => c.role === "switch" && c.name === "scopes",
+      );
       expect(found.map((c) => c.value).sort(), page).toEqual(
         permissions.split(" ").sort(),
       );
@@ -330,13 +332,60 @@ describe("what the approval pages offer", () => {
   });
 });
 
+describe("the switch that groups the permissions", () => {
+  const booted = bootFor("approval-switch");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("groups the permissions a request names under one switch, turned off, that opens to choose them one by one, on both pages", async () => {
+    const asked = ["backups.manage", "sign_ins.manage"];
+    for (const [page, html] of await bothPages(
+      `core.note:read ${asked.join(" ")}`,
+    )) {
+      expect(visibleText(html), page).toContain("Look after this Marfa");
+      const all = readControls(html).filter(
+        (c) => c.role === "switch" && c.name === "",
+      );
+      expect(all, page).toHaveLength(1);
+      expect(all[0]!.checked, page).toBe(false);
+      const each =
+        /<details class="powers-each"[^>]*>([\s\S]*?)<\/details>/.exec(
+          html,
+        )?.[1] ?? "";
+      expect(visibleText(each), page).toContain("Choose one by one");
+      expect(
+        readControls(each)
+          .filter((c) => c.name === "scopes")
+          .map((c) => c.value)
+          .sort(),
+        page,
+      ).toEqual(asked);
+    }
+  });
+
+  it("shows no switch for the permissions to a request that names none, on both pages", async () => {
+    for (const [page, html] of await bothPages("core.note:read")) {
+      expect(visibleText(html), page).not.toContain("Look after this Marfa");
+      expect(
+        readControls(html).filter((c) => c.role === "switch"),
+        page,
+      ).toEqual([]);
+    }
+    // The witness: one permission asked brings the switch.
+    for (const [page, html] of await bothPages("core.note:read audit.read")) {
+      expect(visibleText(html), page).toContain("Look after this Marfa");
+    }
+  });
+});
+
 describe("what the approval pages say of a permission", () => {
   const booted = bootFor("approval-words");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  const TWELVE = [
+  const EVERY = [
     "audit.read",
+    "backups.manage",
     "blobs.manage",
     "config.manage",
     "connectors.manage",
@@ -347,22 +396,19 @@ describe("what the approval pages say of a permission", () => {
     "keys.manage",
     "keys.mint",
     "schema.write",
+    "sign_ins.manage",
     "webhooks.manage",
   ];
 
-  // The first switch of the group is read with the group's heading and the line
-  // under it, which counts what is on and so differs by page.
+  // The first switch of the group is read with the control that opens it.
   const ownWords = (text: string | undefined): string | undefined =>
-    text?.replace(
-      /^More control over Marfa (?:\d+ things? asked[^.]*? turn it on|\d+ of \d+ turned on) /,
-      "",
-    );
+    text?.replace(/^Choose one by one /, "");
 
   it("describes each permission in the same words on both pages", async () => {
     const [[, consent], ...others] = await bothPages(
-      `core.note:read ${TWELVE.join(" ")}`,
+      `core.note:read ${EVERY.join(" ")}`,
     );
-    for (const permission of TWELVE) {
+    for (const permission of EVERY) {
       const words = ownWords(
         readRows(consent).find((r) => r.control.value === permission)?.text,
       );
@@ -2038,7 +2084,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
     );
     expect(
       readControls(html)
-        .filter((c) => c.role === "switch")
+        .filter((c) => c.role === "switch" && c.name === "scopes")
         .map((c) => c.value),
     ).toEqual(["keys.mint"]);
     expect(selectNamed(html, "All your data")).toBeUndefined();

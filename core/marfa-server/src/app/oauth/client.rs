@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use url::Url;
 
 use super::redirect::{self, AppKind};
-use super::scope::{EMAIL_WRITE_REFUSED, OFFLINE_ACCESS, ScopeSet, data_alone};
+use super::scope::{OFFLINE_ACCESS, ScopeSet, data_alone};
 
 pub const MAX_REDIRECT_URIS: usize = 10;
 const MAX_REDIRECT_URI_CHARS: usize = 256;
@@ -443,12 +443,6 @@ fn scope(object: &Map<String, Value>, source: Source, grants: &[GrantType]) -> R
         ));
     }
     let named = ScopeSet::parse(named);
-    if named.writes_email() {
-        return Err(RegistrationError {
-            error: ErrorCode::InvalidScope,
-            description: EMAIL_WRITE_REFUSED.to_string(),
-        });
-    }
     if named.is_empty() {
         return Ok(data_alone(can_refresh(grants)));
     }

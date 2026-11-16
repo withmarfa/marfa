@@ -4,9 +4,7 @@ use rusqlite::{Connection, Transaction};
 use serde_json::json;
 
 use super::client::GrantType;
-use super::clients::{
-    self, ceiling_lacks, destinations_digest, email_write_refused, judge, registries_in,
-};
+use super::clients::{self, ceiling_lacks, destinations_digest, judge, registries_in};
 use super::grant::{self, CONSENT_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::metadata_document;
 use super::offer::{self, Decision, Offer, Post, Request};
@@ -157,9 +155,6 @@ pub async fn begin(
         });
     };
     let named = ScopeSet::parse(only(&pairs, "scope").unwrap_or_default());
-    if named.writes_email() {
-        return Ok(Err(email_write_refused()));
-    }
     let mut asked = Asked {
         client_id: client.id.clone(),
         destination,

@@ -543,7 +543,7 @@ describe("the instance from the terminal", () => {
     expect(refused.envelope.error.code).toBe("forbidden");
   });
 
-  it("lists, renames and removes a passkey through the private socket, and requires that socket for every passkey command", async () => {
+  it("lists, renames and removes a passkey through the private socket, and takes sign_ins.manage for every passkey command over HTTP", async () => {
     const socket = process.env.MARFA_CONTROL_SOCKET;
     expect(
       socket,
@@ -653,24 +653,48 @@ describe("the instance from the terminal", () => {
         return_to: "/auth/owner/passkeys",
       });
 
-      for (const ordinary of [c.cli, c.operator]) {
-        for (const args of [
-          ["list"],
-          ["rename", id, "--name", "Remote"],
-          ["delete", id],
-          ["add", "--no-browser"],
-        ]) {
-          const refused = await ordinary.refused([
+      for (const args of [
+        ["list"],
+        ["rename", id, "--name", "Remote"],
+        ["delete", id],
+        ["add", "--no-browser"],
+      ]) {
+        const refused = await c.cli.refused(["owner", "passkeys", ...args]);
+        expect(refused.envelope.error.server?.status).toBe(403);
+        expect(refused.envelope.error.server?.details).toMatchObject({
+          required_scope: "sign_ins.manage",
+        });
+      }
+      // The witness: a key that holds sign_ins.manage reaches each door.
+      expect(
+        (
+          await c.operator.json<{ data: Passkey[] }>([
             "owner",
             "passkeys",
-            ...args,
-          ]);
-          expect(refused.envelope.error.message).toContain(
-            "requires --socket PATH",
-          );
-          expect(refused.envelope.error.server).toBeNull();
-        }
-      }
+            "list",
+          ])
+        ).data.some((row) => row.id === id),
+      ).toBe(true);
+      expect(
+        await c.operator.json<Passkey>([
+          "owner",
+          "passkeys",
+          "rename",
+          id,
+          "--name",
+          "Remote",
+        ]),
+      ).toEqual({ ...held, name: "Remote" });
+      expect(
+        (
+          await c.operator.json<{ url: string }>([
+            "owner",
+            "passkeys",
+            "add",
+            "--no-browser",
+          ])
+        ).url,
+      ).toBe(added.url);
       expect(await local.json(["owner", "passkeys", "delete", id])).toEqual({
         ok: true,
       });

@@ -24,7 +24,7 @@ If a caller other than the private local command sends a request that only the p
 
 **Reason:** a key that holds every permission is still refused these operations, and a client that reads `details.needs` can tell the person to use the private local command instead of showing a refusal that no permission mends.
 
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at each door`, `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`, `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`, `compliance/owner-trash.test.ts › refuses a key every owner trash door, naming the local command it needs`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 
 ### `errors/status-absent`
 
@@ -146,7 +146,7 @@ When a request to an operation requiring a credential, other than `POST /oauth/r
 
 **Reason:** a caller that may not use the operation learns that first, whatever it sent. The grant on an item's type is checked against the stored item after the body is read, so a key without it is answered `400` for a body that is not JSON, which tells it nothing about the item.
 
-**Tests:** `compliance/json-body-doors.test.ts › answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal`, `› answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body`, `› keeps owner update behind local authority before body validation`, `› answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON`.
+**Tests:** `compliance/json-body-doors.test.ts › answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal`, `› answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body`, `› answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON`.
 
 ## A body key the operation does not declare
 

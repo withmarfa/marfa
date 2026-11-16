@@ -404,7 +404,7 @@ describe("the owner's sign-ins", () => {
     );
   });
 
-  it("refuses a key and an app's token 403, and no credential 401", async () => {
+  it("refuses a key and an app's token without sign_ins.manage 403, and no credential 401", async () => {
     const browser = await signIn();
     const id = await idOf(browser);
     const app = await registerApp(server, "core.note:read");
@@ -414,7 +414,7 @@ describe("the owner's sign-ins", () => {
     // The witness: the app's token works where it is meant to.
     expect(await itemsStatus(server, appToken)).toBe(200);
 
-    for (const bearer of [server.managementKey, server.workingKey, appToken]) {
+    for (const bearer of [server.workingKey, appToken]) {
       for (const [method, path] of [
         ["GET", "/owner/sign-ins"],
         ["PATCH", `/owner/sign-ins/${id}`],
@@ -453,7 +453,7 @@ describe("the owner's sign-ins", () => {
     expect(await session(browser)).not.toBeNull();
   });
 
-  it("refuses a key and an app's token 403 on every passkey door, and no credential 401", async () => {
+  it("refuses a key and an app's token without sign_ins.manage 403 on every passkey door, and no credential 401", async () => {
     const browser = await signIn();
     const app = await registerApp(server, "core.note:read");
     const appToken = (
@@ -486,7 +486,7 @@ describe("the owner's sign-ins", () => {
         method === "GET" ? 200 : 404,
       );
     }
-    for (const bearer of [server.managementKey, server.workingKey, appToken]) {
+    for (const bearer of [server.workingKey, appToken]) {
       for (const [method, path] of doors) {
         const response = await call(method, path, {
           authorization: `Bearer ${bearer}`,

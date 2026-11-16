@@ -10,10 +10,10 @@ use super::sign_in::{done, refuse_elsewhere, require_own_page};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
-use crate::app::access::{Caller, unauthorized};
+use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::owner;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
-use crate::app::auth::{Visit, form_origins};
+use crate::app::auth::{Visit, own_origins};
 use crate::app::clock::Stamp;
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
@@ -82,7 +82,7 @@ pub async fn sign_in_options(
     headers: HeaderMap,
     visit: Visit,
 ) -> Answer {
-    refuse_elsewhere(origin::said(&headers, &form_origins(&app)))?;
+    refuse_elsewhere(origin::said(&headers, &own_origins(&app)))?;
     let started = passkeys::begin_proving(app.clone(), &visit).await?;
     begun(&app, started)
 }
@@ -151,8 +151,9 @@ pub async fn remove(
 }
 
 /// It carries no credential, so the browser signs in there.
-pub async fn add_url(State(app): State<Arc<App>>, caller: Caller) -> Answer {
-    caller.require_local()?;
+pub async fn add_url(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    caller.require(Permission::SignInsManage)?;
+    query::only(&uri, &[])?;
     let origin = app.addresses().sign_in().origin().to_string();
     let url = format!("{origin}/auth/sign-in?prompt=login&return_to={PAGE}");
     Ok(json_answer(StatusCode::OK, &json!({ "url": url })))

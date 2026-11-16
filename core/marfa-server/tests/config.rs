@@ -461,37 +461,20 @@ async fn the_first_stored_sign_in_address_of_a_claimed_instance_asks_first() {
 }
 
 #[tokio::test]
-async fn only_direct_authority_changes_the_trusted_origins() {
+async fn a_key_holding_config_manage_changes_the_trusted_origins() {
     let instance = Instance::start(&[]).await;
     let key = instance.manager().await;
     let page = "https://page.example";
 
     let asked = json!({ "cors_origins": [page] });
-    let first = instance.as_key(&key, Method::PATCH, asked.clone()).await;
-    assert_eq!(first.status, StatusCode::FORBIDDEN, "{}", first.text);
+    let first = instance.as_key(&key, Method::PATCH, asked).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text);
+    assert!(instance.row("cors_origins").await.is_some());
+
+    let cleared = json!({ "cors_origins": null });
+    let cleared = instance.as_key(&key, Method::PATCH, cleared).await;
+    assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.text);
     assert_eq!(instance.row("cors_origins").await, None);
-
-    let local = instance.patch(asked).await;
-    assert_eq!(local.status, StatusCode::OK, "{}", local.text);
-
-    let tidier = json!({ "cors_origins": ["HTTPS://Page.Example:443/"] });
-    let tidier = instance.as_key(&key, Method::PATCH, tidier).await;
-    assert_eq!(tidier.status, StatusCode::OK, "{}", tidier.text);
-
-    for (method, body) in [
-        (
-            Method::PATCH,
-            json!({ "cors_origins": [page, "https://b.example"] }),
-        ),
-        (Method::PATCH, json!({ "cors_origins": null })),
-        (Method::PUT, json!({})),
-    ] {
-        let refused = instance.as_key(&key, method, body).await;
-        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
-    }
-    let other = json!({ "max_request_bytes": 2_000_000 });
-    let other = instance.as_key(&key, Method::PATCH, other).await;
-    assert_eq!(other.status, StatusCode::OK, "{}", other.text);
 }
 
 #[tokio::test]

@@ -59,7 +59,7 @@ async function jump(server: FreshServer, ms: number): Promise<void> {
 async function confirm(server: FreshServer): Promise<string> {
   const confirmed = await controlRequest(
     server.controlSocket,
-    "/_control/clock/confirm",
+    "/clock/confirm",
     { method: "POST" },
   );
   expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);

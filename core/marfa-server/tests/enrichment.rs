@@ -9,6 +9,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use libtest_mimic::{Arguments, Trial};
+use marfa_server::app::access::Caller;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -146,7 +147,9 @@ impl Instance {
     }
 
     async fn sweep(&self) -> Value {
-        let ended = housekeeping::run_now(&self.app, SWEEP).await.unwrap();
+        let ended = housekeeping::run_now(&self.app, &Caller::Server, SWEEP)
+            .await
+            .unwrap();
         assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
         ended.result.unwrap()
     }
@@ -185,14 +188,14 @@ impl Instance {
 
 /// Copies each file to the object store and leaves it there alone.
 async fn keep_only_far_away(one: &Instance, ids: &[String]) {
-    let ended = housekeeping::run_now(&one.app, "blob-replicate")
+    let ended = housekeeping::run_now(&one.app, &Caller::Server, "blob-replicate")
         .await
         .unwrap();
     assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
     for id in ids {
         std::fs::remove_file(one.blob_path(&one.hash_of(id).await)).unwrap();
     }
-    let ended = housekeeping::run_now(&one.app, "blob-integrity")
+    let ended = housekeeping::run_now(&one.app, &Caller::Server, "blob-integrity")
         .await
         .unwrap();
     assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
@@ -563,7 +566,9 @@ async fn sweep_while_held(
     one.app.faults.set(point, arg).unwrap();
     let app = one.app.clone();
     let sweep = tokio::spawn(async move {
-        let ended = housekeeping::run_now(&app, SWEEP).await.unwrap();
+        let ended = housekeeping::run_now(&app, &Caller::Server, SWEEP)
+            .await
+            .unwrap();
         assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
         ended.result.unwrap()
     });
@@ -661,7 +666,9 @@ async fn does_not_run_again_at_once_for_files_it_handed_back() {
         let stored = one.blob_path(&one.hash_of(&id).await);
         std::fs::rename(&stored, one.dir.path().join(format!("away-{number}"))).unwrap();
     }
-    let ended = housekeeping::run_now(&one.app, SWEEP).await.unwrap();
+    let ended = housekeeping::run_now(&one.app, &Caller::Server, SWEEP)
+        .await
+        .unwrap();
     assert_eq!(ended.result.unwrap(), counts(0, 0, 0));
     assert!(
         one.next_run() > ended.finished_at,
@@ -676,7 +683,9 @@ async fn does_not_run_again_at_once_for_files_it_handed_back() {
         let bytes = format!("a ledger kept here, number {number}");
         more.file(bytes.as_bytes(), "text/plain", json!({})).await;
     }
-    let ended = housekeeping::run_now(&more.app, SWEEP).await.unwrap();
+    let ended = housekeeping::run_now(&more.app, &Caller::Server, SWEEP)
+        .await
+        .unwrap();
     assert_eq!(ended.result.unwrap(), counts(2, 0, 0));
     assert!(more.next_run() <= ended.finished_at);
 
@@ -688,10 +697,14 @@ async fn does_not_run_again_at_once_for_files_it_handed_back() {
         let hash = lost.hash_of(&id).await;
         lost.execute("DELETE FROM blob_copies WHERE hash = ?1", &hash);
     }
-    let ended = housekeeping::run_now(&lost.app, SWEEP).await.unwrap();
+    let ended = housekeeping::run_now(&lost.app, &Caller::Server, SWEEP)
+        .await
+        .unwrap();
     assert_eq!(ended.result.unwrap(), counts(0, 2, 0));
     assert!(lost.next_run() <= ended.finished_at);
-    let ended = housekeeping::run_now(&lost.app, SWEEP).await.unwrap();
+    let ended = housekeeping::run_now(&lost.app, &Caller::Server, SWEEP)
+        .await
+        .unwrap();
     assert_eq!(ended.result.unwrap(), counts(0, 1, 0));
     assert!(lost.next_run() > ended.finished_at);
 }
@@ -844,7 +857,9 @@ async fn reads_a_file_whose_only_copy_is_in_the_object_store() {
             let file = one.dir.path().join("blobs").join(&hex[0..4]).join(hex);
             std::fs::remove_file(file).unwrap();
         }
-        let ended = housekeeping::run_now(&one.app, job).await.unwrap();
+        let ended = housekeeping::run_now(&one.app, &Caller::Server, job)
+            .await
+            .unwrap();
         assert_eq!(ended.outcome, "succeeded", "{:?}", ended.error);
     }
     let copies = "SELECT count(*) FROM blob_copies c JOIN stores s ON s.id = c.store_id \

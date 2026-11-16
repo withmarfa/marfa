@@ -1,6 +1,6 @@
 /**
  * The catalogues in the contract: the shipped types, the shipped edge types,
- * the twelve permissions and the event types, each a table between two
+ * the fourteen permissions and the event types, each a table between two
  * markers in the chapter where it belongs. The rows come in as data so that
  * nothing here reads the server: `scripts/catalogue-tables.ts` passes them in
  * and the repository's own check compares what comes out to the chapters.
@@ -62,26 +62,31 @@ export interface EventTypeRow {
 
 /**
  * What each permission lets a credential do, in the words of the first
- * sentence of its row in `GLOSSARY.md`, which fixes the twelve.
+ * sentence of its row in `GLOSSARY.md`, which fixes the fourteen.
  */
 const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "audit.read": "Reading the audit log.",
+  "backups.manage":
+    "Listing the backups, taking one now and adopting the backup folder.",
   "blobs.manage":
     "Managing blob bytes and copies across the instance, without granting item content access.",
   "config.manage":
     "Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.",
   "connectors.manage":
     "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.",
-  "grants.manage": "Listing and revoking other apps' access.",
-  "instance.maintain": "Running housekeeping and canceling bulk jobs.",
+  "grants.manage": "Listing, narrowing and revoking other apps' access.",
+  "instance.maintain":
+    "Running housekeeping, canceling bulk jobs and confirming the server's clock.",
   "instance.read":
-    "Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
+    "Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
   "items.purge":
-    "Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike.",
+    "Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike, and listing and emptying the trash.",
   "keys.manage":
     "Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.",
   "keys.mint":
     "Minting keys within the caller's current access, and listing, changing and revoking keys within that access.",
+  "sign_ins.manage":
+    "Listing, renaming and ending the owner's sign-ins, and listing, renaming and removing the owner's passkeys and getting the link that adds one.",
   "schema.write":
     "Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.",
   "webhooks.manage":
@@ -109,6 +114,8 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
     "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).",
   "edge.updated":
     "An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).",
+  "attention.raised":
+    "A check of what needs the owner's attention first finds an entry (`events/attention-raised`).",
   "edge.deleted":
     "An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).",
   stream_cursor:

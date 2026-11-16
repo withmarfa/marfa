@@ -88,10 +88,10 @@ impl Map {
         }
     }
 
-    /// Whether every type reads, one registered later included.
-    pub(super) fn reads_every_name(&self) -> bool {
-        self.exact("*").is_some_and(|level| level >= Level::Read)
-            && self.patterns().all(|(_, level)| level >= Level::Read)
+    /// Whether every type holds `at`, one registered later included.
+    pub(super) fn holds_every_name(&self, at: Level) -> bool {
+        self.exact("*").is_some_and(|level| level >= at)
+            && self.patterns().all(|(_, level)| level >= at)
     }
 
     fn reads(&self, axis: Axis, name: &str) -> bool {
@@ -186,7 +186,10 @@ impl Axis {
                 .or_else(|| map.exact("*"))
                 .unwrap_or(Level::None),
             Axis::Metadata => map.widest(name),
-            Axis::Profile if name == "email" => map.widest(name).min(Level::Read),
+            Axis::Profile if name == "email" => map
+                .exact(name)
+                .unwrap_or(Level::None)
+                .max(map.exact("*").unwrap_or(Level::None).min(Level::Read)),
             Axis::Profile if PROFILE_ROWS.contains(&name) => map.widest(name),
             Axis::Profile => Level::None,
         }
@@ -242,9 +245,6 @@ impl Axis {
             }
             Axis::Profile if name != "*" && !PROFILE_ROWS.contains(&name) => {
                 Some("The name must be name, email, avatar or *.")
-            }
-            Axis::Profile if name == "email" && word != Some("read") => {
-                Some("Only the owner can change email, so its level must be read.")
             }
             Axis::Edge | Axis::Extension | Axis::Metadata | Axis::Profile
                 if !matches!(word, Some("read" | "write")) =>
@@ -358,11 +358,15 @@ mod tests {
 
     #[test]
     fn every_name_reads_only_under_a_reading_wildcard_that_nothing_narrows() {
-        assert!(map(json!({ "*": "read" })).reads_every_name());
-        assert!(map(json!({ "*": "write", "core.note": "read" })).reads_every_name());
-        assert!(!map(json!({ "*": "write", "core.media.*": "none" })).reads_every_name());
-        assert!(!map(json!({ "core.note": "write" })).reads_every_name());
-        assert!(!map(json!({})).reads_every_name());
+        let reads = |held: Value| map(held).holds_every_name(Level::Read);
+        assert!(reads(json!({ "*": "read" })));
+        assert!(reads(json!({ "*": "write", "core.note": "read" })));
+        assert!(!reads(json!({ "*": "write", "core.media.*": "none" })));
+        assert!(!reads(json!({ "core.note": "write" })));
+        assert!(!reads(json!({})));
+        let writes = |held: Value| map(held).holds_every_name(Level::Write);
+        assert!(writes(json!({ "*": "write" })));
+        assert!(!writes(json!({ "*": "write", "core.note": "read" })));
     }
 
     #[test]
@@ -380,8 +384,16 @@ mod tests {
         let held = map(json!({ "*": "write", "types": "read" }));
         assert_eq!(Axis::Metadata.level(&held, "types"), Level::Write);
         assert_eq!(Axis::Profile.level(&held, "name"), Level::Write);
-        assert_eq!(Axis::Profile.level(&held, "email"), Level::Read);
         assert_eq!(Axis::Profile.level(&held, "age"), Level::None);
+    }
+
+    #[test]
+    fn the_profile_wildcard_reads_the_email_and_only_its_own_entry_writes_it() {
+        let wild = map(json!({ "*": "write" }));
+        assert_eq!(Axis::Profile.level(&wild, "email"), Level::Read);
+        let named = map(json!({ "*": "read", "email": "write" }));
+        assert_eq!(Axis::Profile.level(&named, "email"), Level::Write);
+        assert_eq!(Axis::Profile.level(&named, "name"), Level::Read);
     }
 
     #[test]
@@ -523,10 +535,7 @@ mod tests {
             paths(Axis::Edge, json!({"about":"none"})),
             ["edge_permissions.about"]
         );
-        assert_eq!(
-            paths(Axis::Profile, json!({"email":"write"})),
-            ["profile_permissions.email"]
-        );
+        assert!(paths(Axis::Profile, json!({"email":"write"})).is_empty());
         assert_eq!(
             paths(Axis::Profile, json!({"age":"read"})),
             ["profile_permissions.age"]

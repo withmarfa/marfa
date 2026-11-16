@@ -1,5 +1,5 @@
-//! `/backups`: the owner lists the backups in the object store, takes one now, and restores one
-//! the server reads from the store itself.
+//! `/backups`: the backups where the instance keeps them, one taken now, and a restore of one
+//! the server reads from there itself.
 
 use std::sync::Arc;
 
@@ -10,12 +10,12 @@ use serde_json::json;
 use super::answer::{Answer, json_answer};
 use super::query;
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 
 const ALLOW_MISSING_FILES: &str = "allow_missing_files";
 
 pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::BackupsManage)?;
     query::only(&uri, &[])?;
     let data = app.list_backups(&caller).await?;
     Ok(json_answer(
@@ -25,7 +25,7 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
 }
 
 pub async fn run(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::BackupsManage)?;
     query::only(&uri, &[])?;
     let answer = app.run_backup(&caller).await?;
     Ok(json_answer(StatusCode::OK, &answer))
@@ -49,7 +49,7 @@ pub async fn restore(
 }
 
 pub async fn adopt_folder(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::BackupsManage)?;
     query::only(&uri, &[])?;
     let answer = app.adopt_backup_folder(&caller).await?;
     Ok(json_answer(StatusCode::OK, &answer))

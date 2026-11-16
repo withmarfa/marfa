@@ -7031,7 +7031,7 @@ mod tests {
         let mut taken = Vec::new();
         for root in [
             "schema", "keys", "items", "webhooks", "config", "audit", "grants", "content",
-            "metadata", "edge", "profile", "space", "marfa",
+            "metadata", "edge", "profile", "space", "marfa", "backups", "sign_ins",
         ] {
             let id = format!("{root}.entry");
             if !matches!(

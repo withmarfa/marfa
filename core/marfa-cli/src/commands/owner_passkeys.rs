@@ -6,9 +6,9 @@ use serde_json::{Value, json};
 
 #[derive(Debug, Subcommand)]
 pub enum PasskeysCommand {
-    /// List every registered owner passkey (private socket required).
+    /// List every registered owner passkey. Requires `sign_ins.manage`.
     List,
-    /// Rename one owner passkey (private socket required).
+    /// Rename one owner passkey. Requires `sign_ins.manage`.
     Rename {
         /// The passkey's ID.
         id: String,
@@ -16,12 +16,12 @@ pub enum PasskeysCommand {
         #[arg(long, allow_hyphen_values = true)]
         name: String,
     },
-    /// Delete one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
+    /// Delete one passkey. Existing sign-ins and other passkeys stay usable. Requires `sign_ins.manage`.
     Delete {
         /// The passkey's ID.
         id: String,
     },
-    /// Open the owner sign-in page, where you sign in yourself and then reach the passkey page (private socket required).
+    /// Open the owner sign-in page, where you sign in yourself and then reach the passkey page. Requires `sign_ins.manage`.
     Add {
         /// Print the sign-in URL without opening a browser.
         #[arg(long)]
@@ -30,11 +30,6 @@ pub enum PasskeysCommand {
 }
 
 pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    if !remote.is_local() {
-        return Err(CliError::Usage(
-            "this operation requires --socket PATH".into(),
-        ));
-    }
     match command {
         PasskeysCommand::List => {
             let answer = remote.json(&Request::get(&["owner", "passkeys"]))?;
@@ -48,8 +43,7 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
             out.value(&remote.json(&Request::delete(&["owner", "passkeys", &id]))?)
         }
         PasskeysCommand::Add { no_browser } => {
-            let answer =
-                remote.json(&Request::get(&["_control", "owner", "passkeys", "add-url"]))?;
+            let answer = remote.json(&Request::get(&["owner", "passkeys", "add-url"]))?;
             let link = answer.get("url").and_then(Value::as_str).ok_or_else(|| {
                 CliError::Invalid("server returned no passkey sign-in URL".into())
             })?;

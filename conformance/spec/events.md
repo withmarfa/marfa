@@ -23,6 +23,7 @@ Every event and stream frame the server sends is a row of the table below, which
 | `edge.created`       | Streams and webhooks | An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).                                                                                                                                                                    |
 | `edge.updated`       | Streams and webhooks | An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).                                                                                                                                                  |
 | `edge.deleted`       | Streams and webhooks | An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).                                                                                                                                                                                  |
+| `attention.raised`   | Streams and webhooks | A check of what needs the owner's attention first finds an entry (`events/attention-raised`).                                                                                                                                                                                                                    |
 | `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                                                                                                                                                                                                                      |
 | `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.                                                                                                                                                                                                      |
 | `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                                                                                                                                                                                                                                 |
@@ -699,6 +700,70 @@ When a stream replays from a cursor, the server MUST withhold the edge events it
 When a purge has taken an edge's from item, the server MUST withhold the edge's `edge.deleted` from a subscriber that may not read the type the from item had when the event was published.
 
 **Tests:** `compliance/edge-events.test.ts › withholds a purged item's edges from a subscriber that could not read it, live and on a replay`.
+
+## What needs the owner's attention
+
+A check of what needs the owner's attention (`GET /attention`, and the `attention-check` housekeeping job) announces each entry it finds that no earlier check announced.
+
+### `events/attention-raised`
+
+When a check of what needs the owner's attention finds an entry with a `kind` and `reference` that the last check did not list, the server MUST announce one `attention.raised` event carrying in `attention` the entry's `kind` and `reference` and a `description` fixed for its kind.
+
+**Reason:** an app follows the instance's health from the stream or a webhook rather than reading the list again and again.
+
+**Tests:** `compliance/attention-events.test.ts › sends a new attention entry once on the stream of a credential holding instance.read, and to no other`, `› announces an entry from the attention-check job when nobody reads the list`.
+
+### `events/attention-no-detail`
+
+The server MUST NOT put an entry's `title`, or the `description` `GET /attention` gives it, in an `attention.raised` event.
+
+**Reason:** a description can name a file path or an error from a store or a job, and a webhook sends the event to an address outside the instance, so the event names the entry and `GET /attention` gives the rest.
+
+**Tests:** `compliance/attention-events.test.ts › sends an entry's kind, reference and a fixed description, never the path the list names`.
+
+### `events/attention-once`
+
+While an entry stays in what needs the owner's attention, the server MUST NOT announce it again at a later check.
+
+**Reason:** the event says an entry appeared, so one that stays is told once, and one that goes away and comes back is told again.
+
+**Tests:** `compliance/attention-events.test.ts › sends a new attention entry once on the stream of a credential holding instance.read, and to no other`.
+
+### `events/attention-newest-check`
+
+If a check of what needs the owner's attention comes to record what it found after a check that began later has finished looking, then the server MUST NOT announce any entry from the earlier check.
+
+**Reason:** the later check saw a newer state, so an entry it no longer found is not announced from an older look.
+
+**Tests:** `compliance/attention-events.test.ts › announces nothing from a check older than one that has since looked`.
+
+### `events/attention-covered-job`
+
+While the health check of what needs the owner's attention cannot answer, the server MUST NOT announce an entry of kind `job` for the `backup` or `blob-replicate` job.
+
+**Reason:** once the health check answers, a backup entry tells those jobs' failures, so one fault is announced once.
+
+**Tests:** `compliance/attention-events.test.ts › announces no failed backup job while the health check cannot answer`.
+
+### `events/attention-reader`
+
+The server MUST send an `attention.raised` event only to a stream or a webhook whose credential holds `instance.read`.
+
+**Tests:** `compliance/attention-events.test.ts › sends a new attention entry once on the stream of a credential holding instance.read, and to no other`.
+
+### `events/attention-unfiltered`
+
+The server MUST NOT send an `attention.raised` event on a stream that names a `type` or is a copy stream.
+
+**Reason:** the entry is about the instance, not an item of any type, and a device's copy stream carries only what its working copy holds.
+
+**Tests:** `compliance/attention-events.test.ts › sends no attention entry on a stream that names a type`.
+
+### `events/attention-webhook`
+
+When a webhook subscribed to `attention.raised`, whose maker holds `instance.read`, is active as an entry is announced, the server MUST deliver the event to it, whatever its `type_filter`.
+
+**Tests:** `compliance/attention-events.test.ts › delivers a new attention entry to a webhook subscribed to attention.raised`.
 
 ## A stream and the source filter
 

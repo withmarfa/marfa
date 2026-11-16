@@ -16,7 +16,7 @@ pub enum HousekeepingCommand {
         /// The housekeeping job's name, as `housekeeping list` shows it.
         name: String,
     },
-    /// Take the server's clock as right (private socket required). While the
+    /// Take the server's clock as right. Requires `instance.maintain`. While the
     /// clock reads more than 7 days later than the server's trusted time, the
     /// jobs that delete old records do nothing; this lets them run now. A
     /// clock more than an hour behind that time is named on the attention
@@ -33,7 +33,7 @@ pub fn run_request(name: &str) -> Request {
 }
 
 pub fn confirm_clock_request() -> Request {
-    Request::post(&["_control", "clock", "confirm"])
+    Request::post(&["clock", "confirm"])
 }
 
 pub fn run(command: HousekeepingCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {

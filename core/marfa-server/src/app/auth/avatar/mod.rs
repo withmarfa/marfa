@@ -18,27 +18,10 @@ use crate::app::blobs::references::{self, Naming, Row as Referencing};
 use crate::app::blobs::{Found, Hash};
 use crate::app::refusal::{Refusal, Result};
 
-/// The way an avatar arrives, which decides who may send it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Door {
-    Owner,
-    Profile,
-}
+const ACTION: &str = "profile.update";
 
-impl Door {
-    fn admit(self, caller: &Caller) -> Result<()> {
-        match self {
-            Door::Owner => caller.require_local(),
-            Door::Profile => caller.require_profile("avatar", Level::Write),
-        }
-    }
-
-    fn action(self) -> &'static str {
-        match self {
-            Door::Owner => "owner.update",
-            Door::Profile => "profile.update",
-        }
-    }
+fn admit(caller: &Caller) -> Result<()> {
+    caller.require_profile("avatar", Level::Write)
 }
 
 #[derive(Debug)]
@@ -107,15 +90,14 @@ fn set(
 }
 
 impl App {
-    /// Refuses a caller the door does not admit, before a body is read for it.
-    pub fn admit_avatar(&self, caller: &Caller, door: Door) -> Result<()> {
-        door.admit(caller)
+    /// Refuses a caller that may not change the avatar, before a body is read for it.
+    pub fn admit_avatar(&self, caller: &Caller) -> Result<()> {
+        admit(caller)
     }
 
     pub async fn put_avatar(
         self: &Arc<App>,
         caller: &Caller,
-        door: Door,
         bytes: Vec<u8>,
         visit: Visit,
     ) -> Result<Owner> {
@@ -131,8 +113,8 @@ impl App {
             intake.discard().await;
             return Err(refused);
         }
-        self.keep_upload(caller, door.action(), intake, move |unit, recording| {
-            door.admit(&unit.caller)?;
+        self.keep_upload(caller, ACTION, intake, move |unit, recording| {
+            admit(&unit.caller)?;
             let mut found = owner::read(unit.tx())?.ok_or_else(owner::not_found)?;
             let blob = recording.record(unit.tx(), None, &unit.at)?;
             set(
@@ -149,7 +131,7 @@ impl App {
                 Some(&unit.caller),
                 &visit,
                 Note {
-                    action: door.action(),
+                    action: ACTION,
                     resource_type: "owner",
                     resource_id: &found.id,
                     details: Some(json!({ "fields": ["avatar"] })),

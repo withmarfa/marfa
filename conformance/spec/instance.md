@@ -8,31 +8,27 @@ What one deployment says about itself, and what happens to it as an owner runs i
 
 ### `instance/attention-authority`
 
-When a private local command sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title` and `description`.
+When a caller holding `instance.read` sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title` and `description`.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`, `compliance/owner-tasks.test.ts › lets a key holding each permission do each owner task`.
 
-### `instance/attention-credentials`
+### `instance/attention-permission`
 
-When a key or delegated credential sends `GET /attention`, the server MUST answer `403 forbidden`.
+If a credential without `instance.read` sends `GET /attention`, then the server MUST answer `403 forbidden` with `details.required_scope` `instance.read`.
 
-**Reason:** the aggregate includes the owner's folder and key inventories, which management permissions alone do not grant.
-
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`, `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`.
 
 ### `instance/attention-session`
 
 When a request that carries no bearer token and arrives by the public listener sends `GET /attention`, the server MUST answer `401 unauthorized`.
 
-**Reason:** the owner reads attention through the private socket, as for the folder inventory.
-
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-query`
 
 If `GET /attention` carries a query field, then the server MUST answer `400 validation_error`.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-concerns`
 
@@ -40,7 +36,7 @@ When `GET /attention` completes its checks, the server MUST include degraded or 
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-no-backup`
 
@@ -130,7 +126,7 @@ While `instance/backup-health-parts-damaged` holds, when `GET /attention` comple
 
 Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0, `instance/backup-health-parts-damaged` does not hold and no entry is listed under `instance/attention-backup-unlocked`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
-**Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-clock-ahead`
 
@@ -152,13 +148,13 @@ While the server's clock is more than an hour earlier than the trusted time, the
 
 If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-empty`
 
 When every attention check completes without finding a concern, the server MUST return an empty `data` array from `GET /attention`.
 
-**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+**Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
 ## Background work
 
@@ -708,7 +704,7 @@ Where `backup_path` is set, if a backup run fails because `<backup_path>/files/<
 
 ### `instance/backup-folder-adopt`
 
-Where `backup_path` is set, when the private local command sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
+Where `backup_path` is set, when a caller holding `backups.manage` sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
@@ -736,19 +732,19 @@ When the server adopts a backup folder under `instance/backup-folder-adopt`, the
 
 ### `instance/backup-folder-adopt-held`
 
-If the private local command sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds the marker of the store the server recorded there, then the server MUST answer `409 conflict`.
+If a caller holding `backups.manage` sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds the marker of the store the server recorded there, then the server MUST answer `409 conflict`.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
 ### `instance/backup-folder-adopt-missing`
 
-If the private local command sends `POST /backups/folder/adopt` while the folder `backup_path` names does not exist, then the server MUST answer `503 blob_store_unavailable`.
+If a caller holding `backups.manage` sends `POST /backups/folder/adopt` while the folder `backup_path` names does not exist, then the server MUST answer `503 blob_store_unavailable`.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
 ### `instance/backup-folder-adopt-object-store`
 
-Where `object_store_bucket` is set, if the private local command sends `POST /backups/folder/adopt`, then the server MUST answer `409 conflict`.
+Where `object_store_bucket` is set, if a caller holding `backups.manage` sends `POST /backups/folder/adopt`, then the server MUST answer `409 conflict`.
 
 **Reason:** an instance that backs up to an object store has no backup folder to adopt.
 
@@ -756,7 +752,7 @@ Where `object_store_bucket` is set, if the private local command sends `POST /ba
 
 ### `instance/backup-folder-adopt-foreign`
 
-If the private local command sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds the marker of a store other than the one the server recorded there, then the server MUST answer `409 conflict`.
+If a caller holding `backups.manage` sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds the marker of a store other than the one the server recorded there, then the server MUST answer `409 conflict`.
 
 **Reason:** the marker may be another instance's or another server's store, and adopting over it would take that store's files as this instance's own. The refusal leaves the marker as it is, and the error message says to remove it to adopt the folder afresh.
 
@@ -842,7 +838,7 @@ If a file a backup names is one no attached store gives the bytes of whole, then
 
 ### `instance/backup-lost-files-answered`
 
-When the private local command sends `POST /backups`, the server MUST answer in `blobs_lost` the hash of each file the backup it put names as `lost`.
+When a caller holding `backups.manage` sends `POST /backups`, the server MUST answer in `blobs_lost` the hash of each file the backup it put names as `lost`.
 
 **Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
@@ -856,7 +852,7 @@ If an item, an earlier version of an item or an edge a backup would hold takes m
 
 ### `instance/backup-answer-waiting`
 
-When the private local command sends `POST /backups`, the server MUST answer in `blobs_waiting` how many files the backup it put names of which the copy record holds no copy in the destination.
+When a caller holding `backups.manage` sends `POST /backups`, the server MUST answer in `blobs_waiting` how many files the backup it put names of which the copy record holds no copy in the destination.
 
 **Reason:** the object store takes a file's copy when replication reaches it, which can be after the backup that names it. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again.
 
@@ -888,7 +884,7 @@ When the server takes a backup, the server MUST NOT store again the rows of a ta
 
 ### `instance/backup-answer-sent`
 
-When the private local command sends `POST /backups`, the server MUST answer in `sent_bytes` how many bytes of parts the backup stored that the destination did not already hold under their names with the bytes whose SHA-256 those names give.
+When a caller holding `backups.manage` sends `POST /backups`, the server MUST answer in `sent_bytes` how many bytes of parts the backup stored that the destination did not already hold under their names with the bytes whose SHA-256 those names give.
 
 **Tests:** `compliance/backup-parts.test.ts › stores none of the parts of a backup that holds what the last one held, and not the rows of a large table that did not change, and answers what it sent`, `› stores again a part missing from its instance's parts folder or altered there, sends only those parts, and both backups then restore`.
 
@@ -974,13 +970,45 @@ The server MUST count a change to a stored setting as a change a backup holds.
 
 ### `instance/backup-run-now`
 
-When the private local command sends `POST /backups`, the server MUST put a backup, whether or not anything has changed since the last.
+When a caller holding `backups.manage` sends `POST /backups`, the server MUST put a backup, whether or not anything has changed since the last.
 
 **Tests:** `compliance/backups.test.ts › skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked`.
 
+### `instance/backup-asker-gone-early`
+
+If the key that sent `POST /backups` is revoked before the backup sends its first part, then the server MUST answer `401 unauthorized` and put no backup.
+
+**Tests:** `compliance/owner-tasks.test.ts › puts no backup for a key revoked before the backup's upload begins`.
+
+### `instance/backup-asker-gone-late`
+
+If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/owner-tasks.test.ts › records no backup for a key revoked while its backup uploads`.
+
+### `instance/backup-asker-gone-late-unlisted`
+
+If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST NOT list that backup in `GET /backups`, either when it answers or after a later backup run.
+
+**Reason:** a backup put for a caller whose access ended is not one the owner can count on or restore from, so the server deletes what it wrote of it rather than keep it.
+
+**Tests:** `compliance/owner-tasks.test.ts › records no backup for a key revoked while its backup uploads`.
+
+### `instance/backup-asker-gone-late-unrecorded`
+
+If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST leave `backups.last_backup` of `GET /health` as it was.
+
+**Tests:** `compliance/owner-tasks.test.ts › records no backup for a key revoked while its backup uploads`.
+
+### `instance/backup-asker-gone-store-failed`
+
+If the key that sent `POST /backups` is revoked while the backup is put and the object store or the backup folder does not take the backup, then the server MUST count the failed run in `backups.failures` of `GET /health`.
+
+**Tests:** `compliance/owner-tasks.test.ts › counts the failed run when the backup folder fails a backup whose key was revoked while it uploads`.
+
 ### `instance/backup-one-at-a-time`
 
-While a backup run is under way, when the private local command sends `POST /backups`, the server MUST answer `409 housekeeping_job_running` and start no second run.
+While a backup run is under way, when a caller holding `backups.manage` sends `POST /backups`, the server MUST answer `409 housekeeping_job_running` and start no second run.
 
 **Tests:** `compliance/backup-faults.test.ts › runs one backup at a time, answering a second ask with 409 housekeeping_job_running`.
 
@@ -1132,25 +1160,31 @@ Where a destination is set and `backup_interval_seconds` is above 0, while it ta
 
 ### `instance/backup-no-bucket`
 
-Where neither `object_store_bucket` nor `backup_path` is set, when the private local command sends `GET /backups`, `POST /backups`, `POST /backups/folder/adopt` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_backup_destination`.
+Where neither `object_store_bucket` nor `backup_path` is set, when a caller the operation admits sends `GET /backups`, `POST /backups`, `POST /backups/folder/adopt` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_backup_destination`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
-### `instance/backups-owner-only`
+### `instance/backup-restore-local`
 
-When a key or an app's token sends `GET /backups`, `POST /backups`, `POST /backups/folder/adopt` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `403 forbidden`.
+When a key or an app's token sends `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `403 forbidden` with `details.needs` set to `local`.
 
-**Reason:** a backup holds every item of the instance, which no grant of a key or an app covers.
+**Reason:** a restore replaces every item of the instance, so it waits for the owner to confirm it is them, which for now only the private local command proves.
 
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at each door`, `compliance/backup-folder.test.ts › refuses a key at the adopt door`.
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`.
 
 ### `instance/backups-list`
 
-When the private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<object_store_prefix>/backups/` or `<backup_path>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.
+When a caller holding `backups.manage` sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<object_store_prefix>/backups/` or `<backup_path>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.
 
 **Reason:** a fresh server started on the prefix of an instance it replaces restores that instance's backup.
 
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at each door`, `› restores a named backup into a fresh server on the same bucket, files included`, `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `› restores a named backup into a fresh server on the same bucket, files included`, `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
+
+### `instance/backups-permission`
+
+If a credential without `backups.manage` sends `GET /backups`, `POST /backups` or `POST /backups/folder/adopt`, then the server MUST answer `403 forbidden` with `details.required_scope` `backups.manage`.
+
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/backup-folder.test.ts › refuses a key without backups.manage at the adopt door`, `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`.
 
 ### `instance/backup-restore`
 
@@ -1882,11 +1916,11 @@ Where the server believes the forwarded address of a peer, the server MUST count
 
 ## Bodies on the public listener
 
-The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
+The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /profile/avatar` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
 
 ### `instance/body-deadline`
 
-If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
+If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /profile/avatar` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a body at the 16 MiB default of `max_bulk_request_bytes` takes about 134 seconds over a 1 Mbit/s link, and 180 seconds allows for that while a client that stops sending cannot hold the memory its body takes. The deadline does not move with the settings: an owner who raises `max_bulk_request_bytes` or `max_request_bytes` above about 21 MiB gets bodies that cannot arrive in time over a 1 Mbit/s link, and the descriptions of both settings say so.
 
@@ -1932,7 +1966,7 @@ If a request with a body is sent to an operation that requires a credential and 
 
 ### `instance/credential-judged-after-body`
 
-If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/avatar`, `PUT /profile/avatar` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
+If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /profile/avatar` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
 
 **Reason:** a credential the server judged when the head arrived proves nothing about the moment the body is whole, and a caller who sends a body slowly must not keep authority the owner has taken away. A body that does not arrive whole is answered under `instance/body-deadline` or its own refusals.
 
@@ -2734,7 +2768,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `enrichment_max_memory_bytes`    | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                                     | The most memory reading one file may use. A file that needs more is skipped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `enrichment_max_attempts`        | `3`                | Whole number, 1 to 100                                                        | How many times the server tries to extract text from a failing item before it stops.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `sign_in_address`                | None               | An origin with no path, or empty                                              | The address people sign in at, which OAuth, cookies and links use. An origin has a scheme, a host and an optional port, with no user name, password, path, query or fragment. Empty uses `http://localhost` with the port the server listens on, whatever `MARFA_LISTEN_HOST` is. It joins `addresses` without being listed there.                                                                                                                                                                                                                                                                                                                                                                      |
-| `cors_origins`                   | None               | List of origins, each `scheme://host[:port]` with no path                     | The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `cors_origins`                   | None               | List of origins, each `scheme://host[:port]` with no path                     | The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `rate_limit_enabled`             | `true`             | `true` or `false`                                                             | Whether the rate limiter is on for a key's or an app's requests, and for app registration, device code requests, passkey sign-in challenges and deliveries to inbound addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `rate_limit_requests`            | `4000`             | Whole number, 1 to 1000000                                                    | The requests one key or app may make to all operations together in each window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `rate_limit_window_seconds`      | `60` seconds       | Whole number of seconds, 1 to 86400                                           | The length of a rate-limit window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -2766,7 +2800,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `error_reporting_enabled`        | `true`             | `true` or `false`                                                             | Send error alerts to `error_webhook_url` and exception reports to the receiver the environment names.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `heartbeat_enabled`              | `true`             | `true` or `false`                                                             | Send scheduled requests to `heartbeat_url`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `update_check_enabled`           | `true`             | `true` or `false`                                                             | Whether the server checks GitHub for new Marfa releases every few hours. When off, it makes no request for them and reports no release as newer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `addresses`                      | None               | List of origins, each `scheme://host[:port]` with no path                     | The addresses people reach this instance at, such as `https://marfa.example`. Each is an origin: a scheme, a host and an optional port, with no path. Links the server builds and browser origins it accepts for sign-in come from this list and the sign-in address.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `addresses`                      | None               | List of origins, each `scheme://host[:port]` with no path                     | The addresses people reach this instance at, such as `https://marfa.example`. Each is an origin: a scheme, a host and an optional port, with no path. Links the server builds come from this list and the sign-in address.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### `instance/settings-listed`
 
@@ -2854,17 +2888,23 @@ When a write sets `sign_in_address` and does not name `addresses`, the server MU
 
 ### `instance/sign-in-address-authority`
 
-If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write.
+If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address`, then the server MUST answer `403 forbidden` and store none of the write.
 
-**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through the private local process, may change them.
+**Reason:** the sign-in address decides where sign-in cookies are valid, so moving it waits for the owner to confirm it is them, which for now only the private local command proves.
 
 **Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 
+### `instance/cors-origins-permission`
+
+When a key holding `config.manage` sends `PATCH /config` that changes `cors_origins`, the server MUST store the change.
+
+**Tests:** `compliance/instance-addresses.test.ts › lets a key holding config.manage change cors_origins`.
+
 ### `instance/sign-in-address-authority-unchanged`
 
-If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` or `cors_origins` at the value it already has, then the server MUST apply the write as it would for any other setting.
+If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` at the value it already has, then the server MUST apply the write as it would for any other setting.
 
-**Reason:** a client that sends the whole configuration back changes neither setting, and refusing it would make every such client need direct authority.
+**Reason:** a client that sends the whole configuration back does not move the sign-in address, and refusing it would make every such client need direct authority.
 
 **Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 

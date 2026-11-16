@@ -8,16 +8,16 @@ use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub enum OwnerCommand {
-    /// Show the instance's owner.
+    /// Show the owner's profile: the name, email and avatar the credential reads.
     Show,
-    /// Manage the owner's registered passkeys using private machine authority.
+    /// Manage the owner's registered passkeys.
     Passkeys {
         #[command(subcommand)]
         command: super::owner_passkeys::PasskeysCommand,
     },
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
-    /// Change the owner's email, display name, or avatar (private socket required).
+    /// Change the owner's email, display name, or avatar. Requires `profile` write on each.
     Update(OwnerUpdateArgs),
     /// Fetch the owner's avatar.
     Avatar {
@@ -141,10 +141,10 @@ fn set_address(remote: &Remote, address: Option<&str>, out: &Printer) -> Result<
 pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
         OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
-        OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
+        OwnerCommand::Show => out.value(&remote.json(&Request::get(&["profile"]))?),
         OwnerCommand::Avatar { output } => {
             let (content_type, mut reader) =
-                remote.stream(&Request::get(&["owner", "avatar"]).streamed())?;
+                remote.stream(&Request::get(&["profile", "avatar"]).streamed())?;
             let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
@@ -163,9 +163,11 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
             Ok(())
         }
         OwnerCommand::Update(args) => {
-            require_local(remote)?;
             let avatar = match &args.avatar {
-                Some(file) => Some(super::profile::avatar_request(&["owner", "avatar"], file)?),
+                Some(file) => Some(super::profile::avatar_request(
+                    &["profile", "avatar"],
+                    file,
+                )?),
                 None => None,
             };
             let mut body = serde_json::Map::new();
@@ -185,7 +187,7 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
                 reply = Some(remote.json(&request)?);
             }
             if !body.is_empty() {
-                reply = Some(remote.json(&Request::patch(&["owner"]).json(Value::Object(body)))?);
+                reply = Some(remote.json(&Request::patch(&["profile"]).json(Value::Object(body)))?);
             }
             match reply {
                 Some(reply) => out.value(&reply),

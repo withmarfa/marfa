@@ -364,7 +364,7 @@ describe("owner passkeys", () => {
     );
     const link = await controlRequest(
       server.controlSocket,
-      "/_control/owner/passkeys/add-url",
+      "/owner/passkeys/add-url",
     );
     expect(link.status).toBe(200);
     const url = new URL(String(link.body.url));
@@ -374,9 +374,7 @@ describe("owner passkeys", () => {
       prompt: "login",
       return_to: "/auth/owner/passkeys",
     });
-    expect(
-      (await fetch(base + "/_control/owner/passkeys/add-url")).status,
-    ).toBe(404);
+    expect((await fetch(base + "/owner/passkeys/add-url")).status).toBe(401);
     const rename = await fetch(base + "/owner/passkeys/" + firstId, {
       method: "PATCH",
       headers: {

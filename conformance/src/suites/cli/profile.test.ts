@@ -20,31 +20,26 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
-it("changes owner through the private socket and profile through its credential", async () => {
-  const previous = await local.json<{
-    id: string;
-    email: string;
-    name: string;
-  }>(["owner", "show"]);
-  const changed = await local.json<{ id: string; email: string; name: string }>(
-    [
-      "owner",
-      "update",
-      "--email",
-      "Updated@Example.test",
-      "--name",
-      "CLI owner",
-    ],
-  );
+it("changes the owner through the private socket and through a credential", async () => {
+  const changed = await local.json<{ email: string; name: string }>([
+    "owner",
+    "update",
+    "--email",
+    "Updated@Example.test",
+    "--name",
+    "CLI owner",
+  ]);
   expect(changed).toMatchObject({
-    id: previous.id,
     email: "updated@example.test",
     name: "CLI owner",
   });
   const refused = await delegated
     .as(undefined)
     .refused(["owner", "update", "--name", "No"]);
-  expect(refused.envelope.error.message).toContain("--socket PATH");
+  expect(refused.code).toBe(5);
+  expect(
+    await delegated.json(["owner", "update", "--name", "CLI delegate"]),
+  ).toMatchObject({ name: "CLI delegate" });
   expect(
     await delegated.json(["profile", "update", "--name", "CLI profile"]),
   ).toMatchObject({ name: "CLI profile" });
@@ -70,7 +65,7 @@ it("uploads, fetches and removes the owner's avatar from a file", async () => {
       "--avatar",
       file,
     ]);
-    expect(updated.avatar).toMatch(/\/owner\/avatar$/);
+    expect(updated.avatar).toMatch(/\/profile\/avatar$/);
     expect((await owner()).avatar).toBe(updated.avatar);
     const fetched = join(dir, "fetched.png");
     await local.json(["owner", "avatar", "--output", fetched]);

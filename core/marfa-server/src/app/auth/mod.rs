@@ -73,12 +73,6 @@ pub fn own_origins(app: &App) -> Vec<String> {
     vec![app.addresses().sign_in().origin().to_string()]
 }
 
-pub fn form_origins(app: &App) -> Vec<String> {
-    let mut origins = own_origins(app);
-    origins.extend(configured_origins(app));
-    origins
-}
-
 struct Note<'a> {
     action: &'a str,
     resource_type: &'a str,

@@ -66,8 +66,12 @@ function local(path: string, body?: unknown) {
 describe("claiming the one owner", () => {
   it("starts unclaimed with local authority and no public claim authority", async () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
-    expect((await local("/owner")).status).toBe(404);
-    expect((await fetch(`${server.url}/owner`)).status).toBe(401);
+    const unclaimed = await local("/profile");
+    expect(unclaimed.status).toBe(404);
+    expect(unclaimed.body).toMatchObject({
+      error: { code: "owner_not_found" },
+    });
+    expect((await fetch(`${server.url}/profile`)).status).toBe(401);
     const noProofClaim = await post("/setup/claim", OWNER);
     expect(noProofClaim.status).toBe(401);
     expect(await errorCode(noProofClaim)).toBe("setup_proof_invalid");
@@ -400,16 +404,22 @@ describe("claiming the one owner", () => {
       (await fetch(`${server.url}/owner/passkeys`, { headers: { cookie } }))
         .status,
     ).toBe(200);
-    const read = await local("/owner");
+    const read = await local("/profile");
     expect(read.status).toBe(200);
-    const readOwner = read.body;
-    await expectMatchesSchema("GET", "/owner", 200, readOwner);
-    expect(readOwner).toEqual(owner);
+    await expectMatchesSchema("GET", "/profile", 200, read.body);
+    expect(read.body).toEqual({
+      name: owner.name,
+      email: owner.email,
+      avatar: owner.avatar,
+    });
+    expect((await local("/_control/setup/status")).body.owner_id).toBe(
+      owner.id,
+    );
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
     expect((await local("/_control/setup/code", {})).status).toBe(409);
   });
 
-  it("ordinary full management access cannot become the owner", async () => {
+  it("ordinary full management access cannot claim the instance", async () => {
     const minted = await local("/keys", {
       label: "Instance management",
       source: "owner-test",
@@ -426,6 +436,8 @@ describe("claiming the one owner", () => {
         "instance.read",
         "blobs.manage",
         "instance.maintain",
+        "backups.manage",
+        "sign_ins.manage",
       ],
       type_permissions: {},
       edge_permissions: {},
@@ -436,14 +448,16 @@ describe("claiming the one owner", () => {
     const key = minted.body.key as string;
     managementKey = key;
     expect(typeof key).toBe("string");
-    const read = await fetch(`${server.url}/owner`, {
-      headers: { authorization: `Bearer ${key}` },
-    });
-    expect(read.status).toBe(403);
-    const mixed = await fetch(`${server.url}/owner`, {
-      headers: { cookie, authorization: `Bearer ${key}` },
-    });
-    expect(mixed.status).toBe(403);
+    // The witness: the same claim with no credential, as a stranger sends it.
+    const stranger = await post("/owner", { ...OWNER, code });
+    expect(stranger.status).toBeGreaterThanOrEqual(400);
+    const claim = await post(
+      "/owner",
+      { ...OWNER, code },
+      { authorization: `Bearer ${key}` },
+    );
+    expect(claim.status).toBe(stranger.status);
+    expect(await errorCode(claim)).toBe(await errorCode(stranger));
   });
 
   it("recovers the existing owner and ends the old browser session", async () => {
@@ -531,7 +545,7 @@ describe("claiming the one owner", () => {
         })
       ).status,
     ).toBe(200);
-    expect((await local("/owner")).body.id).toBe(ownerId);
+    expect((await local("/_control/setup/status")).body.owner_id).toBe(ownerId);
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
   });
   it("keeps a completed claim and recovered password through restart", async () => {
@@ -656,8 +670,12 @@ describe("signing the owner in at the claim", () => {
         });
         expect(read.status).toBe(200);
         expect(
-          (await controlRequest(instance.controlSocket, "/owner")).body,
-        ).toEqual(owner);
+          (await controlRequest(instance.controlSocket, "/profile")).body,
+        ).toEqual({
+          name: owner.name,
+          email: owner.email,
+          avatar: owner.avatar,
+        });
 
         const login = await fetch(`${instance.url}/auth/sign-in`, {
           method: "POST",

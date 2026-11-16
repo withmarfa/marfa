@@ -844,6 +844,8 @@ export async function bootServer(args: BootOptions): Promise<void> {
           "instance.maintain",
           "connectors.manage",
           "blobs.manage",
+          "backups.manage",
+          "sign_ins.manage",
           "keys.manage",
         ],
       },

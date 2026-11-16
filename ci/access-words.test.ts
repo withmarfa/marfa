@@ -76,7 +76,7 @@ function serverWords(): {
   );
   const powers = new Map(
     Array.from(
-      source.matchAll(/\(\s*"([a-z.]+)",\s*PowerWords \{\s*title: "([^"]*)"/g),
+      source.matchAll(/\(\s*"([a-z._]+)",\s*PowerWords \{\s*title: "([^"]*)"/g),
       (match): [string, string] => [match[1]!, match[2]!],
     ),
   );
@@ -95,10 +95,10 @@ function serverWords(): {
 describe("the words access is read in", () => {
   const glossary = glossaryTables();
 
-  it("are three levels and twelve powers in the glossary", () => {
+  it("are three levels and fourteen powers in the glossary", () => {
     expect(glossary.levels).toHaveLength(3);
     expect(glossary.rows.length).toBeGreaterThan(0);
-    expect(glossary.powers).toHaveLength(12);
+    expect(glossary.powers).toHaveLength(14);
   });
 
   it("are the CLI's, character for character", () => {
@@ -110,7 +110,7 @@ describe("the words access is read in", () => {
   it("are the server's, character for character", () => {
     const server = serverWords();
     expect(server.levels).toHaveLength(3);
-    expect(server.powers).toHaveLength(12);
+    expect(server.powers).toHaveLength(14);
     expect(glossary.levels).toEqual(
       glossary.levels.map(([level]) => [level, server.levels.get(level)]),
     );

@@ -136,11 +136,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ("POST /_control/setup/code", "the private control socket"),
     ("POST /_control/setup/ticket", "the private control socket"),
     ("POST /_control/owner/recover", "the private control socket"),
-    ("POST /_control/clock/confirm", "the private control socket"),
-    (
-        "GET /_control/owner/passkeys/add-url",
-        "the private control socket",
-    ),
     (
         "GET /_control/test/clock",
         "the private control socket, with test hooks on",

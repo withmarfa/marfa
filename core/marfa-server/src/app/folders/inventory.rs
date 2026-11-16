@@ -10,6 +10,7 @@ use crate::app::refusal::Result;
 
 const UNTITLED: &str = "Untitled folder";
 const SCOPE: &str = "folders";
+const WALK_BATCH: i64 = 200;
 
 pub struct Page {
     pub limit: i64,
@@ -26,22 +27,50 @@ pub(super) fn shown(title: Option<&str>) -> String {
     }
 }
 
+/// Folders are listed as `GET /items?type=system.folder` lists them, the source filter included.
 pub async fn list(app: &App, caller: &Caller, page: Page) -> Result<String> {
     reading(app, caller, move |read| {
-        let after = page
+        let mut after = page
             .cursor
             .as_deref()
             .map(|cursor| read.cursors.open_at(SCOPE, cursor))
             .transpose()?;
-        let rows = newest_of(
-            read.tx,
-            FOLDER_TYPE,
-            "active",
-            after
-                .as_ref()
-                .map(|(created, id)| (created.as_str(), id.as_str())),
-            page.limit + 1,
-        )?;
+        let levers = read.caller.levers()?;
+        let batch = if levers
+            .listed_sources(&read.catalog.rules, FOLDER_TYPE)
+            .is_some()
+        {
+            WALK_BATCH.max(page.limit + 1)
+        } else {
+            page.limit + 1
+        };
+        let mut rows = Vec::new();
+        'walking: loop {
+            let found = newest_of(
+                read.tx,
+                FOLDER_TYPE,
+                "active",
+                after
+                    .as_ref()
+                    .map(|(created, id)| (created.as_str(), id.as_str())),
+                batch,
+            )?;
+            let last = found.len() < batch as usize;
+            after = found
+                .last()
+                .map(|row| (row.created_at.clone(), row.id.clone()));
+            for row in found {
+                if levers.lists(&read.catalog.rules, FOLDER_TYPE, &row.source) {
+                    rows.push(row);
+                    if rows.len() as i64 > page.limit {
+                        break 'walking;
+                    }
+                }
+            }
+            if last {
+                break;
+            }
+        }
         let more = rows.len() as i64 > page.limit;
         let rows = &rows[..rows.len().min(page.limit as usize)];
         let mut data = Vec::with_capacity(rows.len());

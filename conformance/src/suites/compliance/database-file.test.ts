@@ -531,7 +531,7 @@ describe("a completed claim after credential rows disappear", () => {
         });
         expect(publicClaim.status).toBe(409);
         expect(
-          (await controlRequest(restarted.controlSocket, "/owner")).status,
+          (await controlRequest(restarted.controlSocket, "/profile")).status,
         ).toBe(missing === "keys" ? 200 : 404);
         const recovery = await controlRequest(
           restarted.controlSocket,
@@ -813,7 +813,7 @@ describe("starting on a database that holds some of the server's tables and no r
           .body.claimed,
       ).toBe(false);
       expect(
-        (await controlRequest(server.controlSocket, "/owner")).status,
+        (await controlRequest(server.controlSocket, "/profile")).status,
       ).toBe(404);
       expect(await rootInstanceId()).not.toBe(instanceBefore);
       withInstanceDatabase(server.sqlitePath, (db) => {

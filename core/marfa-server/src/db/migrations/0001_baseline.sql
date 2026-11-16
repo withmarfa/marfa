@@ -368,6 +368,13 @@ CREATE TABLE IF NOT EXISTS event_log (
     fanout INTEGER NOT NULL CHECK (fanout IN (0, 1))
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS attention_announced (
+    kind TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    announced_at TEXT NOT NULL,
+    PRIMARY KEY (kind, reference)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,
@@ -1220,6 +1227,8 @@ CREATE TABLE IF NOT EXISTS backups (
     store_id TEXT NOT NULL,
     name TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
+    -- Its asker's access ended before it was recorded: never confirmed, its manifest deleted.
+    refused INTEGER NOT NULL DEFAULT 0 CHECK (refused IN (0, 1)),
     -- How many listings in a row have omitted it while a later backup was recorded.
     omissions INTEGER NOT NULL DEFAULT 0 CHECK (omissions >= 0),
     UNIQUE (store_id, name)

@@ -269,9 +269,11 @@ fn owner_item_doors() -> Routes {
 
 fn profile_doors() -> Routes {
     Doors::new()
-        .route("/owner/avatar", get(profile::read).put(profile::put_owner))
         .route("/profile", get(profile::read_own).patch(profile::update))
-        .route("/profile/avatar", put(profile::put_profile))
+        .route(
+            "/profile/avatar",
+            get(profile::read).put(profile::put_profile),
+        )
 }
 
 fn config_doors() -> Routes {
@@ -347,6 +349,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/housekeeping", get(housekeeping::list))
         .route("/metrics", get(metrics::read))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
+        .route("/clock/confirm", post(housekeeping::confirm_clock))
         .route("/update", get(updates::read).post(updates::start))
         .route("/backups", get(backups::list).post(backups::run))
         .route("/backups/folder/adopt", post(backups::adopt_folder))
@@ -454,12 +457,7 @@ fn control_doors(app: &Arc<App>) -> Routes {
         .route("/_control/setup/claim", post(control::setup_claim))
         .route("/_control/setup/code", post(control::setup_code))
         .route("/_control/setup/ticket", post(control::setup_ticket))
-        .route("/_control/owner/recover", post(control::recover_owner))
-        .route("/_control/clock/confirm", post(control::confirm_clock))
-        .route(
-            "/_control/owner/passkeys/add-url",
-            get(auth::passkeys::add_url),
-        );
+        .route("/_control/owner/recover", post(control::recover_owner));
     #[cfg(feature = "test-hooks")]
     let routes = if app.settings.start.test_hooks {
         routes

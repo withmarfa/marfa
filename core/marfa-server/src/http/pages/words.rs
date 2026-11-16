@@ -13,7 +13,8 @@ pub fn level(level: Level) -> &'static str {
 
 pub const CHOOSE_TYPES_WORD: &str = "Choose types";
 pub const EDIT_LINE: &str = "Edit includes adding and deleting items.";
-pub const POWERS_TITLE: &str = "More control over Marfa";
+pub const POWERS_TITLE: &str = "Look after this Marfa";
+pub const POWERS_EACH: &str = "Choose one by one";
 pub const UNDONE_MARK: &str = "Can't be undone.";
 
 pub struct PowerWords {
@@ -21,7 +22,7 @@ pub struct PowerWords {
     pub note: Option<&'static str>,
 }
 
-const POWERS: [(&str, PowerWords); 12] = [
+const POWERS: [(&str, PowerWords); 14] = [
     (
         "keys.mint",
         PowerWords {
@@ -104,6 +105,20 @@ const POWERS: [(&str, PowerWords); 12] = [
         PowerWords {
             title: "Delete items in the trash for good",
             note: None,
+        },
+    ),
+    (
+        "backups.manage",
+        PowerWords {
+            title: "See, take and adopt backups",
+            note: None,
+        },
+    ),
+    (
+        "sign_ins.manage",
+        PowerWords {
+            title: "See, rename and end sign-ins and passkeys",
+            note: Some("Includes ending this app's own access."),
         },
     ),
 ];
@@ -214,11 +229,12 @@ pub fn description(row: &LevelRow) -> Option<String> {
         (Reach::Metadata, "metadata.types") => "The kinds of item you have defined",
         (Reach::Metadata, "metadata.edge_types") => "The kinds of link you have defined",
         (Reach::Profile, "profile") if writes => {
-            "Read your name, email address and avatar; change only your name and avatar"
+            "Read your email address, and read and change your name and avatar"
         }
         (Reach::Profile, "profile") => "Your name, email address and avatar",
         (Reach::Profile, "profile.name") if writes => "Read and change your name",
         (Reach::Profile, "profile.name") => "Your name",
+        (Reach::Profile, "profile.email") if writes => "Read and change your email address",
         (Reach::Profile, "profile.email") => "Your email address",
         (Reach::Profile, "profile.avatar") if writes => "Read and change your avatar",
         (Reach::Profile, "profile.avatar") => "Your avatar",

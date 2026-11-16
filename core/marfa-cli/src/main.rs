@@ -185,8 +185,8 @@ enum Command {
         #[command(subcommand)]
         command: apps::AppsCommand,
     },
-    /// Sign-ins: every browser, app and key that can reach the server. A key
-    /// or an app's token is refused; use --socket.
+    /// Sign-ins: every browser, app and key that can reach the server.
+    /// Requires `sign_ins.manage`.
     #[command(name = "sign-ins")]
     SignIns {
         #[command(subcommand)]
@@ -335,7 +335,7 @@ enum Command {
     /// non-zero exit when the stream closes on `cursor_ahead`,
     /// `catchup_too_old` or `stream_incomplete`.
     Events(events::EventsArgs),
-    /// What needs the owner's attention: a degraded component, a failed job, a connector or folder with a problem, a key about to expire, and any check that could not answer. Needs --socket.
+    /// What needs the owner's attention: a degraded component, a failed job, a connector or folder with a problem, a key about to expire, and any check that could not answer. Requires `instance.read`.
     Attention,
     /// The housekeeping jobs the server runs on itself. Explicit management permission required.
     Housekeeping {
@@ -615,14 +615,10 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             &cli.command,
             Command::Owner {
                 command: owner::OwnerCommand::Recover(_)
-                    | owner::OwnerCommand::Passkeys { .. }
-                    | owner::OwnerCommand::Update(_)
             } | Command::Setup {
                 command: owner::SetupCommand::Status
                     | owner::SetupCommand::Code
                     | owner::SetupCommand::Open { .. }
-            } | Command::Housekeeping {
-                command: housekeeping::HousekeepingCommand::ConfirmClock
             }
         )
     {

@@ -27,8 +27,7 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     ))
 }
 
-/// The caller is judged here and nowhere after: the run is the server's, so a
-/// key revoked once it is admitted does not stop it.
+/// Judged here and again at the claim; a key revoked after the claim does not stop the run.
 pub async fn run(
     State(app): State<Arc<App>>,
     caller: Caller,
@@ -44,6 +43,17 @@ pub async fn run(
                 .into(),
         );
     }
-    let ended = housekeeping::run_now(&app, &name).await?;
+    let ended = housekeeping::run_now(&app, &caller, &name).await?;
     Ok(json_answer(StatusCode::OK, &ended.to_json()))
+}
+
+/// Takes the server's clock as right, which ends a hold on clean-up.
+pub async fn confirm_clock(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    caller.require(Permission::InstanceMaintain)?;
+    query::only(&uri, &[])?;
+    let confirmed = housekeeping::confirm_clock(&app, &caller).await?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &json!({ "confirmed_at": confirmed }),
+    ))
 }

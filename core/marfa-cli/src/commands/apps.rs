@@ -7,10 +7,10 @@ use crate::remote::{Remote, request::Request};
 
 #[derive(Debug, Subcommand)]
 pub enum AppsCommand {
-    /// List approved apps. Requires grants.manage or private machine authority.
+    /// List approved apps. Requires `grants.manage`.
     List,
     /// Reduce an app's access. Ends tokens and refresh chains that exceed it.
-    /// Requires private machine authority (--socket).
+    /// Requires `grants.manage`.
     Narrow {
         /// The app grant's ID.
         id: String,
@@ -21,7 +21,7 @@ pub enum AppsCommand {
         #[arg(long)]
         clear: bool,
     },
-    /// End an app's grant. Requires grants.manage or private machine authority.
+    /// End an app's grant. Requires `grants.manage`.
     Revoke {
         /// The app grant's ID.
         id: String,

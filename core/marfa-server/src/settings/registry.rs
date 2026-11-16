@@ -573,7 +573,7 @@ registry! {
     INBOUND_HANDLED_RETENTION_DAYS: u64 = "inbound_handled_retention_days", Rule::Whole { min: 0, max: 36_500 }, "7", "How many days a handled inbound delivery is kept after it was handled. 0 keeps it for ever.";
     INBOUND_PENDING_RETENTION_DAYS: u64 = "inbound_pending_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days an unhandled inbound delivery is kept after it arrived. 0 keeps it for ever.";
     ADDRESSES: Vec<Address> = "addresses", Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.", Machine;
-    CORS_ORIGINS: Vec<Address> = "cors_origins", Rule::Addresses, "[]", "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.";
+    CORS_ORIGINS: Vec<Address> = "cors_origins", Rule::Addresses, "[]", "The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves.";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.", Machine;
 }
 

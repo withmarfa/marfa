@@ -52,7 +52,7 @@ pub async fn narrow(
     uri: Uri,
     body: JsonBody,
 ) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::GrantsManage)?;
     query::only(&uri, &[])?;
     let body = body.object(&NARROW_FIELDS).await?;
     let asked = Narrowing {

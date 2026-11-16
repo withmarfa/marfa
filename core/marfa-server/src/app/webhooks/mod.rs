@@ -47,6 +47,7 @@ const CURSOR_SCOPE: &str = "webhook-deliveries";
 fn selects(subscription: &Subscription, rules: &Rules, event_type: &str, type_id: &str) -> bool {
     subscription.events.iter().any(|name| name == event_type)
         && (event_type.starts_with("edge.")
+            || event_type == crate::app::attention::RAISED
             || subscription
                 .type_filter
                 .as_deref()

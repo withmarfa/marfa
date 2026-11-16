@@ -5,7 +5,7 @@ use axum::http::{StatusCode, Uri};
 use serde_json::{Value, json};
 
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 use crate::app::auth::Visit;
 use crate::app::auth::sign_ins;
 use crate::app::refusal::{Code, Refusal};
@@ -16,7 +16,7 @@ use crate::http::query;
 const NAME_FIELDS: [&str; 1] = ["name"];
 
 pub async fn list(State(app): State<Arc<App>>, uri: Uri, caller: Caller) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::SignInsManage)?;
     query::only(&uri, &[])?;
     let found = sign_ins::list(&app, &caller).await?;
     let data: Vec<Value> = found.iter().map(sign_ins::SignIn::to_json).collect();
@@ -33,7 +33,7 @@ pub async fn rename(
     uri: Uri,
     body: JsonBody,
 ) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::SignInsManage)?;
     query::only(&uri, &[])?;
     let body = body.object(&NAME_FIELDS).await?;
     let Some(sent) = body.get("name") else {
@@ -58,7 +58,7 @@ pub async fn end(
     caller: Caller,
     visit: Visit,
 ) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::SignInsManage)?;
     query::only(&uri, &["revoke_keys"])?;
     let with_keys = query::flag(&uri, "revoke_keys")?.unwrap_or(false);
     sign_ins::end(&app, &caller, id, with_keys, visit).await?;

@@ -515,7 +515,7 @@ describe("PATCH /grants/{id}", () => {
     ).toBe(400);
   });
 
-  it("requires the local command and reports an unknown grant", async () => {
+  it("refuses a narrowing to a credential without grants.manage, and reports an unknown grant", async () => {
     const { grant } = await approved();
     const sent = (headers: Record<string, string>) =>
       fetch(`${server.apiUrl}/grants/${grant.id}`, {
@@ -523,9 +523,13 @@ describe("PATCH /grants/{id}", () => {
         headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify({ expected_scopes: grant.scopes, scopes: [] }),
       });
+    const lacking = await keyHolding("grant-narrow-lacking", ["audit.read"]);
+    const refused = await sent({ authorization: `Bearer ${lacking}` });
+    expect(refused.status).toBe(403);
     expect(
-      (await sent({ authorization: `Bearer ${server.managementKey}` })).status,
-    ).toBe(403);
+      ((await refused.json()) as { error: { details?: unknown } }).error
+        .details,
+    ).toEqual({ required_scope: "grants.manage" });
     expect((await sent({})).status).toBe(401);
     expect((await sent({ cookie, origin })).status).toBe(401);
     expect((await narrow("missing-grant", [], [])).status).toBe(404);

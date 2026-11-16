@@ -173,12 +173,6 @@ const seeds: Record<string, () => Promise<Read>> = {
           .item.id,
       );
     }
-    for (const key of [server.workingKey, server.managementKey]) {
-      const refused = await fetch(`${server.apiUrl}/folders`, {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      expect(refused.status).toBe(403);
-    }
     return async ({ limit, cursor }) => {
       const query = new URLSearchParams({ limit: String(limit) });
       if (cursor) query.set("cursor", cursor);

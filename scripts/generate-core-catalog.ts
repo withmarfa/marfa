@@ -45,6 +45,8 @@ const RESERVED_ROOTS = [
   "instance",
   "connectors",
   "blobs",
+  "backups",
+  "sign_ins",
   "content",
   "metadata",
   "edge",

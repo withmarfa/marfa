@@ -26,7 +26,7 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 function owner(body: unknown) {
-  return localFetch(server.controlSocket, server.apiUrl + "/owner", {
+  return localFetch(server.controlSocket, server.apiUrl + "/profile", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -42,9 +42,24 @@ function profile(body: unknown, key = server.workingKey) {
     body: JSON.stringify(body),
   });
 }
+async function read(): Promise<Record<string, unknown>> {
+  const answer = await controlRequest(server.controlSocket, "/profile");
+  expect(answer.status).toBe(200);
+  return answer.body;
+}
+async function mint(
+  source: string,
+  profile_permissions: Record<string, string>,
+): Promise<{ id: string; key: string }> {
+  const made = await controlRequest(server.controlSocket, "/keys", {
+    method: "POST",
+    body: { label: source, source, profile_permissions },
+  });
+  expect(made.status, JSON.stringify(made.body)).toBe(201);
+  return made.body as unknown as { id: string; key: string };
+}
 describe("owner and delegated profile changes", () => {
   it("updates the existing owner and preserves credentials and sessions", async () => {
-    const previous = await controlRequest(server.controlSocket, "/owner");
     const app = await approvedApp(server, ["profile:write", "offline_access"]);
 
     const updated = await owner({
@@ -53,24 +68,19 @@ describe("owner and delegated profile changes", () => {
     });
     expect(updated.status).toBe(200);
     const value = (await updated.json()) as Record<string, unknown>;
-    expect(value).toMatchObject({
-      id: previous.body.id,
+    expect(value).toEqual({
       email: "changed.owner@example.test",
       name: "New owner",
-      created_at: previous.body.created_at,
+      avatar: null,
     });
-    await expectMatchesSchema("PATCH", "/owner", 200, value);
+    await expectMatchesSchema("PATCH", "/profile", 200, value);
     const identity = await fetch(server.apiUrl + "/profile", {
       headers: { authorization: `Bearer ${app.token}` },
     });
     expect(identity.status).toBe(200);
-    const read = await identity.json();
-    expect(read).toEqual({
-      name: "New owner",
-      email: "changed.owner@example.test",
-      avatar: null,
-    });
-    await expectMatchesSchema("GET", "/profile", 200, read);
+    const shown = await identity.json();
+    expect(shown).toEqual(value);
+    await expectMatchesSchema("GET", "/profile", 200, shown);
 
     const signin = (email: string) =>
       fetch(server.apiUrl + "/auth/sign-in", {
@@ -94,8 +104,9 @@ describe("owner and delegated profile changes", () => {
         })
       ).status,
     ).toBe(200);
+    expect((await owner({ email: TEST_OWNER.email })).status).toBe(200);
   });
-  it("validates fields and limits credential writes to approved name and avatar", async () => {
+  it("validates fields and limits credential writes to the fields each may write", async () => {
     for (const body of [
       {},
       { name: "\tInvalid" },
@@ -109,26 +120,15 @@ describe("owner and delegated profile changes", () => {
     const invalid = await owner({ name: "a".repeat(201) });
     expect(invalid.status).toBe(400);
     expect((await owner({ name: "😀".repeat(200) })).status).toBe(200);
-    const made = await controlRequest(server.controlSocket, "/keys", {
-      method: "POST",
-      body: {
-        label: "Profile name",
-        source: "profile-name",
-        profile_permissions: { name: "write" },
-      },
-    });
-    expect(made.status).toBe(201);
-    const before = await controlRequest(server.controlSocket, "/owner");
-    expect(
-      (await profile({ name: "No", avatar: null }, made.body.key as string))
-        .status,
-    ).toBe(403);
-    expect((await controlRequest(server.controlSocket, "/owner")).body).toEqual(
-      before.body,
-    );
-    expect(
-      (await profile({ name: "Delegated" }, made.body.key as string)).status,
-    ).toBe(200);
+    const named = await mint("profile-name", { name: "write" });
+    const before = await read();
+    for (const body of [
+      { name: "No", avatar: null },
+      { name: "No", email: "named@example.test" },
+    ])
+      expect((await profile(body, named.key)).status).toBe(403);
+    expect(await read()).toEqual(before);
+    expect((await profile({ name: "Delegated" }, named.key)).status).toBe(200);
     expect(
       (
         await profile({
@@ -140,31 +140,61 @@ describe("owner and delegated profile changes", () => {
     expect((await profile({ avatar: null })).status).toBe(200);
     for (const body of [
       {},
-      { email: "app@example.test" },
-      { name: "No", email: "app@example.test" },
+      { email: "invalid" },
       { avatar: "file:///avatar" },
       { avatar: "https://example.test/portrait.png" },
     ])
       expect((await profile(body)).status).toBe(400);
+    const email = (await read()).email as string;
+    const mailer = await mint("profile-email", { email: "write" });
+    const changed = await profile({ email: "Moved@Example.test" }, mailer.key);
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toEqual({ email: "moved@example.test" });
+    expect((await owner({ email })).status).toBe(200);
     const response = await profile({ name: "Final" });
     const result = await response.json();
     expect(result).toMatchObject({ name: "Final" });
     expect(result).not.toHaveProperty("ok");
     await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
-  it("refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not", async () => {
-    const made = await controlRequest(server.controlSocket, "/keys", {
-      method: "POST",
-      body: {
-        label: "Profile name lost",
-        source: "profile-name-lost",
-        profile_permissions: { name: "write" },
-      },
+  it("changes the email only for a credential that names email write, never through the profile wildcard", async () => {
+    const wildcard = await mint("profile-wildcard-write", { "*": "write" });
+    // The witness: the wildcard writes the name and reads the email.
+    expect(
+      (await profile({ name: "Wildcard writer" }, wildcard.key)).status,
+    ).toBe(200);
+    const email = (await read()).email as string;
+    const shown = await fetch(server.apiUrl + "/profile", {
+      headers: { authorization: `Bearer ${wildcard.key}` },
     });
-    expect(made.status).toBe(201);
-    const key = made.body.key as string;
-    const name = async () =>
-      (await controlRequest(server.controlSocket, "/owner")).body.name;
+    expect(((await shown.json()) as { email: string }).email).toBe(email);
+    try {
+      const refused = await profile(
+        { email: "wildcard@example.test" },
+        wildcard.key,
+      );
+      expect(refused.status).toBe(403);
+      expect(
+        ((await refused.json()) as { error: { details: unknown } }).error
+          .details,
+      ).toMatchObject({ profile_field: "email", required: "write" });
+      expect((await read()).email).toBe(email);
+
+      const named = await mint("profile-email-named", {
+        "*": "write",
+        email: "write",
+      });
+      const moved = await profile({ email: "named@example.test" }, named.key);
+      expect(moved.status).toBe(200);
+      expect((await read()).email).toBe("named@example.test");
+    } finally {
+      expect((await owner({ email })).status).toBe(200);
+    }
+  });
+  it("refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not", async () => {
+    const made = await mint("profile-name-lost", { name: "write" });
+    const key = made.key;
+    const name = async () => (await read()).name;
 
     // The request waits after it was admitted, while `change` is made.
     const held = async (target: string, change: boolean) => {
@@ -174,7 +204,7 @@ describe("owner and delegated profile changes", () => {
       if (change) {
         const narrowed = await controlRequest(
           server.controlSocket,
-          `/keys/${String(made.body.id)}`,
+          `/keys/${made.id}`,
           { method: "PATCH", body: { profile_permissions: {} } },
         );
         expect(narrowed.status).toBe(200);
@@ -191,55 +221,44 @@ describe("owner and delegated profile changes", () => {
     expect((await held("Lost while held", true)).status).toBe(403);
     expect(await name()).toBe(before);
   });
-  it("requires the private local command and refuses explicit email-write grants", async () => {
-    for (const path of ["/owner", "/profile"]) {
-      const unauthenticated = await fetch(server.apiUrl + path, {
-        method: "PATCH",
-        headers: { "content-type": "application/json", origin: server.apiUrl },
-        body: JSON.stringify({ name: "No credential" }),
-      });
-      expect(unauthenticated.status, path).toBe(401);
-      const body = await unauthenticated.json();
-      expect(body).toMatchObject({ error: { code: "unauthorized" } });
-      await expectMatchesSchema("PATCH", path, 401, body);
-    }
-    // The owner's browser session counts here as no credential, and a key is
-    // refused.
-    for (const [headers, status] of [
-      [{ cookie: server.ownerCookie, origin: server.apiUrl }, 401],
-      [{ authorization: `Bearer ${server.workingKey}` }, 403],
-    ] as const) {
-      const refused = await fetch(server.apiUrl + "/owner", {
-        method: "PATCH",
-        headers: { "content-type": "application/json", ...headers },
-        body: JSON.stringify({ name: "No" }),
-      });
-      expect(refused.status).toBe(status);
-    }
-    for (const profile_permissions of [
-      { email: "write" },
-      { unknown: "read" },
-    ]) {
-      const refused = await controlRequest(server.controlSocket, "/keys", {
-        method: "POST",
-        body: {
-          label: "Invalid",
-          source: "invalid-profile",
-          profile_permissions,
-        },
-      });
-      expect(refused.status).toBe(400);
-    }
-    const local = await controlRequest(server.controlSocket, "/owner", {
+  it("requires a credential, takes an email-write grant and refuses an unknown field", async () => {
+    const unauthenticated = await fetch(server.apiUrl + "/profile", {
       method: "PATCH",
-      body: { name: "Local owner" },
+      headers: { "content-type": "application/json", origin: server.apiUrl },
+      body: JSON.stringify({ name: "No credential" }),
     });
+    expect(unauthenticated.status).toBe(401);
+    const body = await unauthenticated.json();
+    expect(body).toMatchObject({ error: { code: "unauthorized" } });
+    await expectMatchesSchema("PATCH", "/profile", 401, body);
+    // The owner's browser session counts here as no credential.
+    const session = await fetch(server.apiUrl + "/profile", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: server.ownerCookie,
+        origin: server.apiUrl,
+      },
+      body: JSON.stringify({ name: "No" }),
+    });
+    expect(session.status).toBe(401);
+    const refused = await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "Invalid",
+        source: "invalid-profile",
+        profile_permissions: { unknown: "read" },
+      },
+    });
+    expect(refused.status).toBe(400);
+    await mint("profile-email-grant", { email: "write" });
+    const local = await owner({ name: "Local owner" });
     expect(local.status).toBe(200);
-    expect(local.body.name).toBe("Local owner");
+    expect(((await local.json()) as { name: string }).name).toBe("Local owner");
   });
 
   it(
-    "refuses an owner update and an avatar upload from the local command while the instance is unclaimed",
+    "refuses a profile update and an avatar upload from the local command while the instance is unclaimed",
     async () => {
       const state = await mkdtemp(join(tmpdir(), "marfa-profile-unclaimed-"));
       try {
@@ -252,10 +271,10 @@ describe("owner and delegated profile changes", () => {
           expect((await local("/_control/setup/status")).body.claimed).toBe(
             false,
           );
-          expect((await local("/owner")).status).toBe(404);
+          expect((await local("/profile")).status).toBe(404);
         };
 
-        const ownerRefused = await local("/owner", {
+        const ownerRefused = await local("/profile", {
           method: "PATCH",
           body: { name: "Do not create owner" },
         });
@@ -263,10 +282,10 @@ describe("owner and delegated profile changes", () => {
         expect(ownerRefused.body).toMatchObject({
           error: { code: "owner_not_found" },
         });
-        await expectMatchesSchema("PATCH", "/owner", 404, ownerRefused.body);
+        await expectMatchesSchema("PATCH", "/profile", 404, ownerRefused.body);
         await assertStillUnclaimed();
 
-        const avatarRefused = await local("/owner/avatar", {
+        const avatarRefused = await local("/profile/avatar", {
           method: "PUT",
           body: png(8, 8),
         });
@@ -276,7 +295,7 @@ describe("owner and delegated profile changes", () => {
         });
         await expectMatchesSchema(
           "PUT",
-          "/owner/avatar",
+          "/profile/avatar",
           404,
           avatarRefused.body,
         );
@@ -290,44 +309,26 @@ describe("owner and delegated profile changes", () => {
   );
 });
 
-it("refuses explicit email-write OAuth scopes", async () => {
-  const registration = {
-    client_name: "Profile scope",
-    application_type: "native",
-    redirect_uris: ["http://localhost:5173/callback"],
-    token_endpoint_auth_method: "none",
-    grant_types: ["authorization_code"],
-    response_types: ["code"],
-  };
-  const good = await fetch(server.apiUrl + "/oauth/register", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(registration),
-  });
-  expect(good.status).toBe(201);
-  const client = (await good.json()) as { client_id: string };
-  const refused = await fetch(server.apiUrl + "/oauth/register", {
+it("takes an email-write OAuth scope", async () => {
+  const registered = await fetch(server.apiUrl + "/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      ...registration,
+      client_name: "Profile scope",
+      application_type: "native",
+      redirect_uris: ["http://localhost:5173/callback"],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
       scope: "profile.name:read profile.email:write",
     }),
   });
-  expect(refused.status).toBe(400);
-  expect(await refused.json()).toMatchObject({ error: "invalid_scope" });
-  const query = new URLSearchParams({
-    client_id: client.client_id,
-    redirect_uri: registration.redirect_uris[0]!,
-    response_type: "code",
-    scope: "profile.name:read profile.email:write",
-    code_challenge: "a".repeat(43),
-    code_challenge_method: "S256",
-  });
-  const authorized = await fetch(
-    server.apiUrl + "/oauth/authorize?" + query.toString(),
-    { redirect: "manual" },
-  );
-  expect(authorized.status).toBe(400);
-  expect(await authorized.json()).toMatchObject({ error: "invalid_scope" });
+  expect(registered.status).toBe(201);
+  const client = (await registered.json()) as { scope: string };
+  expect(client.scope.split(" ")).toContain("profile.email:write");
+  const app = await approvedApp(server, ["profile.email:write"]);
+  const email = (await read()).email as string;
+  const changed = await profile({ email: "app.moved@example.test" }, app.token);
+  expect(changed.status).toBe(200);
+  expect((await owner({ email })).status).toBe(200);
 });

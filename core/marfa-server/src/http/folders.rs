@@ -13,8 +13,8 @@ use super::items::{Named, Sent, check_item_id, keyed, version_of};
 use super::listing::{Params, whole_limit};
 use super::query;
 use crate::app::App;
-use crate::app::access::{Caller, unauthorized};
-use crate::app::folders::{self, Page, Report, SETTINGS, refuse_null, undeclared};
+use crate::app::access::{Caller, Level, unauthorized};
+use crate::app::folders::{self, FOLDER_TYPE, Page, Report, SETTINGS, refuse_null, undeclared};
 use crate::app::items::write::{self, Change, FolderChange, ruled};
 use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
@@ -164,16 +164,8 @@ pub async fn status(
     Ok(text_answer(StatusCode::OK, answer))
 }
 
-/// Only the private socket lists folders, since a listing names every folder whatever a key reads.
 pub async fn inventory(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    match &caller {
-        Caller::Local(_) => {}
-        _ => {
-            return Err(
-                Refusal::needs_local("Only the private local command can list folders.").into(),
-            );
-        }
-    }
+    caller.require_type(FOLDER_TYPE, Level::Read)?;
     let params = Params::read(&uri, &["limit", "cursor"], false)?;
     let page = Page {
         limit: whole_limit(&params, FOLDER_PAGE, MAX_FOLDER_PAGE)?,

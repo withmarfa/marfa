@@ -144,7 +144,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 
 - Each fixture file mints its own key with a `source` unique to the file.
 - Every item a file writes carries that source, or one built from it that the file's own keys claim.
-- Management operations use their named permissions; owner-only operations use the private local command.
+- Management and owner operations use their named permissions; claiming the instance and recovering the owner's password use the private local command.
 
 **The device's half** runs against a scripted server the fixture controls. A device must reach verdicts for failures the real server cannot be asked for, such as a dropped connection, a server at rest, a spent credential or a retry ceiling.
 

@@ -9,7 +9,6 @@ use crate::app::{App, instance};
 
 pub(super) const MAX_EMAIL_CHARS: usize = 254;
 const MAX_NAME_CHARS: usize = 200;
-pub const UPDATE_FIELDS: [&str; 3] = ["email", "name", "avatar"];
 
 #[derive(Clone, Debug)]
 pub struct Owner {
@@ -17,7 +16,7 @@ pub struct Owner {
     pub email: String,
     pub name: String,
     pub created_at: Stamp,
-    /// Whether the owner holds an avatar, which `GET /owner/avatar` serves.
+    /// Whether the owner holds an avatar, which `GET /profile/avatar` serves.
     pub avatar: bool,
 }
 
@@ -28,7 +27,7 @@ impl Owner {
             "id": self.id,
             "email": self.email,
             "name": self.name,
-            "avatar": self.avatar.then(|| format!("{origin}/owner/avatar")),
+            "avatar": self.avatar.then(|| format!("{origin}/profile/avatar")),
             "created_at": self.created_at,
         })
     }
@@ -216,74 +215,6 @@ pub async fn find(app: &App) -> Result<Option<Owner>> {
     app.db.read(read).await
 }
 
-#[derive(Debug)]
-pub struct Update {
-    email: Option<String>,
-    name: Option<String>,
-    clear_avatar: bool,
-    fields: Vec<String>,
-}
-
-impl Update {
-    pub fn from_body(body: &Map<String, Value>) -> Result<Update> {
-        if body.is_empty() {
-            return Err(Refusal::validation("Name at least one field to change."));
-        }
-        let text = |field: &str| match body.get(field) {
-            None => Ok(None),
-            Some(Value::String(text)) => Ok(Some(text.as_str())),
-            Some(_) => Err(invalid(field, "Must be a string.")),
-        };
-        if body.get("avatar").is_some_and(|avatar| !avatar.is_null()) {
-            return Err(invalid("avatar", "Only null clears the avatar here."));
-        }
-        let name = text("name")?
-            .map(|name| checked_name(name)?.ok_or_else(|| invalid("name", "Enter a name.")))
-            .transpose()?;
-        Ok(Update {
-            email: text("email")?.map(checked_email).transpose()?,
-            name,
-            clear_avatar: body.contains_key("avatar"),
-            fields: body.keys().cloned().collect(),
-        })
-    }
-}
-
-pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) -> Result<Owner> {
-    app.write(caller, "owner.update", move |unit| {
-        unit.caller.require_local()?;
-        let mut owner = read(unit.tx())?.ok_or_else(not_found)?;
-        if let Some(email) = update.email {
-            owner.email = email;
-        }
-        if let Some(name) = update.name {
-            owner.name = name;
-        }
-        if update.clear_avatar {
-            avatar::remove(unit.tx())?;
-            owner.avatar = false;
-        }
-        unit.tx().execute(
-            "UPDATE owner SET email = ?2, name = ?3, updated_at = ?4 WHERE id = ?1",
-            params![owner.id, owner.email, owner.name, unit.instant],
-        )?;
-        note(
-            unit.tx(),
-            &unit.at,
-            Some(&unit.caller),
-            &visit,
-            Note {
-                action: "owner.update",
-                resource_type: "owner",
-                resource_id: &owner.id,
-                details: Some(json!({ "fields": update.fields })),
-            },
-        )?;
-        Ok(owner)
-    })
-    .await
-}
-
 /// The owner's profile as far as `caller` may read it: a field it may not read is left out.
 pub async fn read_profile(app: &App, caller: &Caller) -> Result<Value> {
     let owner = find(app).await?.ok_or_else(not_found)?;
@@ -308,11 +239,12 @@ pub fn profile_of(owner: &Owner, origin: &str, caller: &Caller) -> Value {
 
 #[derive(Debug)]
 pub struct ProfileUpdate {
+    email: Option<String>,
     name: Option<String>,
     clear_avatar: bool,
 }
 
-pub const PROFILE_FIELDS: [&str; 2] = ["name", "avatar"];
+pub const PROFILE_FIELDS: [&str; 3] = ["email", "name", "avatar"];
 
 impl ProfileUpdate {
     pub fn from_body(body: &Map<String, Value>) -> Result<ProfileUpdate> {
@@ -329,14 +261,24 @@ impl ProfileUpdate {
             }
             Some(_) => return Err(invalid("name", "Must be a string.")),
         };
+        let email = match body.get("email") {
+            None => None,
+            Some(Value::String(email)) => Some(checked_email(email)?),
+            Some(_) => return Err(invalid("email", "Must be a string.")),
+        };
         Ok(ProfileUpdate {
+            email,
             name,
             clear_avatar: body.contains_key("avatar"),
         })
     }
 
     fn fields(&self) -> Vec<&'static str> {
-        let named = [(self.name.is_some(), "name"), (self.clear_avatar, "avatar")];
+        let named = [
+            (self.email.is_some(), "email"),
+            (self.name.is_some(), "name"),
+            (self.clear_avatar, "avatar"),
+        ];
         named
             .into_iter()
             .filter_map(|(present, field)| present.then_some(field))
@@ -357,6 +299,12 @@ pub async fn update_profile(
             unit.caller.require_profile(field, Level::Write)?;
         }
         let owner = read(unit.tx())?.ok_or_else(not_found)?;
+        if let Some(email) = &update.email {
+            unit.tx().execute(
+                "UPDATE owner SET email = ?2, updated_at = ?3 WHERE id = ?1",
+                params![owner.id, email, unit.instant],
+            )?;
+        }
         if let Some(name) = &update.name {
             unit.tx().execute(
                 "UPDATE owner SET name = ?2, updated_at = ?3 WHERE id = ?1",

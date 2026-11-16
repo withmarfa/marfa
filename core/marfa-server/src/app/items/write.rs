@@ -24,7 +24,7 @@ use super::{
     not_found, parsed, summary_of, title_key,
 };
 use crate::app::App;
-use crate::app::access::{Caller, Level};
+use crate::app::access::{Caller, Level, Permission};
 use crate::app::blobs::Hash;
 use crate::app::blobs::references::{self, Decided, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
@@ -2503,10 +2503,14 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     /// Answers with the summary alone, so nothing of the item's content leaves through this door.
     /// A purge also returns the ids it removed, the asked one first.
     fn owner(&self, act: OwnerAct, id: String, version: i64) -> Result<(Done, Vec<String>)> {
-        self.caller().require_local()?;
+        match act {
+            OwnerAct::Purge => self.caller().require(Permission::ItemsPurge)?,
+            OwnerAct::Trash | OwnerAct::Restore => self.caller().require_local()?,
+        }
         let levers = self.caller().levers()?;
         let row = rows::by_id(self.unit.tx(), &id)?
             .filter(|row| !super::is_system(&row.type_id))
+            .filter(|row| self.caller().may_read_type(&row.type_id))
             .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
             .ok_or_else(not_found)?;
         let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;

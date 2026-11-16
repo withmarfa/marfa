@@ -30,7 +30,7 @@ When `POST /auth/passkeys/sign-in` signs the owner in, the server MUST answer `2
 
 ### `authentication/passkey-list`
 
-When the owner or private local process lists `GET /owner/passkeys`, the server MUST return every registered owner passkey with only `id`, nullable `name`, UTC `created_at` and nullable UTC `last_used_at`, oldest first, with `next_cursor: null`.
+When the owner's browser session, a caller holding `sign_ins.manage` or the private local command lists `GET /owner/passkeys`, the server MUST return every registered owner passkey with only `id`, nullable `name`, UTC `created_at` and nullable UTC `last_used_at`, oldest first, with `next_cursor: null`.
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
@@ -124,21 +124,27 @@ When a registration names a credential ID already registered on the instance, th
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
-### `authentication/passkey-owner-only`
+### `authentication/passkey-permission`
 
-When a caller without an owner browser session or private local authority asks to manage passkeys, the server MUST refuse the request with `401` if unauthenticated or `403` if using an app token or API key.
+If a request to `GET /owner/passkeys`, `PATCH /owner/passkeys/{id}`, `DELETE /owner/passkeys/{id}` or `GET /owner/passkeys/add-url` carries a key or an app's access token that does not hold `sign_ins.manage`, then the server MUST answer `403 forbidden` with `details.required_scope` `sign_ins.manage`.
 
-**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403 on every passkey door, and no credential 401`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token without sign_ins.manage 403 on every passkey door, and no credential 401`, `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`.
+
+### `authentication/passkey-unauthenticated`
+
+If a request to `GET /owner/passkeys`, `PATCH /owner/passkeys/{id}` or `DELETE /owner/passkeys/{id}` carries no credential and no owner browser session, then the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/owner-sign-ins.test.ts › refuses a key and an app's token without sign_ins.manage 403 on every passkey door, and no credential 401`.
 
 ### `authentication/passkey-origin`
 
 When a foreign origin asks to remove an owner passkey, the server MUST refuse it with `403`.
 
-**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403 on every passkey door, and no credential 401`.
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/owner-sign-ins.test.ts › refuses a key and an app's token without sign_ins.manage 403 on every passkey door, and no credential 401`.
 
 ### `authentication/passkey-recent-management`
 
-When the owner renames or removes a passkey through `PATCH` or `DELETE /owner/passkeys/{id}`, the server MUST require a live owner browser session authenticated within five minutes or private local authority.
+When an owner browser session renames or removes a passkey through `PATCH` or `DELETE /owner/passkeys/{id}`, the server MUST require that the session signed in within five minutes.
 
 **Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/confirm-sign-in.test.ts › refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both`.
 
@@ -168,9 +174,9 @@ When the owner renames or removes a passkey, the server MUST leave every other p
 
 ### `authentication/passkey-add-url`
 
-When the private local process requests `GET /_control/owner/passkeys/add-url`, the server MUST return the configured-origin sign-in URL with `prompt=login` and `return_to=/auth/owner/passkeys` without issuing credentials or setup proof.
+When a caller holding `sign_ins.manage` requests `GET /owner/passkeys/add-url`, the server MUST return the configured-origin sign-in URL with `prompt=login` and `return_to=/auth/owner/passkeys` without issuing credentials or setup proof.
 
-**Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
+**Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`, `compliance/owner-tasks.test.ts › lets a key holding each permission do each owner task`.
 
 ## Confirming a stale sign-in
 

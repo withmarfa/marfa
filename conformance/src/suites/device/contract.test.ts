@@ -1210,7 +1210,6 @@ const invocations: Record<string, () => string[]> = {
   "folders revoke": () => [ID],
   "folders health": () => [ID],
   login: () => ["--no-browser", "--print-token"],
-  "owner show": () => [],
   "owner avatar": () => [],
   "profile show": () => [],
   "profile update": () => ["--name", "Profile"],
@@ -1242,13 +1241,20 @@ const beyondTheTable: Record<string, () => string[]> = {
   "sources clear": () => ["--name", "github"],
   // `sign-ins end-all` sends the list and end operations `sign-ins list` and `sign-ins end` are the entries for.
   "sign-ins end-all": () => [],
+  // `owner show` and `owner update` send the profile operations `profile show` and `profile update` are the entries for.
+  "owner show": () => [],
+  "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
   // `rows put`, `rows patch` and `rows delete` send the batch operation `rows write` is the entry for.
   "rows put": () => ["--values", "{}", ID, "lines"],
   "rows patch": () => ["--values", "{}", ID, "lines", ID],
   "rows delete": () => [ID, "lines", ID],
 };
 
-/** Table commands that require private machine authority rather than a key. */
+/**
+ * Table commands each held to the contract by a case of its own below,
+ * through the private socket, which reaches every one of them. Of these,
+ * only `backups restore` takes nothing but that socket.
+ */
 const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "apps narrow": () => [ID, "--scope", "core.note:read"],
   "items summaries": () => [],
@@ -1256,10 +1262,11 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "items bin empty": () => ["--confirm", "PURGE"],
   attention: () => [],
   "folders inventory": () => ["--limit", "1"],
-  "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
+  "housekeeping confirm-clock": () => [],
   "owner passkeys list": () => [],
   "owner passkeys rename": () => [ID, "--name", "Studio"],
   "owner passkeys delete": () => [ID],
+  "owner passkeys add": () => ["--no-browser"],
   "backups list": () => [],
   "backups run": () => [],
   "backups restore": () => [ID, BACKUP],
@@ -1300,10 +1307,6 @@ const NOT_DRIVEN: Record<string, string> = {
     "requires the private socket; exercised by packaged image smoke",
   "owner recover":
     "requires the private socket; packaged image smoke changes the production password and verifies it after restart",
-  "housekeeping confirm-clock":
-    "requires the private socket; its operation is held by compliance/clock-hold.test.ts",
-  "owner passkeys add":
-    "requires the private socket; its response contract is driven here and its sign-in URL is checked by the CLI instance scenario",
   status: "describes a server on another contract; held by its own case",
   whoami: "describes a server on another contract; held by its own case",
   logout:
@@ -1673,8 +1676,8 @@ describe("every command holds the server to the contract", () => {
       },
       {
         command: "owner passkeys add",
-        args: ["--no-browser"],
-        path: "GET /_control/owner/passkeys/add-url",
+        args: PRIVATE_SOCKET_TABLE["owner passkeys add"]!(),
+        path: "GET /owner/passkeys/add-url",
         body: {
           url: "http://localhost/auth/sign-in?prompt=login&return_to=%2Fauth%2Fowner%2Fpasskeys",
         },
@@ -1813,6 +1816,38 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
+  it("holds the clock confirmation to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const body = { confirmed_at: WHEN };
+    socket.answer = body;
+    try {
+      for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+        socket.contract = contract;
+        socket.asked = [];
+        const outcome = await marfa([
+          "--json",
+          "--socket",
+          socket.path,
+          "housekeeping",
+          "confirm-clock",
+          ...PRIVATE_SOCKET_TABLE["housekeeping confirm-clock"]!(),
+        ]);
+        const label = `housekeeping confirm-clock on contract ${String(contract)}: ${outcome.stderr}`;
+        expect(socket.asked, label).toEqual(["POST /clock/confirm"]);
+        if (contract === BUILT_FOR) {
+          expect(outcome.code, label).toBe(0);
+          expect(JSON.parse(outcome.stdout), label).toEqual(body);
+        } else {
+          expect(outcome.code, label).toBe(1);
+          expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+          expect(outcome.stdout, label).toBe("");
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
   it("holds owner update to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
     const body = {
@@ -1832,10 +1867,10 @@ describe("every command holds the server to the contract", () => {
           socket.path,
           "owner",
           "update",
-          ...PRIVATE_SOCKET_TABLE["owner update"]!(),
+          ...beyondTheTable["owner update"]!(),
         ]);
         const label = `owner update on contract ${String(contract)}: ${outcome.stderr}`;
-        expect(socket.asked, label).toEqual(["PATCH /owner"]);
+        expect(socket.asked, label).toEqual(["PATCH /profile"]);
         if (contract === BUILT_FOR) {
           expect(outcome.code, label).toBe(0);
           expect(JSON.parse(outcome.stdout), label).toEqual(body);
@@ -1957,7 +1992,7 @@ describe("every command holds the server to the contract", () => {
           avatar,
         ]);
         const label = `owner update --avatar on contract ${String(contract)}: ${outcome.stderr}`;
-        expect(socket.asked, label).toEqual(["PUT /owner/avatar"]);
+        expect(socket.asked, label).toEqual(["PUT /profile/avatar"]);
         if (contract === BUILT_FOR) {
           expect(outcome.code, label).toBe(0);
           expect(JSON.parse(outcome.stdout), label).toEqual(body);

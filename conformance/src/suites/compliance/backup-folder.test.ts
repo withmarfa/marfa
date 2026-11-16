@@ -991,11 +991,13 @@ describe("a backup folder that lacks a file or its disk", () => {
     });
   });
 
-  it("refuses a key at the adopt door", async () => {
+  it("refuses a key without backups.manage at the adopt door", async () => {
     await withFolder("backup-folder-adopt-key", async (server) => {
-      const refused = await clientsFor(server).operator.adoptBackupFolder();
+      const refused = await clientsFor(server).working.adoptBackupFolder();
       expect(refused.status, JSON.stringify(refused.data)).toBe(403);
-      expect(refused.error?.error.details).toEqual({ needs: "local" });
+      expect(refused.error?.error.details).toEqual({
+        required_scope: "backups.manage",
+      });
     });
   });
 });

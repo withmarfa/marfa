@@ -11,7 +11,6 @@ use crate::app::access::{Axis, Grants, Level, Map, Permission};
 use crate::app::catalog::Catalog;
 
 pub const OFFLINE_ACCESS: &str = "offline_access";
-pub const EMAIL_WRITE_REFUSED: &str = "Apps cannot change the sign-in email address.";
 
 const ALL: &str = "*";
 const CONTENT: &str = "content";
@@ -19,14 +18,14 @@ const EDGE: &str = "edge";
 const METADATA: &str = "metadata";
 const PROFILE: &str = "profile";
 const MOST_NAME_BYTES: usize = 128;
-const EMAIL_WRITE: &str = "profile.email:write";
 
 const NOT_CONTENT: [&str; 2] = ["system", "marfa"];
 
 /// The roots a permission lives under, and the one word no publisher may use. Anything under
 /// one of these that is not a permission is no scope, so `keys.note:read` can never mean a type.
-const CLAIMED_ROOTS: [&str; 11] = [
+const CLAIMED_ROOTS: [&str; 13] = [
     "audit",
+    "backups",
     "blobs",
     "config",
     "connectors",
@@ -35,6 +34,7 @@ const CLAIMED_ROOTS: [&str; 11] = [
     "items",
     "keys",
     "schema",
+    "sign_ins",
     "space",
     "webhooks",
 ];
@@ -43,7 +43,7 @@ const CLAIMED_ROOTS: [&str; 11] = [
 const STANDING_ROOTS: [&str; 3] = ["app", "core", "user"];
 
 /// The order the approval pages show permissions in.
-const PERMISSIONS: [Permission; 12] = [
+const PERMISSIONS: [Permission; 14] = [
     Permission::WebhooksManage,
     Permission::SchemaWrite,
     Permission::ConfigManage,
@@ -55,6 +55,8 @@ const PERMISSIONS: [Permission; 12] = [
     Permission::InstanceMaintain,
     Permission::ConnectorsManage,
     Permission::BlobsManage,
+    Permission::BackupsManage,
+    Permission::SignInsManage,
     Permission::KeysManage,
 ];
 
@@ -125,10 +127,6 @@ impl ProfileRow {
     fn from_word(word: &str) -> Option<ProfileRow> {
         Self::ALL.into_iter().find(|row| row.word() == word)
     }
-
-    const fn takes(self, verb: Verb) -> bool {
-        !matches!((self, verb), (ProfileRow::Email, Verb::Write))
-    }
 }
 
 /// `pattern` is `*`, `<root>.*` or one id.
@@ -177,13 +175,10 @@ impl Scope {
                 verb,
             }),
             (PROFILE, None) => Some(Scope::Profile { row: None, verb }),
-            (PROFILE, Some(row)) => {
-                let row = ProfileRow::from_word(row)?;
-                row.takes(verb).then_some(Scope::Profile {
-                    row: Some(row),
-                    verb,
-                })
-            }
+            (PROFILE, Some(row)) => Some(Scope::Profile {
+                row: Some(ProfileRow::from_word(row)?),
+                verb,
+            }),
             (EDGE, Some(pattern)) if edge_pattern(pattern) => Some(Scope::Edge {
                 pattern: pattern.to_string(),
                 verb,
@@ -320,11 +315,6 @@ impl ScopeSet {
         self.seen.contains(literal)
     }
 
-    /// A request naming this is refused whole, where any other scope that cannot be granted is dropped.
-    pub fn writes_email(&self) -> bool {
-        self.contains(EMAIL_WRITE)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
     }
@@ -399,7 +389,7 @@ impl Registries {
                 });
             }
             add(Scope::Profile { row: None, verb });
-            for row in ProfileRow::ALL.into_iter().filter(|row| row.takes(verb)) {
+            for row in ProfileRow::ALL {
                 add(Scope::Profile {
                     row: Some(row),
                     verb,
@@ -844,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn the_order_of_the_permissions_lists_all_twelve() {
+    fn the_order_of_the_permissions_lists_every_permission() {
         let listed: HashSet<&str> = PERMISSIONS.iter().map(|p| p.word()).collect();
         let every: HashSet<&str> = Permission::ALL.iter().map(|p| p.word()).collect();
         assert_eq!(listed, every);
@@ -880,7 +870,6 @@ mod tests {
             "metadata.*:read",
             "metadata.other:read",
             "metadata.types.more:read",
-            "profile.email:write",
             "profile.other:read",
             "profile.*:read",
             "edge:read",
@@ -1028,6 +1017,10 @@ mod tests {
             Level::None
         );
         assert_eq!(level("profile:write", Axis::Profile, "email"), Level::Read);
+        assert_eq!(
+            level("profile:write profile.email:write", Axis::Profile, "email"),
+            Level::Write
+        );
         assert_eq!(level("profile:write", Axis::Profile, "name"), Level::Write);
         assert!(to_grants(&set("keys.mint offline_access")).holds(Permission::KeysMint));
     }
@@ -1432,7 +1425,6 @@ mod tests {
             literal in prop_oneof![
                 Just("content.*:read"),
                 Just("schema.*:read"),
-                Just("profile.email:write"),
                 Just("notes"),
                 Just("space.*:write"),
             ],

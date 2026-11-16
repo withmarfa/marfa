@@ -5,7 +5,7 @@ use tokio::sync::Semaphore;
 
 use super::client::Registration;
 use super::metadata_document::{self, Failure, Fetcher};
-use super::scope::{EMAIL_WRITE_REFUSED, OFFLINE_ACCESS, Registries, ScopeSet, covers, narrow};
+use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, covers, narrow};
 use super::store::{self, Client};
 use super::{Answered, Problem};
 use crate::app::App;
@@ -33,10 +33,6 @@ impl Default for Documents {
             permits: Arc::new(Semaphore::new(MOST_FETCHES_AT_ONCE)),
         }
     }
-}
-
-pub(super) fn email_write_refused() -> Problem {
-    Problem::new("invalid_scope", EMAIL_WRITE_REFUSED)
 }
 
 fn no_such_client() -> Problem {

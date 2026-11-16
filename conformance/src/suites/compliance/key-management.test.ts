@@ -829,6 +829,7 @@ describe("key management", () => {
     expect([...(minted.data.permissions ?? [])].sort()).toEqual(
       [
         "audit.read",
+        "backups.manage",
         "blobs.manage",
         "config.manage",
         "connectors.manage",
@@ -839,6 +840,7 @@ describe("key management", () => {
         "keys.manage",
         "keys.mint",
         "schema.write",
+        "sign_ins.manage",
         "webhooks.manage",
       ].sort(),
     );

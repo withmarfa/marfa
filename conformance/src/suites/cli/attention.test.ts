@@ -64,7 +64,7 @@ const mint = (label: string, expiresIn: string) =>
 
 // A failed try can leave a hold set and the clock moved, which the retry would start from.
 it(
-  "shares private-socket attention, keeps known concerns, and refuses every other credential",
+  "shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential",
   { retry: 0 },
   async () => {
     expect(await local.json(["attention"])).toEqual({ data: [] });
@@ -147,17 +147,22 @@ it(
       headers: { cookie: server.ownerCookie, origin: server.apiUrl },
     });
     expect(cookie.status).toBe(401);
-    for (const credential of [server.workingKey, server.managementKey]) {
-      const refused = await new Cli(
-        requireBinary(),
-        server.apiUrl,
-        credential,
-      ).refused(["attention"]);
-      expect(refused.envelope.error.code).toBe("forbidden");
-      expect(refused.envelope.error.server?.details).toEqual({
-        needs: "local",
-      });
-    }
+    const refused = await new Cli(
+      requireBinary(),
+      server.apiUrl,
+      server.workingKey,
+    ).refused(["attention"]);
+    expect(refused.envelope.error.code).toBe("forbidden");
+    expect(refused.envelope.error.server?.details).toEqual({
+      required_scope: "instance.read",
+    });
+    // The witness: the management key holds instance.read and reads the same list.
+    const managed = await new Cli(
+      requireBinary(),
+      server.apiUrl,
+      server.managementKey,
+    ).json<Inventory>(["attention"]);
+    expect(managed).toEqual(await local.json<Inventory>(["attention"]));
 
     // A folder with a conflict reported by a current sign-in.
     const writer = new Cli(requireBinary(), server.apiUrl, server.workingKey);

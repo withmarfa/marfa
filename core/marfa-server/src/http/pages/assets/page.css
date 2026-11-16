@@ -267,6 +267,14 @@ details > :not(summary) {
   color: var(--muted);
 }
 
+.powers-each > .row {
+  color: inherit;
+}
+
+.powers-all {
+  border-top: 0;
+}
+
 code {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.9em;

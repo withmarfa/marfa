@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::super::backups;
 use super::super::blobs::upkeep;
-use super::super::{enrichment, inbound, items, jobs, tables, updates};
+use super::super::{attention, enrichment, inbound, items, jobs, tables, updates};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
@@ -10,6 +10,7 @@ const HOUR: Duration = Duration::from_secs(3_600);
 const SIX_HOURS: Duration = Duration::from_secs(6 * 3_600);
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(30);
 const RELEASE_CHECK_DEADLINE: Duration = Duration::from_secs(60);
+const ATTENTION_DEADLINE: Duration = Duration::from_secs(60);
 
 const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 3_600_000;
@@ -83,6 +84,13 @@ pub(super) const JOBS: &[Job] = &[
     Job::new("blob-integrity", HOUR_MS, 60_000, HOUR, |app, run| {
         Box::pin(upkeep::integrity(app, run))
     }),
+    Job::new(
+        "attention-check",
+        5 * MINUTE_MS,
+        60_000,
+        ATTENTION_DEADLINE,
+        |app, run| Box::pin(attention::check(app, run)),
+    ),
     Job::stored(
         "backup",
         BACKUP_INTERVAL_SECONDS,

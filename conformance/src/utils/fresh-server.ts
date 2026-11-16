@@ -723,7 +723,8 @@ export interface DeviceFlow {
  * Registers a native app and requests a device code for the claimed owner to approve.
  * Without explicit scopes it requests content and seven permissions, every
  * permission but `instance.read`, `instance.maintain`, `connectors.manage`,
- * `blobs.manage` and `keys.manage`, which a fixture names when it needs them.
+ * `blobs.manage`, `backups.manage`, `sign_ins.manage` and `keys.manage`,
+ * which a fixture names when it needs them.
  * The app registers the device grant and the refresh grant, no redirect URI
  * and no response type, unless `options` names others.
  */
@@ -781,6 +782,8 @@ export async function startDeviceFlow(
                 "instance.maintain",
                 "connectors.manage",
                 "blobs.manage",
+                "backups.manage",
+                "sign_ins.manage",
                 "keys.manage",
               ].includes(scope),
           )

@@ -52,14 +52,13 @@ afterAll(async () => {
 });
 
 interface Owner {
-  id: string;
   email: string;
   name: string;
-  created_at: string;
+  avatar: string | null;
 }
 
 describe("the owner", () => {
-  it("keeps the fixture owner after a repeated private claim and refuses ordinary keys", async () => {
+  it("keeps the fixture owner after a repeated private claim, and shows a key only the profile fields it reads", async () => {
     const socket = process.env.MARFA_CONTROL_SOCKET;
     expect(
       socket,
@@ -81,8 +80,10 @@ describe("the owner", () => {
     expect(again.envelope.error.server?.code).toBe("owner_exists");
     expect(await local.json<Owner>(["owner", "show"])).toEqual(shown);
     for (const ordinary of [c.cli, c.operator]) {
-      const refused = await ordinary.refused(["owner", "show"]);
-      expect(refused.envelope.error.server?.code).toBe("forbidden");
+      const seen = await ordinary.json<Partial<Owner>>(["owner", "show"]);
+      for (const [field, value] of Object.entries(seen)) {
+        expect(shown, field).toHaveProperty(field, value);
+      }
     }
   });
 

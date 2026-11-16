@@ -12,7 +12,7 @@ use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session;
 use crate::app::auth::sign_in::SignedIn;
-use crate::app::auth::{Visit, form_origins, sign_in};
+use crate::app::auth::{Visit, own_origins, sign_in};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::{JsonBody, only_declared};
@@ -37,9 +37,9 @@ pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
     }
 }
 
-/// A door that opens a browser session needs `Origin` or `Referer` to name a form origin.
+/// A door that opens a browser session needs `Origin` or `Referer` to name the sign-in address.
 pub(super) fn require_own_page(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
-    match origin::said_by_form(headers, &form_origins(app)) {
+    match origin::said_by_form(headers, &own_origins(app)) {
         Source::Own => Ok(()),
         Source::Elsewhere | Source::Unsaid => Err(not_from_here()),
     }

@@ -912,15 +912,18 @@ describe("a query key no door declares", () => {
     await expectMatchesSchema("GET", "/attention", 200, response.data);
   });
 
-  it("refuses ordinary keys before inspecting the attention query", async () => {
-    for (const key of [apiKey, process.env.MARFA_MANAGEMENT_KEY]) {
-      expect(key).toBeTruthy();
-      const response = await fetch(`${apiUrl}/attention?${STRAY}=1`, {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      expect(response.status).toBe(403);
-      await response.body?.cancel();
-    }
+  it("refuses a key without instance.read before inspecting the attention query", async () => {
+    const refused = await fetch(`${apiUrl}/attention?${STRAY}=1`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(refused.status).toBe(403);
+    await refused.body?.cancel();
+    // The witness: a key that holds it reaches the query, and is refused for it.
+    const held = await fetch(`${apiUrl}/attention?${STRAY}=1`, {
+      headers: { Authorization: `Bearer ${process.env.MARFA_MANAGEMENT_KEY}` },
+    });
+    expect(held.status).toBe(400);
+    await held.body?.cancel();
   });
 
   it("names a misspelled key on the event stream rather than opening it unfiltered", async () => {

@@ -14,7 +14,7 @@ use super::refusal::{Code, Refusal, Result};
 use super::sources;
 use super::{App, instance, stored};
 use crate::settings::registry::{
-    ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS,
+    ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ENTRIES, Entry, SIGN_IN_ADDRESS,
 };
 use crate::settings::sealed::Sealer;
 use crate::settings::together::{self, Breach};
@@ -411,13 +411,6 @@ impl Plan {
         )
     }
 
-    /// Whether the origins sign-in forms are taken from change. Those forms
-    /// reach the owner's cookie, so this is the operator's as the address is.
-    fn origins_change(&self, app: &App) -> bool {
-        let origins = |rows: &Rows| app.settings.candidate(&pairs(rows)).get(CORS_ORIGINS);
-        origins(&self.before) != origins(&self.after)
-    }
-
     /// A key that may change the configuration must not reach the owner's network.
     fn private_addresses_change(&self, app: &App) -> bool {
         let allowed = |rows: &Rows| {
@@ -604,7 +597,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 }
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
-                if moved.sign_in_moves || plan.origins_change(&writing) {
+                if moved.sign_in_moves {
                     unit.caller.require_local()?;
                 }
                 if moved.confirm && !request.confirmed {

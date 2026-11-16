@@ -16,8 +16,8 @@ struct Pin {
 /// One entry for each version in `MIGRATIONS`.
 const PINS: &[Pin] = &[Pin {
     version: 1,
-    file: "ff2101ea3c2f215996b2da84b4260d6d6c9897ebc2908cec9b6b5da9b0010b58",
-    holds: "972085fa36f3694f47545d1ae863bbf81eabe9a105bd290ca30d9e831c15be7c",
+    file: "15a73e1d3bc99f02243347c43eb23eba77dfb310a2e23f4c631908e58aed99a4",
+    holds: "6e9c0c06345e10e586c47929c619e2e135ec9d1e0d22fb9dbc35d7dc67e782d6",
 }];
 
 const BEFORE_0_1: &str = "Before Marfa 0.1, no release promises that its databases keep opening: \

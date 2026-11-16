@@ -90,11 +90,9 @@ pub fn owner_doors() -> Routes {
         )
         .asking(Asks::Session);
     Doors::new()
-        .route(
-            "/owner",
-            get(owner::read).post(owner::claim).patch(owner::update),
-        )
+        .route("/owner", post(owner::claim))
         .asking_at(Method::POST, "/owner", Asks::Nothing)
+        .route("/owner/passkeys/add-url", get(passkeys::add_url))
         .route("/owner/sign-ins", get(sign_ins::list))
         .route(
             "/owner/sign-ins/{id}",

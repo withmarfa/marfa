@@ -266,9 +266,15 @@ When a credential that reads no type asks for `GET /folders/{id}/status` or `PUT
 
 ### `folder-status/inventory`
 
-When a private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
+When a caller that reads `system.folder` asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries with bounded pages, to the local command and a key that reads system.folder, and refuses a key that does not`, `› lists folders newest first under a trimmed, collapsed or placeholder title, to an app that reads system.folder too`.
+
+### `folder-status/inventory-source-filter`
+
+Where the source filter in force for a credential, its own or the instance's, names `system.folder`, when the credential asks for `GET /folders`, the server MUST list only the folders whose `source` the filter names, as `GET /items?type=system.folder` lists them.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists only the folders a credential's source filter admits, as the item listing does`.
 
 ### `folder-status/inventory-summary`
 
@@ -276,23 +282,23 @@ When `GET /folders` returns a folder summary, the server MUST include only `id`,
 
 **Reason:** the command line lists folders without exposing folder settings or the content of items they hold. Reported copies are read through `GET /folders/{id}/status`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries with bounded pages, to the local command and a key that reads system.folder, and refuses a key that does not`, `› lists folders newest first under a trimmed, collapsed or placeholder title, to an app that reads system.folder too`.
 
 ### `folder-status/inventory-title`
 
 When `GET /folders` returns a folder summary, the server MUST answer `title` as the stored title with surrounding whitespace removed and each inner run of whitespace collapsed to one space, or `Untitled folder` when no text is left.
 
-**Tests:** `compliance/folder-status.test.ts › lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists folders newest first under a trimmed, collapsed or placeholder title, to an app that reads system.folder too`.
 
 ### `folder-status/inventory-limit`
 
-When a private local command asks for `GET /folders`, the server MUST answer at most `limit` folders, 50 when `limit` is absent.
+When a caller that reads `system.folder` asks for `GET /folders`, the server MUST answer at most `limit` folders, 50 when `limit` is absent.
 
 **Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
 
 ### `folder-status/inventory-limit-range`
 
-If a private local command names a `limit` that is not a whole number of 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
+If a caller that reads `system.folder` names a `limit` that is not a whole number of 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
 
 **Reason:** a `limit` above 200 is refused here, where `search-and-filters/limit-listing-capped` caps one on `GET /items`.
 
@@ -300,7 +306,7 @@ If a private local command names a `limit` that is not a whole number of 1 to 20
 
 ### `folder-status/inventory-cursor`
 
-When a private local command sends back the `next_cursor` of a page of `GET /folders`, the server MUST answer the page that follows it, so that walking to the end delivers every active folder exactly once.
+When a caller that reads `system.folder` sends back the `next_cursor` of a page of `GET /folders`, the server MUST answer the page that follows it, so that walking to the end delivers every active folder exactly once.
 
 **Reason:** this is `search-and-filters/cursor-continues` and `search-and-filters/cursor-last-page` for this listing, whose page has the shape `search-and-filters/page-envelope` gives every list.
 
@@ -308,18 +314,20 @@ When a private local command sends back the `next_cursor` of a page of `GET /fol
 
 ### `folder-status/inventory-cursor-invalid`
 
-If a private local command sends `GET /folders` a `cursor` that is malformed or that another ordering issued, then the server MUST answer `400 validation_error`.
+If a caller that reads `system.folder` sends `GET /folders` a `cursor` that is malformed or that another ordering issued, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
 
 ### `folder-status/inventory-authority`
 
-When an API key or delegated token asks for `GET /folders`, the server MUST answer `403 forbidden`.
+If a credential that cannot read `system.folder` asks for `GET /folders`, then the server MUST answer `403 type_not_permitted`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Reason:** a folder summary is a `system.folder` item's title, so it is read as the item is.
+
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries with bounded pages, to the local command and a key that reads system.folder, and refuses a key that does not`, `compliance/owner-tasks.test.ts › lists folders to a credential that reads system.folder, and refuses one that does not`.
 
 ### `folder-status/inventory-authentication`
 
 When an unauthenticated caller asks for `GET /folders`, the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries with bounded pages, to the local command and a key that reads system.folder, and refuses a key that does not`.

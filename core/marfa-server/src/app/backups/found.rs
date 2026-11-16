@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::parts::{self, files_named};
-use super::{Destination, Listing, OMISSIONS, last_thinned, parse};
+use super::{Destination, Listing, OMISSIONS, last_thinned, parse, refused};
 use crate::app::App;
 use crate::app::archive::FILES;
 use crate::app::blobs::Hash;
@@ -260,7 +260,7 @@ pub(super) async fn survey(
     for name in unread {
         read(app, destination, name).await?;
     }
-    let (listed, now): (HashSet<String>, Stamp) =
+    let (mut listed, now): (HashSet<String>, Stamp) =
         (listed.iter().cloned().collect(), app.clock.instant());
     app.db
         .write(Write::own(), move |tx| {
@@ -268,6 +268,8 @@ pub(super) async fn survey(
                 Some(taken) => Some(taken),
                 None => last_thinned(tx, &store, now)?,
             };
+            let withdrawn = refused(tx, &store)?;
+            listed.retain(|name| !withdrawn.contains(name));
             settle(tx, &store, &listed, at)
         })
         .await

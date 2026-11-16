@@ -352,7 +352,6 @@ describe("a browser session ending", () => {
       ["GET", "/items/stats"],
       ["GET", "/keys"],
       ["POST", "/keys"],
-      ["GET", "/owner"],
       ["GET", "/owner/sign-ins"],
       ["GET", "/grants"],
       ["GET", "/trash"],

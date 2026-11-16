@@ -26,7 +26,7 @@ description: Boot a throwaway Marfa server on this machine, claim it and make a 
    Output: these variables in your shell.
 
    - `MARFA_TEST_URL`: the server's address, on a port the system assigns unless `MARFA_PORT` names one.
-   - `MARFA_TEST_KEY`: a working key with all twelve permissions, write on every type, edge, extension and metadata entry, and read on the owner's profile.
+   - `MARFA_TEST_KEY`: a working key with all fourteen permissions, write on every type, edge, extension and metadata entry, and read on the owner's profile.
    - `MARFA_TEST_SOCKET`: the private socket.
    - `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`: the throwaway owner, from `core/scripts/test-owner.example.env`.
    - `MARFA_SERVER_ENV`: the env file `server-down.sh` reads. `MARFA_SERVER_PID` and `MARFA_SERVER_STATE`: the server's process and its data directory.

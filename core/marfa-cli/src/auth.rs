@@ -28,7 +28,7 @@ pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_cod
 /// `keys-and-oauth/grants-kind` names the same value.
 const SOFTWARE_ID: &str = "so.marfa.cli";
 
-const OWNER_SCOPES: [&str; 21] = [
+const OWNER_SCOPES: [&str; 23] = [
     "offline_access",
     "*:read",
     "*:write",
@@ -49,6 +49,8 @@ const OWNER_SCOPES: [&str; 21] = [
     "instance.maintain",
     "connectors.manage",
     "blobs.manage",
+    "backups.manage",
+    "sign_ins.manage",
     "keys.manage",
 ];
 

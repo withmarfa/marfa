@@ -500,14 +500,15 @@ pub async fn confirm(
 }
 
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Listed>> {
-    caller.require_owner()?;
+    caller.require_passkeys()?;
     app.db.read(store::all).await
 }
 
 pub async fn rename(app: &App, caller: &Caller, id: String, name: &str) -> Result<Listed> {
-    caller.require_owner()?;
+    caller.require_passkeys()?;
     let name = passkey_name(name)?;
     app.write(caller, RENAMED, move |unit| {
+        unit.caller.require_passkeys()?;
         unit.caller.require_recent(&unit.at)?;
         let renamed = store::rename(unit.tx(), &id, &name)?.ok_or_else(not_found)?;
         unit.audit("passkey", &id, Some(json!({ "name": name })))?;
@@ -517,8 +518,9 @@ pub async fn rename(app: &App, caller: &Caller, id: String, name: &str) -> Resul
 }
 
 pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
-    caller.require_owner()?;
+    caller.require_passkeys()?;
     app.write(caller, REMOVED, move |unit| {
+        unit.caller.require_passkeys()?;
         unit.caller.require_recent(&unit.at)?;
         if !store::remove(unit.tx(), &id)? {
             return Err(not_found());

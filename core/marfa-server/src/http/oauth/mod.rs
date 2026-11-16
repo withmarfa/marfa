@@ -20,7 +20,7 @@ use super::doors::{Asks, Doors, get, patch, post};
 use super::no_store;
 use crate::app::App;
 use crate::app::access::Caller;
-use crate::app::auth::form_origins;
+use crate::app::auth::own_origins;
 use crate::app::oauth::Problem;
 use crate::app::oauth::offer::Post;
 use crate::app::refusal::Refusal;
@@ -47,7 +47,7 @@ fn problem_answer(problem: &Problem) -> Answer {
 
 /// A post that names no origin came from no page, so it is let through.
 fn require_own_form(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
-    match origin::said_by_form(headers, &form_origins(app)) {
+    match origin::said_by_form(headers, &own_origins(app)) {
         Source::Elsewhere => Err(origin::not_our_page()),
         Source::Own | Source::Unsaid => Ok(()),
     }

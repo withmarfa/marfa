@@ -165,9 +165,6 @@ fn socket_only(words: &[String]) -> bool {
         || words == ["setup", "code"]
         || words == ["setup", "open"]
         || words == ["owner", "recover"]
-        || words.starts_with(&["owner".into(), "passkeys".into()])
-        || words == ["owner", "update"]
-        || words == ["housekeeping", "confirm-clock"]
 }
 
 /// Where a command has no use: what is not a request to the server, what
@@ -390,18 +387,7 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             .iter()
             .map(|leaf| leaf.words.join(" "))
             .collect::<Vec<_>>(),
-        [
-            "setup status",
-            "setup code",
-            "setup open",
-            "owner passkeys list",
-            "owner passkeys rename",
-            "owner passkeys delete",
-            "owner passkeys add",
-            "owner recover",
-            "owner update",
-            "housekeeping confirm-clock",
-        ]
+        ["setup status", "setup code", "setup open", "owner recover",]
     );
     for leaf in commands {
         let argv = command_line(&server.url, &leaf.words, &[], &file).unwrap();
@@ -674,17 +660,9 @@ const MISSED: &[&str] = &[
     "requestDeviceCode",
     "exchangeToken",
     "revokeToken",
-    // Private transport: the CLI scenarios drive these with a real passkey,
-    // and `device/contract.test.ts` checks their socket response contract.
-    "listOwnerPasskeys",
-    "renameOwnerPasskey",
-    "deleteOwnerPasskey",
-    // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
-    "updateOwner",
     // `owner update --avatar` and `profile update --avatar`: the walk gives
     // each command one option, so it stops at the name's door. Both avatars
     // are driven by cli/profile.test.ts.
-    "replaceOwnerAvatar",
     "replaceProfileAvatar",
     // `apps narrow` reads the grant before sending the guarded update.
     "narrowAppGrant",

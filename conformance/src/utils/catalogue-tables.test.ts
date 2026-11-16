@@ -97,6 +97,7 @@ describe("the table of permissions", () => {
   it("refuses a list that differs from the wording it holds, in either direction", () => {
     const all = permissionsTable([
       "audit.read",
+      "backups.manage",
       "blobs.manage",
       "config.manage",
       "connectors.manage",
@@ -107,9 +108,10 @@ describe("the table of permissions", () => {
       "keys.manage",
       "keys.mint",
       "schema.write",
+      "sign_ins.manage",
       "webhooks.manage",
     ]);
-    expect(all.split("\n")).toHaveLength(14);
+    expect(all.split("\n")).toHaveLength(16);
     expect(() => permissionsTable(["audit.read"])).toThrow(
       /wording for no permission/,
     );
