@@ -665,7 +665,7 @@ mod tests {
         std::fs::create_dir(&state_dir).unwrap();
         let path = state_dir.join("core.sqlite");
         let writing = store::open(&path).unwrap();
-        store::replace_catalog(&writing, &wire_catalog("source")).unwrap();
+        store::replace_catalog(&writing, &wire_catalog("from")).unwrap();
         for (key, value) in [
             (store::META_SLICE_TYPES, "[\"core.note\"]"),
             (store::META_SLICE_TIER, "library"),

@@ -1195,7 +1195,7 @@ export const answers = {
     refusal(
       400,
       "edge_constraint_violation",
-      `Edge "${edge.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
+      `Edge "${edge.edge_type}" is one-to-many on the to side; the to item already has an inbound edge of this type`,
       { ...edge, constraint: "cardinality" },
     ),
   /** An edge write refused by the edge type's half of the dual gate

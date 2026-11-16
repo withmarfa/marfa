@@ -373,15 +373,15 @@ pub struct Refused {
 pub fn refused_end(edge_type: &EdgeType, end: End, item_type: &str) -> Refused {
     let id = &edge_type.id;
     let (end, allowed) = match end {
-        End::From => ("source", &edge_type.from_type_constraints),
-        End::To => ("target", &edge_type.to_type_constraints),
+        End::From => ("from", &edge_type.from_type_constraints),
+        End::To => ("to", &edge_type.to_type_constraints),
     };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(id));
     details.insert(format!("{end}_type"), json!(item_type));
     details.insert("allowed".into(), json!(allowed));
     Refused {
-        message: format!("Edge \"{id}\" does not allow {end} type \"{item_type}\""),
+        message: format!("Edge \"{id}\" does not allow type \"{item_type}\" at its {end} end"),
         details: Value::Object(details),
     }
 }
@@ -389,7 +389,7 @@ pub fn refused_end(edge_type: &EdgeType, end: End, item_type: &str) -> Refused {
 pub fn refused_nesting(edge_type: &str, from_id: &str, from_type: &str) -> Refused {
     Refused {
         message: format!(
-            "Edge \"{edge_type}\" does not take a source its target constraints admit; use \"parent-of\" for hierarchy"
+            "Edge \"{edge_type}\" does not take a from item its to constraints admit; use \"parent-of\" for hierarchy"
         ),
         details: json!({
             "edge_type": edge_type,
@@ -414,12 +414,12 @@ pub fn refused_parts_cycle(edge_type: &str, from_id: &str, to_id: &str) -> Refus
 
 pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused {
     let (end, edge) = match end {
-        End::From => ("source", "outbound"),
-        End::To => ("target", "inbound"),
+        End::From => ("from", "outbound"),
+        End::To => ("to", "inbound"),
     };
     let limit = match edge_type.cardinality.as_str() {
-        "one-to-one" => format!("is one-to-one; {end} already has one"),
-        cardinality => format!("is {cardinality} on the {end} side; {end} already has an"),
+        "one-to-one" => format!("is one-to-one; the {end} item already has one"),
+        cardinality => format!("is {cardinality} on the {end} side; the {end} item already has an"),
     };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(edge_type.id));

@@ -110,7 +110,7 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect(refused.error?.error).toEqual({
       code: "edge_constraint_violation",
       message:
-        'Edge "parent-of" is one-to-many on the target side; target already has an inbound edge of this type',
+        'Edge "parent-of" is one-to-many on the to side; the to item already has an inbound edge of this type',
       details: {
         edge_type: "parent-of",
         to_id: child,
@@ -166,7 +166,7 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect(refused.error?.error).toEqual({
       code: "edge_constraint_violation",
       message:
-        'Edge "supersedes" is one-to-one; target already has one inbound edge of this type',
+        'Edge "supersedes" is one-to-one; the to item already has one inbound edge of this type',
       details: {
         edge_type: "supersedes",
         to_id: older,

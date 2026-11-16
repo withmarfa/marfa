@@ -103,7 +103,7 @@ fn upgraded(found: i64) -> bool {
     (OLDEST_UPGRADED..SCHEMA_VERSION).contains(&found)
 }
 
-const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, from_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
+const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
     "id, from_id, to_id, edge_type, properties, version, created_at, updated_at";
 
@@ -10777,11 +10777,12 @@ mod tests {
     }
 
     /// Append one hash per schema version; never change an existing entry.
-    const SHAPES: [&str; 4] = [
+    const SHAPES: [&str; 5] = [
         "9a505dc1b14cecc6",
         "115c1d4def4a3d91",
         "2d4e4e1e76ec61dc",
         "c2b64b3a6428a46c",
+        "e5029183e86b7c37",
     ];
 
     #[test]
