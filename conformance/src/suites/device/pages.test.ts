@@ -166,6 +166,9 @@ class Door {
       if (standIn !== undefined) return standIn;
       const held = this.edges.get(edge.id);
       if (held !== undefined) return writeAnswers.edgeRepeated(held);
+      if (this.endMissing(edge)) {
+        return refusal(404, "item_not_found", "No such item");
+      }
       this.edges.set(edge.id, { ...edge, version: 1 });
       return writeAnswers.edge(edge, 201);
     });
@@ -179,6 +182,13 @@ class Door {
         edges.map((edge, index): PageResult => {
           const scripted = this.edgeEntry?.(edge, index);
           if (scripted !== undefined) return scripted;
+          if (this.endMissing(edge)) {
+            return {
+              index,
+              outcome: "errored",
+              error: { code: "item_not_found", message: "No such item" },
+            };
+          }
           this.edges.set(edge.id, { ...edge, version: 1 });
           return { index, outcome: "created", id: edge.id };
         }),
@@ -236,6 +246,12 @@ class Door {
     this.items.set(entry.id, item);
     if (entry.tags !== undefined) this.tags.set(entry.id, [...entry.tags]);
     return item;
+  }
+
+  /** Whether an end of `edge` is gone, as a delete leaves it: a create
+   *  naming it is refused (`edges/create-end-in-bin`). */
+  private endMissing(edge: WireEdgeOptions): boolean {
+    return !this.items.has(edge.from_id) || !this.items.has(edge.to_id);
   }
 
   /** The edges the door lists from `source`, those a read of it can reach. */
@@ -992,6 +1008,40 @@ describe("creates in pages", () => {
     expect(queued.find((row) => row.id === removal.id)?.verdict).toBe(
       "accepted",
     );
+  });
+
+  it("sends the delete of an end queued after its links after those links, and creates every link", async () => {
+    const made = await start("pages-edges-before-a-delete");
+    harness = made.harness;
+    const { door } = made;
+    const { edges } = await queue(harness, 110, {
+      edges: true,
+      alone: (at) => at % 2 === 1,
+    });
+    const removal = value(await harness.device.deleteItem(HELD));
+    const drained = await drain(harness);
+
+    expect(drained.undelivered, JSON.stringify(drained)).toBe(0);
+    // The witness: a link sent after the delete is refused, so a link
+    // created at all was sent before it.
+    const deletes = door.requests("DELETE", `/items/${HELD}`);
+    expect(deletes).toHaveLength(1);
+    const edgeRequests = [
+      ...door.requests("POST", "/edges"),
+      ...door.requests("POST", "/edges/bulk"),
+    ];
+    expect(edgeRequests.length).toBeGreaterThan(0);
+    for (const request of edgeRequests) {
+      expect(request.seq).toBeLessThan(deletes[0]?.seq ?? 0);
+    }
+    expect(door.edges.size).toBe(110);
+    const verdicts = new Map(
+      drained.verdicts.map((entry) => [entry.id, entry.verdict]),
+    );
+    expect(edges.every((edge) => verdicts.get(edge.id) === "accepted")).toBe(
+      true,
+    );
+    expect(verdicts.get(removal.id)).toBe("accepted");
   });
 
   it("sends the edges of a deferred page whose answer was lost again one at a time, under each write's key, and writes none twice", async () => {

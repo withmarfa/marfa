@@ -34,7 +34,7 @@ When the process that queued a write ends before the write is answered, a device
 
 When a drain sends more than one queued write, a device MUST send them in the order they were queued.
 
-**Reason:** a write held for a write ahead of it is not sent in that drain, so a later write that waits on nothing goes before it. Creates sent in a page are the other exception: a page goes before the writes it does not carry, so a write queued ahead of a create that a page takes is sent after it (`queue-and-verdicts/create-pages`).
+**Reason:** a write held for a write ahead of it is not sent in that drain, so a later write that waits on nothing goes before it. Creates sent in a page are the other exception: a page goes before the writes it does not carry, so a write queued ahead of a create that a page takes is sent after it (`queue-and-verdicts/create-pages`). The create of an edge held for the answers of its ends goes in a page in the same drain, after them: so after a write queued behind it that names neither it nor either end, and ahead of any write that does (`queue-and-verdicts/page-waits-for-its-ends`).
 
 **Tests:** `device/queue.test.ts › sends queued writes in the order they were queued`, `› drains in order on reconnect`.
 
@@ -162,11 +162,11 @@ When a drain finds 50 or more item creates, or 50 or more edge creates, each nev
 
 ### `queue-and-verdicts/page-waits-for-its-ends`
 
-When a drain finds 50 or more edge creates that would go in a page but for waiting on writes the drain has not answered yet, and that no other write follows or waits on, a device MUST send them through `POST /edges/bulk` in the same drain, after those writes are answered.
+When a drain finds 50 or more edge creates that would go in a page but for waiting on writes the drain has not answered yet, or that are ready and not yet sent, and none has a write queued after it that names it, follows it, waits on it or names either of its ends, a device MUST send them through `POST /edges/bulk` in the same drain, after the writes they wait for are answered.
 
-**Reason:** an edge from or to an item whose create goes on its own door, such as a note created in a state a page entry cannot carry, waits for that create. Left to its own door, each such edge is a write and a read back against the server's request limit, so a first sync of linked notes would send every link alone. An edge with an edit or delete behind it, or a write waiting on it, goes on its own door in queue order (`queue-and-verdicts/queue-sends-in-order`), so the write behind it never reaches the server first.
+**Reason:** an edge from or to an item whose create goes on its own door, such as a note created in a state a page entry cannot carry, waits for that create. Left to its own door, each such edge is a write and a read back against the server's request limit, so a first sync of linked notes would send every link alone. An edge with a write behind it that names it or an end, such as an edit of the edge or the delete of an end, goes in queue order, so that write never reaches the server first: the server refuses an edge to an end already deleted (`edges/create-end-in-bin`). The create of another edge between other ends names neither, so the links of one note page together. Where fewer than 50 would go in a page after the answers, a page saves too little, and each goes in queue order on its own door (`queue-and-verdicts/queue-sends-in-order`).
 
-**Tests:** `device/pages.test.ts › sends the edges of creates it sent on their own doors in pages, once those creates are answered, in the same drain`, `› sends an edge with an edit queued behind it on its own door, ahead of the edit, and pages the rest`, `› sends the edges of a deferred page whose answer was lost again one at a time, under each write's key, and writes none twice`.
+**Tests:** `device/pages.test.ts › sends the edges of creates it sent on their own doors in pages, once those creates are answered, in the same drain`, `› sends an edge with an edit queued behind it on its own door, ahead of the edit, and pages the rest`, `› sends the delete of an end queued after its links after those links, and creates every link`, `› sends the edges of a deferred page whose answer was lost again one at a time, under each write's key, and writes none twice`.
 
 ### `queue-and-verdicts/page-carries-tags`
 
