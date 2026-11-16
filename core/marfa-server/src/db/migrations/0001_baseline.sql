@@ -1254,6 +1254,24 @@ CREATE TABLE IF NOT EXISTS found_backup_files (
 
 CREATE INDEX IF NOT EXISTS found_backup_files_hash ON found_backup_files (hash);
 
+CREATE TABLE IF NOT EXISTS found_backup_parts (
+    seq INTEGER NOT NULL REFERENCES found_backups (seq),
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (seq, sha256)
+) STRICT, WITHOUT ROWID;
+
+-- The parts of this instance's backups the server stored or checked in a store. `etag` is
+-- the ETag the object store gave the part when the server stored or last hashed it, and
+-- `damaged_at` is set once a check found the stored part does not hold the bytes its name
+-- gives, until the server stores it again or a hash shows it whole.
+CREATE TABLE IF NOT EXISTS backup_parts (
+    store_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    etag TEXT,
+    damaged_at TEXT,
+    PRIMARY KEY (store_id, sha256)
+) STRICT, WITHOUT ROWID;
+
 CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;

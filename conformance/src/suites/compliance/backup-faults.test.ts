@@ -6,8 +6,11 @@ import { MarfaClient } from "../../client/api.js";
 import { lostFiles } from "../../utils/archive.js";
 import {
   afterFirstScheduledBackup,
+  backupInBucket,
   bucketAt,
+  instanceIdOf,
   ownerOf,
+  sha256Of,
 } from "../../utils/backups.js";
 import {
   bootFreshServer,
@@ -24,8 +27,9 @@ import {
  * A backup that cannot finish: an object store the server cannot reach, a
  * process killed while the store takes the backup, two asks at once, and a
  * store that takes a backup slowly. `hold:backup:put` stops a backup once the
- * put has some of its bytes in hand: more than one part of a large backup, so
- * its multipart upload has begun, or all of a small one. Each server has a
+ * put has more than two upload parts of its parts' bytes in hand, so a
+ * multipart upload has begun, or else all of the last part it stores, or else
+ * before its manifest. Each server has a
  * prefix of its own. The backup interval is a year, so `backup` is listed,
  * and once the first scheduled run has ended no other comes during a test.
  */
@@ -132,6 +136,7 @@ describe("a backup cut short", () => {
   const store = ownObjectStore();
   const bucket = bucketAt(store.S3_PREFIX);
   let server: FreshServer;
+  let large: { id: string; version: number } | undefined;
 
   beforeAll(async () => {
     server = await bootFreshServer("backup-cut-short", {
@@ -170,7 +175,7 @@ describe("a backup cut short", () => {
 
   it("leaves no object and no spool when killed while putting a backup larger than one part", async () => {
     const { working } = clientsFor(server);
-    // Text that does not compress, so the archive takes more than two parts.
+    // Text that does not compress, so the items part takes more than two upload parts.
     for (let at = 0; at < 40; at++) {
       const body = randomBytes(540 * 1024).toString("base64");
       const created = await working.createItem({
@@ -178,6 +183,7 @@ describe("a backup cut short", () => {
         properties: { title: `large ${String(at)}`, body },
       });
       expect(created.status, JSON.stringify(created.error)).toBe(201);
+      large = created.data.item;
     }
     const before = await bucket.backupKeys();
     const owner = ownerOf(server);
@@ -190,6 +196,12 @@ describe("a backup cut short", () => {
 
     expect(await bucket.backupKeys()).toEqual(before);
     expect(readdirSync(join(blobFolder(server), "tmp"))).toEqual([]);
+    const id = await instanceIdOf(server);
+    for (const key of await bucket.partKeys(id)) {
+      expect(`${sha256Of(await bucket.get(key))}.ndjson.gz`).toBe(
+        key.split("/").pop(),
+      );
+    }
 
     // The witness: the same backup, let through, is put whole.
     await server.setFault("hold:backup:put");
@@ -208,9 +220,10 @@ describe("a backup cut short", () => {
 
   it("puts a backup whole when the object store takes it more slowly than a client download may stall", async () => {
     const owner = ownerOf(server);
-    // The archive is the previous test's, more than two parts.
-    const changed = await owner.patchConfig({
-      mcp_fetch_max_bytes: 40_000_000,
+    // The previous test's large notes: a change to one sends their items part again.
+    const changed = await clientsFor(server).working.updateItem(large!.id, {
+      version: large!.version,
+      properties: { title: "large, retitled" },
     });
     expect(changed.status, JSON.stringify(changed.error)).toBe(200);
     const before = await bucket.backupKeys();
@@ -223,7 +236,7 @@ describe("a backup cut short", () => {
     await server.clearFault();
     const done = await slow;
     expect(done.status, JSON.stringify(done.error)).toBe(200);
-    expect(done.data.backup.size_bytes).toBeGreaterThan(2 * PART_BYTES);
+    expect(done.data.sent_bytes).toBeGreaterThan(2 * PART_BYTES);
     expect(await bucket.backupKeys()).toHaveLength(before.length + 1);
     expect(await bucket.unfinishedUploads()).toEqual(uploads);
   });
@@ -259,8 +272,12 @@ describe("a file no store can give, in a backup to the object store", () => {
       const run = await owner.runBackup();
       expect(run.status, JSON.stringify(run.error)).toBe(200);
       expect(run.data.blobs_lost).toEqual([lost]);
-      const key = `${store.S3_PREFIX}/backups/${run.data.backup.instance_id}/${run.data.backup.name}`;
-      expect(lostFiles(await bucket.get(key))).toEqual([lost]);
+      const { archive } = await backupInBucket(
+        bucket,
+        run.data.backup.instance_id,
+        run.data.backup.name,
+      );
+      expect(lostFiles(archive)).toEqual([lost]);
       const seen = await health(server);
       expect(seen.backups.status).toBe("failing");
       expect(seen.backups.last_error).toContain(lost);

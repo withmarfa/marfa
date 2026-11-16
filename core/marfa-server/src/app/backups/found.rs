@@ -4,10 +4,12 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use super::parts::{self, files_named};
 use super::{Destination, Listing, OMISSIONS, last_thinned, parse};
 use crate::app::App;
-use crate::app::archive::restore::named::files_named;
+use crate::app::archive::FILES;
 use crate::app::blobs::Hash;
+use crate::app::blobs::folder::Area;
 use crate::app::clock::Stamp;
 use crate::app::refusal::Result;
 use crate::db::Write;
@@ -56,13 +58,31 @@ pub fn names(tx: &Transaction<'_>, store: &str, hash: &str) -> Result<bool> {
         .exists(params![store, hash])?)
 }
 
+/// The parts each backup of `store` the server found names, by its name. The parts are recorded
+/// with the backup in one write, so a found backup holds them all from the start.
+pub(super) fn parts_held(
+    tx: &Transaction<'_>,
+    store: &str,
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut parts = tx.prepare_cached("SELECT sha256 FROM found_backup_parts WHERE seq = ?1")?;
+    let mut held = HashMap::new();
+    for backup in found(tx, store)? {
+        let named = parts
+            .query_map([backup.seq], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        held.insert(backup.name, named);
+    }
+    Ok(held)
+}
+
 /// Forgets every backup the server found in `store`, answering how many.
 pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<usize> {
-    tx.prepare_cached(
-        "DELETE FROM found_backup_files WHERE seq IN \
-         (SELECT seq FROM found_backups WHERE store_id = ?1)",
-    )?
-    .execute([store])?;
+    for table in ["found_backup_files", "found_backup_parts"] {
+        tx.prepare_cached(&format!(
+            "DELETE FROM {table} WHERE seq IN (SELECT seq FROM found_backups WHERE store_id = ?1)"
+        ))?
+        .execute([store])?;
+    }
     Ok(tx
         .prepare_cached("DELETE FROM found_backups WHERE store_id = ?1")?
         .execute([store])?)
@@ -70,6 +90,8 @@ pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<usize> {
 
 fn forget(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     tx.prepare_cached("DELETE FROM found_backup_files WHERE seq = ?1")?
+        .execute([seq])?;
+    tx.prepare_cached("DELETE FROM found_backup_parts WHERE seq = ?1")?
         .execute([seq])?;
     tx.prepare_cached("DELETE FROM found_backups WHERE seq = ?1")?
         .execute([seq])?;
@@ -104,16 +126,26 @@ pub(super) fn settle(
     Ok(())
 }
 
-fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
+/// Records the found backup `name` with the parts its manifest names.
+fn begin(tx: &Transaction<'_>, store: &str, name: &str, parts: &[String]) -> Result<i64> {
     tx.prepare_cached(
         "INSERT INTO found_backups (store_id, name) VALUES (?1, ?2) \
          ON CONFLICT (store_id, name) DO NOTHING",
     )?
     .execute(params![store, name])?;
-    tx.prepare_cached("SELECT seq FROM found_backups WHERE store_id = ?1 AND name = ?2")?
+    let seq: i64 = tx
+        .prepare_cached("SELECT seq FROM found_backups WHERE store_id = ?1 AND name = ?2")?
         .query_row(params![store, name], |row| row.get(0))
         .optional()?
-        .ok_or_else(|| crate::app::refusal::Refusal::internal("a found backup was not kept"))
+        .ok_or_else(|| crate::app::refusal::Refusal::internal("a found backup was not kept"))?;
+    let mut held = tx.prepare_cached(
+        "INSERT INTO found_backup_parts (seq, sha256) VALUES (?1, ?2) \
+         ON CONFLICT (seq, sha256) DO NOTHING",
+    )?;
+    for sha256 in parts {
+        held.execute(params![seq, sha256])?;
+    }
+    Ok(seq)
 }
 
 fn hold(tx: &Transaction<'_>, seq: i64, files: &[Hash]) -> Result<()> {
@@ -127,28 +159,57 @@ fn hold(tx: &Transaction<'_>, seq: i64, files: &[Hash]) -> Result<()> {
     Ok(())
 }
 
-/// Records every file the found backup `name` names, a page per write, and only then that its
-/// files are read, so an interrupted read is read again.
+/// Records every part and file the found backup `name` names, the files a page per write, and
+/// only then that its files are read, so an interrupted read is read again. A manifest that does
+/// not read names none.
 async fn read(app: &App, destination: &Destination, name: &str) -> Result<()> {
     let unreachable = |error: std::io::Error| {
         destination.unreachable("reading a backup this instance did not record", &error)
     };
-    let got = destination
-        .get(&app.instance_id, name, app.blobs.check())
+    let own = &app.instance_id;
+    let read = destination
+        .manifest(own, name, app.blobs.check())
         .await
         .map_err(unreachable)?;
-    let Some((_, bytes)) = got else {
-        return Ok(());
+    let (files, referenced) = match read {
+        None => return Ok(()),
+        Some((_, Err(why))) => {
+            tracing::warn!(backup = %name, %why, "A backup in this instance's folder does not read");
+            (Vec::new(), Vec::new())
+        }
+        Some((_, Ok(manifest))) => {
+            let referenced: Vec<String> = manifest.referenced().map(str::to_string).collect();
+            let Some(part) = manifest.parts.iter().find(|part| part.entry == FILES) else {
+                return Err(crate::app::refusal::Refusal::internal(
+                    "a read manifest names no files part",
+                ));
+            };
+            let got = destination
+                .get(
+                    Area::Parts,
+                    own,
+                    &parts::name_of(&part.sha256),
+                    app.blobs.check(),
+                )
+                .await
+                .map_err(unreachable)?;
+            let named = match got {
+                Some((_, bytes)) => files_named(part, bytes).await.map_err(unreachable)?,
+                None => None,
+            };
+            let files = named.unwrap_or_else(|| {
+                tracing::warn!(backup = %name, "A backup in this instance's folder lacks its files part");
+                Vec::new()
+            });
+            (files, referenced)
+        }
     };
-    let files = files_named(bytes).await.map_err(unreachable)?;
-    let files = files.unwrap_or_else(|| {
-        tracing::warn!(backup = %name, "A backup in this instance's folder holds no manifest");
-        Vec::new()
-    });
     let (store, named) = (destination.id().to_string(), name.to_string());
     let seq = app
         .db
-        .write(Write::own(), move |tx| begin(tx, &store, &named))
+        .write(Write::own(), move |tx| {
+            begin(tx, &store, &named, &referenced)
+        })
         .await?;
     for page in files.chunks(PAGE) {
         let page = page.to_vec();
@@ -218,7 +279,7 @@ pub async fn survey_folder(app: &App) -> Result<()> {
         return Ok(());
     };
     let listed: Vec<String> = destination
-        .list_in(&app.instance_id)
+        .list_in(Area::Backups, &app.instance_id)
         .await
         .map_err(|error| destination.unreachable("listing this instance's backups", &error))?
         .into_iter()

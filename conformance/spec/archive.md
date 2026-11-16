@@ -630,15 +630,15 @@ When `POST /restore` succeeds with an archive whose manifest names an `instance_
 
 ### `archive/restore-previous-folder`
 
-Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
+Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>`, `backup-parts/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
 
-**Reason:** the backup folder keeps each instance's backups and its copy of each file in folders of that instance's own (`instance/backup-object`).
+**Reason:** the backup folder keeps each instance's backups, their parts and its copy of each file in folders of that instance's own (`instance/backup-folder-file`, `instance/backup-part-named`).
 
 **Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`.
 
 ### `archive/restore-previous-bucket`
 
-Where `S3_BUCKET` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<S3_PREFIX>/backups/<instance id>` in `kept_by_previous_instance`.
+Where `S3_BUCKET` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<S3_PREFIX>/backups/<instance id>` and `<S3_PREFIX>/backup-parts/<instance id>` in `kept_by_previous_instance`.
 
 **Reason:** the object store keeps every instance's file copies under `<S3_PREFIX>/blobs/`, shared with this instance, so no file copy belongs to the old instance alone.
 

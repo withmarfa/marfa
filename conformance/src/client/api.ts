@@ -1130,6 +1130,7 @@ export class MarfaClient {
   async restoreBackup(
     instanceId: string,
     name: string,
+    options: { allow_missing_files?: boolean } = {},
   ): Promise<
     ApiResponse<
       RestoreArchiveResponse & { backup: { name: string; instance_id: string } }
@@ -1138,7 +1139,11 @@ export class MarfaClient {
     return this.request<
       RestoreArchiveResponse & { backup: { name: string; instance_id: string } }
     >(
-      `/backups/${encodeURIComponent(instanceId)}/${encodeURIComponent(name)}/restore`,
+      `/backups/${encodeURIComponent(instanceId)}/${encodeURIComponent(name)}/restore${
+        options.allow_missing_files === undefined
+          ? ""
+          : `?allow_missing_files=${options.allow_missing_files}`
+      }`,
       { method: "POST" },
     );
   }

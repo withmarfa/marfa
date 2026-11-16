@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::sync::Arc;
 
-use flate2::write::GzDecoder;
+use flate2::write::MultiGzDecoder;
 use marfa_rules::schema::{Obj, icon_issue};
 use serde_json::{Map, Value, json};
 
@@ -840,7 +840,7 @@ enum Entry {
     Skip,
     Manifest(Vec<u8>),
     Lines {
-        decoder: Box<GzDecoder<Splitter>>,
+        decoder: Box<MultiGzDecoder<Splitter>>,
         spool: BufWriter<File>,
     },
     Blob {
@@ -986,7 +986,7 @@ impl Intake {
                 .ok_or_else(|| Refusal::internal("a restore's spool was lost"))?;
             let spool = BufWriter::new(scratch.file().try_clone().map_err(spooled)?);
             self.entry = Entry::Lines {
-                decoder: Box::new(GzDecoder::new(Splitter {
+                decoder: Box::new(MultiGzDecoder::new(Splitter {
                     file,
                     rows,
                     pending: Vec::new(),

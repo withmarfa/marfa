@@ -124,6 +124,28 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
                 .to_string(),
         ));
     }
+    let damaged = backups["damaged_parts"].as_u64().unwrap_or(0);
+    if damaged > 0 {
+        let place = match text("destination") {
+            Some("folder") => "backup folder",
+            _ => "object store",
+        };
+        let parts = match damaged {
+            1 => format!("1 part in the {place} does not hold the bytes its name gives"),
+            count => {
+                format!("{count} parts in the {place} do not hold the bytes their names give")
+            }
+        };
+        found.push(concern(
+            "parts_damaged",
+            "Parts of backups are damaged",
+            format!(
+                "{parts}. A restore of a backup that names one is refused. The next backup stores \
+                 again each damaged part it names; `marfa backups run` takes one now. A part that \
+                 only older backups name stays damaged until those backups are gone."
+            ),
+        ));
+    }
     let waiting = backups["last_backup_files_waiting"].as_u64().unwrap_or(0);
     if waiting > 0 && backups["status"] != "failing" {
         let place = match text("destination") {

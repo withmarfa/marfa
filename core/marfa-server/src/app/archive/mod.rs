@@ -5,7 +5,7 @@ mod lines;
 pub mod restore;
 mod send;
 mod spool;
-mod tar;
+pub(crate) mod tar;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -20,6 +20,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::App;
 use super::access::{Caller, Levers, Permission};
+use super::backups::parts::{self, Cut, Part};
 use super::blobs::carry::{self, Carried, Copy};
 use super::blobs::{Hash, Room, Scratch, references};
 use super::clock::Stamp;
@@ -27,9 +28,11 @@ use super::faults::{ARCHIVE_LINE_LANE, FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
+use super::tables::archive::{ArchivedRow, CarriedTable, Rows};
 use super::{backups, connectors, edges, provenance, sources, stored, tables};
 use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
+pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
 pub const VERSION: u64 = 1;
@@ -141,7 +144,7 @@ struct RowNeed {
     unheld: bool,
 }
 
-struct Prepared {
+struct Prepared<R = Spooled<RowNeed>> {
     created_at: Stamp,
     manifest: Vec<u8>,
     /// `None` for a backup until the files no store gave are known.
@@ -150,8 +153,27 @@ struct Prepared {
     items: Spooled<ItemNeed>,
     versions: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
-    rows: Spooled<RowNeed>,
+    rows: R,
     blobs: Vec<(Carried, String)>,
+}
+
+/// A part of a backup's rows: written by this run, or a stored part whose mark its tables still
+/// have.
+pub enum RowPart {
+    Written { sealed: Sealed, mark: String },
+    Reused(Part),
+}
+
+/// A part a backup names, with its bytes where this run wrote them.
+pub struct Out {
+    pub part: Part,
+    pub bytes: Option<Sealed>,
+}
+
+/// A backup ready to store: the archive's manifest and its parts, in order.
+pub struct Parted {
+    pub archive: Map<String, Value>,
+    pub parts: Vec<Out>,
 }
 
 /// One line of `files.ndjson.gz`.
@@ -175,55 +197,17 @@ pub struct Taken {
     pub files: Vec<String>,
     /// The files the backup store held a recorded copy of.
     pub in_store: Vec<String>,
-    prepared: Prepared,
+    prepared: Prepared<Vec<RowPart>>,
     /// The lines of `files.ndjson.gz`, in order of hash, before the lost files are known.
     listing: Vec<FileLine>,
     scratch: Scratch,
 }
 
-pub struct Backup {
-    pub body: Body,
-    /// How long the destination has to take it, which also bounds how long its sender waits.
-    pub limit: std::time::Duration,
-    /// The most bytes the archive can take.
-    pub size: u64,
-}
-
 impl Taken {
-    /// The most bytes the archive can take once the files in `lost` are named as lost. A caller
-    /// holds the archive to its disk before `send` starts the work of writing it.
-    pub fn bound(&self, lost: &[String]) -> Result<u64> {
-        let lost: HashSet<&str> = lost.iter().map(String::as_str).collect();
-        let mut listed = 0u64;
-        for line in &self.listing {
-            let mut printed = print(line)?.len() as u64 + 1;
-            if lost.contains(line.hash.as_str()) {
-                printed = printed - line.state.len() as u64 + LOST.len() as u64;
-            }
-            listed += printed;
-        }
-        let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
-        Ok(entry(self.prepared.manifest.len() as u64)
-            + entry(listed + listed / 1000 + 1024)
-            + entry(self.prepared.instance.size)
-            + entry(self.prepared.items.size)
-            + entry(self.prepared.versions.size)
-            + entry(self.prepared.edges.size)
-            + entry(self.prepared.rows.size)
-            + tar::END.len() as u64)
-    }
-
-    /// Sends the backup, its `files.ndjson.gz` naming as lost each file in `lost`. `size` is
-    /// what `bound` gave for the same `lost`.
-    pub fn send(
-        self,
-        app: &Arc<App>,
-        lost: &[String],
-        size: u64,
-        check: std::time::Duration,
-    ) -> Backup {
+    /// The backup's parts, its `files.ndjson.gz` naming as lost each file in `lost`.
+    pub async fn parts(self, app: &Arc<App>, lost: &[String]) -> Result<Parted> {
         let Taken {
-            mut prepared,
+            prepared,
             mut listing,
             scratch,
             ..
@@ -234,25 +218,38 @@ impl Taken {
                 line.state = LOST;
             }
         }
-        let limit = super::blobs::store::write_deadline(check, size);
-        let (sender, body) = channel(QUEUED);
-        let (app, room, cap) = (app.clone(), app.room(), app.archive_line_cap());
-        tokio::spawn(async move {
-            let spooled =
-                tokio::task::spawn_blocking(move || spool_files(scratch, room, cap, &listing))
-                    .await;
-            match spooled {
-                Ok(Ok(files)) => {
-                    prepared.files = Some(files);
-                    send::archive(app, Caller::Server, prepared, sender, limit).await;
-                }
-                Ok(Err(refusal)) => {
-                    tracing::warn!(message = %refusal.message, "A backup's files were not spooled");
-                }
-                Err(_) => tracing::warn!("A backup's files were not spooled"),
-            }
-        });
-        Backup { body, limit, size }
+        let (room, cap) = (app.room(), app.archive_line_cap());
+        let files = tokio::task::spawn_blocking(move || spool_files(scratch, room, cap, &listing))
+            .await
+            .map_err(|_| Refusal::internal("a backup's files were not spooled"))??;
+        let archive = match serde_json::from_slice(&prepared.manifest) {
+            Ok(Value::Object(archive)) => archive,
+            _ => return Err(Refusal::internal("an archive's manifest did not read back")),
+        };
+        let written = |entry: &str, sealed: Sealed, mark: Option<String>| Out {
+            part: Part {
+                entry: entry.to_string(),
+                sha256: sealed.sha256.clone(),
+                size_bytes: sealed.size,
+                lines: sealed.lines,
+                mark,
+            },
+            bytes: Some(sealed),
+        };
+        let mut parts = vec![
+            written(FILES, files.sealed(), None),
+            written(INSTANCE, prepared.instance.sealed(), None),
+            written(ITEMS, prepared.items.sealed(), None),
+            written(VERSIONS, prepared.versions.sealed(), None),
+            written(EDGES, prepared.edges.sealed(), None),
+        ];
+        for row in prepared.rows {
+            parts.push(match row {
+                RowPart::Written { sealed, mark } => written(ROWS, sealed, Some(mark)),
+                RowPart::Reused(part) => Out { part, bytes: None },
+            });
+        }
+        Ok(Parted { archive, parts })
     }
 }
 
@@ -294,12 +291,13 @@ struct Snapshot {
 }
 
 /// What the selection's snapshot gave: the line files, the blobs the rows name, and the counts.
-struct Selected {
+struct Selected<R> {
     instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
     versions: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
-    rows: Spooled<RowNeed>,
+    rows: R,
+    row_count: u64,
     counts: Map<String, Value>,
     /// The stored values left out because they do not read.
     unreadable: Vec<&'static str>,
@@ -375,7 +373,11 @@ impl App {
         ask: Ask,
         files: bool,
     ) -> Result<(Body, Stamp)> {
-        let (prepared, _) = self.prepare_archive(caller, ask, files, None).await?;
+        let rows = WholeRows {
+            scratch: self.scratch().await?,
+            room: self.room(),
+        };
+        let (prepared, _) = self.prepare_archive(caller, ask, files, None, rows).await?;
         let created = prepared.created_at;
         self.audit_export(caller, "archive").await?;
         let (sender, body) = channel(QUEUED);
@@ -387,14 +389,25 @@ impl App {
         Ok((body, created))
     }
 
-    /// Reads a row-only backup from one snapshot; nothing is sent until its lost files are known.
-    pub async fn backup_archive(self: &Arc<App>, backup_store: &str) -> Result<Taken> {
+    /// Reads a row-only backup from one snapshot; nothing is stored until its lost files are known.
+    /// A run of tables whose mark is a key of `reuse` takes that part without reading its rows.
+    pub async fn backup_archive(
+        self: &Arc<App>,
+        backup_store: &str,
+        reuse: HashMap<String, Part>,
+    ) -> Result<Taken> {
         let ask = Ask {
             system: true,
             ..Ask::default()
         };
+        let rows = PartedRows {
+            reuse,
+            room: self.room(),
+            scratches: Box::new(self.scratches()),
+        };
+        let backup_store = Some(backup_store.to_string());
         let (prepared, snapshot) = self
-            .prepare_archive(&Caller::Server, ask, false, Some(backup_store.to_string()))
+            .prepare_archive(&Caller::Server, ask, false, backup_store, rows)
             .await?;
         let Some((
             Snapshot {
@@ -426,16 +439,16 @@ impl App {
         .await
     }
 
-    async fn prepare_archive(
+    async fn prepare_archive<W: RowSink>(
         &self,
         caller: &Caller,
         ask: Ask,
         files: bool,
         backup_store: Option<String>,
-    ) -> Result<(Prepared, Option<(Snapshot, Vec<FileLine>, Scratch)>)> {
+        rows: W,
+    ) -> Result<(Prepared<W::Out>, Option<(Snapshot, Vec<FileLine>, Scratch)>)> {
         let created_at = self.clock.instant();
         let scratch = [
-            self.scratch().await?,
             self.scratch().await?,
             self.scratch().await?,
             self.scratch().await?,
@@ -450,13 +463,13 @@ impl App {
         let selected = match backup_store {
             None => {
                 reading(self, caller, move |read| {
-                    select(read, &ask, scratch, room, caps, None)
+                    select(read, &ask, scratch, room, caps, None, rows)
                 })
                 .await?
             }
             Some(backup_store) => {
                 reading_background(self, caller, move |read| {
-                    select(read, &ask, scratch, room, caps, Some(&backup_store))
+                    select(read, &ask, scratch, room, caps, Some(&backup_store), rows)
                 })
                 .await?
             }
@@ -507,7 +520,7 @@ impl App {
         manifest.insert("item_count".into(), selected.items.lines.into());
         manifest.insert("version_count".into(), selected.versions.lines.into());
         manifest.insert("edge_count".into(), selected.edges.lines.into());
-        manifest.insert("row_count".into(), selected.rows.lines.into());
+        manifest.insert("row_count".into(), selected.row_count.into());
         manifest.insert("blob_count".into(), blobs.len().into());
         manifest.extend(selected.counts);
         if !selected.unreadable.is_empty() {
@@ -552,19 +565,19 @@ struct Caps {
 }
 
 /// Reads the whole selection in one snapshot, checking each row as a restore would.
-fn select(
+fn select<W: RowSink>(
     read: &Reader<'_, '_>,
     ask: &Ask,
-    [instance, items, versions, edges, rows]: [Scratch; 5],
+    [instance, items, versions, edges]: [Scratch; 4],
     room: Room,
     caps: Caps,
     backup_store: Option<&str>,
-) -> Result<Selected> {
+    rows: W,
+) -> Result<Selected<W::Out>> {
     let Caps { bulk: cap, line } = caps;
     let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
     let mut versions: Lines<ItemNeed> = Lines::new(versions, room.clone())?;
     let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
-    let mut rows: Lines<RowNeed> = Lines::new(rows, room.clone())?;
     let mut instance: Lines<InstanceNeed> = Lines::new(instance, room)?;
     let caller = &read.caller;
     let catalog = &read.catalog;
@@ -712,25 +725,8 @@ fn select(
             digests.extend(references::digests(&items::parsed(&edge.properties)?));
         }
     }
-    tables::archive::archived(
-        read,
-        |seq| selected.binary_search(&seq).is_ok(),
-        |row| {
-            checks::row(&row.line, rows.lines as usize + 1).map_err(|refused| {
-                Refusal::internal(&format!(
-                    "a stored row does not pass a restore's check: {}",
-                    refused.refusal.message
-                ))
-            })?;
-            let text = print(&row.line)?;
-            fits(ROWS, rows.lines + 1, &text, line)?;
-            rows.push(&text, |need| {
-                need.hosts.insert(row.host);
-                need.types.extend(row.types);
-                need.unheld |= row.unheld;
-            })
-        },
-    )?;
+    let carried = tables::archive::carried(read, |seq| selected.binary_search(&seq).is_ok())?;
+    let (rows, row_count) = rows.write(read, &carried, line)?;
     let mut listed = Vec::new();
     let mut missing = BTreeSet::new();
     for digest in digests.union(&file_refs) {
@@ -908,11 +904,140 @@ fn select(
         items: items.finish()?,
         versions: versions.finish()?,
         edges: edges.finish()?,
-        rows: rows.finish()?,
+        rows,
+        row_count,
         counts,
         unreadable,
         listed,
         missing,
         backup,
     })
+}
+
+/// Where a selection writes the rows it reads, answering them and how many lines they hold.
+trait RowSink: Send + 'static {
+    type Out: Send + 'static;
+
+    fn write(
+        self,
+        read: &Reader<'_, '_>,
+        tables: &[CarriedTable],
+        line: usize,
+    ) -> Result<(Self::Out, u64)>;
+}
+
+/// Checks a row as a restore would, as line `at` of `rows.ndjson.gz`, and prints it.
+fn row_text(row: &ArchivedRow, at: u64, cap: usize) -> Result<String> {
+    checks::row(&row.line, at as usize).map_err(|refused| {
+        Refusal::internal(&format!(
+            "a stored row does not pass a restore's check: {}",
+            refused.refusal.message
+        ))
+    })?;
+    let text = print(&row.line)?;
+    fits(ROWS, at, &text, cap)?;
+    Ok(text)
+}
+
+/// An export's rows, in one line file.
+struct WholeRows {
+    scratch: Scratch,
+    room: Room,
+}
+
+impl RowSink for WholeRows {
+    type Out = Spooled<RowNeed>;
+
+    fn write(
+        self,
+        read: &Reader<'_, '_>,
+        tables: &[CarriedTable],
+        line: usize,
+    ) -> Result<(Spooled<RowNeed>, u64)> {
+        let mut rows: Lines<RowNeed> = Lines::new(self.scratch, self.room)?;
+        let mut reader = Rows::of(read);
+        for table in tables {
+            reader.read(read, table, |row| {
+                let text = row_text(&row, rows.lines + 1, line)?;
+                rows.push(&text, |need| {
+                    need.hosts.insert(row.host);
+                    need.types.extend(row.types);
+                    need.unheld |= row.unheld;
+                })
+            })?;
+        }
+        let rows = rows.finish()?;
+        let count = rows.lines;
+        Ok((rows, count))
+    }
+}
+
+/// A backup's rows, a part per run of tables. A run whose mark is a key of `reuse` takes that
+/// part: its tables' batches are the ones it was written from, so its rows are not read.
+struct PartedRows {
+    reuse: HashMap<String, Part>,
+    room: Room,
+    scratches: Box<dyn Fn() -> Result<Scratch> + Send>,
+}
+
+impl RowSink for PartedRows {
+    type Out = Vec<RowPart>;
+
+    fn write(
+        self,
+        read: &Reader<'_, '_>,
+        tables: &[CarriedTable],
+        line: usize,
+    ) -> Result<(Vec<RowPart>, u64)> {
+        let cuts: Vec<Cut<'_>> = tables
+            .iter()
+            .map(|table| Cut {
+                item_id: &table.item_id,
+                table: &table.table,
+                bytes: table.bytes,
+            })
+            .collect();
+        let writer = writer();
+        let mut reader = Rows::of(read);
+        let (mut out, mut count) = (Vec::new(), 0u64);
+        for group in parts::groups(&cuts) {
+            let run = &tables[group];
+            let mark = parts::mark(
+                &writer,
+                run.iter().map(|table| {
+                    (
+                        table.item_id.as_str(),
+                        table.table.as_str(),
+                        table.last_batch.as_str(),
+                    )
+                }),
+            );
+            if let Some(part) = self.reuse.get(&mark) {
+                count += part.lines;
+                out.push(RowPart::Reused(part.clone()));
+                continue;
+            }
+            let mut rows: Lines<()> = Lines::new((self.scratches)()?, self.room.clone())?;
+            for table in run {
+                reader.read(read, table, |row| {
+                    let text = row_text(&row, count + rows.lines + 1, line)?;
+                    rows.push(&text, |_| ())
+                })?;
+            }
+            let rows = rows.finish()?;
+            count += rows.lines;
+            out.push(RowPart::Written {
+                sealed: rows.sealed(),
+                mark,
+            });
+        }
+        if out.is_empty() {
+            let empty: Lines<()> = Lines::new((self.scratches)()?, self.room)?;
+            out.push(RowPart::Written {
+                sealed: empty.finish()?.sealed(),
+                mark: parts::mark(&writer, []),
+            });
+        }
+        Ok((out, count))
+    }
 }

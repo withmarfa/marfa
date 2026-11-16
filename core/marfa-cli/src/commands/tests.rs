@@ -1806,14 +1806,15 @@ fn backups_reach_their_doors_and_an_instance_and_a_name_are_one_path_segment_eac
     );
     let restore = backups::request(&backups::BackupsCommand::Restore {
         instance_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".to_string(),
-        name: "20261109T101530.250Z.tar".to_string(),
+        name: "20261109T101530.250Z.json".to_string(),
+        allow_missing_files: false,
     });
     assert_eq!(restore.method, Method::Post);
     assert!(
         restore
             .path()
             .starts_with("/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/20261109T10")
-            && restore.path().ends_with(".tar/restore")
+            && restore.path().ends_with(".json/restore")
             && restore.path().matches('/').count() == 4,
         "{}",
         restore.path()

@@ -110,7 +110,7 @@ async function download(server: FreshServer, hash: string) {
 }
 
 describe("an object store's layout under its prefix", () => {
-  it("keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups folder", async () => {
+  it("keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups and backup-parts folders", async () => {
     const store = ownObjectStore();
     const bucket = bucketAt(store.S3_PREFIX);
     const server = await boot("bucket-layout", store);
@@ -132,9 +132,11 @@ describe("an object store's layout under its prefix", () => {
       keys.filter(
         (key) =>
           !key.startsWith(`${store.S3_PREFIX}/blobs/`) &&
-          !key.startsWith(`${store.S3_PREFIX}/backups/`),
+          !key.startsWith(`${store.S3_PREFIX}/backups/`) &&
+          !key.startsWith(`${store.S3_PREFIX}/backup-parts/${id}/`),
       ),
     ).toEqual([]);
+    expect(await bucket.partKeys(id)).not.toEqual([]);
   });
 
   it("starts beside objects an older layout left at the prefix's root, and never reads or deletes them", async () => {

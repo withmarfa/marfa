@@ -23,11 +23,15 @@ import {
 import {
   afterFirstScheduledBackup,
   backupConcerns,
+  backupInFolder,
   backupName,
   attentionOf,
   healthDetail,
   instanceIdOf,
   ownerOf,
+  partName,
+  sha256Of,
+  storedSize,
 } from "../../utils/backups.js";
 import { same } from "../../utils/drill.js";
 import {
@@ -47,8 +51,9 @@ import { diskHolds, inspectStores } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
- * Backups to a folder the owner names with `MARFA_BACKUP_PATH`: one file per
- * backup under `backups/<instance id>/`, a copy of each file a backup names
+ * Backups to a folder the owner names with `MARFA_BACKUP_PATH`: one manifest
+ * per backup under `backups/<instance id>/`, the parts it names under
+ * `backup-parts/<instance id>/`, a copy of each file a backup names
  * under `files/<instance id>/`, and a restore from the folder alone into a
  * fresh server on another data path.
  */
@@ -87,6 +92,22 @@ async function health(server: FreshServer) {
   }>("/health");
   expect(answer.status, JSON.stringify(answer.data)).toBe(200);
   return answer.data;
+}
+
+/**
+ * The parts folder of `instance` under `root`: the names a part is being
+ * written under, which begin with `.`, and the parts stored, each of which
+ * must hold the bytes its name gives.
+ */
+function partsIn(root: string, instance: string) {
+  const dir = join(root, "backup-parts", instance);
+  const names = existsSync(dir) ? readdirSync(dir).sort() : [];
+  const writing = names.filter((entry) => entry.startsWith("."));
+  const stored = names.filter((entry) => !entry.startsWith("."));
+  for (const entry of stored) {
+    expect(`${sha256Of(readFileSync(join(dir, entry)))}.ndjson.gz`).toBe(entry);
+  }
+  return { writing, stored };
 }
 
 function copyOf(instance: string, hash: string): string {
@@ -140,7 +161,7 @@ let made: {
 let name: string;
 
 describe("backups to a folder", () => {
-  it("writes each backup as one file named for its created_at in the folder's backups folder for its instance, and a copy of each file it names in the folder's files area", async () => {
+  it("writes each backup as one manifest named for its created_at in the folder's backups folder for its instance, its parts named for their bytes, and a copy of each file it names in the folder's files area", async () => {
     const { working } = clientsFor(origin);
     const type = `user.folder_ledger_${String(Date.now())}`;
     const registered = await working.registerType({
@@ -203,9 +224,27 @@ describe("backups to a folder", () => {
     expect(readdirSync(join(folder, "backups", originId)).sort()).toEqual(
       [...scheduled, name].sort(),
     );
-    const archive = new Uint8Array(
-      readFileSync(join(folder, "backups", originId, name)),
+    const stored = await backupInFolder(folder, originId, name);
+    expect(storedSize(stored)).toBe(run.data.backup.size_bytes);
+    expect(stored.manifest).toMatchObject({
+      format: "marfa-backup",
+      version: 1,
+    });
+    const parts = partsIn(folder, originId);
+    expect(parts.writing).toEqual([]);
+    expect(parts.stored).toEqual(
+      expect.arrayContaining(stored.manifest.parts.map(partName)),
     );
+    const archive = stored.archive;
+    expect(listEntries(archive).map((entry) => entry.name)).toEqual([
+      "manifest.json",
+      "files.ndjson.gz",
+      "instance.ndjson.gz",
+      "items.ndjson.gz",
+      "versions.ndjson.gz",
+      "edges.ndjson.gz",
+      "rows.ndjson.gz",
+    ]);
     expect(Object.keys(notCarried(archive))).toContain(made.hash);
     expect(
       listEntries(archive).filter((entry) => entry.name.startsWith("blobs/")),
@@ -334,21 +373,29 @@ describe("backups to a folder", () => {
     });
     expect(changed.status, JSON.stringify(changed.error)).toBe(201);
 
+    const partsBefore = partsIn(folder, originId).stored;
+
     await origin.setFault("fail:backup-folder-write");
     const full = await owner.runBackup();
     expect(full.status, JSON.stringify(full.data)).toBe(503);
     expect(full.error?.error.message).toMatch(/No space left on device/);
     expect(readdirSync(own).sort()).toEqual(before);
+    expect(partsIn(folder, originId)).toEqual({
+      writing: [],
+      stored: partsBefore,
+    });
     await origin.clearFault();
 
     await origin.setFault("hold:backup:put");
     void ownerOf(origin).runBackup();
     await origin.waitForHold("hold:backup:put");
-    const writing = readdirSync(own).filter((entry) => !before.includes(entry));
-    expect(writing).toHaveLength(1);
-    expect(writing[0]).toMatch(/^\..*\.partial$/);
+    expect(readdirSync(own).sort()).toEqual(before);
+    const held = partsIn(folder, originId);
+    expect(held.writing).toHaveLength(1);
+    expect(held.writing[0]).toMatch(/^\..*\.partial$/);
     await origin.restart({ signal: "SIGKILL" });
-    expect(readdirSync(own).sort()).toEqual([...before, ...writing].sort());
+    expect(readdirSync(own).sort()).toEqual(before);
+    expect(partsIn(folder, originId).writing).toEqual(held.writing);
     const listed = await ownerOf(origin).listBackups();
     expect(listed.data.data.map((backup) => backup.name).sort()).toEqual(
       before,
@@ -359,6 +406,7 @@ describe("backups to a folder", () => {
     expect(readdirSync(own).sort()).toEqual(
       [...before, next.data.backup.name].sort(),
     );
+    expect(partsIn(folder, originId).writing).toEqual([]);
   });
 });
 
@@ -413,9 +461,7 @@ describe("a backup folder that lacks a file or its disk", () => {
       const run = await ownerOf(server).runBackup();
       expect(run.status, JSON.stringify(run.error)).toBe(200);
       expect(run.data.blobs_lost).toEqual([lost.hash]);
-      const archive = new Uint8Array(
-        readFileSync(join(root, "backups", id, run.data.backup.name)),
-      );
+      const { archive } = await backupInFolder(root, id, run.data.backup.name);
       expect(lostFiles(archive)).toEqual([lost.hash]);
       expect(existsSync(copyIn(root, id, kept.hash))).toBe(true);
       const answer = await health(server);
@@ -467,6 +513,7 @@ describe("a backup folder that lacks a file or its disk", () => {
         status: "ok",
         store_error: null,
         copies_waiting: 0,
+        damaged_parts: 0,
       });
       expect(await attentionOf(server)).toEqual([]);
     });

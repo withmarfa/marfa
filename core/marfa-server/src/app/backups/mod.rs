@@ -1,25 +1,30 @@
-//! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`
-//! in the object store, or as one file under `backups/<instance id>/` in the backup folder.
+//! Backups: an archive without files, put in parts. Each part is one line file of the archive,
+//! named by its hash under `backup-parts/<instance id>/`, and the backup is a manifest under
+//! `backups/<instance id>/` naming its parts, in the object store under its prefix or in the
+//! backup folder. A part the last backup stored is not stored again.
 
 mod found;
 mod names;
+pub(crate) mod parts;
+mod stock;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use futures_util::stream::{self, BoxStream};
+use futures_util::stream;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::App;
 use super::access::Caller;
-use super::archive::{self, Backup};
-use super::blobs::folder::{self as backup_folder, Adoptable, Folder};
+use super::archive::tar::{BLOCK, END, header, padding};
+use super::archive::{self, MANIFEST, Out, Parted};
+use super::blobs::folder::{self as backup_folder, Adoptable, Area, Folder};
 use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
@@ -34,18 +39,62 @@ use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 pub use found::survey_folder;
 pub use names::{Listing, doomed, instance_of, name_of, parse};
+use parts::{Checked, Manifest, Part};
+use stock::Stock;
 
 /// The folder under the object store's prefix that holds a folder of backups per instance.
-pub const FOLDER: &str = "backups";
+pub const FOLDER: &str = backup_folder::BACKUPS;
+/// The folder under the object store's prefix that holds a folder of parts per instance.
+pub const PARTS: &str = backup_folder::PARTS;
 const LIST_DEADLINE: Duration = Duration::from_secs(30);
+/// How many manifests a listing reads at once to size the backups it lists.
+const MANIFEST_READS: usize = 8;
 const REPLICATION: &str = "blob-replicate";
 
 /// One backup at a time, whether the schedule or the owner asked for it.
 #[derive(Debug, Default)]
 pub struct Backups {
     running: Mutex<()>,
+    /// Set while a restore holds `running` to read a backup.
+    restoring: AtomicBool,
     /// Set while a look at the backup folder is in flight, which a mount that hangs holds.
     looking: Arc<AtomicBool>,
+    /// Manifests this process began to write and saw fail, which may still land: a write that
+    /// timed out can finish after its answer. No part is deleted while one is neither found nor
+    /// forgotten.
+    unsettled: std::sync::Mutex<BTreeSet<String>>,
+}
+
+impl Backups {
+    fn unsettled(&self) -> std::sync::MutexGuard<'_, BTreeSet<String>> {
+        self.unsettled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Clears `Backups::restoring` however the restore's read ends.
+struct Restoring<'a>(&'a AtomicBool);
+
+impl<'a> Restoring<'a> {
+    fn begin(flag: &'a AtomicBool) -> Restoring<'a> {
+        flag.store(true, Ordering::Release);
+        Restoring(flag)
+    }
+}
+
+impl Drop for Restoring<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// A part as the destination lists it.
+#[derive(Clone, Debug)]
+pub(super) struct Stored {
+    size: u64,
+    /// The ETag an object store lists it with; a backup folder gives none.
+    etag: Option<String>,
 }
 
 /// What the database records of backups.
@@ -375,6 +424,7 @@ fn forget_backups(tx: &Transaction<'_>, store: &str) -> Result<usize> {
          last_backup_at = NULL WHERE id = 1",
         [],
     )?;
+    stock::forget_store(tx, store)?;
     Ok(put + found::forget_store(tx, store)?)
 }
 
@@ -464,18 +514,49 @@ impl Destination {
         )
     }
 
-    /// The backups directly in `instance`'s folder, by name and size.
-    async fn list_in(&self, instance: &str) -> std::io::Result<Vec<(String, u64)>> {
+    /// The files directly in `instance`'s folder of `area`, by name, with each one's size and the
+    /// ETag an object store lists it with.
+    async fn listed(
+        &self,
+        area: Area,
+        instance: &str,
+    ) -> std::io::Result<Vec<(String, u64, Option<String>)>> {
         match self {
             Destination::Bucket(bucket) => {
-                let own = format!("{FOLDER}/{instance}");
+                let own = format!("{}/{instance}", area.name());
                 super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await
             }
             Destination::Folder(folder) => {
                 let (folder, instance) = (folder.clone(), instance.to_string());
-                blocking(move || folder.list_in(&instance)).await
+                let listed = blocking(move || folder.list_in(area, &instance)).await?;
+                Ok(listed
+                    .into_iter()
+                    .map(|(name, size)| (name, size, None))
+                    .collect())
             }
         }
+    }
+
+    /// The files directly in `instance`'s folder of `area`, by name and size.
+    async fn list_in(&self, area: Area, instance: &str) -> std::io::Result<Vec<(String, u64)>> {
+        Ok(self
+            .listed(area, instance)
+            .await?
+            .into_iter()
+            .map(|(name, size, _)| (name, size))
+            .collect())
+    }
+
+    /// The parts in `instance`'s folder of parts, by hash.
+    async fn parts_in(&self, instance: &str) -> std::io::Result<HashMap<String, Stored>> {
+        Ok(self
+            .listed(Area::Parts, instance)
+            .await?
+            .into_iter()
+            .filter_map(|(name, size, etag)| {
+                Some((parts::parse(&name)?.to_string(), Stored { size, etag }))
+            })
+            .collect())
     }
 
     /// Every backup in an instance's folder, as its folder and name, and its size.
@@ -491,16 +572,17 @@ impl Destination {
         }
     }
 
-    /// The backup `name` of `instance`, with its size.
+    /// The file `name` in `instance`'s folder of `area`, with its size.
     async fn get(
         &self,
+        area: Area,
         instance: &str,
         name: &str,
         idle: Duration,
     ) -> std::io::Result<Option<(u64, ByteStream)>> {
         let found = match self {
             Destination::Bucket(bucket) => {
-                let key = key_of(instance, name);
+                let key = key_of(area, instance, name);
                 super::blobs::store::within(
                     super::blobs::store::CHECK_DEADLINE,
                     bucket.get_whole(&key),
@@ -510,7 +592,7 @@ impl Destination {
             Destination::Folder(folder) => {
                 let (folder, instance, name) =
                     (folder.clone(), instance.to_string(), name.to_string());
-                blocking(move || folder.open_backup(&instance, &name))
+                blocking(move || folder.open_in(area, &instance, &name))
                     .await?
                     .map(|(size, file)| (size, super::blobs::store::file_stream(file, 0, size)))
             }
@@ -518,16 +600,77 @@ impl Destination {
         Ok(found.map(|(size, bytes)| (size, super::blobs::store::idle_limited(bytes, idle))))
     }
 
-    /// Deletes this instance's backup `name`.
-    async fn delete(&self, instance: &str, name: &str) -> std::io::Result<()> {
+    /// The manifest of backup `name` of `instance`, with its size, or why it does not read.
+    async fn manifest(
+        &self,
+        instance: &str,
+        name: &str,
+        idle: Duration,
+    ) -> std::io::Result<Option<(u64, std::result::Result<Manifest, String>)>> {
+        let Some((size, mut bytes)) = self.get(Area::Backups, instance, name, idle).await? else {
+            return Ok(None);
+        };
+        if size > archive::LINE_CAP as u64 {
+            let why = format!("it is larger than {} bytes", archive::LINE_CAP);
+            return Ok(Some((size, Err(why))));
+        }
+        let mut held = Vec::with_capacity(size as usize);
+        while let Some(chunk) = bytes.next().await {
+            held.extend_from_slice(&chunk?);
+            if held.len() as u64 > size {
+                return Ok(Some((size, Err("it grew while it was read".into()))));
+            }
+        }
+        Ok(Some((size, Manifest::read(&held))))
+    }
+
+    /// Stores `bytes` as `name` in this instance's folder of `area`, whole or not at all, in place
+    /// of what is there. Answers the size and the ETag an object store gave it.
+    async fn put(
+        &self,
+        app: &App,
+        area: Area,
+        name: &str,
+        size: u64,
+        bytes: ByteStream,
+    ) -> std::io::Result<(u64, Option<String>)> {
+        let limit = super::blobs::store::write_deadline(app.blobs.check(), size);
         match self {
             Destination::Bucket(bucket) => {
-                let key = key_of(instance, name);
+                let key = key_of(area, &app.instance_id, name);
+                let kind = match area {
+                    Area::Backups => "application/json",
+                    Area::Parts => "application/gzip",
+                };
+                bucket.put_whole(&key, kind, bytes, limit).await
+            }
+            Destination::Folder(folder) => {
+                let written = super::blobs::store::within(
+                    limit,
+                    backup_folder::write(
+                        folder.clone(),
+                        area,
+                        name.to_string(),
+                        bytes,
+                        app.faults.clone(),
+                    ),
+                )
+                .await?;
+                Ok((written.place().await?, None))
+            }
+        }
+    }
+
+    /// Deletes `name` from this instance's folder of `area`.
+    async fn delete(&self, area: Area, own: &str, name: &str) -> std::io::Result<()> {
+        match self {
+            Destination::Bucket(bucket) => {
+                let key = key_of(area, own, name);
                 super::blobs::store::within(LIST_DEADLINE, bucket.delete_whole(&key)).await
             }
             Destination::Folder(folder) => {
                 let (folder, name) = (folder.clone(), name.to_string());
-                blocking(move || folder.delete(&name)).await
+                blocking(move || folder.delete(area, &name)).await
             }
         }
     }
@@ -561,7 +704,7 @@ async fn settle_attempts(app: &Arc<App>, destination: &Destination) -> Result<()
         return Ok(());
     }
     let listed: HashSet<String> = destination
-        .list_in(&app.instance_id)
+        .list_in(Area::Backups, &app.instance_id)
         .await
         .map_err(|error| destination.unreachable("checking the last backup", &error))?
         .into_iter()
@@ -602,11 +745,12 @@ fn no_backup_destination() -> Refusal {
     )
 }
 
-fn running() -> Refusal {
-    Refusal::new(
-        Code::HousekeepingJobRunning,
-        "A backup is running; try again once it ends.",
-    )
+fn running(restoring: bool) -> Refusal {
+    let message = match restoring {
+        true => "A restore is reading a backup; try again once it ends.",
+        false => "A backup is running; try again once it ends.",
+    };
+    Refusal::new(Code::HousekeepingJobRunning, message)
 }
 
 /// Whether the schedule runs backups here: a destination is set and the interval is not 0.
@@ -614,8 +758,8 @@ pub fn scheduled(app: &App) -> bool {
     Destination::of(app).is_some() && app.settings.live().get(BACKUP_INTERVAL_SECONDS) > 0
 }
 
-fn key_of(instance: &str, name: &str) -> String {
-    format!("{FOLDER}/{instance}/{name}")
+fn key_of(area: Area, instance: &str, name: &str) -> String {
+    format!("{}/{instance}/{name}", area.name())
 }
 
 fn listed(instance: &str, name: &str, created_at: Stamp, size: u64) -> Value {
@@ -634,15 +778,22 @@ enum Outcome {
         name: String,
         taken: Stamp,
         size: u64,
+        /// The bytes of the parts it stored, which the destination did not already hold.
+        sent: u64,
         removed: usize,
         unremoved: usize,
+        /// The parts no backup named any more that it deleted.
+        parts_removed: usize,
         /// The files the backup names that no store could give.
         lost: Vec<String>,
         /// How many files it names that the destination did not yet hold once it was put.
         waiting: u64,
     },
     Unchanged,
-    Running,
+    /// Another backup, or a restore when `restoring`, holds the lock.
+    Running {
+        restoring: bool,
+    },
 }
 
 impl Outcome {
@@ -652,8 +803,10 @@ impl Outcome {
             Outcome::Put {
                 name,
                 size,
+                sent,
                 removed,
                 unremoved,
+                parts_removed,
                 lost,
                 waiting,
                 ..
@@ -661,6 +814,8 @@ impl Outcome {
                 "outcome": "put",
                 "backup": name,
                 "size_bytes": size,
+                "sent_bytes": sent,
+                "parts_removed": parts_removed,
                 "removed": removed,
                 "unremoved": unremoved,
                 "blobs_lost": lost.len(),
@@ -677,20 +832,23 @@ impl Outcome {
                 name,
                 taken,
                 size,
+                sent,
                 removed,
                 unremoved,
                 lost,
                 waiting,
+                ..
             } => json!({
                 "outcome": "put",
                 "backup": listed(instance, name, *taken, *size),
+                "sent_bytes": sent,
                 "removed": removed,
                 "unremoved": unremoved,
                 "blobs_lost": lost,
                 "blobs_waiting": waiting,
             }),
             Outcome::Unchanged => json!({ "outcome": "unchanged" }),
-            Outcome::Running => json!({ "outcome": "running" }),
+            Outcome::Running { .. } => json!({ "outcome": "running" }),
         }
     }
 }
@@ -704,38 +862,49 @@ pub async fn job(app: Arc<App>, _run: Run) -> Result<Report> {
 /// Past one part, so a multipart upload has begun before `backup:put` holds.
 const HELD_AFTER: u64 = 16 * 1024 * 1024;
 
-struct Sending {
-    body: super::archive::Body,
+/// Holds a backup at `backup:put` once: as soon as more than `HELD_AFTER` bytes of its parts are
+/// in hand, else with every byte of the last part it stores in hand, before the destination takes
+/// that part whole, else before its manifest is written.
+#[derive(Clone)]
+struct Held {
     faults: Arc<super::faults::Faults>,
-    sent: u64,
-    held: bool,
+    sent: Arc<AtomicU64>,
+    held: Arc<AtomicBool>,
 }
 
-/// The archive's bytes as a stream, held at `backup:put` once the put has some in hand.
-fn put_stream(app: &Arc<App>, backup: Backup) -> BoxStream<'static, std::io::Result<Bytes>> {
-    let sending = Sending {
-        body: backup.body,
-        faults: app.faults.clone(),
-        sent: 0,
-        held: false,
-    };
-    stream::unfold(sending, |mut sending| async move {
-        let chunk = std::future::poll_fn(|context| sending.body.poll_chunk(context)).await;
-        if let Some(Ok(bytes)) = &chunk {
-            sending.sent += bytes.len() as u64;
+impl Held {
+    fn new(app: &App) -> Held {
+        Held {
+            faults: app.faults.clone(),
+            sent: Arc::default(),
+            held: Arc::default(),
         }
-        let due = match &chunk {
-            None => true,
-            Some(Ok(_)) => sending.sent > HELD_AFTER,
-            Some(Err(_)) => false,
-        };
-        if due && !sending.held {
-            sending.held = true;
-            sending.faults.hold(HOLD_BACKUP_PUT, None).await;
+    }
+
+    fn watch(&self, bytes: ByteStream, last: bool) -> ByteStream {
+        stream::unfold((bytes, self.clone()), move |(mut bytes, held)| async move {
+            let chunk = bytes.next().await;
+            let due = match &chunk {
+                Some(Ok(chunk)) => {
+                    let len = chunk.len() as u64;
+                    held.sent.fetch_add(len, Ordering::AcqRel) + len > HELD_AFTER
+                }
+                Some(Err(_)) => false,
+                None => last,
+            };
+            if due {
+                held.once().await;
+            }
+            chunk.map(|chunk| (chunk, (bytes, held)))
+        })
+        .boxed()
+    }
+
+    async fn once(&self) {
+        if !self.held.swap(true, Ordering::AcqRel) {
+            self.faults.hold(HOLD_BACKUP_PUT, None).await;
         }
-        chunk.map(|chunk| (chunk, sending))
-    })
-    .boxed()
+    }
 }
 
 impl App {
@@ -762,10 +931,18 @@ impl App {
             })
             .collect();
         backups.sort_by(|a, b| b.cmp(a));
-        Ok(backups
-            .into_iter()
-            .map(|(created_at, instance, name, size)| listed(&instance, &name, created_at, size))
-            .collect())
+        let (destination, idle) = (&destination, self.blob_read_idle());
+        Ok(stream::iter(backups)
+            .map(|(created_at, instance, name, size)| async move {
+                let size = match destination.manifest(&instance, &name, idle).await {
+                    Ok(Some((length, Ok(manifest)))) => manifest.size(length),
+                    _ => size,
+                };
+                listed(&instance, &name, created_at, size)
+            })
+            .buffered(MANIFEST_READS)
+            .collect()
+            .await)
     }
 
     /// Puts a backup now, whether or not anything has changed since the last.
@@ -776,71 +953,59 @@ impl App {
             .await
             .map_err(|_| Refusal::internal("a backup's task ended early"))??;
         match outcome {
-            Outcome::Running => Err(running()),
+            Outcome::Running { restoring } => Err(running(restoring)),
             outcome => Ok(outcome.to_json()),
         }
     }
 
     /// Restores the named backup of `instance`, read by the server itself from where it keeps
     /// backups. From the backup folder, every file the backup names is read from the folder too.
+    /// Without `whole`, a file it needs that is held nowhere is left out instead of refusing.
     pub async fn restore_backup(
         self: &Arc<App>,
         caller: &Caller,
         started_at: String,
         instance: &str,
         name: &str,
+        whole: bool,
     ) -> Result<Value> {
         caller.require_local()?;
         let destination = self.destination()?;
         if !instance_of(instance) || parse(name).is_none() {
             return Err(destination.not_found(instance, name));
         }
-        let found = destination
-            .get(instance, name, self.blob_read_idle())
-            .await
-            .map_err(|error| destination.unreachable("reading the backup", &error))?;
-        let Some((size, mut bytes)) = found else {
-            return Err(destination.not_found(instance, name));
-        };
-        let mut receiving = self.begin_restore(Some(size)).await?;
-        while let Some(chunk) = bytes.next().await {
-            match chunk {
-                Ok(chunk) => receiving.push(chunk).await?,
-                Err(error) => {
-                    receiving.abandon().await;
-                    return Err(destination.unreachable("reading the backup", &error));
-                }
+        // No backup prunes parts while they are read.
+        let reading = self.backups.running.lock().await;
+        let restoring = Restoring::begin(&self.backups.restoring);
+        let mut received = self.receive_backup(&destination, instance, name).await?;
+        drop(restoring);
+        drop(reading);
+        if let Destination::Folder(folder) = &destination {
+            let reading = self
+                .files_to_read(folder, instance, &received, whole)
+                .await?;
+            let needed = received.manifest.held_files();
+            let wanted: Vec<String> = reading
+                .iter()
+                .map(|named| named.hash.as_str().to_string())
+                .filter(|hash| needed.contains(hash))
+                .collect();
+            let copies = self.copies_in_folder(folder, instance, reading).await?;
+            let read: HashSet<&str> = copies
+                .iter()
+                .map(|(sealed, _)| sealed.hash.as_str())
+                .collect();
+            let unread: Vec<String> = wanted
+                .into_iter()
+                .filter(|hash| !read.contains(hash.as_str()))
+                .collect();
+            if whole && !unread.is_empty() {
+                return Err(archive::restore::files_missing(unread));
             }
+            received.carried.extend(copies);
         }
-        let mut received = receiving.finish().await?;
-        let carries_files = match &destination {
-            Destination::Bucket(_) => true,
-            Destination::Folder(folder) => {
-                let reading = self.files_to_read(folder, instance, &received).await?;
-                let needed = received.manifest.held_files();
-                let wanted: Vec<String> = reading
-                    .iter()
-                    .map(|named| named.hash.as_str().to_string())
-                    .filter(|hash| needed.contains(hash))
-                    .collect();
-                let copies = self.copies_in_folder(folder, instance, reading).await?;
-                let read: HashSet<&str> = copies
-                    .iter()
-                    .map(|(sealed, _)| sealed.hash.as_str())
-                    .collect();
-                let unread: Vec<String> = wanted
-                    .into_iter()
-                    .filter(|hash| !read.contains(hash.as_str()))
-                    .collect();
-                if !unread.is_empty() {
-                    return Err(archive::restore::files_missing(unread));
-                }
-                received.carried.extend(copies);
-                true
-            }
-        };
         let mut answer = self
-            .restore(caller, started_at, received, carries_files)
+            .restore(caller, started_at, received, whole)
             .await
             .map_err(|refused| match destination {
                 Destination::Bucket(_) => lacking_in_bucket(refused),
@@ -850,12 +1015,125 @@ impl App {
         Ok(answer)
     }
 
-    /// The files a folder restore reads; refuses before any read where the folder lacks one it needs.
+    /// Reads backup `name` of `instance` as one archive: its manifest, then each part it names,
+    /// each checked against the hash and size the manifest gives. A part missing or altered
+    /// refuses the restore before it writes anything.
+    async fn receive_backup(
+        &self,
+        destination: &Destination,
+        instance: &str,
+        name: &str,
+    ) -> Result<archive::restore::intake::Received> {
+        let idle = self.blob_read_idle();
+        let read = destination
+            .manifest(instance, name, idle)
+            .await
+            .map_err(|error| destination.unreachable("reading the backup", &error))?;
+        let manifest = match read {
+            None => return Err(destination.not_found(instance, name)),
+            Some((_, Err(why))) => {
+                return Err(Refusal::validation(format!(
+                    "Nothing was restored: the manifest of the backup {name} from instance \
+                     {instance} does not read, because {why}."
+                )));
+            }
+            Some((_, Ok(manifest))) => manifest,
+        };
+        let stored = destination
+            .parts_in(instance)
+            .await
+            .map_err(|error| destination.unreachable("listing the backup's parts", &error))?;
+        let own = instance == self.instance_id;
+        let absent = absent_parts(&manifest.parts, &stored);
+        if !absent.is_empty() {
+            if own {
+                for part in &manifest.parts {
+                    if stored
+                        .get(&part.sha256)
+                        .is_some_and(|stored| stored.size != part.size_bytes)
+                    {
+                        stock::found_damaged(self, destination, &part.sha256).await;
+                    }
+                }
+            }
+            return Err(parts_missing(name, absent));
+        }
+        let head = serde_json::to_vec(&manifest.archive)
+            .map_err(|_| Refusal::internal("a backup's archive manifest did not print"))?;
+        let entry = |size: u64| BLOCK as u64 + size + padding(size) as u64;
+        let mut total = entry(head.len() as u64) + END.len() as u64;
+        for run in runs(&manifest.parts) {
+            total += entry(run.iter().map(|part| part.size_bytes).sum());
+        }
+        let mut assembly = Assembly {
+            receiving: Some(self.begin_restore(Some(total)).await?),
+            refused: None,
+        };
+        let result = async {
+            assembly.header(MANIFEST, head.len() as u64).await?;
+            let length = head.len() as u64;
+            assembly.push(Bytes::from(head)).await;
+            assembly.pad(length).await;
+            for run in runs(&manifest.parts) {
+                let size = run.iter().map(|part| part.size_bytes).sum();
+                assembly.header(&run[0].entry, size).await?;
+                for part in run {
+                    let named = parts::name_of(&part.sha256);
+                    let got = destination
+                        .get(Area::Parts, instance, &named, idle)
+                        .await
+                        .map_err(|error| {
+                            destination.unreachable("reading a part of the backup", &error)
+                        })?;
+                    let Some((_, mut bytes)) = got else {
+                        return Err(parts_missing(name, vec![named]));
+                    };
+                    let mut checked = Checked::default();
+                    let mut over = false;
+                    while let Some(chunk) = bytes.next().await {
+                        let chunk = chunk.map_err(|error| {
+                            destination.unreachable("reading a part of the backup", &error)
+                        })?;
+                        checked.update(&chunk);
+                        if checked.size() > part.size_bytes {
+                            over = true;
+                            break;
+                        }
+                        assembly.push(chunk).await;
+                    }
+                    if over || !checked.matches(part) {
+                        if own {
+                            stock::found_damaged(self, destination, &part.sha256).await;
+                        }
+                        return Err(parts_missing(name, vec![named]));
+                    }
+                    if let Some(refused) = assembly.refused.take() {
+                        return Err(refused);
+                    }
+                }
+                assembly.pad(size).await;
+            }
+            assembly.push(Bytes::from_static(&END)).await;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => assembly.finish().await,
+            Err(refused) => {
+                assembly.abandon().await;
+                Err(refused)
+            }
+        }
+    }
+
+    /// The files a folder restore reads; with `whole`, refuses before any read where the folder
+    /// lacks one it needs.
     async fn files_to_read(
         &self,
         folder: &Arc<Folder>,
         instance: &str,
         received: &archive::restore::intake::Received,
+        whole: bool,
     ) -> Result<Vec<Named>> {
         let needed = received.manifest.held_files();
         let (mut reading, mut lacking) = (Vec::new(), Vec::new());
@@ -892,7 +1170,7 @@ impl App {
                 lacking.push(named.hash.as_str().to_string());
             }
         }
-        if !lacking.is_empty() {
+        if whole && !lacking.is_empty() {
             return Err(archive::restore::files_missing(lacking));
         }
         Ok(reading)
@@ -909,7 +1187,7 @@ impl App {
             ));
         };
         let Ok(_running) = self.backups.running.try_lock() else {
-            return Err(running());
+            return Err(running(self.backups.restoring.load(Ordering::Acquire)));
         };
         let looked = folder.clone();
         let found = blocking(move || looked.adoptable())
@@ -1028,25 +1306,30 @@ impl App {
                     (Some(store), Some(name)) => files_waiting(tx, store, name)?,
                     _ => None,
                 };
+                let damaged = match &store {
+                    Some(store) => Some(stock::damaged(tx, store)?),
+                    None => None,
+                };
                 Ok((
                     state,
                     housekeeping::last_run(tx, REPLICATION)?,
                     files_waiting,
+                    damaged,
                 ))
             }),
         );
         let (read, looked) = tokio::join!(read, look);
-        let (state, replication, files_waiting) = match read {
-            Ok(Ok((state, replication, files_waiting))) => {
-                (Some(state), replication, files_waiting)
+        let (state, replication, files_waiting, damaged) = match read {
+            Ok(Ok((state, replication, files_waiting, damaged))) => {
+                (Some(state), replication, files_waiting, damaged)
             }
             Ok(Err(error)) => {
                 tracing::warn!(%error, "The backup state did not read for health");
-                (None, None, None)
+                (None, None, None, None)
             }
             Err(_) => {
                 tracing::warn!("The backup state did not read for health in time");
-                (None, None, None)
+                (None, None, None, None)
             }
         };
         let waiting = replication
@@ -1070,12 +1353,14 @@ impl App {
         let turned_off = self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0;
         let failing = state.as_ref().is_none_or(|state| state.failures > 0);
         let incomplete = files_waiting.is_some_and(|waiting| waiting > 0);
+        let damage = damaged.is_some_and(|damaged| damaged > 0);
         let status = match (&destination, turned_off, failing, &store_error) {
             (None, ..) => {
                 health.insert("reason".into(), "no_backup_destination".into());
                 "off"
             }
             (Some(_), _, _, Some(_)) => "failing",
+            (Some(_), ..) if damage => "failing",
             (Some(_), true, ..) => {
                 health.insert("reason".into(), "turned_off".into());
                 "off"
@@ -1096,6 +1381,7 @@ impl App {
             health.insert("copies_waiting".into(), waiting.into());
             health.insert("last_backup_files_waiting".into(), files_waiting.into());
             health.insert("store_error".into(), store_error.into());
+            health.insert("damaged_parts".into(), damaged.into());
         }
         BackupHealth {
             report: Value::Object(health),
@@ -1125,12 +1411,90 @@ fn lacking_in_bucket(mut refused: Refusal) -> Refusal {
     }
     refused.message = format!(
         "Nothing was restored: the backup names {} that neither this instance nor the object \
-         store holds whole: {shown}. Restore an earlier backup, or download this backup's \
-         object from the object store and restore it with `marfa restore` to leave them out.",
+         store holds whole: {shown}. Restore an earlier backup, or restore this one with \
+         `marfa backups restore --allow-missing-files` to leave them out.",
         counted(lacking.len(), "file", "files")
     )
     .into();
     refused
+}
+
+/// Refuses a restore of backup `name` for the parts in `missing`, missing or altered where
+/// backups go.
+fn parts_missing(name: &str, missing: Vec<String>) -> Refusal {
+    const SHOWN: usize = 10;
+    let mut shown = missing[..missing.len().min(SHOWN)].join(", ");
+    if missing.len() > SHOWN {
+        shown.push_str(&format!(" and {} more", missing.len() - SHOWN));
+    }
+    let count = counted(missing.len(), "part", "parts");
+    Refusal::new(
+        Code::BackupPartsMissing,
+        format!(
+            "Nothing was restored: the backup {name} names {count} that {} missing where \
+             backups go, or that no longer {} what the backup recorded: {shown}. Restore \
+             another backup.",
+            if missing.len() == 1 { "is" } else { "are" },
+            if missing.len() == 1 { "holds" } else { "hold" },
+        ),
+    )
+    .with_detail("missing_parts", missing)
+}
+
+/// The parts of each entry in turn.
+fn runs(parts: &[Part]) -> Vec<&[Part]> {
+    parts.chunk_by(|a, b| a.entry == b.entry).collect()
+}
+
+/// The archive a backup's parts make, handed to a restore's reader as it is read. Once the reader
+/// refuses, the rest of a part is read only to check it.
+struct Assembly {
+    receiving: Option<archive::restore::Receiving>,
+    refused: Option<Refusal>,
+}
+
+impl Assembly {
+    async fn push(&mut self, bytes: Bytes) {
+        if self.refused.is_some() {
+            return;
+        }
+        if let Some(receiving) = self.receiving.as_mut()
+            && let Err(refused) = receiving.push(bytes).await
+        {
+            self.receiving = None;
+            self.refused = Some(refused);
+        }
+    }
+
+    async fn header(&mut self, entry: &str, size: u64) -> Result<()> {
+        let block = header(entry, size, 0)
+            .ok_or_else(|| Refusal::internal("a backup's entry name does not fit a header"))?;
+        self.push(Bytes::copy_from_slice(&block)).await;
+        Ok(())
+    }
+
+    async fn pad(&mut self, size: u64) {
+        let fill = padding(size);
+        if fill > 0 {
+            self.push(Bytes::from(vec![0u8; fill])).await;
+        }
+    }
+
+    async fn abandon(mut self) {
+        if let Some(receiving) = self.receiving.take() {
+            receiving.abandon().await;
+        }
+    }
+
+    async fn finish(mut self) -> Result<archive::restore::intake::Received> {
+        if let Some(refused) = self.refused.take() {
+            return Err(refused);
+        }
+        match self.receiving.take() {
+            Some(receiving) => receiving.finish().await,
+            None => Err(Refusal::internal("a restore's reader ended early")),
+        }
+    }
 }
 
 /// How the destination fails to take the copies that wait for it.
@@ -1192,7 +1556,8 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {
-        return Ok(Outcome::Running);
+        let restoring = app.backups.restoring.load(Ordering::Acquire);
+        return Ok(Outcome::Running { restoring });
     };
     // A backup records itself as the server's work, which queues behind a restore.
     if forced && let Some(refusal) = app.db.writes_held() {
@@ -1210,8 +1575,10 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
             at,
             name,
             size,
+            sent,
             changes,
             lost,
+            manifest,
         }) => {
             let store = destination.id();
             let (recorded, without) = (name.clone(), lost_message(&name, &lost));
@@ -1224,13 +1591,16 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                 .await?
                 .unwrap_or(0);
             let (removed, unremoved) = thin(app, &destination, at).await;
+            let parts_removed = prune(app, &destination, &manifest).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
                 taken: at,
                 size,
+                sent,
                 removed,
                 unremoved,
+                parts_removed,
                 lost,
                 waiting,
             })
@@ -1284,8 +1654,10 @@ async fn bring_replication_forward(app: &Arc<App>) {
     }
 }
 
-/// Writes the archive and puts it whole. In the backup folder it is written only once every file
-/// it names has a copy there or is known to be lost.
+/// Stores each part the destination does not hold, checks every part the backup names is there
+/// whole, and only then writes its manifest, so a listed backup names only parts that are there.
+/// In the backup folder the parts are stored only once every file the backup names has a copy
+/// there or is known to be lost.
 async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
     settle_attempts(app, destination).await?;
     if let Destination::Folder(folder) = destination {
@@ -1296,8 +1668,10 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
                 destination.unreachable("clearing what an earlier backup left", &error)
             })?;
     }
+    let mut stock = Stock::load(app, destination).await?;
+    let reuse = reusable(app, destination, &mut stock).await;
     let began = std::time::Instant::now();
-    let mut taken = app.backup_archive(&destination.id()).await?;
+    let mut taken = app.backup_archive(&destination.id(), reuse).await?;
     app.faults.hold(HOLD_BACKUP_READ, None).await;
     let read_ms = began.elapsed().as_millis() as u64;
     let (at, changes) = (taken.created_at, taken.changes);
@@ -1321,40 +1695,100 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
             copy_files(app, destination, folder, uncopied, &mut shared).await?
         }
     };
-    let bound = taken.bound(&lost)?;
+    let Parted { archive, parts } = taken.parts(app, &lost).await?;
+    let pause = Held::new(app);
+    let mut storing = HashSet::new();
+    let mut first = HashSet::new();
+    let mut incoming = 0u64;
+    for (at, Out { part, bytes }) in parts.iter().enumerate() {
+        if let Some(sealed) = bytes
+            && !stock.whole(app, destination, part).await?
+            && first.insert(&part.sha256)
+        {
+            storing.insert(at);
+            incoming = incoming.saturating_add(sealed.size);
+        }
+    }
+    let manifest = Manifest::new(archive, parts.iter().map(|out| out.part.clone()).collect());
+    let written = manifest.to_bytes()?;
     if let Destination::Folder(folder) = destination
-        && let Some(why) = folder_shortfall(app, folder.root(), &mut shared, bound).await
+        && let Some(why) = folder_shortfall(
+            app,
+            folder.root(),
+            &mut shared,
+            incoming.saturating_add(written.len() as u64),
+        )
+        .await
     {
         return Err(destination.failed_while("writing the backup", &why));
     }
-    let backup = taken.send(app, &lost, bound, app.blobs.check());
-    let limit = backup.limit;
-    let bytes = put_stream(app, backup);
-    let size = match destination {
-        Destination::Bucket(bucket) => {
-            let key = key_of(&app.instance_id, &name);
-            bucket
-                .put_whole(&key, "application/x-tar", bytes, limit)
+    let last = storing.iter().max().copied();
+    let mut sent = 0u64;
+    for (at, Out { part, bytes }) in parts.into_iter().enumerate() {
+        if let Some(sealed) = bytes
+            && storing.contains(&at)
+        {
+            let opened =
+                tokio::task::spawn_blocking(move || sealed.open().map(|file| (sealed, file)))
+                    .await
+                    .map_err(|_| Refusal::internal("a backup's part did not open"))?;
+            let (sealed, file) = opened.map_err(|error| {
+                Refusal::internal(&format!("a backup's part did not open: {error}"))
+            })?;
+            let bytes = pause.watch(
+                super::blobs::store::file_stream(file, 0, sealed.size),
+                last == Some(at),
+            );
+            let (_, etag) = destination
+                .put(
+                    app,
+                    Area::Parts,
+                    &parts::name_of(&part.sha256),
+                    sealed.size,
+                    bytes,
+                )
                 .await
-                .map_err(|error| destination.unreachable("taking the backup", &error))?
+                .map_err(|error| destination.unreachable("storing a part of the backup", &error))?;
+            stock.stored(app, destination, &part, etag).await?;
+            sent += part.size_bytes;
         }
-        Destination::Folder(folder) => {
-            let written = super::blobs::store::within(
-                limit,
-                backup_folder::write(folder.clone(), name.clone(), bytes, app.faults.clone()),
-            )
-            .await
-            .map_err(|error| destination.unreachable("writing the backup", &error))?;
-            written
-                .place()
-                .await
-                .map_err(|error| destination.unreachable("naming the backup", &error))?
+    }
+    pause.once().await;
+    stock
+        .relist(app, destination, "checking the backup's parts")
+        .await?;
+    let mut absent = Vec::new();
+    for part in &manifest.parts {
+        if !stock.whole(app, destination, part).await? {
+            absent.push(parts::name_of(&part.sha256));
         }
-    };
+    }
+    absent.sort();
+    absent.dedup();
+    if !absent.is_empty() {
+        let why = format!(
+            "{} the backup names {} not there whole once stored: {}",
+            counted(absent.len(), "part", "parts"),
+            if absent.len() == 1 { "is" } else { "are" },
+            absent.join(", ")
+        );
+        return Err(destination.failed_while("checking the backup's parts", &why));
+    }
+    let length = written.len() as u64;
+    let body = stream::once(async move { Ok(Bytes::from(written)) }).boxed();
+    destination
+        .put(app, Area::Backups, &name, length, body)
+        .await
+        .map_err(|error| {
+            app.backups.unsettled().insert(name.clone());
+            destination.unreachable("writing the backup's manifest", &error)
+        })?;
+    let size = manifest.size(length);
     tracing::info!(
         backup = %name,
         destination = destination.kind(),
         size,
+        sent,
         copied,
         lost = lost.len(),
         read_ms,
@@ -1365,9 +1799,192 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
         at,
         name,
         size,
+        sent,
         changes,
         lost,
+        manifest,
     })
+}
+
+/// The parts `named` names that `present` does not hold at the size named.
+fn absent_parts(named: &[Part], present: &HashMap<String, Stored>) -> Vec<String> {
+    let mut absent: Vec<String> = named
+        .iter()
+        .filter(|part| present.get(&part.sha256).map(|stored| stored.size) != Some(part.size_bytes))
+        .map(|part| parts::name_of(&part.sha256))
+        .collect();
+    absent.sort();
+    absent.dedup();
+    absent
+}
+
+/// The parts of rows the last backup put names that the destination holds whole, by their mark. A
+/// part is taken again only where its tables' mark is unchanged, so a failure here costs only
+/// reading the rows again.
+async fn reusable(
+    app: &Arc<App>,
+    destination: &Destination,
+    stock: &mut Stock,
+) -> HashMap<String, Part> {
+    let last = match app.db.read(|tx| Ok(state(tx)?.last_backup)).await {
+        Ok(Some(last)) => last,
+        Ok(None) => return HashMap::new(),
+        Err(error) => {
+            tracing::warn!(error = %error.message, "The last backup was not looked up, so every row is read");
+            return HashMap::new();
+        }
+    };
+    let read = destination
+        .manifest(&app.instance_id, &last, app.blob_read_idle())
+        .await;
+    let manifest = match read {
+        Ok(Some((_, Ok(manifest)))) => manifest,
+        Ok(Some((_, Err(why)))) => {
+            tracing::warn!(backup = %last, %why, "The last backup's manifest does not read, so every row is read");
+            return HashMap::new();
+        }
+        Ok(None) => return HashMap::new(),
+        Err(error) => {
+            tracing::warn!(%error, "The last backup's manifest was not read, so every row is read");
+            return HashMap::new();
+        }
+    };
+    let mut reuse = HashMap::new();
+    for part in manifest.parts {
+        let Some(mark) = part.mark.clone().filter(|_| part.entry == archive::ROWS) else {
+            continue;
+        };
+        match stock.whole(app, destination, &part).await {
+            Ok(true) => {
+                reuse.insert(mark, part);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(error = %error.message, "A part of the last backup was not checked, so every row is read");
+                return HashMap::new();
+            }
+        }
+    }
+    reuse
+}
+
+/// Deletes each part in this instance's folder of parts that no backup names. It reads first the
+/// manifest of every backup the folder lists, the database records or the server found, and
+/// deletes nothing if one does not read, a store does not answer, or a manifest whose write failed
+/// may still land. A found backup the folder no longer lists keeps its parts until the server
+/// forgets it. In an object store it then checks each part a backup names by its ETag, so a part
+/// written since it was stored shows in health. Answers how many parts it deleted.
+async fn prune(app: &Arc<App>, destination: &Destination, put: &Manifest) -> usize {
+    let own = app.instance_id.clone();
+    let listed = match destination.list_in(Area::Backups, &own).await {
+        Ok(listed) => listed,
+        Err(error) => {
+            tracing::warn!(%error, "The backups were not listed, so no part was deleted");
+            return 0;
+        }
+    };
+    let looked = destination.id().to_string();
+    let read = app
+        .db
+        .read(move |tx| {
+            let recorded: HashSet<String> = tx
+                .prepare_cached("SELECT name FROM backups WHERE store_id = ?1")?
+                .query_map([&looked], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            Ok((recorded, found::parts_held(tx, &looked)?))
+        })
+        .await;
+    let (recorded, found) = match read {
+        Ok(read) => read,
+        Err(error) => {
+            tracing::warn!(error = %error.message, "The recorded backups were not read, so no part was deleted");
+            return 0;
+        }
+    };
+    let unsettled: BTreeSet<String> = {
+        let mut unsettled = app.backups.unsettled();
+        unsettled.retain(|name| recorded.contains(name));
+        unsettled.clone()
+    };
+    let names: BTreeSet<String> = listed
+        .into_iter()
+        .map(|(name, _)| name)
+        .chain(recorded)
+        .chain(found.keys().cloned())
+        .filter(|name| parse(name).is_some())
+        .collect();
+    let mut named: HashMap<String, Part> = put
+        .parts
+        .iter()
+        .map(|part| (part.sha256.clone(), part.clone()))
+        .collect();
+    for name in names {
+        match destination
+            .manifest(&own, &name, app.blob_read_idle())
+            .await
+        {
+            Ok(Some((_, Ok(manifest)))) => {
+                for part in manifest.parts {
+                    named.entry(part.sha256.clone()).or_insert(part);
+                }
+                app.backups.unsettled().remove(&name);
+            }
+            Ok(None) if unsettled.contains(&name) => {
+                tracing::warn!(backup = %name, "A backup whose manifest failed to write may still land, so no part was deleted");
+                return 0;
+            }
+            Ok(None) => {}
+            Ok(Some((_, Err(why)))) => {
+                tracing::warn!(backup = %name, %why, "A backup's manifest does not read, so no part was deleted");
+                return 0;
+            }
+            Err(error) => {
+                tracing::warn!(%error, backup = %name, "A backup's manifest was not read, so no part was deleted");
+                return 0;
+            }
+        }
+    }
+    let mut stock = match Stock::load(app, destination).await {
+        Ok(stock) => stock,
+        Err(error) => {
+            tracing::warn!(error = %error.message, "The parts were not listed, so none was deleted");
+            return 0;
+        }
+    };
+    if matches!(destination, Destination::Bucket(_)) {
+        for part in named.values() {
+            if let Err(error) = stock.whole(app, destination, part).await {
+                tracing::warn!(error = %error.message, "A part a backup names was not checked");
+                break;
+            }
+        }
+    }
+    let kept: HashSet<String> = named
+        .into_keys()
+        .chain(found.into_values().flatten())
+        .collect();
+    let mut deleted = 0;
+    let unnamed: Vec<String> = stock
+        .listed()
+        .keys()
+        .filter(|sha256| !kept.contains(*sha256))
+        .cloned()
+        .collect();
+    for sha256 in unnamed {
+        match destination
+            .delete(Area::Parts, &own, &parts::name_of(&sha256))
+            .await
+        {
+            Ok(()) => deleted += 1,
+            Err(error) => {
+                tracing::warn!(%error, "A part no backup names was not deleted");
+            }
+        }
+    }
+    if let Err(error) = stock.forget_others(app, kept).await {
+        tracing::warn!(error = %error.message, "What the server recorded of deleted parts was not forgotten");
+    }
+    deleted
 }
 
 /// What a backup put; `lost` names the files no store could give.
@@ -1375,8 +1992,11 @@ struct Put {
     at: Stamp,
     name: String,
     size: u64,
+    /// The bytes of the parts it stored, which the destination did not already hold.
+    sent: u64,
     changes: i64,
     lost: Vec<String>,
+    manifest: Manifest,
 }
 
 fn purged_while_taken(hash: &str) -> Refusal {
@@ -1460,7 +2080,7 @@ async fn copy_files(
 /// Only names it listed in its own folder, could read as a backup and recorded putting are
 /// deleted.
 async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize, usize) {
-    let listed = match destination.list_in(&app.instance_id).await {
+    let listed = match destination.list_in(Area::Backups, &app.instance_id).await {
         Ok(listed) => listed,
         Err(error) => {
             tracing::warn!(%error, "The backups were not listed for thinning");
@@ -1494,7 +2114,10 @@ async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize
         .into_iter()
         .filter(|name| put.contains(name))
     {
-        match destination.delete(&app.instance_id, &name).await {
+        match destination
+            .delete(Area::Backups, &app.instance_id, &name)
+            .await
+        {
             Ok(()) => {
                 deleted.insert(name);
                 removed += 1;
@@ -2198,7 +2821,7 @@ mod tests {
             .await
             .unwrap();
         destination
-            .delete(&app.instance_id, &missing)
+            .delete(Area::Backups, &app.instance_id, &missing)
             .await
             .unwrap();
 
