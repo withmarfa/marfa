@@ -111,7 +111,8 @@ A person reading the API reference, and an agent or a code generator reading the
 - **A field whose format is not obvious from its type carries an example** too: type identifiers, cursors, other times.
 - Set an example with `example` on a field or a named schema, or beside `schema` in a response's content.
 - **An example is accepted by its own schema**, with no field the schema does not declare. Write it from what the server answers: call the operation, then trim the answer to a small, realistic object. An example for `text/event-stream` is the raw stream, not a value of the frame schema. `ci/openapi/examples.test.ts` checks both.
-- Use values that belong to no real person, account or machine, such as `example.com`. IDs are lowercase UUIDv7. Times are UTC with milliseconds: `2026-10-03T09:30:00.000Z`. A field that holds seconds since the Unix epoch, such as `client_id_issued_at`, shows a number.
+- Use values that belong to no real person, account or machine, such as `example.com`. IDs are lowercase UUIDv7: every `id` and `*_id` example, in a field or in a response, request or webhook, is one, apart from the names of a type or an edge type, an app's `software_id`, a `source_id`, an event's ID (a number written as text) and the actors `local` and `server`. **(checked)** Times are UTC with milliseconds: `2026-10-03T09:30:00.000Z`. `client_id_issued_at` is the one time that shows seconds since the Unix epoch, as a number. **(checked)**
+- **A list in a success response shows an entry**, never an empty list. **(checked: `data`, `tombstones`, `failures` and `skipped`)**
 
 ## Groups
 

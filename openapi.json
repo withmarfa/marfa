@@ -14687,11 +14687,17 @@
                       "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
                       "type": "acme.contact",
                       "version": 1,
-                      "takes": [],
-                      "count": 1
+                      "takes": [
+                        {
+                          "id": "01a1012b-f1d2-7b86-a3e9-0c5d7e4b2a69",
+                          "type": "core.comment",
+                          "version": 1
+                        }
+                      ],
+                      "count": 2
                     }
                   ],
-                  "count": 1,
+                  "count": 2,
                   "digest": "1023138a64a006e1e1a612ca419385d9f11c3729c2f691985fecc5f46dbae0dd"
                 }
               }
@@ -17007,7 +17013,13 @@
                       }
                     }
                   ],
-                  "tombstones": []
+                  "tombstones": [
+                    {
+                      "key": "deal-1041",
+                      "purged_at": "2026-10-03T09:30:00.000Z",
+                      "settled_at": "2026-10-05T14:12:08.000Z"
+                    }
+                  ]
                 }
               }
             },
@@ -19189,11 +19201,64 @@
                   "$ref": "#/components/schemas/OccurrencePage"
                 },
                 "example": {
-                  "data": [],
+                  "data": [
+                    {
+                      "starts_at": "2026-10-07T08:00:00.000Z",
+                      "ends_at": "2026-10-07T09:00:00.000Z",
+                      "item": {
+                        "id": "01a1012b-8d07-7a13-b5c4-61e0f39a2d78",
+                        "type": "core.event",
+                        "state": "active",
+                        "tier": "library",
+                        "created_at": "2026-09-01T08:00:00.000Z",
+                        "updated_at": "2026-09-01T08:00:00.000Z",
+                        "last_activity_at": "2026-09-01T08:00:00.000Z",
+                        "occurred_at": "2026-10-07T08:00:00.000Z",
+                        "source": "calendar",
+                        "version": 1,
+                        "schema_version": 1,
+                        "trashed_at": null,
+                        "read_only": false,
+                        "properties": {
+                          "title": "Dentist",
+                          "starts_at": "2026-10-07T08:00:00.000Z",
+                          "ends_at": "2026-10-07T09:00:00.000Z"
+                        }
+                      }
+                    },
+                    {
+                      "starts_at": "2026-10-09T10:00:00.000Z",
+                      "ends_at": "2026-10-09T10:30:00.000Z",
+                      "item": {
+                        "id": "01a1012b-5e31-7c42-9a6e-2d4f8b1c7e50",
+                        "type": "core.event",
+                        "state": "active",
+                        "tier": "library",
+                        "created_at": "2026-09-01T08:00:00.000Z",
+                        "updated_at": "2026-09-01T08:00:00.000Z",
+                        "last_activity_at": "2026-09-01T08:00:00.000Z",
+                        "occurred_at": "2026-09-04T10:00:00.000Z",
+                        "source": "calendar",
+                        "version": 1,
+                        "schema_version": 1,
+                        "trashed_at": null,
+                        "read_only": false,
+                        "properties": {
+                          "title": "Team review",
+                          "starts_at": "2026-09-04T10:00:00.000Z",
+                          "ends_at": "2026-09-04T10:30:00.000Z",
+                          "recurrence": [
+                            "RRULE:FREQ=WEEKLY;BYDAY=FR"
+                          ]
+                        }
+                      },
+                      "series_id": "01a1012b-5e31-7c42-9a6e-2d4f8b1c7e50"
+                    }
+                  ],
                   "next_cursor": null,
                   "window": {
-                    "from": "2026-10-03T09:30:00.885Z",
-                    "to": "2026-10-03T09:33:00.176Z"
+                    "from": "2026-10-05T00:00:00.000Z",
+                    "to": "2026-10-12T00:00:00.000Z"
                   },
                   "scan": {
                     "series_errors": 0,
@@ -19469,7 +19534,13 @@
                   ]
                 },
                 "example": {
-                  "data": []
+                  "data": [
+                    {
+                      "key": "deal-1041",
+                      "purged_at": "2026-10-03T09:30:00.000Z",
+                      "settled_at": "2026-10-05T14:12:08.000Z"
+                    }
+                  ]
                 }
               }
             },
@@ -21058,8 +21129,14 @@
                   ]
                 },
                 "example": {
-                  "purged": 0,
-                  "failures": [],
+                  "purged": 12,
+                  "failures": [
+                    {
+                      "id": "01a1012b-c3a9-7e58-8f41-d7b20a6e9c13",
+                      "code": "invalid_transition",
+                      "message": "An item cannot move from active to purged."
+                    }
+                  ],
                   "next_cursor": null
                 }
               }
@@ -24649,7 +24726,14 @@
                   "$ref": "#/components/schemas/ExtensionPage"
                 },
                 "example": {
-                  "data": []
+                  "data": [
+                    {
+                      "namespace": "acme.crm",
+                      "document": {
+                        "pipeline": "enterprise"
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -32621,10 +32705,24 @@
                   "dry_run": true,
                   "from": "acme.lead",
                   "to": "acme.contact",
-                  "matched": 0,
-                  "ids": [],
-                  "settings": [],
-                  "grants": []
+                  "matched": 1,
+                  "ids": [
+                    "01a1011a-4902-76cf-a4a9-88e99c038c8d"
+                  ],
+                  "settings": [
+                    {
+                      "kind": "view",
+                      "id": "01a10126-6c86-74b2-a04a-1fe68e721fde",
+                      "field": "query.types"
+                    }
+                  ],
+                  "grants": [
+                    {
+                      "kind": "key",
+                      "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                      "label": "CRM sync"
+                    }
+                  ]
                 }
               }
             },
@@ -36950,7 +37048,14 @@
                   "$ref": "#/components/schemas/BlobOrphanPage"
                 },
                 "example": {
-                  "data": [],
+                  "data": [
+                    {
+                      "hash": "sha256:9f2c1d3b5a7e4f60b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+                      "mime_type": "image/png",
+                      "size_bytes": 48213,
+                      "reported_at": "2026-10-05T14:12:08.000Z"
+                    }
+                  ],
                   "next_cursor": null
                 }
               }
@@ -41523,7 +41628,12 @@
                           "pending_downloads": 0,
                           "paused_removals": 0,
                           "first_sync_waiting": false,
-                          "problems": [],
+                          "problems": [
+                            {
+                              "code": "conflict",
+                              "count": 1
+                            }
+                          ],
                           "received_at": "2026-10-03T09:30:00.000Z",
                           "age_seconds": 60
                         }
@@ -41536,7 +41646,12 @@
                     "pending_downloads": 0,
                     "paused_removals": 0,
                     "first_sync_waiting": 0,
-                    "problems": []
+                    "problems": [
+                      {
+                        "code": "conflict",
+                        "count": 1
+                      }
+                    ]
                   }
                 },
                 "schema": {
@@ -43395,7 +43510,9 @@
                   "registered_at": "2026-10-03T10:01:55.251Z",
                   "updated_at": "2026-10-03T10:02:55.417Z",
                   "last_heartbeat_at": null,
-                  "read_only_types": [],
+                  "read_only_types": [
+                    "acme.deal"
+                  ],
                   "last_run": null,
                   "hold_expires_at": null,
                   "problems": {}
@@ -43427,7 +43544,9 @@
                   "registered_at": "2026-10-03T10:01:55.251Z",
                   "updated_at": "2026-10-03T10:01:55.251Z",
                   "last_heartbeat_at": null,
-                  "read_only_types": [],
+                  "read_only_types": [
+                    "acme.deal"
+                  ],
                   "last_run": null,
                   "hold_expires_at": null,
                   "problems": {}
@@ -43725,7 +43844,9 @@
                       "registered_at": "2026-10-03T10:01:55.251Z",
                       "updated_at": "2026-10-03T10:02:55.417Z",
                       "last_heartbeat_at": null,
-                      "read_only_types": [],
+                      "read_only_types": [
+                        "acme.deal"
+                      ],
                       "last_run": null,
                       "hold_expires_at": null,
                       "problems": {}
@@ -43943,7 +44064,9 @@
                   "registered_at": "2026-10-03T10:01:55.251Z",
                   "updated_at": "2026-10-03T10:02:55.417Z",
                   "last_heartbeat_at": null,
-                  "read_only_types": [],
+                  "read_only_types": [
+                    "acme.deal"
+                  ],
                   "last_run": null,
                   "hold_expires_at": null,
                   "problems": {}
@@ -47113,7 +47236,9 @@
                 "example": {
                   "written": 1,
                   "cleared": 0,
-                  "skipped": []
+                  "skipped": [
+                    "01a1012c-0b4e-7d95-9c27-5a8e1f3b6d40"
+                  ]
                 }
               }
             },

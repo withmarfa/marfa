@@ -157,41 +157,215 @@ function mismatches(doc: Json): string[] {
   return found;
 }
 
-/** Every `example` set on a field, with the schema of the field. */
-function fieldExamples(
-  doc: Json,
-): { name: string; value: unknown; schema: Json }[] {
-  const out: { name: string; value: unknown; schema: Json }[] = [];
-  const visit = (node: unknown, where: string) => {
+interface Leaf {
+  /** The field the value sits in, or empty for a value in a list or at the top. */
+  name: string;
+  value: unknown;
+  where: string;
+}
+
+/**
+ * Every value an example shows, with the name of the field that holds it: an
+ * example set on a field, a parameter, a named schema, a media type (`example`
+ * and each of `examples`), and the JSON frames of a stream's raw text. A
+ * property that is itself called `example` is a field, not the keyword.
+ */
+function leaves(doc: Json): Leaf[] {
+  const out: Leaf[] = [];
+  const value = (node: unknown, where: string, name: string): void => {
     if (Array.isArray(node)) {
       node.forEach((child, index) => {
-        visit(child, `${where}/${String(index)}`);
+        value(child, `${where}/${String(index)}`, name);
       });
     } else if (node !== null && typeof node === "object") {
       for (const [key, child] of Object.entries(node as Json)) {
-        if (["example", "examples", "default", "enum", "const"].includes(key)) {
-          continue;
+        value(child, `${where}/${key}`, key);
+      }
+    } else {
+      out.push({ name, value: node, where });
+    }
+  };
+  const stream = (text: string, where: string): void => {
+    text.split("\n").forEach((line, index) => {
+      if (!line.startsWith("data: ")) return;
+      value(
+        JSON.parse(line.slice("data: ".length)),
+        `${where}/${String(index)}`,
+        "",
+      );
+    });
+  };
+  const schema = (node: unknown, where: string, field: string): void => {
+    if (Array.isArray(node)) {
+      node.forEach((child, index) => {
+        schema(child, `${where}/${String(index)}`, field);
+      });
+      return;
+    }
+    if (node === null || typeof node !== "object") return;
+    const record = node as Json;
+    const raw = where.endsWith("/text/event-stream");
+    const own =
+      typeof record.in === "string" && typeof record.name === "string"
+        ? record.name
+        : field;
+    for (const [key, child] of Object.entries(record)) {
+      const at = `${where}/${key}`;
+      if (key === "properties" && child !== null && typeof child === "object") {
+        for (const [name, property] of Object.entries(child as Json)) {
+          schema(property, `${at}/${name}`, name);
         }
-        if (key === "properties" && typeof child === "object" && child) {
-          for (const [field, schema] of Object.entries(child as Json)) {
-            const example = (schema as Json).example;
-            if (example !== undefined) {
-              out.push({
-                name: `${where}.${field}`,
-                value: example,
-                schema: schema as Json,
-              });
-            }
-            visit(schema, `${where}.${field}`);
+      } else if (key === "example") {
+        if (raw && typeof child === "string") stream(child, at);
+        else value(child, at, own);
+      } else if (key === "examples") {
+        if (Array.isArray(child)) value(child, at, own);
+        else if (child !== null && typeof child === "object") {
+          for (const [name, entry] of Object.entries(child as Json)) {
+            const shown = (entry as Json).value;
+            if (raw && typeof shown === "string")
+              stream(shown, `${at}/${name}`);
+            else value(shown, `${at}/${name}/value`, "");
           }
-        } else {
-          visit(child, `${where}/${key}`);
         }
+      } else if (["default", "enum", "const"].includes(key)) {
+        continue;
+      } else {
+        const carries = ["items", "allOf", "anyOf", "oneOf", "schema"];
+        schema(child, at, carries.includes(key) ? own : "");
       }
     }
   };
-  visit(doc, "");
+  schema(doc.paths, "paths", "");
+  schema(doc.webhooks, "webhooks", "");
+  schema(doc.components, "components", "");
   return out;
+}
+
+/** The name of a type or an edge type, which an `id` shows instead of a UUID. */
+const TYPE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/;
+
+/**
+ * A field called `id` or ending `_id` shows a lowercase UUIDv7 unless it is
+ * listed here, each with where it holds something else and why.
+ */
+const NOT_A_UUID: {
+  field: RegExp;
+  at?: RegExp;
+  value?: RegExp;
+  reason: string;
+}[] = [
+  {
+    field: /^id$/,
+    at: /^(paths\/\/(types|edge-types|overview)\/|components\/schemas\/(EdgeType|TypeDefinition|Overview)\w*\/)/,
+    value: TYPE_NAME,
+    reason: "A type or an edge type is named, as in `acme.deal`, not numbered.",
+  },
+  {
+    field: /^(source_id|software_id)$/,
+    reason: "A source or an app names its own software, in its own words.",
+  },
+  {
+    field: /^(event_id|min_retained_id)$/,
+    value: /^\d+$/,
+    reason: "An event's ID is its place in the event log, a number as text.",
+  },
+  {
+    field: /^id$/,
+    at: /\/actor\/(anyOf\/\d+\/)?(properties\/)?id(\/example)?$/,
+    value: /^(local|server)$/,
+    reason:
+      "The actor of a local command or of Marfa itself is named, not numbered.",
+  },
+  {
+    field: /^key_id$/,
+    value: /^local:process$/,
+    reason: "The key of the command line's private socket is `local:process`.",
+  },
+];
+
+/**
+ * How many `id` and `*_id` examples the document shows, the ones that are not
+ * a lowercase UUIDv7, and the allowances nothing used.
+ */
+function idExamples(doc: Json): {
+  checked: number;
+  offenders: string[];
+  unused: string[];
+} {
+  const used = new Set<number>();
+  const offenders: string[] = [];
+  let checked = 0;
+  for (const { name, value, where } of leaves(doc)) {
+    if (!/^(id|.+_id)$/.test(name)) continue;
+    checked += 1;
+    if (value === null) continue;
+    if (typeof value === "string" && UUID_V7.test(value)) continue;
+    const allowed = NOT_A_UUID.findIndex(
+      (entry) =>
+        typeof value === "string" &&
+        entry.field.test(name) &&
+        (entry.at?.test(where) ?? true) &&
+        (entry.value?.test(value) ?? true),
+    );
+    if (allowed >= 0) used.add(allowed);
+    else offenders.push(`${where}: ${JSON.stringify(value)}`);
+  }
+  return {
+    checked,
+    offenders,
+    unused: NOT_A_UUID.filter((_, index) => !used.has(index)).map(
+      ({ reason }) => reason,
+    ),
+  };
+}
+
+/**
+ * The times that are not written the way Marfa writes them: UTC text with
+ * milliseconds, or `null` for a time that has not happened. Only
+ * `client_id_issued_at` is a number, seconds since the Unix epoch as RFC 7591
+ * defines it.
+ */
+function badTimes(doc: Json): { checked: number; offenders: string[] } {
+  const times = leaves(doc).filter(({ name }) => name.endsWith("_at"));
+  return {
+    checked: times.length,
+    offenders: times
+      .filter(({ name, value }) =>
+        name === "client_id_issued_at"
+          ? !Number.isInteger(value)
+          : value !== null && !(typeof value === "string" && TIME.test(value)),
+      )
+      .map(({ where, value }) => `${where}: ${JSON.stringify(value)}`),
+  };
+}
+
+/**
+ * The success responses whose example answers a list with nothing in it: an
+ * empty `data`, or an empty `tombstones`, `failures` or `skipped`. An empty
+ * list shows no entry, so it teaches no shape.
+ */
+function emptyLists(doc: Json): string[] {
+  const found: string[] = [];
+  const paths = (doc.paths ?? {}) as Record<string, Record<string, Json>>;
+  for (const [path, methods] of Object.entries(paths)) {
+    for (const [method, operation] of Object.entries(methods)) {
+      const responses = (operation.responses ?? {}) as Record<string, Json>;
+      for (const [status, response] of Object.entries(responses)) {
+        if (!status.startsWith("2")) continue;
+        const media = (response.content ?? {}) as Record<string, Json>;
+        const body = media["application/json"]?.example as Json | undefined;
+        if (body === undefined) continue;
+        for (const key of ["data", "tombstones", "failures", "skipped"]) {
+          const list = body[key];
+          if (Array.isArray(list) && list.length === 0) {
+            found.push(`${method.toUpperCase()} ${path} ${status} ${key}`);
+          }
+        }
+      }
+    }
+  }
+  return found;
 }
 
 describe("the examples in the API description", () => {
@@ -240,38 +414,178 @@ describe("the examples in the API description", () => {
     expect(broken({ id: "a", colour: "red" })).toHaveLength(1);
   });
 
-  it("writes every example for a field ending `_at` as a UTC time with milliseconds", () => {
-    // A number is a time in seconds since the Unix epoch, as RFC 7591 defines
-    // `client_id_issued_at`, so only a field that holds text is held to the
-    // form.
-    const times = fieldExamples(document).filter(
-      ({ name, schema }) => name.endsWith("_at") && schema.type !== "number",
-    );
-    expect(times.length).toBeGreaterThan(0);
-    expect(
-      times
-        .filter(({ value }) => !(typeof value === "string" && TIME.test(value)))
-        .map(({ name }) => name),
-    ).toEqual([]);
+  it("shows an entry in every list a success response answers", () => {
+    expect(emptyLists(document)).toEqual([]);
+
+    // The witness: the same walk finds a list left empty.
+    const doc = structuredClone(document) as Json;
+    const response = (
+      (doc.paths as Record<string, Record<string, Json>>)["/occurrences"]?.get
+        ?.responses as Record<string, Json>
+    )["200"] as { content: Record<string, { example: Json }> };
+    const body = response.content["application/json"]!.example;
+    body.data = [];
+    expect(emptyLists(doc)).toEqual(["GET /occurrences 200 data"]);
   });
 
-  it("writes every example for a field that holds a UUID as a lowercase UUIDv7", () => {
-    const holders = new Set(["id", "item_id", "from_id", "to_id"]);
-    const ids = fieldExamples(document).filter(({ name }) =>
-      holders.has(name.slice(name.lastIndexOf(".") + 1)),
-    );
-    expect(ids.length).toBeGreaterThan(0);
-    // An `id` can name a type (`core.note`) or a sign-in (`local`), so only an
-    // example that begins like a UUID is held to the whole form.
-    const uuidLike = ids.filter(
-      ({ value }) =>
-        typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(value),
-    );
-    expect(uuidLike.length).toBeGreaterThan(0);
+  it("writes every example for a field ending `_at` as a UTC time with milliseconds", () => {
+    const { checked, offenders } = badTimes(document);
+    expect(checked).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
+
+    // The witness: a time in any other form, in a field or a response, and
+    // the one number there is, written as text.
+    const planted = (example: unknown, name = "created_at") =>
+      badTimes({
+        components: {
+          schemas: { Probe: { properties: { [name]: { example } } } },
+        },
+        paths: {
+          "/probe": {
+            get: {
+              responses: {
+                "200": {
+                  content: {
+                    "application/json": { example: { [name]: example } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }).offenders;
+    expect(planted("2026-10-03T09:30:00.000Z")).toEqual([]);
+    expect(planted(null)).toEqual([]);
+    expect(planted("2026-10-03T09:30:00Z")).toHaveLength(2);
+    expect(planted("2026-10-03")).toHaveLength(2);
+    expect(planted(1_790_000_000)).toHaveLength(2);
+    expect(planted(1_790_000_000, "client_id_issued_at")).toEqual([]);
     expect(
-      uuidLike
-        .filter(({ value }) => !UUID_V7.test(value as string))
-        .map(({ name }) => name),
+      planted("2026-10-03T09:30:00.000Z", "client_id_issued_at"),
+    ).toHaveLength(2);
+    expect(planted(1_790_000_000.5, "client_id_issued_at")).toHaveLength(2);
+  });
+
+  it("writes every example for an `id` or `*_id` as a lowercase UUIDv7", () => {
+    const { checked, offenders, unused } = idExamples(document);
+    expect(checked).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
+    expect(unused, "Remove an allowance nothing uses.").toEqual([]);
+  });
+
+  it("holds an `id` example in a field, a response, a request and a stream to the form", () => {
+    // The witness: the same walk, over examples in each position it reads,
+    // finds the opaque ID a passkey would be shown with.
+    const opaque = "dGVzdC1wYXNza2V5LWNyZWRlbnRpYWw";
+    const at = (doc: Json) => idExamples(doc).offenders;
+    const media = (example: unknown) =>
+      ({
+        paths: {
+          "/passkeys": {
+            post: {
+              requestBody: { content: { "application/json": { example } } },
+              responses: {
+                "200": {
+                  content: {
+                    "application/json": {
+                      example,
+                      examples: { one: { value: example } },
+                    },
+                    "text/event-stream": {
+                      example: `id: 7\ndata: ${JSON.stringify(example)}\n\n`,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        webhooks: {
+          sent: {
+            post: {
+              requestBody: { content: { "application/json": { example } } },
+            },
+          },
+        },
+      }) as Json;
+    const good = "0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b";
+    expect(at(media({ data: [{ id: good, item_id: good }] }))).toEqual([]);
+    // Every position the example can sit in reports its own place.
+    expect(at(media({ data: [{ id: opaque }] }))).toHaveLength(5);
+    expect(at(media({ credential_id: opaque }))).toHaveLength(5);
+    expect(at(media({ id: good.toUpperCase() }))).toHaveLength(5);
+    expect(at(media({ id: good.replace("-7d3a", "-4d3a") }))).toHaveLength(5);
+    expect(at(media({ id: 7 }))).toHaveLength(5);
+
+    const field = (example: unknown, name = "id") =>
+      at({
+        components: {
+          schemas: {
+            Passkey: { properties: { [name]: { type: "string", example } } },
+          },
+        },
+      });
+    expect(field(good)).toEqual([]);
+    expect(field(opaque)).toHaveLength(1);
+    expect(field(opaque, "device_id")).toHaveLength(1);
+    expect(
+      at({
+        paths: {
+          "/passkeys/{id}": {
+            get: {
+              parameters: [
+                { name: "id", in: "path", schema: {}, example: opaque },
+              ],
+            },
+          },
+        },
+      }),
+    ).toHaveLength(1);
+    // A field literally named `example` holds no ID, and a name that only
+    // contains `id` is not one.
+    expect(
+      at({
+        components: {
+          schemas: {
+            Probe: {
+              properties: {
+                example: { type: "string", example: "x" },
+                valid: { type: "string", example: "yes" },
+                grid: { type: "string", example: "a1" },
+              },
+            },
+          },
+        },
+      }),
     ).toEqual([]);
+    // An allowance holds only where it names, and only for a name.
+    expect(
+      at({
+        paths: {
+          "/types": {
+            get: {
+              responses: {
+                "200": {
+                  content: {
+                    "application/json": { example: { id: "acme.deal" } },
+                  },
+                },
+              },
+            },
+          },
+          "/owner/passkeys": {
+            get: {
+              responses: {
+                "200": {
+                  content: {
+                    "application/json": { example: { id: "acme.deal" } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toHaveLength(1);
   });
 });

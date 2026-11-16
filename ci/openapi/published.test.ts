@@ -23,6 +23,27 @@ function operationKeys(spec: Record<string, unknown>): Map<string, Operation> {
 }
 
 /**
+ * A schema as a shape, which is how it is written without the values it
+ * shows: the same fields with different examples are one shape. A property
+ * that is itself called `example` is a field and stays.
+ */
+function shapeOf(node: unknown, isPropertyMap = false): unknown {
+  if (Array.isArray(node)) return node.map((child) => shapeOf(child));
+  if (node === null || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (!isPropertyMap && (key === "example" || key === "examples")) continue;
+    out[key] = shapeOf(value, !isPropertyMap && key === "properties");
+  }
+  return out;
+}
+
+/** The key two schemas share when they are one shape. */
+function shapeKey(node: unknown): string {
+  return JSON.stringify(shapeOf(node));
+}
+
+/**
  * Every refusal the document declares whose code is not a closed set.
  *
  * A refusal names its code under `error.code`, or, in the RFC shapes the
@@ -214,7 +235,7 @@ describe("the committed OpenAPI document", () => {
         typeof record.properties === "object" &&
         Object.keys(record.properties).length > 0
       ) {
-        const key = JSON.stringify(record);
+        const key = shapeKey(record);
         found.set(key, [...(found.get(key) ?? []), where]);
       }
       for (const [field, value] of Object.entries(record)) {
@@ -296,6 +317,46 @@ describe("the committed OpenAPI document", () => {
     expect([...examples.values()].flat()).toEqual([]);
   });
 
+  it("sees two shapes that differ only in their examples as one shape", () => {
+    // The key a repeat is found by leaves the examples out, so a copy that
+    // shows other values is still a copy. A witness for all three checks
+    // below, which read the same key.
+    const shape = (example: string, note: string) => ({
+      type: "object",
+      properties: {
+        name: { type: "string", example },
+        tags: { type: "array", items: { type: "string" }, examples: [note] },
+      },
+      example: { name: example },
+    });
+    const a = shape("Renewal", "x");
+    const b = shape("Contact", "y");
+    expect(JSON.stringify(a)).not.toEqual(JSON.stringify(b));
+    expect(shapeKey(a)).toEqual(shapeKey(b));
+
+    const repeats = [
+      ...inlineShapes({
+        "/a": { schema: a },
+        "/b": { schema: b },
+      }).values(),
+    ].filter((places) => places.length > 1);
+    expect(repeats.flat()).toEqual(["//a/schema", "//b/schema"]);
+
+    // A different field is a different shape, and a field called `example`
+    // is a field, so a shape that holds one differs from a shape without.
+    expect(shapeKey({ properties: { name: { type: "string" } } })).not.toEqual(
+      shapeKey({ properties: { title: { type: "string" } } }),
+    );
+    const withField = {
+      properties: { example: { type: "string", example: "x" } },
+    };
+    expect(shapeKey(withField)).not.toEqual(
+      shapeKey({ properties: { other: { type: "string" } } }),
+    );
+    expect(shapeKey(withField)).toContain('"example":{"type":"string"}');
+    expect(shapeKey(withField)).not.toEqual(shapeKey({ properties: {} }));
+  });
+
   /**
    * The operations, plus what each component carries below its own top
    * level.
@@ -349,7 +410,7 @@ describe("the committed OpenAPI document", () => {
     // one of them reads as though it answered something else.
     const namesByShape = new Map<string, string[]>();
     for (const [name, schema] of Object.entries(components ?? {})) {
-      const key = JSON.stringify(schema);
+      const key = shapeKey(schema);
       namesByShape.set(key, [...(namesByShape.get(key) ?? []), name]);
     }
     expect(namesByShape.size).toBeGreaterThan(20);
@@ -363,7 +424,7 @@ describe("the committed OpenAPI document", () => {
     // And a component written out on an operation rather than referenced.
     const byShape = new Map(
       Object.entries(components ?? {}).map(([name, schema]) => [
-        JSON.stringify(schema),
+        shapeKey(schema),
         name,
       ]),
     );
