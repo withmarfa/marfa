@@ -104,6 +104,29 @@ describe("a reserve the volume cannot keep", () => {
     expect((await management.downloadBlob(hash)).status).toBe(404);
   });
 
+  it("words the refusal to state the reserve and the room, and to name the setting that changes it", async () => {
+    await server.setFault(`size:blobs=${String(HUGE_RESERVE * 2)}`);
+    await server.setFault("free:blobs=1048576");
+    const refused = await working.uploadBlob(bytes, "application/octet-stream");
+    expect(refused.status).toBe(507);
+    expect(refused.error?.error.message).toContain("has 1 MiB free");
+    expect(refused.error?.error.message).toContain(
+      "disk reserve of 1 TiB (disk_reserve_bytes)",
+    );
+    await server.clearFault();
+  });
+
+  it("says in the refusal that the reserve is not less than the volume, where it is not", async () => {
+    await server.setFault(`size:blobs=${String(HUGE_RESERVE / 2)}`);
+    await server.setFault("free:blobs=1048576");
+    const refused = await working.uploadBlob(bytes, "application/octet-stream");
+    expect(refused.status).toBe(507);
+    expect(refused.error?.error.message).toContain(
+      "disk reserve of 1 TiB (disk_reserve_bytes) is not less than the 512 GiB",
+    );
+    await server.clearFault();
+  });
+
   it("refuses a restore 507 insufficient_storage, and writes no item, no type and no blob", async () => {
     const refused = await ownerClient().restoreArchive(archive());
     expect(refused.status).toBe(507);

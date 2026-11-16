@@ -500,6 +500,16 @@ async fn an_upload_that_would_leave_less_than_the_reserve_is_refused_with_507_an
         refused.json()["error"]["details"]["reserve_bytes"],
         1_000_000
     );
+    let message = refused.json()["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(message.contains("has 1.4 MiB free"), "{message}");
+    assert!(message.contains("takes 585.9 KiB"), "{message}");
+    assert!(
+        message.contains("disk reserve of 976.5 KiB (disk_reserve_bytes)"),
+        "{message}"
+    );
     assert!(closes(&refused));
     assert_eq!(instance.files(), Vec::<PathBuf>::new());
 
@@ -527,6 +537,58 @@ async fn an_upload_that_would_leave_less_than_the_reserve_is_refused_with_507_an
         .set("free:blobs", Some("1500000"))
         .unwrap();
     assert_eq!(instance.put(&[1u8; 1000]).await.status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_volume_smaller_than_the_reserve_refuses_every_upload_and_says_the_reserve_is_too_big() {
+    let instance = Instance::with(RESERVE).await;
+    instance
+        .app
+        .faults
+        .set("size:blobs", Some("800000"))
+        .unwrap();
+    instance
+        .app
+        .faults
+        .set("free:blobs", Some("700000"))
+        .unwrap();
+
+    let refused = instance.put(&[1u8; 1000]).await;
+    assert_eq!(refused.status, StatusCode::INSUFFICIENT_STORAGE);
+    let message = refused.json()["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        message.contains(
+            "disk reserve of 976.5 KiB (disk_reserve_bytes) is not less than the 781.2 KiB"
+        ),
+        "{message}"
+    );
+    assert!(message.contains("set it to 0"), "{message}");
+    assert_eq!(
+        refused.json()["error"]["details"]["available_bytes"],
+        700_000
+    );
+    assert_eq!(instance.files(), Vec::<PathBuf>::new());
+}
+
+#[tokio::test]
+async fn a_reserve_of_zero_takes_an_upload_a_volume_smaller_than_the_default_reserve_would_refuse()
+{
+    let instance = Instance::with(&[("MARFA_DISK_RESERVE_BYTES", "0")]).await;
+    instance
+        .app
+        .faults
+        .set("size:blobs", Some("800000"))
+        .unwrap();
+    instance
+        .app
+        .faults
+        .set("free:blobs", Some("700000"))
+        .unwrap();
+    assert_eq!(instance.put(&[1u8; 1000]).await.status, StatusCode::CREATED);
+    assert_eq!(instance.files().len(), 1);
 }
 
 /// What a client sees of one request on a real connection: the answer, and whether the

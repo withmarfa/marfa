@@ -1,14 +1,62 @@
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-pub fn free_bytes(path: &Path) -> Option<u64> {
+fn stats_of(path: &Path) -> Option<libc::statvfs> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: `statvfs` writes only into the struct it is given, and `path`
     // is a NUL-terminated string that outlives the call.
     let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
     let answered = unsafe { libc::statvfs(path.as_ptr(), &mut stats) };
+    (answered == 0).then_some(stats)
+}
+
+pub fn free_bytes(path: &Path) -> Option<u64> {
     // The two fields are narrower than u64 on some platforms and not others.
     #[allow(clippy::useless_conversion)]
-    (answered == 0).then(|| u64::from(stats.f_bavail) * u64::from(stats.f_frsize))
+    stats_of(path).map(|stats| u64::from(stats.f_bavail) * u64::from(stats.f_frsize))
+}
+
+/// The size of the volume that holds `path`, whatever is free on it.
+pub fn size_bytes(path: &Path) -> Option<u64> {
+    #[allow(clippy::useless_conversion)]
+    stats_of(path).map(|stats| u64::from(stats.f_blocks) * u64::from(stats.f_frsize))
+}
+
+/// Whether `path` is on the same volume as any of `others`. A path that cannot be read counts as
+/// sharing, so that the caller errs toward keeping room.
+pub fn shares_with(path: &Path, others: &[&Path]) -> bool {
+    let Ok(device) = std::fs::metadata(path).map(|found| found.dev()) else {
+        return true;
+    };
+    others.iter().any(|other| {
+        std::fs::metadata(other)
+            .map(|found| found.dev() == device)
+            .unwrap_or(true)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_volume_is_at_least_as_big_as_what_is_free_on_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let size = size_bytes(dir.path()).unwrap();
+        let free = free_bytes(dir.path()).unwrap();
+        assert!(size > 0 && free <= size, "{free} of {size}");
+    }
+
+    #[test]
+    fn two_folders_of_one_volume_share_it_and_a_path_that_cannot_be_read_is_taken_to_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two) = (dir.path().join("one"), dir.path().join("two"));
+        std::fs::create_dir(&one).unwrap();
+        std::fs::create_dir(&two).unwrap();
+        assert!(shares_with(&one, &[&two]));
+        assert!(shares_with(&one, &[&dir.path().join("absent")]));
+        assert!(shares_with(&dir.path().join("absent"), &[&two]));
+    }
 }

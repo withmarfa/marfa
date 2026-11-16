@@ -624,6 +624,20 @@ Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in 
 
 **Tests:** `compliance/backup-folder.test.ts › writes each backup as one file named for its created_at in the folder's backups folder for its instance, and a copy of each file it names in the folder's files area`, `› refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
+### `instance/backup-folder-reserve`
+
+Where `MARFA_BACKUP_PATH` names a folder on a volume that also holds the database or the disk store's folder, if a copy of a file there would leave less free on that volume than `disk_reserve_bytes`, then the server MUST leave the file uncopied there.
+
+**Reason:** the reserve keeps room for every other write on the volume the server lives on. A folder on a disk of its own holds back none of it: the copy needs only room for the file.
+
+**Tests:** `compliance/backup-folder.test.ts › leaves a file uncopied that would take the server's own volume below its reserve, says so in health by the setting's name, and copies it once there is room`.
+
+### `instance/backup-folder-reserve-said`
+
+Where `MARFA_BACKUP_PATH` names a folder on a volume that also holds the database or the disk store's folder, while a file waits because a copy of it there would leave less free on that volume than `disk_reserve_bytes`, the server MUST name `disk_reserve_bytes` in `backups.store_error`.
+
+**Tests:** `compliance/backup-folder.test.ts › leaves a file uncopied that would take the server's own volume below its reserve, says so in health by the setting's name, and copies it once there is room`.
+
 ### `instance/backup-folder-whole`
 
 Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the whole backup and a copy of each file it names but those it names as `lost`, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as a backup.
@@ -1301,6 +1315,14 @@ If the bytes available on the database's volume and on the disk store's volume c
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is at least 1 MiB and below the greater of 64 MiB and the instance's disk reserve (`disk_reserve_bytes`, 128 MiB unless set), then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
 **Tests:** `compliance/disk-space-faults.test.ts › answers the disk component degraded, and the status 200, when the lesser of the two volumes has 1 MiB or more and under 64 MiB`, `compliance/disk-reserve-health.test.ts › answers the disk component degraded below a reserve above 64 MiB, and ok at it`.
+
+### `instance/health-disk-reserve-unfit`
+
+If `disk_reserve_bytes` is above 0 and not less than the size of the volume that holds the database or the disk store's folder, and the `disk` component of `GET /health` is `degraded`, then the server MUST say in its `error` that the reserve is not less than the volume, and name `disk_reserve_bytes`.
+
+**Reason:** a reserve as large as its volume can never be met, so the component is degraded for as long as the setting stands, and the owner needs to be told to lower it.
+
+**Tests:** `compliance/disk-reserve-health.test.ts › says in the disk component's error that the reserve is not less than the volume, naming the setting, where it is not`.
 
 ### `instance/health-disk-unknown`
 
@@ -2466,7 +2488,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 
 | Key                              | Default            | Allowed values                                            | What it sets                                                                                                                                                                                                                                                                                                                           |
 | -------------------------------- | ------------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `disk_reserve_bytes`             | `134217728` bytes  | Whole number of bytes, 0 to 1099511627776                 | The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.                                                                            |
+| `disk_reserve_bytes`             | `134217728` bytes  | Whole number of bytes, 0 to 1099511627776                 | The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. A backup folder on the same volume is held to it. At 0 nothing is held back.                          |
 | `max_request_bytes`              | `1048576` bytes    | Whole number of bytes, 1 to 1099511627776                 | The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link. |
 | `max_bulk_request_bytes`         | `16777216` bytes   | Whole number of bytes, 1 to 33554432                      | The largest body the bulk operations accept. It may be at most half of the 67108864 bytes a restore reads on one archive line, so that an item written at this limit fits on its line. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.                          |
 | `blob_min_copies`                | `1`                | Whole number, 1 to 1000000                                | The fewest live copies a blob keeps. A drop that would leave fewer is refused.                                                                                                                                                                                                                                                         |

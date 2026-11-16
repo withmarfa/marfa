@@ -9,14 +9,14 @@ use serde_json::json;
 use super::rows::Held;
 use super::s3::S3;
 use super::store::{self, Answer, Failed, Store};
-use super::{App, Hash, room_on, rows};
+use super::{App, Hash, copy_shortfall, rows, shortfall};
 use crate::app::access::Caller;
 use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie, Volume};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
 use crate::app::stored;
-use crate::db::Write;
+use crate::db::{Write, volume};
 use crate::settings::registry::{
     BLOB_CLEANUP_ENABLED, BLOB_CLEANUP_GRACE_SECONDS, DISK_RESERVE_BYTES,
 };
@@ -140,15 +140,24 @@ async fn copy_to(
         let (written, object) = match target {
             Store::Disk(disk) | Store::Folder(disk) => {
                 let reserve = app.settings.live().get(DISK_RESERVE_BYTES);
-                let volume = match target {
-                    Store::Folder(_) => Volume::Backups,
-                    _ => Volume::Blobs,
+                let short = match target {
+                    Store::Folder(folder) => {
+                        let start = &app.settings.start;
+                        let shared = volume::shares_with(
+                            folder.root(),
+                            &[&start.blob_path, &start.database.folder()],
+                        );
+                        copy_shortfall(&app.faults, folder.root(), reserve, shared, size)
+                    }
+                    _ => shortfall(&app.faults, Volume::Blobs, disk.root(), reserve, size)
+                        .map(|short| short.reason()),
                 };
-                if let Err(refused) = room_on(&app.faults, volume, disk.root(), reserve, size) {
-                    tracing::warn!(error = %refused, store = target.kind(), "A store has no room for a blob's copy");
-                    return Ok(Copy::Skipped(Some(
-                        "there is not enough free space on its disk".to_string(),
-                    )));
+                if let Some(why) = short {
+                    tracing::warn!(
+                        store = target.kind(),
+                        "A store has no room for a blob's copy"
+                    );
+                    return Ok(Copy::Skipped(Some(why)));
                 }
                 if matches!(target, Store::Folder(_)) {
                     bytes = super::folder::filling(bytes, app.faults.clone());

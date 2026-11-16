@@ -472,6 +472,35 @@ describe("a backup folder that lacks a file or its disk", () => {
     });
   });
 
+  it("leaves a file uncopied that would take the server's own volume below its reserve, says so in health by the setting's name, and copies it once there is room", async () => {
+    await withFolder("backup-folder-reserve", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const { operator } = clientsFor(server);
+      await server.setFault("free:backups=2097152");
+      const held = await fileItem(
+        server,
+        bytesOf("a file the folder has no room for", 2048),
+      );
+      const run = await runJob(operator, "blob-replicate", "error");
+      expect(run.result).toMatchObject({ copied: 0 });
+      expect(existsSync(copyIn(root, id, held.hash))).toBe(false);
+      const told = (await healthDetail(server)).backups.store_error;
+      expect(told).toEqual(expect.stringContaining("has 2 MiB free"));
+      expect(told).toEqual(expect.stringContaining("disk_reserve_bytes"));
+
+      // The witness: the same file is copied once the folder's volume has room.
+      await server.setFault("free:backups=1073741824");
+      await waitFor("the file's copy in the folder", async () => {
+        const caught = await runJob<{ remaining: number }>(
+          operator,
+          "blob-replicate",
+        );
+        return caught.result.remaining === 0 ? true : undefined;
+      });
+      expect(existsSync(copyIn(root, id, held.hash))).toBe(true);
+    });
+  });
+
   // The claim is a latency bound: a pass on the second try would pass a slow answer.
   it(
     "says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up",

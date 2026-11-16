@@ -452,6 +452,22 @@ When the server answers `507 insufficient_storage` because a request would take 
 
 **Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `compliance/export-reserve.test.ts › is refused 507 insufficient_storage before any archive byte, naming the reserve and the room, and leaves nothing on disk`.
 
+### `errors/storage-reserve-message`
+
+When the server answers `507 insufficient_storage` because a request would take the volume below the reserve, the server MUST word `error.message` to state the reserve and the free space it found, and to name the setting `disk_reserve_bytes`.
+
+**Reason:** a refusal that names no reserve reads as a full disk while the volume has room, and the person who meets it cannot tell what to change.
+
+**Tests:** `compliance/disk-reserve.test.ts › words the refusal to state the reserve and the room, and to name the setting that changes it`.
+
+### `errors/storage-reserve-unfit`
+
+Where `disk_reserve_bytes` is not less than the size of the volume that holds the disk store's folder, when the server answers `507 insufficient_storage` because a request would take the volume below the reserve, the server MUST say in `error.message` that the reserve is not less than the volume.
+
+**Reason:** no request can leave a reserve that is as large as the volume, so telling the person to free space sends them to a task that cannot succeed.
+
+**Tests:** `compliance/disk-reserve.test.ts › says in the refusal that the reserve is not less than the volume, where it is not`.
+
 ## What a refusal names of a missing grant
 
 ### `errors/grant-type`

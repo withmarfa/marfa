@@ -93,6 +93,14 @@ impl Volume {
             Volume::Backups => "free:backups",
         }
     }
+
+    const fn size_name(self) -> &'static str {
+        match self {
+            Volume::Database => "size:database",
+            Volume::Blobs => "size:blobs",
+            Volume::Backups => "size:backups",
+        }
+    }
 }
 
 const HIDE_POSITION: &str = "hide:webhook-position";
@@ -348,7 +356,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 Some(_) => Err("a release fault takes no argument".to_string()),
             }
         }
-        "free" => {
+        "free" | "size" => {
             if !["database", "blobs", "backups"].contains(&rest) {
                 return Err(format!(
                     "{rest} is not a volume: database, blobs or backups"
@@ -361,7 +369,9 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
                 .and_then(|text| text.parse::<u64>().ok())
                 .filter(|bytes| *bytes <= MAX_FREE_BYTES)
-                .ok_or("a free fault takes a whole number of bytes, or unknown")?;
+                .ok_or_else(|| {
+                    format!("a {kind} fault takes a whole number of bytes, or unknown")
+                })?;
             Ok((None, Some(bytes)))
         }
         "deadline" => deadline_of(rest, arg).map(|ms| (None, Some(ms))),
@@ -418,7 +428,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         "hide" => judge_hide(rest, arg),
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
-             deadline:<job>, unfold-deadline, free:<volume>, resolve:<host>, limit:<lane>, \
+             deadline:<job>, unfold-deadline, free:<volume>, size:<volume>, resolve:<host>, limit:<lane>, \
              unreadable:<stored>, lose:blob, damage:blob, damage:blob-unreadable, \
              store-check-deadline, hide:event or hide:webhook-position"
                 .to_string(),
@@ -729,6 +739,15 @@ impl Faults {
             .map(|bytes| (bytes != FREE_UNKNOWN).then_some(bytes))
     }
 
+    /// What a `size` fault sets for the volume: its bytes, or `None` for a size that cannot be read.
+    pub fn size(&self, volume: Volume) -> Option<Option<u64>> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == volume.size_name())
+            .and_then(|fault| fault.number)
+            .map(|bytes| (bytes != FREE_UNKNOWN).then_some(bytes))
+    }
+
     /// Whether `refuse:<point>` is armed, without counting a refusal.
     pub fn is_refusing(&self, point: &Point) -> bool {
         let name = format!("refuse:{}", point.name);
@@ -830,6 +849,9 @@ mod tests {
         assert!(refused("refuse:nowhere", None));
         assert!(refused("refuse:read", Some("1")));
         assert!(refused("free:database", Some("lots")));
+        assert!(refused("size:elsewhere", Some("1")));
+        assert!(refused("size:blobs", None));
+        assert!(refused("size:blobs", Some("lots")));
         assert!(refused("hold:read-snapshot", Some("1")));
         assert!(refused("fail:lock", Some("item.create")));
         assert!(refused("fail:lock", Some("0")));
@@ -946,6 +968,18 @@ mod tests {
         assert_eq!(faults.list()[0].fired, 2);
         faults.clear(None);
         assert!(!faults.refusing(REFUSE_READ));
+    }
+
+    #[test]
+    fn a_volume_size_is_set_in_bytes_or_unknown_beside_its_free_space() {
+        let faults = Faults::default();
+        assert_eq!(faults.size(Volume::Blobs), None);
+        faults.set("size:blobs", Some("4096")).unwrap();
+        assert_eq!(faults.size(Volume::Blobs), Some(Some(4096)));
+        assert_eq!(faults.free(Volume::Blobs), None);
+        assert_eq!(faults.size(Volume::Database), None);
+        faults.set("size:blobs", Some("unknown")).unwrap();
+        assert_eq!(faults.size(Volume::Blobs), Some(None));
     }
 
     #[test]

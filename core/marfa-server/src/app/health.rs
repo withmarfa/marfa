@@ -10,7 +10,7 @@ use tokio::sync::watch;
 
 use super::App;
 use super::backups::BackupHealth;
-use super::blobs::MARKER;
+use super::blobs::{MARKER, bytes_in_words};
 use super::clock::Standing;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
@@ -285,29 +285,67 @@ async fn disk(app: &Arc<App>) -> Component {
             Some(set) => set,
             None => volume::free_bytes(path),
         };
-        let database = free(Volume::Database, &start.database.folder());
-        let blobs = free(Volume::Blobs, &start.blob_path);
+        let size = |volume: Volume, path: &Path| match app.faults.size(volume) {
+            Some(set) => set,
+            None => volume::size_bytes(path),
+        };
+        let (database_folder, blob_folder) = (start.database.folder(), &start.blob_path);
         let reserve = app
             .settings
             .live()
             .get(crate::settings::registry::DISK_RESERVE_BYTES);
-        (database, blobs, reserve)
+        let volumes = [
+            (
+                "database",
+                free(Volume::Database, &database_folder),
+                size(Volume::Database, &database_folder),
+            ),
+            (
+                "blobs",
+                free(Volume::Blobs, blob_folder),
+                size(Volume::Blobs, blob_folder),
+            ),
+        ];
+        (volumes, reserve)
     })
     .await;
-    let Some((database, blobs, reserve)) = measured else {
+    let Some((volumes, reserve)) = measured else {
         return Component::silent("free space read");
     };
-    let (Some(database), Some(blobs)) = (database, blobs) else {
+    judge_disk(volumes, reserve)
+}
+
+/// A volume's name, the bytes free on it and its size, each where it could be read.
+type Measured = (&'static str, Option<u64>, Option<u64>);
+
+fn judge_disk(volumes: [Measured; 2], reserve: u64) -> Component {
+    let [(_, Some(database), _), (_, Some(blobs), _)] = volumes else {
         return Component::not_ok(Status::Degraded, "free space unknown");
     };
     let least = database.min(blobs);
     if least < DISK_DOWN_BELOW {
-        Component::not_ok(Status::Down, format!("{least} bytes free"))
-    } else if least < DISK_DEGRADED_FLOOR.max(reserve) {
-        Component::not_ok(Status::Degraded, format!("{least} bytes free"))
-    } else {
-        Component::ok(None)
+        return Component::not_ok(Status::Down, format!("{least} bytes free"));
     }
+    if least >= DISK_DEGRADED_FLOOR.max(reserve) {
+        return Component::ok(None);
+    }
+    let unfit = volumes
+        .iter()
+        .find(|(_, _, size)| size.is_some_and(|size| reserve > 0 && reserve >= size));
+    let error = match unfit {
+        Some((name, _, Some(size))) => format!(
+            "the disk reserve of {} (disk_reserve_bytes) is not less than the {} the {name} \
+             volume holds, so it can never be met; lower disk_reserve_bytes, or set it to 0",
+            bytes_in_words(reserve),
+            bytes_in_words(*size)
+        ),
+        _ if least < reserve => format!(
+            "{least} bytes free, less than the disk reserve of {} (disk_reserve_bytes)",
+            bytes_in_words(reserve)
+        ),
+        _ => format!("{least} bytes free"),
+    };
+    Component::not_ok(Status::Degraded, error)
 }
 
 async fn blob_storage(app: &Arc<App>) -> Component {
@@ -366,6 +404,65 @@ mod tests {
         assert!(started.elapsed() < PROBE_WAIT + Duration::from_secs(1));
         assert!(ticker.await.unwrap() < Duration::from_secs(1));
         drop(release);
+    }
+
+    const MIB: u64 = 1024 * 1024;
+
+    fn disk_of(free: u64, size: Option<u64>, reserve: u64) -> Component {
+        judge_disk(
+            [("database", Some(free), None), ("blob", Some(free), size)],
+            reserve,
+        )
+    }
+
+    #[test]
+    fn a_reserve_the_volume_cannot_hold_is_reported_once_with_the_setting_to_change() {
+        let disk = disk_of(50 * MIB, Some(64 * MIB), 128 * MIB);
+        assert!(matches!(disk.status, Status::Degraded));
+        let error = disk.error.unwrap();
+        assert!(
+            error.contains("disk reserve of 128 MiB (disk_reserve_bytes)"),
+            "{error}"
+        );
+        assert!(
+            error.contains("not less than the 64 MiB the blob volume holds"),
+            "{error}"
+        );
+        assert!(error.contains("set it to 0"));
+    }
+
+    #[test]
+    fn a_reserve_the_volume_can_hold_is_said_to_be_the_reason_free_space_is_short() {
+        let disk = disk_of(100 * MIB, Some(4096 * MIB), 128 * MIB);
+        assert!(matches!(disk.status, Status::Degraded));
+        let error = disk.error.unwrap();
+        assert!(
+            error.starts_with("104857600 bytes free, less than the disk reserve of 128 MiB"),
+            "{error}"
+        );
+        let low = disk_of(10 * MIB, Some(4096 * MIB), 0).error.unwrap();
+        assert_eq!(low, "10485760 bytes free");
+    }
+
+    #[test]
+    fn a_reserve_of_zero_is_never_too_big_and_room_at_the_reserve_is_ok() {
+        assert!(disk_of(100 * MIB, Some(64 * MIB), 0).error.is_none());
+        assert!(
+            disk_of(128 * MIB, Some(4096 * MIB), 128 * MIB)
+                .error
+                .is_none()
+        );
+        assert!(matches!(
+            disk_of(MIB - 1, Some(64 * MIB), 128 * MIB).status,
+            Status::Down
+        ));
+    }
+
+    #[test]
+    fn a_volume_whose_free_space_cannot_be_read_is_degraded_never_down() {
+        let disk = judge_disk([("database", None, None), ("blob", Some(0), None)], 0);
+        assert!(matches!(disk.status, Status::Degraded));
+        assert_eq!(disk.error.as_deref(), Some("free space unknown"));
     }
 
     #[tokio::test]
