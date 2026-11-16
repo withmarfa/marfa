@@ -159,12 +159,29 @@ it("holds a sign-in address change until its flag confirms it, and tells a key a
   ]);
   expect(stored.sign_in_address).toBeUndefined();
 
+  // The address answers nothing, so the server's check refuses the move.
+  const unchecked = await local.run([
+    "config",
+    "update",
+    "--body",
+    body,
+    "--confirm-address-change",
+  ]);
+  expect(unchecked.code).toBe(1);
+  expect(unchecked.stderr).toContain("sign_in_address_check_failed");
+  expect(unchecked.stderr).toContain("--skip-sign-in-address-check");
+  expect(
+    (await local.json<{ sign_in_address?: string }>(["config", "get"]))
+      .sign_in_address,
+  ).toBeUndefined();
+
   const moved = await local.json<{ sign_in_address?: string }>([
     "config",
     "update",
     "--body",
     body,
     "--confirm-address-change",
+    "--skip-sign-in-address-check",
   ]);
   expect(moved.sign_in_address).toBe(address);
 });

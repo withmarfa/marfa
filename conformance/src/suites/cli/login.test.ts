@@ -225,6 +225,123 @@ describe("the owner", () => {
   });
 });
 
+describe("a fresh sign-in", () => {
+  async function ownerCookie(origin: string): Promise<string> {
+    const signIn = await fetch(`${origin}/auth/sign-in`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify(TEST_OWNER),
+    });
+    expect(signIn.status).toBe(200);
+    const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
+      signIn.headers.get("set-cookie") ?? "",
+    )?.[1];
+    expect(cookie, "sign-in set no session cookie").toBeTruthy();
+    return cookie!;
+  }
+
+  it("asks the owner to sign in again under --fresh-sign-in before the code is approved", async () => {
+    const registration = await fetch(`${c.apiUrl}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "marfa",
+        software_id: "so.marfa.cli",
+        application_type: "native",
+        grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(registration.status).toBe(201);
+    const client = ((await registration.json()) as { client_id: string })
+      .client_id;
+    const origin = new URL(c.apiUrl).origin;
+    // A browser signed in before the code is asked for.
+    const earlier = await ownerCookie(origin);
+
+    const login = c.cli
+      .as(undefined)
+      .hold([
+        "login",
+        "--print-token",
+        "--no-browser",
+        "--fresh-sign-in",
+        "--scope",
+        "*:read",
+        "--client-id",
+        client,
+      ]);
+    let stdout = "";
+    let stderr = "";
+    login.stdout!.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    login.stderr!.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const ended = once(login, "close");
+    const started = Date.now();
+    while (!stdout.includes("\n") && Date.now() - started < 15_000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(stdout.includes("\n"), `no code line: ${stderr}`).toBe(true);
+    const first = JSON.parse(stdout.split("\n")[0]!) as {
+      user_code: string;
+      verification_uri_complete: string;
+    };
+    const page = new URL(first.verification_uri_complete).origin;
+    const consentAt = `${page}/auth/device/consent?user_code=${encodeURIComponent(first.user_code)}`;
+
+    const asked = await fetch(consentAt, {
+      headers: { cookie: earlier },
+      redirect: "manual",
+    });
+    expect(asked.status).toBe(302);
+    const to = new URL(asked.headers.get("location")!, page);
+    expect(to.pathname).toBe("/auth/sign-in");
+    expect(to.searchParams.get("prompt")).toBe("login");
+
+    const cookie = await ownerCookie(page);
+    const consent = await fetch(consentAt, { headers: { cookie } });
+    expect(consent.status).toBe(200);
+    const form = new URLSearchParams();
+    form.set("user_code", first.user_code);
+    form.set("decision", "approve");
+    for (const scope of offeredValues(await consent.text(), "scopes")) {
+      form.append("scopes", scope);
+    }
+    const approved = await fetch(`${page}/auth/device/consent`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: page,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: form,
+    });
+    expect(approved.status).toBe(200);
+    expect(await ended, stderr).toBe(0);
+    const token = JSON.parse(stdout.slice(stdout.indexOf("\n") + 1)) as {
+      access_token: string;
+    };
+    const me = await c.cli
+      .as(token.access_token)
+      .json<{ credential: { kind: string } }>(["whoami"]);
+    expect(me.credential.kind).toBe("token");
+    const revoked = await fetch(`${c.apiUrl}/oauth/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: token.access_token,
+        token_type_hint: "access_token",
+        client_id: client,
+      }),
+    });
+    expect(revoked.status).toBe(200);
+  });
+});
+
 describe("a sign-in whose device code is no longer valid", () => {
   let server: FreshServer;
 

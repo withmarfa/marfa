@@ -46,7 +46,13 @@ pub fn for_error(error: &CliError, aim: &Aim) -> Option<String> {
         CliError::Refused {
             status: 401, code, ..
         } if code == "insufficient_user_authentication" => Some(
-            "This needs a sign-in from the last five minutes. Sign in again, then repeat the command within five minutes, or run it on the server's private local command (`--socket`)."
+            "This needs a sign-in from the last five minutes. Run `marfa login --fresh-sign-in`, sign in again in the browser, then repeat the command within five minutes; or run it on the server's private local command (`--socket`)."
+                .into(),
+        ),
+        CliError::Refused {
+            status: 409, code, ..
+        } if code == "sign_in_address_check_failed" => Some(
+            "Nothing was changed. Check the address, and that it reaches this server. For a host that answers only once the address has moved, run the same command on the server's private local command (`--socket`) with --skip-sign-in-address-check."
                 .into(),
         ),
         CliError::Refused {

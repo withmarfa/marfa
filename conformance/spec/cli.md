@@ -334,6 +334,14 @@ If a person runs `config update` or `config replace` with `--confirm-address-cha
 
 **Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key a person is the way`.
 
+### `cli/command-address-check-flag`
+
+If a person runs `config update` or `config replace` with `--skip-sign-in-address-check`, then the CLI MUST send `skip_sign_in_address_check` set to `true` with the body.
+
+**Reason:** a host that answers only once the sign-in address has moved fails the server's check (`instance/sign-in-address-check-refused`), and the private local command may skip it (`instance/sign-in-address-check-skip`).
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key a person is the way`.
+
 ### `cli/command-upload-refusal-reported`
 
 If the server refuses an upload before it reads the file, then the CLI MUST report the refusal's status, code and message.
@@ -775,6 +783,14 @@ If the server answers the poll of the device code that `login` waits on with `in
 **Reason:** the server removes an unentered device code when 1000 newer ones are held (`keys-and-oauth/device-code-unentered-bound`), and answers one that ran out `expired_token`. A new `login` can succeed where the same code cannot, so the refusal is not one a retry fails to change (exit 1).
 
 **Tests:** `cli/login.test.ts › ends a login whose device code the server removed with exit 3, saying to run marfa login again`, `› ends a login whose device code ran out with exit 3, saying to run marfa login again`.
+
+### `cli/login-fresh-sign-in`
+
+When a person runs `login` with `--fresh-sign-in`, the CLI MUST send `max_age=0` with its device authorization request.
+
+**Reason:** the approval page then asks the owner to sign in again (`keys-and-oauth/device-max-age-sign-in`), so the token meets an act that asks for a recent sign-in (`keys-and-oauth/step-up-recent`).
+
+**Tests:** `cli/login.test.ts › asks the owner to sign in again under --fresh-sign-in before the code is approved`.
 
 ### `cli/command-cleartext-loopback`
 

@@ -250,18 +250,19 @@ pub fn register(discovery: &Discovery, name: Option<&str>) -> Result<String, Cli
         .ok_or_else(|| CliError::Invalid("the registration answered no client_id".to_string()))
 }
 
+/// `fresh_sign_in` sends `max_age=0`, so the approval page asks the owner to sign in again.
 pub fn device_code(
     discovery: &Discovery,
     client_id: &str,
     scope: &str,
+    fresh_sign_in: bool,
 ) -> Result<DeviceCode, CliError> {
     let door = Remote::public_at(&discovery.device_authorization_endpoint)?;
-    let answer = door.json(
-        &Request::post(&[])
-            .public()
-            .reading()
-            .form(&[("client_id", client_id), ("scope", scope)]),
-    )?;
+    let mut form = vec![("client_id", client_id), ("scope", scope)];
+    if fresh_sign_in {
+        form.push(("max_age", "0"));
+    }
+    let answer = door.json(&Request::post(&[]).public().reading().form(&form))?;
     serde_json::from_value(answer).map_err(|error| {
         CliError::Invalid(format!(
             "the device code answer is not one this build reads: {error}"
@@ -1318,7 +1319,7 @@ mod tests {
         let origin = door.url.clone();
         let discovery = waiting_discovery(&origin);
         let client = register(&discovery, Some("studio")).unwrap();
-        let code = device_code(&discovery, &client, "*:read").unwrap();
+        let code = device_code(&discovery, &client, "*:read", false).unwrap();
         assert!(matches!(
             poll(&discovery, &client, &code.device_code).unwrap(),
             Poll::Token(_)
