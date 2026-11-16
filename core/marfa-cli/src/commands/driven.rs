@@ -165,9 +165,6 @@ fn socket_only(words: &[String]) -> bool {
         || words == ["setup", "code"]
         || words == ["setup", "open"]
         || words == ["owner", "recover"]
-        || words.starts_with(&["owner".into(), "passkeys".into()])
-        || words == ["owner", "update"]
-        || words == ["housekeeping", "confirm-clock"]
 }
 
 /// Where a command has no use: what is not a request to the server, what
@@ -394,13 +391,7 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             "setup status",
             "setup code",
             "setup open",
-            "owner passkeys list",
-            "owner passkeys rename",
-            "owner passkeys delete",
-            "owner passkeys add",
             "owner recover",
-            "owner update",
-            "housekeeping confirm-clock",
         ]
     );
     for leaf in commands {

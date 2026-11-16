@@ -9,11 +9,10 @@ use crate::remote::request::Request;
 #[derive(Debug, Subcommand)]
 pub enum BackupsCommand {
     /// The backups where the instance keeps them, its backup folder or its object store, newest
-    /// first, from every instance that put them there. Requires private local authority
-    /// (--socket).
+    /// first, from every instance that put them there. Requires `backups.manage`.
     List,
     /// Take a backup now, whether or not anything changed since the last one.
-    /// Requires private local authority (--socket).
+    /// Requires `backups.manage`.
     Run,
     /// Restore a backup from the instance's backup folder or object store. The
     /// server reads it itself, files included, so nothing is downloaded here. It
@@ -29,8 +28,7 @@ pub enum BackupsCommand {
         #[arg(long)]
         allow_missing_files: bool,
     },
-    /// The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority
-    /// (--socket).
+    /// The backup folder that `MARFA_BACKUP_PATH` names. Requires `backups.manage`.
     Folder {
         #[command(subcommand)]
         command: FolderCommand,

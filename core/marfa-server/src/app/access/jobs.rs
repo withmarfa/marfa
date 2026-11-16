@@ -85,6 +85,11 @@ impl Caller {
     pub fn lists_app_grants(&self) -> bool {
         self.holds(Permission::GrantsManage)
     }
+
+    /// Whether a stream or a webhook sends this credential what needs the owner's eye.
+    pub fn reads_attention(&self) -> bool {
+        self.holds(Permission::InstanceRead)
+    }
 }
 
 /// App jobs outlive their access tokens while the grant stands.

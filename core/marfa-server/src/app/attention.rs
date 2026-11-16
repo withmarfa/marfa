@@ -7,10 +7,15 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use rusqlite::{Transaction, params};
+
+use super::access::Caller;
 use super::backups::{BackupHealth, StoreFault};
 use super::blobs::disk::Disk;
 use super::connectors::{self, Reason};
+use super::events::Event;
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
+use super::housekeeping::{Report, Run};
 use super::refusal::Result;
 use super::{App, folders, health, housekeeping, keys};
 use crate::app::clock::{Stamp, Standing};
@@ -33,6 +38,19 @@ pub const CHECKS: [(&str, &str); 5] = [
     (KEYS, "API keys"),
 ];
 
+/// The event a new entry is announced by.
+pub const RAISED: &str = "attention.raised";
+
+/// The kinds of entry each check finds, kept as announced while the check cannot answer.
+const FOUND_BY: [(&str, &[&str]); 5] = [
+    (HEALTH, &["health", "backup"]),
+    (HOUSEKEEPING, &["job"]),
+    (CONNECTORS, &["connector"]),
+    (FOLDERS, &["folder"]),
+    (KEYS, &["key"]),
+];
+
+#[derive(Clone)]
 struct Concern {
     kind: &'static str,
     reference: String,
@@ -375,7 +393,7 @@ async fn ending(app: &Arc<App>, at: &str) -> Result<Vec<Concern>> {
 
 /// One check, bounded in time; a check that fails, runs out of time or is made to fail by a
 /// fault becomes one entry naming it.
-async fn checked<F>(app: &App, name: &'static str, check: F) -> Vec<Concern>
+async fn checked<F>(app: &App, name: &'static str, check: F) -> (Vec<Concern>, bool)
 where
     F: Future<Output = Result<Vec<Concern>>>,
 {
@@ -393,19 +411,20 @@ where
         }
     };
     match tokio::time::timeout(CHECK_WAIT, held).await {
-        Ok(Some(found)) => found,
+        Ok(Some(found)) => (found, true),
         _ => {
             let label = CHECKS
                 .iter()
                 .find(|(key, _)| *key == name)
                 .map_or(name, |(_, label)| *label);
-            vec![Concern {
+            let unavailable = Concern {
                 kind: "unavailable",
                 reference: label.to_string(),
                 title: format!("Couldn't check {}", label.to_lowercase()),
                 description: "The check failed or did not answer in time. Its state is unknown."
                     .to_string(),
-            }]
+            };
+            (vec![unavailable], false)
         }
     }
 }
@@ -426,7 +445,14 @@ fn without_covered_jobs(health: &[Concern], jobs: Vec<Concern>) -> Vec<Concern> 
         .collect()
 }
 
-pub async fn read(app: &Arc<App>) -> Value {
+/// Every entry, and the kinds of entry a check that could not answer would have found.
+#[derive(Clone)]
+struct Gathered {
+    concerns: Vec<Concern>,
+    unknown: Vec<&'static str>,
+}
+
+async fn gather(app: &Arc<App>) -> Gathered {
     let at = app.clock.stamp();
     let (health, jobs, connectors, folders, keys) = tokio::join!(
         checked(app, HEALTH, healthy(app)),
@@ -435,14 +461,119 @@ pub async fn read(app: &Arc<App>) -> Value {
         checked(app, FOLDERS, synced(app, &at)),
         checked(app, KEYS, ending(app, &at)),
     );
-    let jobs = without_covered_jobs(&health, jobs);
-    let clock: Vec<Concern> = clocked(app.clock.standing()).into_iter().collect();
-    let data: Vec<Value> = [health, clock, jobs, connectors, folders, keys]
+    let answered = [
+        (HEALTH, health.1),
+        (HOUSEKEEPING, jobs.1),
+        (CONNECTORS, connectors.1),
+        (FOLDERS, folders.1),
+        (KEYS, keys.1),
+    ];
+    let unknown = FOUND_BY
         .iter()
-        .flatten()
-        .map(Concern::to_json)
+        .filter(|(check, _)| answered.contains(&(*check, false)))
+        .flat_map(|(_, kinds)| kinds.iter().copied())
         .collect();
+    let jobs = without_covered_jobs(&health.0, jobs.0);
+    let clock: Vec<Concern> = clocked(app.clock.standing()).into_iter().collect();
+    let concerns = [health.0, clock, jobs, connectors.0, folders.0, keys.0]
+        .into_iter()
+        .flatten()
+        .collect();
+    Gathered { concerns, unknown }
+}
+
+fn announced(tx: &Transaction<'_>) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare("SELECT kind, reference FROM attention_announced")?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// The entries no earlier check announced.
+fn unannounced<'a>(tx: &Transaction<'_>, gathered: &'a Gathered) -> Result<Vec<&'a Concern>> {
+    let announced = announced(tx)?;
+    Ok(gathered
+        .concerns
+        .iter()
+        .filter(|concern| {
+            !announced
+                .iter()
+                .any(|(kind, reference)| kind == concern.kind && *reference == concern.reference)
+        })
+        .collect())
+}
+
+/// The announced entries that are gone, so that one is announced again should it come back.
+/// An entry of a check that could not answer is kept.
+fn forgotten(tx: &Transaction<'_>, gathered: &Gathered) -> Result<Vec<(String, String)>> {
+    Ok(announced(tx)?
+        .into_iter()
+        .filter(|(kind, reference)| {
+            !gathered.unknown.contains(&kind.as_str())
+                && !gathered
+                    .concerns
+                    .iter()
+                    .any(|concern| concern.kind == kind && concern.reference == *reference)
+        })
+        .collect())
+}
+
+/// Writes only when an entry is new or gone, and decides that again inside the write.
+async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
+    let looking = gathered.clone();
+    let changed = app
+        .db
+        .read(move |tx| {
+            Ok(!unannounced(tx, &looking)?.is_empty() || !forgotten(tx, &looking)?.is_empty())
+        })
+        .await?;
+    if !changed {
+        return Ok(0);
+    }
+    let writing = gathered.clone();
+    app.write(&Caller::Server, "attention.check", move |unit| {
+        let tx = unit.tx();
+        for (kind, reference) in forgotten(tx, &writing)? {
+            tx.execute(
+                "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
+                params![kind, reference],
+            )?;
+        }
+        let new = unannounced(tx, &writing)?;
+        for concern in &new {
+            tx.execute(
+                "INSERT INTO attention_announced (kind, reference, announced_at) \
+                 VALUES (?1, ?2, ?3)",
+                params![concern.kind, concern.reference, unit.at],
+            )?;
+            unit.announce(&Event {
+                event_type: RAISED,
+                item_id: "",
+                type_id: "",
+                source: "",
+                payload: json!({ "attention": concern.to_json() }).to_string(),
+            })?;
+        }
+        Ok(new.len())
+    })
+    .await
+}
+
+/// A list that cannot announce its new entries is still answered whole.
+pub async fn read(app: &Arc<App>) -> Value {
+    let gathered = gather(app).await;
+    if let Err(refused) = announce(app, &gathered).await {
+        tracing::warn!(error = %refused, "New attention entries were not announced");
+    }
+    let data: Vec<Value> = gathered.concerns.iter().map(Concern::to_json).collect();
     json!({ "data": data })
+}
+
+/// The housekeeping job that announces new entries when nobody reads the list.
+pub async fn check(app: Arc<App>, _run: Run) -> Result<Report> {
+    let raised = announce(&app, &gather(&app).await).await?;
+    Ok(Report::done(json!({ "raised": raised })))
 }
 
 #[cfg(test)]

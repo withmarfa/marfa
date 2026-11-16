@@ -9,12 +9,12 @@ use crate::remote::request::Request;
 #[derive(Debug, Subcommand)]
 pub enum SignInsCommand {
     /// List every browser, app and key that can reach the server, each with
-    /// its name, its kind and when it was last used. Needs direct local
-    /// authority (--socket).
+    /// its name, its kind and when it was last used. Requires
+    /// `sign_ins.manage`.
     List,
     /// Give an app or a key a new name. A key's name is its label; a
-    /// browser's comes from the browser and can't be changed. Needs direct
-    /// local authority (--socket).
+    /// browser's comes from the browser and can't be changed. Requires
+    /// `sign_ins.manage`.
     Rename {
         /// The sign-in's id.
         id: String,
@@ -24,8 +24,7 @@ pub enum SignInsCommand {
     },
     /// End a sign-in at once: its next request is refused, and an app can't
     /// refresh its tokens. What it wrote stays, and so do the keys an app
-    /// minted unless --revoke-keys is given. Needs direct local authority
-    /// (--socket).
+    /// minted unless --revoke-keys is given. Requires `sign_ins.manage`.
     End {
         /// The sign-in's id.
         id: String,
@@ -38,7 +37,7 @@ pub enum SignInsCommand {
     /// with --keep. With no --kind it ends every browser. It refuses, ending
     /// nothing, when a --keep names no sign-in. It ends them one at a time,
     /// carries on past one it cannot end, says how many it ended and names
-    /// each one it could not. Needs direct local authority (--socket).
+    /// each one it could not. Requires `sign_ins.manage`.
     EndAll {
         /// The kinds to end. Repeat it for several; the default is browser.
         #[arg(long, value_enum, value_name = "KIND")]

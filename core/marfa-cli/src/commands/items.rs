@@ -17,7 +17,8 @@ use crate::values::{ItemState, SortDirection, Tier, parse_sort_field};
 pub enum ItemsCommand {
     /// List items on the server, a page at a time.
     List(ListArgs),
-    /// Item names, sources and creation times, newest first. Use `--socket`.
+    /// Item names, sources and creation times, newest first, of the types
+    /// the credential reads.
     Summaries {
         /// Only items of this exact type.
         #[arg(long = "type", value_name = "TYPE")]
@@ -28,7 +29,8 @@ pub enum ItemsCommand {
         #[command(flatten)]
         page: PageArgs,
     },
-    /// Read and empty the bin through direct local authority. Use `--socket`.
+    /// Read and empty the bin, as far as the credential reads its types.
+    /// Requires `items.purge`.
     Bin {
         #[command(subcommand)]
         command: BinCommand,

@@ -34,7 +34,6 @@ afterAll(async () => {
 const NOT_JSON: Record<string, string> = {
   "POST /blobs": "the bytes of a blob",
   "POST /restore": "a gzip archive",
-  "PUT /owner/avatar": "the bytes of an avatar",
   "PUT /profile/avatar": "the bytes of an avatar",
   "POST /oauth/token": "a form, as RFC 6749 defines",
   "POST /oauth/revoke": "a form, as RFC 7009 defines",
@@ -474,28 +473,6 @@ describe("a request the door would refuse before it reads the body", () => {
     }
     expect(wrong).toEqual([]);
   }, 120_000);
-
-  it("keeps owner update behind local authority before body validation", async () => {
-    for (const contentType of ["text/plain", "application/json"]) {
-      const refused = await fetch(`${apiUrl}/owner`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": contentType,
-        },
-        body: JSON.stringify({ name: "Not the owner" }),
-      });
-      expect(refused.status, contentType).toBe(403);
-      expect(await refused.json(), contentType).toMatchObject({
-        error: { code: "forbidden" },
-      });
-    }
-    const reached = await send("PATCH /owner", plainTextWay(), apiKey);
-    expect(reached.status).toBe(400);
-    expect(await reached.json()).toMatchObject({
-      error: { code: "validation_error" },
-    });
-  });
 
   it("answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body", async () => {
     const doors: { door: string; permission: string }[] = [

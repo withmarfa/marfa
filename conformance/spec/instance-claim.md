@@ -4,7 +4,7 @@
 
 ### `instance-claim/unclaimed-owner`
 
-While an instance is unclaimed, the server MUST answer the private local command's `GET /owner` with `404 owner_not_found`.
+While an instance is unclaimed, the server MUST answer the private local command's `GET /profile` with `404 owner_not_found`.
 
 **Tests:** `compliance/owner.test.ts › starts unclaimed with local authority and no public claim authority`.
 
@@ -240,7 +240,7 @@ When a handoff exchange succeeds on loopback HTTP, the server MUST issue an `Htt
 
 ### `instance-claim/setup-only-session`
 
-When a request presents only a setup browser session to `GET /owner`, the server MUST answer `401 unauthorized`.
+When a request presents only a setup browser session to `GET /owner/passkeys`, the server MUST answer `401 unauthorized`.
 
 **Reason:** Setup proof authorizes initial claim, not the owner's administration or an app's data access.
 
@@ -268,9 +268,11 @@ When the server logs setup exchange requests, the server MUST omit submitted set
 
 ### `instance-claim/management-is-not-owner`
 
-When an ordinary credential holding all twelve permissions requests `GET /owner`, including with an accompanying owner cookie, the server MUST answer `403 forbidden`.
+When an ordinary credential holding every permission sends `POST /owner`, the server MUST answer as it answers the same request carrying no credential.
 
-**Tests:** `compliance/owner.test.ts › ordinary full management access cannot become the owner`.
+**Reason:** Claiming starts only from setup proof, which no permission stands in for.
+
+**Tests:** `compliance/owner.test.ts › ordinary full management access cannot claim the instance`.
 
 ### `instance-claim/recover-existing-owner`
 
@@ -492,45 +494,31 @@ Where control-only mode is enabled, when another process holds the configured pu
 
 ### `instance-claim/profile-owner-unavailable`
 
-While the instance is unclaimed, the server MUST answer the private local command's `PATCH /owner` and `PUT /owner/avatar` with `404 owner_not_found` without creating an owner or storing an avatar.
+While the instance is unclaimed, the server MUST answer the private local command's `PATCH /profile` and `PUT /profile/avatar` with `404 owner_not_found` without creating an owner or storing an avatar.
 
 **Reason:** An update or an upload cannot stand in for the claim that creates the owner.
 
-**Tests:** `compliance/profile.test.ts › refuses an owner update and an avatar upload from the local command while the instance is unclaimed`.
-
-### `instance-claim/owner-update`
-
-When the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, `avatar` set to `null`, or any combination of them, the server MUST return the updated owner.
-
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `compliance/owner-avatar.test.ts › removes the avatar through either PATCH door and leaves the other fields as they were`, `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › refuses a profile update and an avatar upload from the local command while the instance is unclaimed`.
 
 ### `instance-claim/owner-avatar`
 
-When `PATCH /owner` receives `avatar` set to `null`, the server MUST remove the owner's avatar and answer `avatar` as `null` at `GET /owner` and `PATCH /owner`.
+When `PATCH /profile` receives `avatar` set to `null`, the server MUST remove the owner's avatar and answer `avatar` as `null` at `GET /profile` and `PATCH /profile`.
 
 **Reason:** An avatar is set by sending its bytes, so the one value `avatar` takes in an update is the one that removes it.
 
-**Tests:** `compliance/owner-avatar.test.ts › removes the avatar through either PATCH door and leaves the other fields as they were`.
-
-### `instance-claim/owner-update-authority`
-
-If `PATCH /owner` lacks private local authority, then the server MUST refuse the request.
-
-**Reason:** Email determines the owner's password sign-in identity, and the other fields are the owner's visible profile.
-
-**Tests:** `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
+**Tests:** `compliance/owner-avatar.test.ts › removes the avatar through PATCH /profile, from the local command or a key, and leaves the other fields as they were`.
 
 ### `instance-claim/owner-update-identity`
 
-When `PATCH /owner` changes email, name, or avatar, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
+When `PATCH /profile` changes email, name, or avatar, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
 
 **Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
 
 ### `instance-claim/owner-update-email`
 
-When `PATCH /owner` changes email, the server MUST store the lowercase address without requiring email confirmation.
+When `PATCH /profile` changes email, the server MUST store the lowercase address without requiring email confirmation.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `› validates fields and limits credential writes to the fields each may write`.
 
 ### `instance-claim/profile-input`
 
@@ -538,37 +526,31 @@ If an owner or delegated profile update contains no field, an unknown field, an 
 
 **Reason:** An address names an avatar that lives somewhere else, and the owner's avatar is held by the instance.
 
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`, `compliance/owner-avatar.test.ts › refuses a web address as the avatar and changes nothing`.
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `compliance/owner-avatar.test.ts › refuses a web address as the avatar and changes nothing`.
 
 ### `instance-claim/delegated-profile-update`
 
-When a key or app submits a valid nonempty `PATCH /profile` containing only `name`, `avatar` set to `null`, or both and holds current profile write permission for every submitted field, the server MUST change those fields and return the profile fields the credential may read, as `GET /profile` answers them.
+When the private local command, a key or an app submits a valid nonempty `PATCH /profile` containing `email`, `name`, `avatar` set to `null`, or any combination of them, and holds current profile write permission for every submitted field, the server MUST change those fields and return the profile fields the caller may read, as `GET /profile` answers them.
 
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `› updates the existing owner and preserves credentials and sessions`, `› takes an email-write OAuth scope`.
 
 ### `instance-claim/delegated-profile-atomic`
 
 If a key or app submits `PATCH /profile` with a field it lacks current write permission for, or loses write permission for before the server stores the change, then the server MUST refuse the request with `403` and leave every submitted field as it was.
 
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`, `› refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not`.
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `› refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not`.
 
 ### `instance-claim/owner-avatar-upload`
 
-When the private local command sends `PUT /owner/avatar` with the bytes of a PNG, JPEG or WebP avatar, the server MUST store them as the owner's avatar and return the updated owner.
+When the private local command sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP avatar, the server MUST store them as the owner's avatar and return the owner's profile.
 
-**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent to the owner door and returns the owner`, `› stores an avatar sent through the private local command`.
+**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent by the private local command and returns the profile`, `› stores an avatar sent through the private local command`.
 
 ### `instance-claim/profile-avatar-upload`
 
 When a key or app that holds current profile write permission for `avatar` sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP avatar, the server MUST store them as the owner's avatar and return the profile fields the credential may read, as `GET /profile` answers them.
 
 **Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent to the profile door by a credential that may write the avatar`.
-
-### `instance-claim/owner-avatar-authority`
-
-If `PUT /owner/avatar` lacks private local authority, then the server MUST refuse the request and keep the previous avatar.
-
-**Tests:** `compliance/owner-avatar.test.ts › refuses an avatar from a caller the door does not admit, and keeps the previous one`.
 
 ### `instance-claim/profile-avatar-authority`
 
@@ -636,7 +618,7 @@ If an avatar upload ends before its body is whole, then the server MUST store no
 
 ### `instance-claim/avatar-replace`
 
-When the server has stored several avatars in turn, the server MUST serve at `GET /owner/avatar` no avatar but the last of them, including once that one is removed.
+When the server has stored several avatars in turn, the server MUST serve at `GET /profile/avatar` no avatar but the last of them, including once that one is removed.
 
 **Reason:** The owner has one avatar, and a replaced one is never served again.
 
@@ -644,9 +626,9 @@ When the server has stored several avatars in turn, the server MUST serve at `GE
 
 ### `instance-claim/owner-avatar-address`
 
-While the owner has an avatar, the server MUST answer `avatar` in the owner as the instance's own address followed by `/owner/avatar`, and while the owner has none as `null`.
+While the owner has an avatar, the server MUST answer `avatar` in the owner as the instance's own address followed by `/profile/avatar`, and while the owner has none as `null`.
 
-**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent to the owner door and returns the owner`, `› removes the avatar through either PATCH door and leaves the other fields as they were`.
+**Tests:** `compliance/owner-avatar.test.ts › stores an avatar sent by the private local command and returns the profile`, `› removes the avatar through PATCH /profile, from the local command or a key, and leaves the other fields as they were`.
 
 ### `instance-claim/profile-read`
 
@@ -658,7 +640,7 @@ When a credential sends `GET /profile`, the server MUST answer `200` with the ow
 
 ### `instance-claim/avatar-served`
 
-When a caller admitted by `instance-claim/avatar-read-authority` sends `GET /owner/avatar`, the server MUST return the stored bytes with the `Content-Type` decided when they were stored.
+When a caller admitted by `instance-claim/avatar-read-authority` sends `GET /profile/avatar`, the server MUST return the stored bytes with the `Content-Type` decided when they were stored.
 
 **Tests:** `compliance/owner-avatar.test.ts › serves the stored bytes under the kind decided from them`.
 
@@ -672,7 +654,7 @@ The server MUST send with every answer over HTTP that carries the avatar's bytes
 
 ### `instance-claim/avatar-validators`
 
-When a caller sends `GET /owner/avatar` with an `If-None-Match` that names the avatar's `ETag`, the server MUST answer `304` with no body.
+When a caller sends `GET /profile/avatar` with an `If-None-Match` that names the avatar's `ETag`, the server MUST answer `304` with no body.
 
 **Tests:** `compliance/owner-avatar.test.ts › answers 304 to a validator that still matches, and sends the avatar when it does not`.
 
@@ -684,7 +666,7 @@ The server MUST send with the avatar, as its `ETag`, the quoted SHA-256 of the a
 
 ### `instance-claim/avatar-read-authority`
 
-If an authenticated caller of `GET /owner/avatar` is neither the private local command nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
+If an authenticated caller of `GET /profile/avatar` is neither the private local command nor a credential that holds profile read permission for `avatar`, then the server MUST refuse the request with `403 forbidden`.
 
 **Reason:** An app sees the owner's avatar only if the owner lets it. A request with no credential is answered `401 unauthorized` by `keys-and-oauth/no-credential`.
 
@@ -692,21 +674,15 @@ If an authenticated caller of `GET /owner/avatar` is neither the private local c
 
 ### `instance-claim/avatar-none`
 
-If the owner has no avatar, then the server MUST answer `GET /owner/avatar` from an admitted caller with `404 not_found`.
+If the owner has no avatar, then the server MUST answer `GET /profile/avatar` from an admitted caller with `404 not_found`.
 
 **Tests:** `compliance/owner-avatar.test.ts › answers 404 when there is no avatar, and again after it is removed`.
 
-### `instance-claim/profile-email-owner-only`
-
-When a credential holds wildcard or stored explicit profile write permission, the server MUST refuse email changes through `PATCH /profile`.
-
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
-
 ### `instance-claim/profile-grant-closed`
 
-If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`, or requests write on `email`, then the server MUST refuse the grant.
+If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`, then the server MUST refuse the grant.
 
-**Tests:** `compliance/profile.test.ts › requires the private local command and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › requires a credential, takes an email-write grant and refuses an unknown field`.
 
 ### `instance-claim/owner-update-password-identity`
 
@@ -714,10 +690,3 @@ If a password sign-in's submitted email no longer matches the owner's address wh
 
 **Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
 
-### `instance-claim/profile-email-write-scope`
-
-If an OAuth registration, authorization, device initiation, consent decision, or token exchange explicitly names `profile.email:write`, then the server MUST refuse that request without granting a narrowed scope.
-
-**Reason:** Apps can read the sign-in address but cannot change it.
-
-**Tests:** `compliance/profile.test.ts › refuses explicit email-write OAuth scopes`.

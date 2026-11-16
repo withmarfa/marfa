@@ -8,7 +8,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
-import { localFetch } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { generateId } from "../../generators/items.js";
 import { itemsArchive } from "../../utils/archive.js";
 type RefusalBody = { error: { details?: unknown } };
@@ -463,15 +463,28 @@ it("answers a stale version with 409 version_conflict and the item's current sum
   expect((await act(item.id, "trash")).status).toBe(200);
 });
 
-it("refuses a key every owner trash door, naming the local command it needs", async () => {
-  for (const [path, body] of [
-    ["/trash", undefined],
-    ["/trash/empty", {}],
+it("refuses a key without items.purge every owner trash door, naming the permission", async () => {
+  const minted = await controlRequest(server.controlSocket, "/keys", {
+    method: "POST",
+    body: {
+      label: "owner trash without items.purge",
+      source: `owner-trash-${randomUUID()}`,
+      type_permissions: { "*": "write" },
+    },
+  });
+  expect(minted.status).toBe(201);
+  const holder = minted.body.key as string;
+  for (const [method, path] of [
+    ["GET", "/trash"],
+    ["POST", "/trash/empty"],
   ] as const) {
-    const refused = await key(path, body);
+    const refused = await fetch(`${server.apiUrl}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${holder}` },
+    });
     expect(refused.status, path).toBe(403);
     expect(((await refused.json()) as RefusalBody).error.details, path).toEqual(
-      { needs: "local" },
+      { required_scope: "items.purge" },
     );
   }
   // The witness: the local command is admitted at the same paths.

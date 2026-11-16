@@ -1918,9 +1918,21 @@ When the credential that a `GET /export` request was admitted on is narrowed whi
 
 ### `search-and-filters/owner-summaries-authority`
 
-When the private local command sends `GET /items/summaries`, the server MUST admit the read.
+When the private local command or a credential that reads some type sends `GET /items/summaries`, the server MUST admit the read.
 
-**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`, `compliance/owner-tasks.test.ts › lists item summaries of only the types a credential reads, and refuses one that reads none`.
+
+### `search-and-filters/owner-summaries-reach`
+
+When a credential sends `GET /items/summaries`, the server MUST list only items of the types the credential reads.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists item summaries of only the types a credential reads, and refuses one that reads none`.
+
+### `search-and-filters/owner-summaries-no-reach`
+
+If a credential whose type map reaches no type sends `GET /items/summaries`, then the server MUST answer `403 type_not_permitted`.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists item summaries of only the types a credential reads, and refuses one that reads none`.
 
 ### `search-and-filters/owner-summaries-projection`
 

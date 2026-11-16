@@ -74,12 +74,13 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
     "Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.",
   "connectors.manage":
     "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.",
-  "grants.manage": "Listing and revoking other apps' access.",
-  "instance.maintain": "Running housekeeping and canceling bulk jobs.",
+  "grants.manage": "Listing, narrowing and revoking other apps' access.",
+  "instance.maintain":
+    "Running housekeeping, canceling bulk jobs and confirming the server's clock.",
   "instance.read":
-    "Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
+    "Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
   "items.purge":
-    "Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike.",
+    "Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike, and listing and emptying the trash.",
   "keys.manage":
     "Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.",
   "keys.mint":
@@ -113,6 +114,8 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
     "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).",
   "edge.updated":
     "An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).",
+  "attention.raised":
+    "A check of what needs the owner's attention first finds an entry (`events/attention-raised`).",
   "edge.deleted":
     "An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).",
   stream_cursor:

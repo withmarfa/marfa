@@ -1,6 +1,6 @@
 # Keys and sign-in
 
-## The twelve permissions
+## The fourteen permissions
 
 A credential holds any of these permissions, each a row of the table below, which is written from the server's own permission list and so cannot differ from it.
 
@@ -9,16 +9,18 @@ A credential holds any of these permissions, each a row of the table below, whic
 | Permission          | What it lets a credential do                                                                                                                            |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `audit.read`        | Reading the audit log.                                                                                                                                  |
+| `backups.manage`    | Listing the backups, taking one now and adopting the backup folder.                                                                                     |
 | `blobs.manage`      | Managing blob bytes and copies across the instance, without granting item content access.                                                               |
 | `config.manage`     | Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.                          |
 | `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state. |
-| `grants.manage`     | Listing and revoking other apps' access.                                                                                                                |
-| `instance.maintain` | Running housekeeping and canceling bulk jobs.                                                                                                           |
-| `instance.read`     | Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.                                                    |
-| `items.purge`       | Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike.                                                      |
+| `grants.manage`     | Listing, narrowing and revoking other apps' access.                                                                                                     |
+| `instance.maintain` | Running housekeeping, canceling bulk jobs and confirming the server's clock.                                                                            |
+| `instance.read`     | Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.                  |
+| `items.purge`       | Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike, and listing and emptying the trash.                  |
 | `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
 | `schema.write`      | Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.           |
+| `sign_ins.manage`   | Listing, renaming and ending the owner's sign-ins, and listing, renaming and removing the owner's passkeys and getting the link that adds one.          |
 | `webhooks.manage`   | Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.             |
 
 <!-- permissions-table:end -->
@@ -35,7 +37,7 @@ When a credential holding named permissions and no content map reads or writes i
 
 ### `keys-and-oauth/direct-mint-everything`
 
-When local authority mints a key from a body naming no permission, map or `sources`, the server MUST give the key all twelve permissions, `*: write` in each of the five maps and no claimed source.
+When local authority mints a key from a body naming no permission, map or `sources`, the server MUST give the key every permission, `*: write` in each of the five maps and no claimed source.
 
 **Reason:** The owner holds no ceiling of their own, so a key minted with nothing named holds everything a key can.
 
@@ -1257,7 +1259,7 @@ If a registration names `offline_access` in its scope and its `grant_types` name
 
 When a registration or a client ID metadata document names no scope, the server MUST register the client for exactly `content:read`, `content:write`, `edge.*:read`, `edge.*:write` and `offline_access`, leaving out `offline_access` for a client whose `grant_types` name neither `refresh_token` nor `authorization_code`.
 
-**Reason:** An app that asks for nothing in particular is offered the owner's content and the links between items, and none of the `system` types, the twelve permissions, the metadata or the profile: an app that needs one names it. A client that may not exchange a refresh token is refused `offline_access` by `keys-and-oauth/device-offline-no-refresh`, so a default that held the scope would register the client for a scope it can never use.
+**Reason:** An app that asks for nothing in particular is offered the owner's content and the links between items, and none of the `system` types, the permissions, the metadata or the profile: an app that needs one names it. A client that may not exchange a refresh token is refused `offline_access` by `keys-and-oauth/device-offline-no-refresh`, so a default that held the scope would register the client for a scope it can never use.
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `› registers a client naming an empty or blank scope for the owner's data alone`, `compliance/device-offline-access.test.ts › registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone`, `compliance/approval-screens.test.ts › offers an app that names no scope the owner's content and links, read only beside read and edit or chosen types, and no permission`.
 
@@ -1681,7 +1683,7 @@ When a signed-in person's authorization request naming `prompt=none` names only 
 
 When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes that read (`<type>:read` for an item type or a pattern of types, `edge.<type>:read` for an edge type or a pattern of edge types, `metadata:read`, `metadata.<sub-resource>:read`, `content:read`, `profile:read`, `profile.<row>:read` and `offline_access`), the server MUST send the browser to the redirect URI with a code.
 
-**Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every one of the twelve permissions is left out, and so is any scope this build cannot read.
+**Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every permission is left out, and so is any scope this build cannot read.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off`.
 
@@ -1933,7 +1935,7 @@ When the consent screen or the device approval page shows a row it names itself,
 
 ### `keys-and-oauth/access-words`
 
-The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each of the twelve permissions by the title in `GLOSSARY.md`, "Access words".
+The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each permission by the title in `GLOSSARY.md`, "Access words".
 
 **Reason:** Access reads the same wherever a person meets it: on these pages and in the CLI's output (`cli/access-words-cli`). The words are kept in `GLOSSARY.md`, one description of access in the server builds every page that shows it, and `ci/access-words.test.ts` holds the glossary's tables to the server's words and the CLI's, which no fixture here can reach.
 
@@ -2245,11 +2247,11 @@ When `GET /grants` lists a grant, the server MUST report `kind` as `cli` for a c
 
 **Tests:** `compliance/auth-grants.test.ts › classifies registered native, web, command line and other device apps`.
 
-### `keys-and-oauth/grant-narrow-authority`
+### `keys-and-oauth/grant-narrow-permission`
 
-If a request other than the private local command's sends `PATCH /grants/{id}`, then the server MUST refuse it, `401 unauthorized` where it carries no credential and `403 forbidden` where it carries one.
+When a credential holding `grants.manage` sends `PATCH /grants/{id}` naming a live grant of another app with `scopes` that `keys-and-oauth/grant-narrow-ceiling` admits, the server MUST narrow the grant to those scopes.
 
-**Tests:** `compliance/auth-grants.test.ts › requires the local command and reports an unknown grant`.
+**Tests:** `compliance/owner-tasks.test.ts › lets an app holding grants.manage narrow another app's grant`.
 
 ### `keys-and-oauth/grant-narrow-ceiling`
 
@@ -2289,15 +2291,15 @@ When `PATCH /grants/{id}` succeeds, the server MUST answer `200` with the result
 
 If `PATCH /grants/{id}` names no live app grant of the owner, then the server MUST answer `404 grant_not_found`.
 
-**Tests:** `compliance/auth-grants.test.ts › requires the local command and reports an unknown grant`.
+**Tests:** `compliance/auth-grants.test.ts › refuses a narrowing to a credential without grants.manage, and reports an unknown grant`.
 
 ### `keys-and-oauth/grants-permission`
 
-If a caller without `grants.manage` lists or revokes grants, then the server MUST answer `403 forbidden` with `details.required_scope` naming `grants.manage`.
+If a caller without `grants.manage` lists, narrows or revokes grants, then the server MUST answer `403 forbidden` with `details.required_scope` naming `grants.manage`.
 
 **Reason:** A key is an app's own credential and a grant is another app's, so a credential trusted to rotate a key is not one that may revoke every other app.
 
-**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`, `› refuses a caller without grants.manage 403 whatever query it sends, at both doors`.
+**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`, `› refuses a caller without grants.manage 403 whatever query it sends, at both doors`, `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`, `compliance/auth-grants.test.ts › refuses a narrowing to a credential without grants.manage, and reports an unknown grant`.
 
 ### `keys-and-oauth/grants-no-credential`
 
@@ -2527,11 +2529,11 @@ If a client asks `POST /oauth/device-authorization` for a scope the instance doe
 
 ### `keys-and-oauth/device-permission-scope-closed`
 
-If a client asks `POST /oauth/device-authorization` for a scope under one of the ten permission roots that is not one of the twelve permission names, `<root>.*:read` and `<root>.*:write` included, then the server MUST answer `400 invalid_scope`.
+If a client asks `POST /oauth/device-authorization` for a scope under one of the permission roots that is not a permission name, `<root>.*:read` and `<root>.*:write` included, then the server MUST answer `400 invalid_scope`.
 
 **Reason:** The roots are reserved for the permissions, so a scope under one that no permission names asks for a power that does not exist, and cannot name a type.
 
-**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for a scope under a permission root that is not one of the twelve permissions, and issued for each of the twelve`.
+**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for a scope under a permission root that is not a permission, and issued for each permission`.
 
 ### `keys-and-oauth/device-offline-no-refresh`
 
@@ -3171,13 +3173,13 @@ When the consent screen or the device approval page offers a grant of one type, 
 
 ## The owner's sign-ins
 
-A sign-in is one way the owner's Marfa can be reached: a browser session of the owner, an app the owner approved, or a live key. The owner lists every sign-in at `GET /owner/sign-ins`, renames an app or a key at `PATCH /owner/sign-ins/{id}`, and ends any one at `DELETE /owner/sign-ins/{id}`, through the private local command.
+A sign-in is one way the owner's Marfa can be reached: a browser session of the owner, an app the owner approved, or a live key. The owner lists every sign-in at `GET /owner/sign-ins`, renames an app or a key at `PATCH /owner/sign-ins/{id}`, and ends any one at `DELETE /owner/sign-ins/{id}`, with a credential that holds `sign_ins.manage` or through the private local command.
 
 ### `keys-and-oauth/sign-ins-list`
 
-When the private local command asks `GET /owner/sign-ins`, the server MUST answer `200` with every live browser session of the owner with `kind` `browser`, every live app grant of the owner with `kind` `app`, and every live key with `kind` `key`.
+When a caller holding `sign_ins.manage` asks `GET /owner/sign-ins`, the server MUST answer `200` with every live browser session of the owner with `kind` `browser`, every live app grant of the owner with `kind` `app`, and every live key with `kind` `key`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`, `› lists, renames and ends a sign-in through the local command`.
+**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`, `› lists, renames and ends a sign-in through the local command`, `compliance/owner-tasks.test.ts › lets a key holding sign_ins.manage list and rename another key's sign-in`.
 
 ### `keys-and-oauth/sign-ins-fields`
 
@@ -3263,17 +3265,17 @@ The server MUST NOT list a key that is revoked or past its `expires_at` at `GET 
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists no revoked key`, `› lists no key past its expires_at`.
 
-### `keys-and-oauth/sign-ins-browser-only`
+### `keys-and-oauth/sign-ins-permission`
 
-If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`.
+If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a credential that does not hold `sign_ins.manage`, then the server MUST answer `403 forbidden` with `details.required_scope` `sign_ins.manage`.
 
-**Reason:** These doors reach every sign-in, the owner's browsers included, and a key or an app that could end them could leave itself the only way in. A key or an app acts on other keys and apps only at `/keys` and `/grants`, within the permissions it holds. The private local command holds the right to every sign-in.
+**Reason:** These operations reach every sign-in, the owner's browsers included, so only a credential the owner approved for them may use them. An owner whose browsers it ended signs in again with the password or a passkey.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403, and no credential 401`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token without sign_ins.manage 403, and no credential 401`, `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`, `› refuses an owner task to a key narrowed between requests, naming the permission it lost`.
 
 ### `keys-and-oauth/sign-in-end`
 
-When the private local command asks `DELETE /owner/sign-ins/{id}` naming a live sign-in of the owner, the server MUST answer `200` with `ok` `true`.
+When a caller holding `sign_ins.manage` asks `DELETE /owner/sign-ins/{id}` naming a live sign-in of the owner, the server MUST answer `200` with `ok` `true`.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› lists, renames and ends a sign-in through the local command`.
 
@@ -3323,6 +3325,14 @@ When `DELETE /owner/sign-ins/{id}` has ended a key, the server MUST answer `401`
 
 **Tests:** `compliance/owner-sign-ins.test.ts › ends a key at once, and leaves every other sign-in`, `› lists, renames and ends a sign-in through the local command`.
 
+### `keys-and-oauth/sign-in-end-own`
+
+When a key holding `sign_ins.manage` ends its own sign-in at `DELETE /owner/sign-ins/{id}`, the server MUST answer `401` to the next request that carries that key.
+
+**Reason:** A credential may end itself as it may end any other sign-in, and is refused from the moment the end commits.
+
+**Tests:** `compliance/owner-tasks.test.ts › lets a key holding only sign_ins.manage end its own sign-in, and refuses its next request`.
+
 ### `keys-and-oauth/sign-in-end-others`
 
 When `DELETE /owner/sign-ins/{id}` ends a sign-in, the server MUST keep every other sign-in of the owner signed in.
@@ -3353,9 +3363,9 @@ When the server restarts, the server MUST keep refusing every app and key that `
 
 ### `keys-and-oauth/sign-in-rename`
 
-When the private local command asks `PATCH /owner/sign-ins/{id}` naming a live app or key of the owner, the server MUST answer `200` with the sign-in, whose `name` is the `name` the request gave with the spaces at each end removed.
+When a caller holding `sign_ins.manage` asks `PATCH /owner/sign-ins/{id}` naming a live app or key of the owner, the server MUST answer `200` with the sign-in, whose `name` is the `name` the request gave with the spaces at each end removed.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › gives an app the owner's own name, which the listing shows`, `› lists, renames and ends a sign-in through the local command`.
+**Tests:** `compliance/owner-sign-ins.test.ts › gives an app the owner's own name, which the listing shows`, `› lists, renames and ends a sign-in through the local command`, `compliance/owner-tasks.test.ts › lets a key holding sign_ins.manage list and rename another key's sign-in`.
 
 ### `keys-and-oauth/sign-in-rename-listed`
 

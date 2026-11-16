@@ -303,7 +303,7 @@ describe("a backup in the object store", () => {
     }
   });
 
-  it("lists the backups newest first to the owner, and refuses a key at each door", async () => {
+  it("lists the backups newest first to the owner, and refuses a key without backups.manage at each door", async () => {
     const owner = ownerOf(origin);
     const second = await owner.runBackup();
     expect(second.status, JSON.stringify(second.error)).toBe(200);
@@ -317,17 +317,22 @@ describe("a backup in the object store", () => {
     ]);
     expect(listed.data.data[0]).toEqual(second.data.backup);
 
-    const { operator } = clientsFor(origin);
+    const { operator, working } = clientsFor(origin);
     for (const answer of [
-      await operator.listBackups(),
-      await operator.runBackup(),
-      await operator.restoreBackup(originId, firstName),
-      await operator.adoptBackupFolder(),
+      await working.listBackups(),
+      await working.runBackup(),
+      await working.adoptBackupFolder(),
     ]) {
       expect(answer.status, JSON.stringify(answer.data)).toBe(403);
       expect(answer.error?.error.code).toBe("forbidden");
-      expect(answer.error?.error.details).toEqual({ needs: "local" });
+      expect(answer.error?.error.details).toEqual({
+        required_scope: "backups.manage",
+      });
     }
+    // A restore over the data waits for the owner, whatever a key holds.
+    const restore = await operator.restoreBackup(originId, firstName);
+    expect(restore.status, JSON.stringify(restore.data)).toBe(403);
+    expect(restore.error?.error.details).toEqual({ needs: "local" });
     expect((await bucket.backupKeys()).length).toBe(2);
   });
 

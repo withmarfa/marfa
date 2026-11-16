@@ -129,7 +129,7 @@ describe("a device code", () => {
     expect(body.device_code).toBeUndefined();
   });
 
-  it("is refused 400 invalid_scope for a scope under a permission root that is not one of the twelve permissions, and issued for each of the twelve", async () => {
+  it("is refused 400 invalid_scope for a scope under a permission root that is not a permission, and issued for each permission", async () => {
     const registered = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -150,7 +150,7 @@ describe("a device code", () => {
         body: new URLSearchParams({ client_id, scope }),
       });
 
-    // The witness: each of the twelve is issued a code.
+    // The witness: each permission is issued a code.
     for (const permission of [
       "audit.read",
       "blobs.manage",

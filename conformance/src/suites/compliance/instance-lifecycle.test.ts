@@ -344,7 +344,7 @@ it(
   "recovers the existing owner in control-only mode while the public port is taken",
   async () => {
     const server = await bootFreshServer("lifecycle-control-recovery");
-    const owner = await controlRequest(server.controlSocket, "/owner");
+    const owner = await controlRequest(server.controlSocket, "/profile");
     expect(owner.status).toBe(200);
     await stopServer({ state: server.stateDir });
     const held = await holdPort();
@@ -363,7 +363,7 @@ it(
       );
       expect(recovered.status).toBe(200);
       expect(
-        (await controlRequest(local.controlSocket, "/owner")).body,
+        (await controlRequest(local.controlSocket, "/profile")).body,
       ).toEqual(owner.body);
       const audits = await controlRequest(
         local.controlSocket,

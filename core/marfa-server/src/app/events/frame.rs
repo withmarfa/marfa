@@ -22,6 +22,7 @@ pub enum Kind {
     Item,
     Edge,
     Rows,
+    Attention,
 }
 
 /// The columns of a logged event, which decide whether its payload is read.
@@ -57,6 +58,10 @@ pub struct Judge<'a> {
 impl Judge<'_> {
     /// Decides from the columns alone, so a payload a stream does not send is not read.
     pub fn wants(&self, entry: &Head<'_>) -> Option<Kind> {
+        if entry.event_type == crate::app::attention::RAISED {
+            let unfiltered = !self.filter.copy && self.filter.types.is_empty();
+            return (unfiltered && self.caller.reads_attention()).then_some(Kind::Attention);
+        }
         let kind = if entry.event_type.starts_with("edge.") {
             if !self.filter.edges {
                 return None;
@@ -105,6 +110,12 @@ impl Judge<'_> {
         let Ok(Value::Object(mut body)) = serde_json::from_str(payload) else {
             return Ok(Judged::Unreadable);
         };
+        if kind == Kind::Attention {
+            let mut data = Map::new();
+            data.insert("event_type".into(), entry.event_type.into());
+            data.extend(body);
+            return Ok(Judged::Shown(data));
+        }
         if kind == Kind::Rows {
             return Ok(match crate::app::tables::judged_event(self.caller, body) {
                 Some(body) => {
@@ -119,7 +130,7 @@ impl Judge<'_> {
         let shown = match kind {
             Kind::Item => self.item(entry, &mut body)?,
             Kind::Edge => self.edge(entry, &body),
-            Kind::Rows => None,
+            Kind::Rows | Kind::Attention => None,
         };
         Ok(match shown {
             Some(true) => {

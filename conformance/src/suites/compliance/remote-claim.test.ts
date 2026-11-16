@@ -156,9 +156,12 @@ async function itemsStatus(server: FreshServer, token: string) {
 }
 
 async function ownerId(server: FreshServer): Promise<unknown> {
-  const owner = await controlRequest(server.controlSocket, "/owner");
-  expect(owner.status).toBe(200);
-  return owner.body.id;
+  const status = await controlRequest(
+    server.controlSocket,
+    "/_control/setup/status",
+  );
+  expect(status.status).toBe(200);
+  return status.body.owner_id;
 }
 
 /** A claimed server that prints a recovery code at each start after its first. */

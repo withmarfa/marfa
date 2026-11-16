@@ -143,7 +143,7 @@ async function get(id: string): Promise<Status> {
 }
 
 describe("folder sync reports", () => {
-  it("lists active folder summaries for the local command with bounded pages, and refuses every other caller", async () => {
+  it("lists active folder summaries with bounded pages, to the local command and a key that reads system.folder, and refuses a key that does not", async () => {
     const firstId = await folder();
     const secondId = await folder();
     const ids = new Set<string>();
@@ -169,10 +169,18 @@ describe("folder sync reports", () => {
     } while (cursor);
     expect(ids.has(firstId)).toBe(true);
     expect(ids.has(secondId)).toBe(true);
-    const fromKey = await call("GET", "/folders");
-    expect(fromKey.status).toBe(403);
-    expect(await fromKey.json()).toMatchObject({
-      error: { code: "forbidden", details: { needs: "local" } },
+    const reader = await key();
+    const fromKey = await call("GET", "/folders?limit=200", undefined, reader.key);
+    expect(fromKey.status).toBe(200);
+    const read = ((await fromKey.json()) as { data: { id: string }[] }).data;
+    expect(read.map((row) => row.id)).toEqual(
+      expect.arrayContaining([firstId, secondId]),
+    );
+    const notes = await key({ "core.note": "read" });
+    const refusedKey = await call("GET", "/folders", undefined, notes.key);
+    expect(refusedKey.status).toBe(403);
+    expect(await refusedKey.json()).toMatchObject({
+      error: { code: "type_not_permitted" },
     });
     const noCredential = await fetch(`${server.apiUrl}/folders`);
     expect(noCredential.status).toBe(401);
@@ -198,7 +206,7 @@ describe("folder sync reports", () => {
     expect(active).toContain(firstId);
     expect(active).not.toContain(secondId);
   });
-  it("lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token", async () => {
+  it("lists folders newest first under a trimmed, collapsed or placeholder title, to an app that reads system.folder too", async () => {
     const wait = () => clock.advance(1_000);
     const made: { id: string; title: string }[] = [];
     for (const [sent, shown] of [
@@ -253,24 +261,18 @@ describe("folder sync reports", () => {
       newestFirst.map((m) => m.id),
     );
 
-    // The witness: the app holds the permission the folder's own reads need,
-    // and the token works there, so the refusal is the inventory's.
     const app = await registerApp(server, "system.folder:read");
     const delegated = (
       await connect(server, origin, cookie, app, "system.folder:read")
     ).access_token!;
-    const witness = await call(
-      "GET",
-      `/folders/${made[0]!.id}/status`,
-      undefined,
-      delegated,
-    );
-    expect(witness.status).toBe(200);
-    const refused = await call("GET", "/folders", undefined, delegated);
-    expect(refused.status).toBe(403);
+    const listed = await call("GET", "/folders?limit=200", undefined, delegated);
+    expect(listed.status).toBe(200);
+    const shown = ((await listed.json()) as { data: { id: string }[] }).data;
     expect(
-      ((await refused.json()) as { error: { code: string } }).error.code,
-    ).toBe("forbidden");
+      shown
+        .map((row) => row.id)
+        .filter((id) => made.some((m) => m.id === id)),
+    ).toEqual(newestFirst.map((m) => m.id));
   });
   it("allows a local command to read but refuses a report without a sign-in", async () => {
     const id = await folder();

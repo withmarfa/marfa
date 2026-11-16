@@ -2718,13 +2718,13 @@ If a `GET /search` query contains a NUL character, then the server MUST answer `
 
 ### `items/owner-trash-summary`
 
-When the private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
+When a caller holding `items.purge` calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
 
 **Tests:** `compliance/owner-trash.test.ts › lists a trashed item as a summary with its fields and retention_days beside the page`.
 
 ### `items/owner-trash-selection`
 
-When the private local command calls `GET /trash`, the server MUST list only items in the bin.
+When a caller holding `items.purge` calls `GET /trash`, the server MUST list only items in the bin.
 
 **Tests:** `compliance/owner-trash.test.ts › lists only the items in the bin`.
 
@@ -2848,11 +2848,17 @@ If an owner trash action names a system item, or an item the instance's source f
 
 **Tests:** `compliance/owner-trash.test.ts › answers an owner trash action on a system item, or one the source filter hides, with 404 item_not_found and leaves it`.
 
-### `items/owner-trash-local-only`
+### `items/owner-trash-permission`
 
-If a request that carries a key calls `GET /trash`, `POST /trash/empty` or an owner trash action, then the server MUST answer `403 forbidden` with `details.needs` set to `local` (`errors/needs-local`).
+If a credential without `items.purge` calls `GET /trash` or `POST /trash/empty`, then the server MUST answer `403 forbidden` with `details.required_scope` `items.purge`.
 
-**Tests:** `compliance/owner-trash.test.ts › refuses a key every owner trash door, naming the local command it needs`.
+**Tests:** `compliance/owner-trash.test.ts › refuses a key without items.purge every owner trash door, naming the permission`, `compliance/owner-tasks.test.ts › refuses each owner task to a key that lacks its permission, naming the permission`.
+
+### `items/owner-trash-reach`
+
+When a credential holding `items.purge` calls `GET /trash` or `POST /trash/empty`, the server MUST list or purge only items of the types the credential reads.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists and empties only the bin's items of the types a credential holding items.purge reads`.
 
 ### `items/owner-trash-content-boundary`
 
@@ -2886,13 +2892,13 @@ When an archive restores an item in the bin whose line records no `trashed_at` a
 
 ### `items/owner-empty-trash`
 
-When the private local command posts to `/trash/empty`, the server MUST attempt at most 200 items of the bin, the first 200 that `GET /trash` lists.
+When a caller holding `items.purge` posts to `/trash/empty`, the server MUST attempt at most 200 items of the bin, the first 200 that `GET /trash` lists.
 
 **Tests:** `compliance/owner-trash.test.ts › attempts at most 200 items of the bin in a batch, those a listing of the bin gives first`.
 
 ### `items/owner-empty-trash-cursor`
 
-When the private local command posts to `/trash/empty`, the server MUST return `next_cursor` as the cursor that continues the bin after the last item of the batch, or null at the end of the bin.
+When a caller holding `items.purge` posts to `/trash/empty`, the server MUST return `next_cursor` as the cursor that continues the bin after the last item of the batch, or null at the end of the bin.
 
 **Tests:** `compliance/owner-trash.test.ts › returns the cursor that continues a batch at the item after it, and null at the end of the bin`.
 
@@ -2910,7 +2916,7 @@ If an item the batch selected has changed version by the time the batch reaches 
 
 ### `items/owner-empty-trash-count`
 
-When the private local command posts to `/trash/empty`, the server MUST count in `purged` every item the batch removed, each part that went with its host (`edges/parts-purge`) as well as each item it selected.
+When a caller holding `items.purge` posts to `/trash/empty`, the server MUST count in `purged` every item the batch removed, each part that went with its host (`edges/parts-purge`) as well as each item it selected.
 
 **Tests:** `compliance/owner-trash.test.ts › counts every item emptying the bin removes, parts included, and reports no failure for a part that went with its host`.
 

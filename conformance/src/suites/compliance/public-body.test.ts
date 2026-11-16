@@ -354,7 +354,7 @@ describe("a credential revoked while an upload streams in", () => {
     const headers = bearer(key);
     const file = png(10, 10, 0x40);
     const stored = () =>
-      localFetch(server.controlSocket, `${server.apiUrl}/owner/avatar`);
+      localFetch(server.controlSocket, `${server.apiUrl}/profile/avatar`);
 
     const held = heldRequest(
       server.apiUrl,

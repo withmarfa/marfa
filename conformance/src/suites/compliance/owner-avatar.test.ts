@@ -33,7 +33,7 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-const address = () => `${server.apiUrl}/owner/avatar`;
+const address = () => `${server.apiUrl}/profile/avatar`;
 const sha256 = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 
@@ -75,7 +75,7 @@ function getWithKey(key: string) {
 }
 
 function patchOwner(body: unknown) {
-  return localFetch(server.controlSocket, `${server.apiUrl}/owner`, {
+  return localFetch(server.controlSocket, `${server.apiUrl}/profile`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -94,7 +94,7 @@ function patchProfile(body: unknown, key = server.workingKey) {
 }
 
 async function ownerNow() {
-  return (await controlRequest(server.controlSocket, "/owner")).body;
+  return (await controlRequest(server.controlSocket, "/profile")).body;
 }
 
 /** The bytes the server serves to the owner, or its refusal. */
@@ -208,7 +208,7 @@ function sendChunked(
 }
 
 describe("the owner's avatar", () => {
-  it("stores an avatar sent to the owner door and returns the owner", async () => {
+  it("stores an avatar sent by the private local command and returns the profile", async () => {
     const before = await ownerNow();
     expect(before.avatar).toBeNull();
     const file = png(16, 16);
@@ -219,14 +219,14 @@ describe("the owner's avatar", () => {
       ...before,
       avatar: address(),
     });
-    await expectMatchesSchema("PUT", "/owner/avatar", 200, updated);
+    await expectMatchesSchema("PUT", "/profile/avatar", 200, updated);
     expect((await ownerNow()).avatar).toBe(address());
     expect(await served()).toMatchObject({ status: 200, bytes: file });
   });
 
   it("stores an avatar sent through the private local command", async () => {
     const file = png(12, 12, 0x20);
-    const res = await controlRequest(server.controlSocket, "/owner/avatar", {
+    const res = await controlRequest(server.controlSocket, "/profile/avatar", {
       method: "PUT",
       body: file,
     });
@@ -306,7 +306,7 @@ describe("the owner's avatar", () => {
           status: 400,
           code: "validation_error",
         });
-        await expectMatchesSchema("PUT", "/owner/avatar", 400, refused.body);
+        await expectMatchesSchema("PUT", "/profile/avatar", 400, refused.body);
       }
     }
     // The previous avatar stands, and the same door took a real one.
@@ -410,7 +410,7 @@ describe("the owner's avatar", () => {
         status: 413,
         code: "request_too_large",
       });
-      await expectMatchesSchema("PUT", "/owner/avatar", 413, refused.body);
+      await expectMatchesSchema("PUT", "/profile/avatar", 413, refused.body);
     }
     // The refused ones left the stored avatar as it was.
     expect((await served()).bytes.length).toBe(MAX_BYTES);
@@ -483,23 +483,21 @@ describe("the owner's avatar", () => {
     expect((await getAsOwner()).status).toBe(404);
   });
 
-  it("removes the avatar through either PATCH door and leaves the other fields as they were", async () => {
-    for (const door of ["owner", "profile"] as const) {
-      expect((await putOwner(png(8, 8))).status, door).toBe(200);
+  it("removes the avatar through PATCH /profile, from the local command or a key, and leaves the other fields as they were", async () => {
+    for (const from of ["local", "key"] as const) {
+      expect((await putOwner(png(8, 8))).status, from).toBe(200);
       const before = await ownerNow();
-      expect(before.avatar, door).toBe(address());
+      expect(before.avatar, from).toBe(address());
       const res =
-        door === "owner"
+        from === "local"
           ? await patchOwner({ avatar: null })
           : await patchProfile({ avatar: null });
-      expect(res.status, door).toBe(200);
-      if (door === "owner") {
-        const body = (await res.json()) as Record<string, unknown>;
-        expect(body.avatar).toBeNull();
-        await expectMatchesSchema("PATCH", "/owner", 200, body);
-      }
-      expect(await ownerNow(), door).toEqual({ ...before, avatar: null });
-      expect((await getAsOwner()).status, door).toBe(404);
+      expect(res.status, from).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.avatar, from).toBeNull();
+      await expectMatchesSchema("PATCH", "/profile", 200, body);
+      expect(await ownerNow(), from).toEqual({ ...before, avatar: null });
+      expect((await getAsOwner()).status, from).toBe(404);
     }
   });
 
@@ -631,7 +629,7 @@ describe("the owner's avatar", () => {
     await clear();
     const none = await refusal(await getAsOwner());
     expect(none).toMatchObject({ status: 404, code: "not_found" });
-    await expectMatchesSchema("GET", "/owner/avatar", 404, none.body);
+    await expectMatchesSchema("GET", "/profile/avatar", 404, none.body);
     expect((await getWithKey(server.workingKey)).status).toBe(404);
     // The witness: with an avatar the same door answers.
     expect((await putOwner(png(8, 8))).status).toBe(200);
@@ -659,12 +657,11 @@ describe("the owner's avatar", () => {
     ).toMatchObject({ status: 403, code: "forbidden" });
     expect((await putProfile(next, null)).status).toBe(401);
 
-    // The owner door: no credential, the owner's browser session, which
-    // counts here as none, and a key.
+    // No credential, and the owner's browser session, which counts here as
+    // none.
     for (const [headers, status] of [
       [{ origin: server.apiUrl }, 401],
       [{ origin: server.apiUrl, cookie: server.ownerCookie }, 401],
-      [{ authorization: `Bearer ${server.workingKey}` }, 403],
     ] as const) {
       const refused = await fetch(address(), {
         method: "PUT",

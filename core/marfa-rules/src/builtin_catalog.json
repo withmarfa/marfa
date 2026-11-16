@@ -2849,6 +2849,7 @@
  "reserved_type_roots": [
   "app",
   "audit",
+  "backups",
   "blobs",
   "config",
   "connectors",
@@ -2863,6 +2864,7 @@
   "metadata",
   "profile",
   "schema",
+  "sign_ins",
   "space",
   "system",
   "user",

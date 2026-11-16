@@ -368,6 +368,13 @@ CREATE TABLE IF NOT EXISTS event_log (
     fanout INTEGER NOT NULL CHECK (fanout IN (0, 1))
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS attention_announced (
+    kind TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    announced_at TEXT NOT NULL,
+    PRIMARY KEY (kind, reference)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,

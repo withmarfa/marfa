@@ -430,8 +430,11 @@ describe("a registration that was refused", () => {
     const own = await createSecondClient(ctx, "refused");
     const keyId = (await own.getCurrentKey()).data.id;
     const ownerId = (
-      await getOwnerClient().rawRequest<{ id: string }>("/owner")
-    ).data.id;
+      await getOwnerClient().rawRequest<{ owner_id: string }>(
+        "/_control/setup/status",
+      )
+    ).data.owner_id;
+    expect(ownerId).toEqual(expect.any(String));
     const since = at();
     const before = (await operator().listConnectors()).data.data.map(
       (row) => row.id,
