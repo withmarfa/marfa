@@ -169,7 +169,10 @@ describe("a backup cut short", () => {
     expect(done.status, JSON.stringify(done.error)).toBe(200);
     const { instance_id, name } = done.data.backup;
     expect(await bucket.backupKeys()).toEqual(
-      [...before, `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${instance_id}/${name}`].sort(),
+      [
+        ...before,
+        `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${instance_id}/${name}`,
+      ].sort(),
     );
   });
 

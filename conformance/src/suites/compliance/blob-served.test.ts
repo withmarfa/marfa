@@ -23,7 +23,9 @@ afterAll(async () => {
 });
 
 /** One of the values the run booted the server with. */
-function bootEnv(name: "MARFA_API_URL" | "MARFA_OBJECT_STORE_ENDPOINT"): string {
+function bootEnv(
+  name: "MARFA_API_URL" | "MARFA_OBJECT_STORE_ENDPOINT",
+): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(

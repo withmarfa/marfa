@@ -86,7 +86,9 @@ async function objectStoreOf(operator: MarfaClient): Promise<{
   const s3 = (await operator.listBlobStores()).data.data.find(
     (store) => store.kind === "s3",
   )!;
-  const prefix = s3.locator.slice(`s3://${process.env.MARFA_OBJECT_STORE_BUCKET!}/`.length);
+  const prefix = s3.locator.slice(
+    `s3://${process.env.MARFA_OBJECT_STORE_BUCKET!}/`.length,
+  );
   const objects = new S3Client({
     region: process.env.MARFA_OBJECT_STORE_REGION!,
     endpoint: process.env.MARFA_OBJECT_STORE_ENDPOINT!,

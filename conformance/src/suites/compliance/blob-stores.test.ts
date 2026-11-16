@@ -59,7 +59,9 @@ describe("the stores an instance keeps bytes in", () => {
     // credential in it. The run's own `MARFA_OBJECT_STORE_*` values name them.
     const s3 = stores.data.data.find((store) => store.kind === "s3");
     const prefix = process.env.MARFA_OBJECT_STORE_PREFIX ?? "marfa";
-    expect(s3?.locator).toBe(`s3://${objectStoreEnv("MARFA_OBJECT_STORE_BUCKET")}/${prefix}`);
+    expect(s3?.locator).toBe(
+      `s3://${objectStoreEnv("MARFA_OBJECT_STORE_BUCKET")}/${prefix}`,
+    );
   });
 
   it("lists each store with the time it was first attached", async () => {

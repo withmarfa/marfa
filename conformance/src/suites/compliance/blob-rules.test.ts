@@ -28,7 +28,8 @@ let operator: MarfaClient;
  *  booted without `pnpm marfa:up` or `pnpm garage:up`, which is a failure
  *  here rather than a skip. */
 function bootEnv(
-  name: "MARFA_API_URL" | "MARFA_CONTROL_SOCKET" | "MARFA_OBJECT_STORE_ENDPOINT",
+  name:
+    "MARFA_API_URL" | "MARFA_CONTROL_SOCKET" | "MARFA_OBJECT_STORE_ENDPOINT",
 ) {
   const value = process.env[name];
   if (!value) {

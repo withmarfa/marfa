@@ -123,8 +123,12 @@ describe("an object store's layout under its prefix", () => {
     const keys = await bucket.keys();
     const files = keys.filter((key) => key.includes(hex));
     expect(files.length).toBe(1);
-    expect(files[0]!.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${hex}/`)).toBe(true);
-    expect(keys).toContain(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`);
+    expect(
+      files[0]!.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${hex}/`),
+    ).toBe(true);
+    expect(keys).toContain(
+      `${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`,
+    );
     expect(keys).toContain(
       `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${id}/${run.data.backup.name}`,
     );
@@ -133,7 +137,9 @@ describe("an object store's layout under its prefix", () => {
         (key) =>
           !key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/`) &&
           !key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/backups/`) &&
-          !key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${id}/`),
+          !key.startsWith(
+            `${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${id}/`,
+          ),
       ),
     ).toEqual([]);
     expect(await bucket.partKeys(id)).not.toEqual([]);

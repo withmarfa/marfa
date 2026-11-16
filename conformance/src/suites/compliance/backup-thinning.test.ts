@@ -119,7 +119,9 @@ describe("thinning the backups", () => {
       for (const key of [...others, ...strays]) {
         expect(left).toContain(key);
       }
-      expect(left).toContain(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`);
+      expect(left).toContain(
+        `${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`,
+      );
     } finally {
       await server.pauseClock(false);
     }
