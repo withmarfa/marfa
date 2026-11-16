@@ -400,16 +400,25 @@ fn make_inside(path: &Path) -> io::Result<()> {
     }
 }
 
-/// A file's size, modified time and inode. A disk's decay, or a write that sets the time back,
-/// keeps it.
+/// A file's size, modified time, inode and, where the file system records one, birth time. A
+/// disk's decay, or a write in place that sets the time back, keeps it. The change time is left
+/// out, since a rename changes it on some file systems.
 pub fn stamp(meta: &Metadata) -> String {
-    format!(
+    let mut stamp = format!(
         "{}-{}.{:09}-{}",
         meta.len(),
         meta.mtime(),
         meta.mtime_nsec(),
         meta.ino()
-    )
+    );
+    if let Some(born) = meta
+        .created()
+        .ok()
+        .and_then(|at| at.duration_since(SystemTime::UNIX_EPOCH).ok())
+    {
+        stamp.push_str(&format!("-{}.{:09}", born.as_secs(), born.subsec_nanos()));
+    }
+    stamp
 }
 
 /// Files directly in `folder` whose names a listing may read, by name, size and stamp.
@@ -454,16 +463,16 @@ impl Partial {
     }
 
     /// Syncs the bytes, gives them the backup's name and syncs the folder that names them.
-    /// Answers the file's stamp, which the rename keeps.
+    /// Answers the file's stamp under its name.
     fn place(&mut self) -> io::Result<String> {
         let Some(file) = self.file.take() else {
             return Err(io::Error::other("a partial backup was closed"));
         };
         file.sync_all()?;
-        let stamped = stamp(&file.metadata()?);
-        drop(file);
         fs::rename(&self.path, &self.target)?;
         self.placed = true;
+        let stamped = stamp(&file.metadata()?);
+        drop(file);
         File::open(&self.folder)?.sync_all()?;
         Ok(stamped)
     }
@@ -637,6 +646,34 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, ["a.json"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_given_another_birth_time_with_its_size_time_and_inode_kept_is_stamped_anew() {
+        use std::os::darwin::fs::FileTimesExt as _;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("p.ndjson.gz");
+        fs::write(&path, b"part").unwrap();
+        let before = fs::metadata(&path).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(before.modified().unwrap())
+                    .set_created(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(86_400)),
+            )
+            .unwrap();
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(
+            (after.len(), after.modified().unwrap(), after.ino()),
+            (before.len(), before.modified().unwrap(), before.ino())
+        );
+        assert_ne!(after.created().unwrap(), before.created().unwrap());
+        assert_ne!(stamp(&after), stamp(&before));
     }
 
     #[test]
