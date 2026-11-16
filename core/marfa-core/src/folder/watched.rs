@@ -269,11 +269,16 @@ impl Tree {
         Ok(self.sync(watcher, reach))
     }
 
-    /// Watches the directories a scan enters and no others.
+    /// Watches the directories a scan enters, and the state directory, which
+    /// holds the settings file, and no others.
     fn sync(&mut self, watcher: &mut impl Directories, reach: &Reach) -> Vec<notify::Error> {
-        let wanted: BTreeSet<PathBuf> = entered_under(&self.root, &self.root, reach)
+        let mut wanted: BTreeSet<PathBuf> = entered_under(&self.root, &self.root, reach)
             .into_iter()
             .collect();
+        let state = self.state();
+        if is_directory(&state) {
+            wanted.insert(state);
+        }
         let stale: Vec<PathBuf> = self
             .held
             .iter()
@@ -285,6 +290,12 @@ impl Tree {
             let _ = watcher.unwatch(&directory);
         }
         self.add(watcher, wanted)
+    }
+
+    /// The state directory. A scan never enters it, but an edit of the
+    /// settings file in it must be heard.
+    fn state(&self) -> PathBuf {
+        self.root.join(STATE_DIR)
     }
 
     /// Watches each of `wanted` not yet watched, a parent before its
@@ -341,8 +352,8 @@ impl Tree {
     }
 
     /// Watches the directory at `path`, and the ones below it a scan enters,
-    /// where it is one inside a directory watched. A link is not followed, as
-    /// a scan does not.
+    /// where it is one inside a directory watched; the state directory alone,
+    /// when that is the one. A link is not followed, as a scan does not.
     fn arrived(
         &mut self,
         watcher: &mut impl Directories,
@@ -357,14 +368,16 @@ impl Tree {
             .ok()
             .and_then(Path::to_str)
             .is_some_and(|relative| reach.enters(relative));
-        if self.held.contains(path)
-            || !inside_watched
-            || !enters
-            || !std::fs::symlink_metadata(path).is_ok_and(|found| found.is_dir())
-        {
+        if self.held.contains(path) || !inside_watched || !is_directory(path) {
             return Vec::new();
         }
-        let wanted = entered_under(&self.root, path, reach).into_iter().collect();
+        let wanted = if path == self.state() {
+            BTreeSet::from([path.to_path_buf()])
+        } else if enters {
+            entered_under(&self.root, path, reach).into_iter().collect()
+        } else {
+            return Vec::new();
+        };
         self.add(watcher, wanted)
     }
 
@@ -381,6 +394,10 @@ impl Tree {
             let _ = watcher.unwatch(&directory);
         }
     }
+}
+
+fn is_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|found| found.is_dir())
 }
 
 /// `from` and the directories below it that a scan enters, found without
@@ -699,6 +716,7 @@ mod tests {
             "notes/deep",
             "app/node_modules/pkg/lib",
             ".git/objects",
+            ".marfa/inner",
             "app/src",
         ]);
         let root = dir.path();
@@ -708,10 +726,11 @@ mod tests {
             .open(&mut recorder, &reaching(&["node_modules/"]))
             .unwrap();
         assert!(failures.is_empty());
-        // The witness: the folders a scan walks are watched, parents first.
+        // The witness: the folders a scan walks are watched, parents first,
+        // and the state directory, which holds the settings file, alone.
         assert_eq!(
             relative(root, &recorder.asked),
-            names(&["", "app", "app/src", "notes", "notes/deep"])
+            names(&["", ".marfa", "app", "app/src", "notes", "notes/deep"])
         );
         assert_eq!(recorder.asked[0], root);
     }
@@ -766,6 +785,27 @@ mod tests {
         std::fs::write(root.join("notes/a.md"), "").unwrap();
         tree.follow(&mut recorder, &reach, &created(root.join("notes/a.md")));
         assert!(recorder.asked.is_empty());
+    }
+
+    #[test]
+    fn a_state_directory_made_after_the_watch_began_is_watched_alone() {
+        let dir = folder_of(&["notes"]);
+        let root = dir.path();
+        let reach = reaching(&[]);
+        let mut recorder = Recorder::default();
+        let mut tree = Tree::new(root.to_path_buf());
+        tree.open(&mut recorder, &reach).unwrap();
+        recorder.asked.clear();
+        std::fs::create_dir_all(root.join(".marfa/inner")).unwrap();
+        tree.follow(&mut recorder, &reach, &created(root.join(".marfa")));
+        assert_eq!(relative(root, &recorder.asked), names(&[".marfa"]));
+        // A rule that changes keeps it watched.
+        let mut reach = reach;
+        assert!(reach.replace(Some(Lists::new(&[], &lines(&["notes/"])).unwrap())));
+        recorder.asked.clear();
+        recorder.dropped.clear();
+        tree.sync(&mut recorder, &reach);
+        assert!(!recorder.dropped.contains(&root.join(".marfa")));
     }
 
     #[test]
@@ -845,6 +885,46 @@ mod tests {
             relative(dir.path(), &limited.0.asked),
             names(&["", "light"])
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_inotify_watch_hears_an_edit_of_the_settings_file() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+        let dir = folder_of(&["notes", ".marfa"]);
+        let root = dir.path().canonicalize().unwrap();
+        let settings = root.join(STATE_DIR).join(SETTINGS_FILE);
+        std::fs::write(&settings, "include: []\n").unwrap();
+        let (sender, events) = mpsc::channel();
+        let watcher = notify::recommended_watcher(move |event| {
+            let _ = sender.send(event);
+        })
+        .unwrap();
+        let (mut listening, failures) = Listening::start(watcher, &root, reaching(&[])).unwrap();
+        assert!(failures.is_empty());
+        let mut starts_a_pass = |wanted: &Path| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+                let Ok(Ok(event)) = events.recv_timeout(left) else {
+                    return false;
+                };
+                listening.follow(&event);
+                if event.paths.iter().any(|path| path == wanted)
+                    && !listening.reach.passes_over(&event, &root, |_| false)
+                {
+                    return true;
+                }
+            }
+            false
+        };
+        std::fs::write(&settings, "include: [\"*.md\"]\n").unwrap();
+        assert!(starts_a_pass(&settings));
+        // The witness: the state directory's other files are heard and then
+        // passed over.
+        let wal = root.join(STATE_DIR).join("core.sqlite-wal");
+        std::fs::write(&wal, "w").unwrap();
+        assert!(!starts_a_pass(&wal));
     }
 
     #[cfg(target_os = "linux")]

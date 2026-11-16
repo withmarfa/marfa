@@ -115,12 +115,17 @@ async function untilPassStart(device: BindingFolderHarness["device"]) {
  * Waits until a pass stands at its pull. A pass that ends first never reaches
  * it, and the wait says so at once.
  */
-async function untilPull(device: BindingFolderHarness["device"]) {
+async function untilPull(
+  device: BindingFolderHarness["device"],
+  watch: Awaited<ReturnType<typeof startFirstPass>>,
+) {
   const stood = await vi.waitFor(
     async () => {
       if ((await device.hooks.waiting("folder-pass-pull")) > 0) return "pull";
       if ((await device.hooks.waiting("folder-pass-ended")) > 0) return "ended";
-      throw new Error("no call was held at folder-pass-pull");
+      throw new Error(
+        `no call was held at folder-pass-pull; the watch told ${JSON.stringify(watch.kinds)}`,
+      );
     },
     { timeout: 10_000, interval: 5 },
   );
@@ -433,9 +438,9 @@ describe("folder clock and scan boundaries", () => {
     const { device, dir, served } = harness;
     writeFileSync(join(dir, "new.md"), "---\ntitle: New\n---\nwords\n");
     await device.hooks.hold("folder-pass-pull");
-    await startFirstPass(harness);
+    const watch = await startFirstPass(harness);
     // The pass has scanned the note and sent its create.
-    await untilPull(device);
+    await untilPull(device, watch);
     expect(served.size).toBe(1);
     renameSync(join(dir, "new.md"), join(dir, "moved.md"));
     await device.hooks.release("folder-pass-pull");
@@ -460,8 +465,8 @@ describe("folder clock and scan boundaries", () => {
     const { device, dir, served, server } = harness;
     writeFileSync(join(dir, "new.md"), "---\ntitle: New\n---\nwords\n");
     await device.hooks.hold("folder-pass-pull");
-    await startFirstPass(harness);
-    await untilPull(device);
+    const watch = await startFirstPass(harness);
+    await untilPull(device, watch);
     const id = [...served.keys()][0];
     unlinkSync(join(dir, "new.md"));
     await device.hooks.release("folder-pass-pull");
@@ -498,9 +503,9 @@ describe("folder clock and scan boundaries", () => {
       ).length;
     unlinkSync(join(dir, "note.md"));
     await device.hooks.hold("folder-pass-pull");
-    await startFirstPass(harness);
+    const watch = await startFirstPass(harness);
     // The sweep is done, inside the grace, and the pass is not.
-    await untilPull(device);
+    await untilPull(device, watch);
     expect(deletes()).toBe(0);
     await device.clock.advance(5_000);
     await device.hooks.release("folder-pass-pull");
