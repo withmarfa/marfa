@@ -558,15 +558,15 @@ async fn a_type_declares_tables_and_reads_lists_and_normalizes_them() {
         .await;
     assert_eq!(judged.status, StatusCode::OK, "{}", judged.body);
     assert_eq!(
-        judged.body["tables"]["lines"]["columns"]["amount"]["required"],
+        judged.body["type"]["tables"]["lines"]["columns"]["amount"]["required"],
         false
     );
     assert_eq!(
-        judged.body["tables"]["lines"]["columns"]["memo"]["searchable"],
+        judged.body["type"]["tables"]["lines"]["columns"]["memo"]["searchable"],
         true
     );
     assert_eq!(
-        judged.body["tables"]["lines"]["columns"]["amount"]["searchable"],
+        judged.body["type"]["tables"]["lines"]["columns"]["amount"]["searchable"],
         false
     );
 }

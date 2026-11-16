@@ -838,7 +838,7 @@ async fn a_folder_on_the_servers_volume_that_would_leave_less_than_the_reserve_s
         .unwrap();
 
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "error", "{replicated}");
+    assert_eq!(replicated["outcome"], "failed", "{replicated}");
     assert_eq!(replicated["result"]["copied"], 0, "{replicated}");
     let health = instance.health().await;
     let told = health["store_error"].as_str().unwrap();
@@ -855,7 +855,7 @@ async fn a_folder_on_the_servers_volume_that_would_leave_less_than_the_reserve_s
         .set("free:backups", Some("1073741824"))
         .unwrap();
     let replicated = instance.run("blob-replicate").await;
-    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert_eq!(replicated["outcome"], "succeeded", "{replicated}");
     assert!(copy_of(folder.path(), &instance.id(), &file).is_file());
 }
 
