@@ -1904,6 +1904,42 @@ async fn a_folder_part_that_cannot_be_read_is_damaged_and_stored_again_where_a_b
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
 }
 
+#[tokio::test]
+async fn a_due_part_no_backup_names_is_not_found_damaged_when_its_delete_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let place = Place::folder().await;
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    origin.app.clock.pause(true);
+    origin.item("core.note", json!({ "title": "first" })).await;
+    let first = origin.back_up().await;
+    let first_name = first["backup"]["name"].as_str().unwrap().to_string();
+    let (old_items, _) = entry_part(&place.manifest(&id, &first_name), "items.ndjson.gz");
+    origin.item("core.note", json!({ "title": "second" })).await;
+    origin.app.clock.advance(DAY_MS).unwrap();
+    let second = origin.back_up().await;
+    let second = place.manifest(&id, second["backup"]["name"].as_str().unwrap());
+    assert_ne!(old_items, entry_part(&second, "items.ndjson.gz").0);
+
+    place.remove("backups", &id, &first_name);
+    let old_path = place.path("backup-parts", &id, &part_name(&old_items));
+    rewrite_keeping_time(&old_path, &altered(place.part(&id, &old_items)));
+    let parts = old_path.parent().unwrap().to_path_buf();
+    fs::set_permissions(&parts, fs::Permissions::from_mode(0o555)).unwrap();
+    let locked = fs::write(parts.join("probe"), b"probe").is_err();
+    origin.app.clock.advance(8 * DAY_MS).unwrap();
+    let third = origin.back_up().await;
+    fs::set_permissions(&parts, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(locked, "a folder without write permission took a file");
+
+    assert_eq!(third["sent_bytes"], 0, "{third}");
+    assert!(old_path.exists(), "a part no backup names was deleted");
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 0, "{health}");
+    assert_eq!(origin.hashed_at(&old_items).await, None);
+}
+
 const FOUND: &str = "20200101T000000.000Z.json";
 
 async fn a_found_backup_keeps_its_parts_until_the_server_forgets_it(place: Place) {

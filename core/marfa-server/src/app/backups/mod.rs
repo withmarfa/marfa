@@ -1912,8 +1912,8 @@ async fn reusable(
 /// may still land. A found backup the folder no longer lists keeps its parts until the server
 /// forgets it. Once every manifest reads, it checks each part a backup names as `Stock::whole`
 /// does, so a part changed since it was stored or hashed shows in health. Folder parts whose hash
-/// is due are hashed by `Stock::rehash_due` whether or not this reads every manifest. Answers how
-/// many parts it deleted.
+/// is due are hashed by `Stock::rehash_due` whether or not this reads every manifest, but for a
+/// part this finds no backup names. Answers how many parts it deleted.
 async fn prune(
     app: &Arc<App>,
     destination: &Destination,
@@ -2009,6 +2009,7 @@ async fn prune(
         .cloned()
         .collect();
     for sha256 in unnamed {
+        stock.unnamed(&sha256);
         match destination
             .delete(Area::Parts, &own, &parts::name_of(&sha256))
             .await
