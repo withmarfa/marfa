@@ -763,7 +763,7 @@
               "id": {
                 "type": "string",
                 "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-                "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+                "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
               },
               "name": {
                 "type": "string",
@@ -1015,7 +1015,7 @@
               "id": {
                 "type": "string",
                 "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-                "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+                "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
               },
               "name": {
                 "type": "string",
@@ -1844,7 +1844,7 @@
                   "id": {
                     "type": "string",
                     "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-                    "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+                    "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
                   },
                   "name": {
                     "type": "string",
@@ -8174,7 +8174,7 @@
               "id": {
                 "type": "string",
                 "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-                "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+                "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
               },
               "name": {
                 "type": "string",
@@ -9195,7 +9195,7 @@
           "id": {
             "type": "string",
             "description": "Unique identifier for the sign-in.",
-            "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+            "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
           },
           "kind": {
             "type": "string",
@@ -9442,7 +9442,7 @@
           "id": {
             "type": "string",
             "description": "Unique identifier for the passkey.",
-            "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+            "example": "01a10129-3c7a-7b48-9d15-5e0f2a6c8d31"
           },
           "name": {
             "type": [
@@ -9642,7 +9642,7 @@
             {
               "id": "019980d6-7612-7000-8000-000000000001",
               "kind": "app",
-              "client_id": "reader",
+              "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
               "client_name": "Reader",
               "origins": [],
               "scopes": [
@@ -9732,7 +9732,7 @@
         "example": {
           "id": "019980d6-7612-7000-8000-000000000001",
           "kind": "app",
-          "client_id": "reader",
+          "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
           "client_name": "Reader",
           "origins": [],
           "scopes": [
@@ -10247,7 +10247,7 @@
                   "id": {
                     "type": "string",
                     "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
-                    "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+                    "example": "01a1011b-b5e5-7be6-8f3b-77492475b5a4"
                   },
                   "name": {
                     "type": "string",
@@ -37219,7 +37219,7 @@
             "description": "Returns the stream. Each frame's `event:` names it:\n- `stream_cursor`: first, where the log stands.\n- An event, such as `item.created`, with its event ID as `id:`.\n- `stream_live`: once the catch-up is over.\n- `stream_incomplete`, `catchup_too_old`, `cursor_ahead` or `reach_changed`: last, before the stream closes.",
             "content": {
               "text/event-stream": {
-                "example": ": connected\n\nevent: stream_cursor\ndata: {\"event_type\":\"stream_cursor\",\"cursor\":\"1041\"}\n\nevent: stream_live\ndata: {\"event_type\":\"stream_live\",\"cursor\":\"1041\"}\n\nid: 1042\nevent: item.created\ndata: {\"event_type\":\"item.created\",\"item\":{\"id\":\"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b\",\"type\":\"core.note\",\"properties\":{\"title\":\"Reading list\",\"body\":\"Finish the chapter on tides.\"},\"state\":\"active\",\"tier\":\"library\",\"version\":1,\"schema_version\":0,\"source\":\"notes-app\",\"occurred_at\":\"2026-10-03T09:30:00.000Z\",\"created_at\":\"2026-10-03T09:30:00.000Z\",\"updated_at\":\"2026-10-03T09:30:00.000Z\"},\"metadata\":{\"item_id\":\"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b\",\"tags\":[],\"extensions\":{}}}\n\n",
+                "example": "event: stream_cursor\ndata: {\"event_type\":\"stream_cursor\",\"cursor\":\"1041\"}\n\nevent: stream_live\ndata: {\"event_type\":\"stream_live\",\"cursor\":\"1041\"}\n\nid: 1042\nevent: item.created\ndata: {\"event_type\":\"item.created\",\"item\":{\"id\":\"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b\",\"type\":\"core.note\",\"properties\":{\"title\":\"Reading list\",\"body\":\"Finish the chapter on tides.\"},\"state\":\"active\",\"tier\":\"library\",\"version\":1,\"schema_version\":0,\"source\":\"notes-app\",\"occurred_at\":\"2026-10-03T09:30:00.000Z\",\"created_at\":\"2026-10-03T09:30:00.000Z\",\"updated_at\":\"2026-10-03T09:30:00.000Z\"},\"metadata\":{\"item_id\":\"0199a9c4-7c1e-7d3a-9f2b-3c4d5e6f7a8b\",\"tags\":[],\"extensions\":{}}}\n\n",
                 "schema": {
                   "$ref": "#/components/schemas/EventStreamFrame"
                 }
@@ -52803,7 +52803,21 @@
                   "$ref": "#/components/schemas/AppGrantPage"
                 },
                 "example": {
-                  "data": [],
+                  "data": [
+                    {
+                      "id": "019980d6-7612-7000-8000-000000000001",
+                      "kind": "app",
+                      "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
+                      "client_name": "Reader",
+                      "origins": [],
+                      "scopes": [
+                        "core.note:read"
+                      ],
+                      "status": "active",
+                      "granted_at": "2026-10-03T09:30:00.000Z",
+                      "last_used_at": null
+                    }
+                  ],
                   "next_cursor": null
                 }
               }
@@ -53942,7 +53956,7 @@
                     "user_code": {
                       "type": "string",
                       "description": "The code the person types on the approval page.",
-                      "example": "BCDF-GHJK"
+                      "example": "BCDFGHJK"
                     },
                     "verification_uri": {
                       "type": "string",
@@ -53974,7 +53988,7 @@
                 },
                 "example": {
                   "device_code": "GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS",
-                  "user_code": "BCDF-GHJK",
+                  "user_code": "BCDFGHJK",
                   "verification_uri": "https://marfa.example/auth/device",
                   "verification_uri_complete": "https://marfa.example/auth/device?user_code=BCDFGHJK",
                   "expires_in": 600,
@@ -57945,7 +57959,14 @@
                   "$ref": "#/components/schemas/OwnerPasskeyPage"
                 },
                 "example": {
-                  "data": [],
+                  "data": [
+                    {
+                      "id": "01a10129-3c7a-7b48-9d15-5e0f2a6c8d31",
+                      "name": "Laptop",
+                      "created_at": "2026-10-03T09:30:00.000Z",
+                      "last_used_at": "2026-10-05T14:12:08.000Z"
+                    }
+                  ],
                   "next_cursor": null
                 }
               }
@@ -58203,7 +58224,7 @@
                   "$ref": "#/components/schemas/OwnerPasskey"
                 },
                 "example": {
-                  "id": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M",
+                  "id": "01a10129-3c7a-7b48-9d15-5e0f2a6c8d31",
                   "name": "Laptop",
                   "created_at": "2026-10-03T09:30:00.000Z",
                   "last_used_at": "2026-10-05T14:12:08.000Z"
@@ -64578,7 +64599,7 @@
                     }
                   ],
                   "backup": {
-                    "name": "20261116T081919.427Z.tar",
+                    "name": "20261003T102400.836Z.tar",
                     "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
                   }
                 }

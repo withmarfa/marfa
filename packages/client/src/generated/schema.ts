@@ -2866,7 +2866,7 @@ export interface components {
                 kind: "browser" | "app" | "key" | "local";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
                  */
                 id: string;
                 /**
@@ -2984,7 +2984,7 @@ export interface components {
                 kind: "browser" | "app" | "key" | "local";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
                  */
                 id: string;
                 /**
@@ -3351,7 +3351,7 @@ export interface components {
                 kind: "browser" | "app" | "key" | "local";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
                  */
                 id: string;
                 /**
@@ -6009,7 +6009,7 @@ export interface components {
                 kind: "app" | "key";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
                  */
                 id: string;
                 /**
@@ -6427,7 +6427,7 @@ export interface components {
         SignIn: {
             /**
              * @description Unique identifier for the sign-in.
-             * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+             * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
              */
             id: string;
             /**
@@ -6547,7 +6547,7 @@ export interface components {
         OwnerPasskey: {
             /**
              * @description Unique identifier for the passkey.
-             * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+             * @example 01a10129-3c7a-7b48-9d15-5e0f2a6c8d31
              */
             id: string;
             /** @description The owner's name for the passkey, or `null` when unnamed. */
@@ -6638,7 +6638,7 @@ export interface components {
          *         {
          *           "id": "019980d6-7612-7000-8000-000000000001",
          *           "kind": "app",
-         *           "client_id": "reader",
+         *           "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
          *           "client_name": "Reader",
          *           "origins": [],
          *           "scopes": [
@@ -6663,7 +6663,7 @@ export interface components {
          * @example {
          *       "id": "019980d6-7612-7000-8000-000000000001",
          *       "kind": "app",
-         *       "client_id": "reader",
+         *       "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
          *       "client_name": "Reader",
          *       "origins": [],
          *       "scopes": [
@@ -6926,7 +6926,7 @@ export interface components {
                 kind: "browser" | "app" | "key" | "local";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
                  */
                 id: string;
                 /**
@@ -21938,9 +21938,7 @@ export interface operations {
                 };
                 content: {
                     /**
-                     * @example : connected
-                     *
-                     *     event: stream_cursor
+                     * @example event: stream_cursor
                      *     data: {"event_type":"stream_cursor","cursor":"1041"}
                      *
                      *     event: stream_live
@@ -30799,7 +30797,21 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "data": [],
+                     *       "data": [
+                     *         {
+                     *           "id": "019980d6-7612-7000-8000-000000000001",
+                     *           "kind": "app",
+                     *           "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
+                     *           "client_name": "Reader",
+                     *           "origins": [],
+                     *           "scopes": [
+                     *             "core.note:read"
+                     *           ],
+                     *           "status": "active",
+                     *           "granted_at": "2026-10-03T09:30:00.000Z",
+                     *           "last_used_at": null
+                     *         }
+                     *       ],
                      *       "next_cursor": null
                      *     }
                      */
@@ -31414,7 +31426,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "device_code": "GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS",
-                     *       "user_code": "BCDF-GHJK",
+                     *       "user_code": "BCDFGHJK",
                      *       "verification_uri": "https://marfa.example/auth/device",
                      *       "verification_uri_complete": "https://marfa.example/auth/device?user_code=BCDFGHJK",
                      *       "expires_in": 600,
@@ -31426,7 +31438,7 @@ export interface operations {
                         device_code: string;
                         /**
                          * @description The code the person types on the approval page.
-                         * @example BCDF-GHJK
+                         * @example BCDFGHJK
                          */
                         user_code: string;
                         /**
@@ -33754,7 +33766,14 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "data": [],
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10129-3c7a-7b48-9d15-5e0f2a6c8d31",
+                     *           "name": "Laptop",
+                     *           "created_at": "2026-10-03T09:30:00.000Z",
+                     *           "last_used_at": "2026-10-05T14:12:08.000Z"
+                     *         }
+                     *       ],
                      *       "next_cursor": null
                      *     }
                      */
@@ -34060,7 +34079,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "id": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M",
+                     *       "id": "01a10129-3c7a-7b48-9d15-5e0f2a6c8d31",
                      *       "name": "Laptop",
                      *       "created_at": "2026-10-03T09:30:00.000Z",
                      *       "last_used_at": "2026-10-05T14:12:08.000Z"
@@ -37383,7 +37402,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "backup": {
-                     *         "name": "20261116T081919.427Z.tar",
+                     *         "name": "20261003T102400.836Z.tar",
                      *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
                      *       }
                      *     }
