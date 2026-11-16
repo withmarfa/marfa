@@ -2566,7 +2566,7 @@ export interface components {
         /** @description Profile field permissions. */
         ProfilePermissions: {
             /**
-             * @description Access to every profile field.
+             * @description Access to every profile field, except that `write` changes only the name and the avatar. Changing the email address takes `email` at `write`.
              * @enum {string}
              */
             "*"?: "read" | "write";
@@ -2576,7 +2576,7 @@ export interface components {
              */
             name?: "read" | "write";
             /**
-             * @description Access to the owner's email address.
+             * @description Access to the owner's email address, which password sign-in matches. Only this entry at `write` lets a credential change it.
              * @enum {string}
              */
             email?: "read" | "write";
@@ -7899,7 +7899,22 @@ export interface components {
              * @constant
              */
             event_type: "attention.raised";
-            attention: components["schemas"]["AttentionConcern"] & unknown;
+            attention: components["schemas"]["AttentionEventEntry"] & unknown;
+        };
+        /** @description Which entry is new, with a sentence fixed for its kind. The entry's title and description, which can name a file path or an error, are read from `GET /attention`. */
+        AttentionEventEntry: {
+            /**
+             * @description The entry's `kind`, as `GET /attention` lists it.
+             * @enum {string}
+             */
+            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "clock" | "unavailable";
+            /** @description The entry's `reference`, as `GET /attention` lists it. */
+            reference: string;
+            /**
+             * @description A sentence fixed for the kind, the same for every entry of it.
+             * @example The backups need a look.
+             */
+            description: string;
         };
         /** @description The body of a webhook delivery of a new attention entry. */
         WebhookAttentionEvent: components["schemas"]["AttentionEventFrame"] & components["schemas"]["WebhookDeliveryAttempt"];
@@ -11655,7 +11670,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -22967,7 +22982,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

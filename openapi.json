@@ -287,7 +287,7 @@
               "read",
               "write"
             ],
-            "description": "Access to every profile field."
+            "description": "Access to every profile field, except that `write` changes only the name and the avatar. Changing the email address takes `email` at `write`."
           },
           "name": {
             "type": "string",
@@ -303,7 +303,7 @@
               "read",
               "write"
             ],
-            "description": "Access to the owner's email address."
+            "description": "Access to the owner's email address, which password sign-in matches. Only this entry at `write` lets a credential change it."
           },
           "avatar": {
             "type": "string",
@@ -12463,10 +12463,10 @@
           "attention": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/AttentionConcern"
+                "$ref": "#/components/schemas/AttentionEventEntry"
               },
               {
-                "description": "The entry, as `GET /attention` lists it."
+                "description": "The new entry: its kind and reference, with a sentence fixed for its kind."
               }
             ]
           }
@@ -12475,6 +12475,41 @@
           "event_type",
           "attention"
         ]
+      },
+      "AttentionEventEntry": {
+        "type": "object",
+        "description": "Which entry is new, with a sentence fixed for its kind. The entry's title and description, which can name a file path or an error, are read from `GET /attention`.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "health",
+              "job",
+              "connector",
+              "folder",
+              "key",
+              "backup",
+              "clock",
+              "unavailable"
+            ],
+            "description": "The entry's `kind`, as `GET /attention` lists it."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The entry's `reference`, as `GET /attention` lists it."
+          },
+          "description": {
+            "type": "string",
+            "description": "A sentence fixed for the kind, the same for every entry of it.",
+            "example": "The backups need a look."
+          }
+        },
+        "required": [
+          "kind",
+          "reference",
+          "description"
+        ],
+        "additionalProperties": false
       },
       "WebhookAttentionEvent": {
         "description": "The body of a webhook delivery of a new attention entry.",
@@ -19248,7 +19283,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
                 }
               }
             },
@@ -39070,7 +39105,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
                 }
               }
             },

@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -14,19 +17,25 @@ import { waitFor } from "../../utils/wait.js";
 /**
  * Each new entry in what needs the owner's attention is an event, on
  * `GET /events` and to webhooks, sent once. An entry here is a key that
- * expires within seven days, which the fixture can make at will. The list
- * is the instance's own, so the file boots a server of its own.
+ * expires within seven days, which the fixture can make at will, or the
+ * backup folder moved away, whose entry names its path. The list is the
+ * instance's own, so the file boots a server of its own.
  */
 let server: FreshServer;
 let writer: string;
+const backups = mkdtempSync(join(tmpdir(), "marfa-attention-events-"));
 
 beforeAll(async () => {
-  server = await bootFreshServer("attention-events");
+  server = await bootFreshServer("attention-events", {
+    S3_BUCKET: "",
+    MARFA_BACKUP_PATH: backups,
+  });
   writer = (await mint({ type_permissions: { "core.note": "write" } })).key;
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server.stop();
+  rmSync(backups, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 async function mint(
@@ -128,7 +137,7 @@ it("sends a new attention entry once on the stream of a credential holding insta
             Object.keys(
               (firstFrames[0]!.data as { attention: object }).attention,
             ).sort(),
-          ).toEqual(["description", "kind", "reference", "title"]);
+          ).toEqual(["description", "kind", "reference"]);
           const elsewhere = await collectUntil(
             without,
             (events) => created(events, last),
@@ -220,7 +229,10 @@ it("announces an entry from the attention-check job when nobody reads the list",
   );
 });
 
-it("delivers a new attention entry to a webhook subscribed to attention.raised", async () => {
+/** Runs `use` with a webhook subscribed to `attention.raised`, and the bodies it receives. */
+async function withAttentionHook(
+  use: (bodies: unknown[]) => Promise<void>,
+): Promise<void> {
   const bodies: unknown[] = [];
   const receiver: Server = createServer((req, res) => {
     let text = "";
@@ -253,23 +265,215 @@ it("delivers a new attention entry to a webhook subscribed to attention.raised",
       }),
     });
     expect(made.status, await made.clone().text()).toBe(201);
-    const key = await ending();
-    await check();
-    const delivered = await waitFor(
-      "the webhook delivery of the new entry",
-      async () =>
-        bodies.find(
-          (body) =>
-            (body as { attention?: { reference?: string } }).attention
-              ?.reference === key.id,
-        ),
-    );
-    expect(delivered).toMatchObject({
-      event_type: "attention.raised",
-      attention: { kind: "key", reference: key.id },
-    });
+    await use(bodies);
   } finally {
     receiver.closeAllConnections();
     await new Promise<void>((resolve) => receiver.close(() => resolve()));
   }
+}
+
+const deliveredTo = (bodies: unknown[], reference: string) =>
+  waitFor("the webhook delivery of the new entry", async () =>
+    bodies.find(
+      (body) =>
+        (body as { attention?: { reference?: string } }).attention
+          ?.reference === reference,
+    ),
+  );
+
+it("delivers a new attention entry to a webhook subscribed to attention.raised", async () => {
+  await withAttentionHook(async (bodies) => {
+    const key = await ending();
+    await check();
+    expect(await deliveredTo(bodies, key.id)).toMatchObject({
+      event_type: "attention.raised",
+      attention: { kind: "key", reference: key.id },
+    });
+  });
 });
+
+it("sends an entry's kind, reference and a fixed description, never the path the list names", async ({
+  signal,
+}) => {
+  const reader = await mint({
+    permissions: ["instance.read"],
+    type_permissions: { "core.note": "read" },
+  });
+  await withAttentionHook(async (bodies) =>
+    withStreamAtCursor(
+      server.apiUrl,
+      reader.key,
+      { signal },
+      async (stream) => {
+        const away = `${backups}-away`;
+        renameSync(backups, away);
+        try {
+          // The witness: the list names the folder's path.
+          const listed = await controlRequest(
+            server.controlSocket,
+            "/attention",
+          );
+          expect(listed.status).toBe(200);
+          const store = (
+            listed.body.data as {
+              kind: string;
+              reference: string;
+              description: string;
+            }[]
+          ).find(
+            (entry) => entry.kind === "backup" && entry.reference === "store",
+          );
+          expect(store?.description).toContain(backups);
+          const last = await sentinel();
+          const seen = await collectUntil(
+            stream,
+            (events) => created(events, last),
+            "the sentinel note",
+            signal,
+          );
+          const frames = attentionTo(seen.events, "store");
+          expect(frames).toHaveLength(1);
+          const sent = (
+            frames[0]!.data as { attention: Record<string, string> }
+          ).attention;
+          expect(Object.keys(sent).sort()).toEqual([
+            "description",
+            "kind",
+            "reference",
+          ]);
+          expect(sent.kind).toBe("backup");
+          expect(sent.description).not.toBe(store?.description);
+          expect(JSON.stringify(frames[0]!.data)).not.toContain(backups);
+          const delivered = await deliveredTo(bodies, "store");
+          expect(delivered).toMatchObject({ attention: sent });
+          expect(JSON.stringify(delivered)).not.toContain(backups);
+        } finally {
+          renameSync(away, backups);
+        }
+      },
+    ),
+  );
+});
+
+it(
+  "announces nothing from a check older than one that has since looked",
+  { retry: 0 },
+  async ({ signal }) => {
+    // retry: 0 because a failed try leaves the hold set.
+    const reader = await mint({
+      permissions: ["instance.read"],
+      type_permissions: { "core.note": "read" },
+    });
+    /** A check held at its write, and the answer it gives once let go. */
+    const heldCheck = async () => {
+      await server.setFault("hold:write=attention.check@1");
+      const answer = controlRequest(server.controlSocket, "/attention");
+      await server.waitForHold("hold:write");
+      return { answer };
+    };
+    await withStreamAtCursor(
+      server.apiUrl,
+      reader.key,
+      { signal },
+      async (stream) => {
+        // The witness: a check held at its write and let go announces its entry.
+        const kept = await ending();
+        const alone = await heldCheck();
+        await server.clearFault("hold:write");
+        expect((await alone.answer).status).toBe(200);
+
+        const gone = await ending();
+        const older = await heldCheck();
+        const revoked = await controlRequest(
+          server.controlSocket,
+          `/keys/${gone.id}`,
+          { method: "DELETE" },
+        );
+        expect(revoked.status).toBe(200);
+        // A newer check looks while the older one waits, and no longer finds the key.
+        await check();
+        await server.clearFault("hold:write");
+        expect((await older.answer).status).toBe(200);
+
+        const last = await sentinel();
+        const seen = await collectUntil(
+          stream,
+          (events) => created(events, last),
+          "the sentinel note",
+          signal,
+        );
+        expect(attentionTo(seen.events, kept.id)).toHaveLength(1);
+        expect(attentionTo(seen.events, gone.id)).toEqual([]);
+      },
+    );
+  },
+);
+
+it(
+  "announces no failed backup job while the health check cannot answer",
+  { retry: 0 },
+  async ({ signal }) => {
+    // retry: 0 because a failed try leaves the fault set and the folder moved.
+    const reader = await mint({
+      permissions: ["instance.read"],
+      type_permissions: { "core.note": "read" },
+    });
+    await withStreamAtCursor(
+      server.apiUrl,
+      reader.key,
+      { signal },
+      async (stream) => {
+        const away = `${backups}-away`;
+        renameSync(backups, away);
+        try {
+          // A change since the last backup, so the job puts one rather than finding nothing new.
+          await sentinel();
+          const ran = await controlRequest(
+            server.controlSocket,
+            "/housekeeping/backup/run",
+            { method: "POST" },
+          );
+          expect(ran.body).toMatchObject({ outcome: "failed" });
+          await server.setFault("fail:attention=health");
+          const listed = await controlRequest(
+            server.controlSocket,
+            "/attention",
+          );
+          expect(listed.status).toBe(200);
+          const entries = listed.body.data as {
+            kind: string;
+            reference: string;
+          }[];
+          // The witness: the list holds the failed job and the health check that did not answer.
+          expect(entries).toContainEqual(
+            expect.objectContaining({ kind: "job", reference: "backup" }),
+          );
+          expect(entries).toContainEqual(
+            expect.objectContaining({
+              kind: "unavailable",
+              reference: "Health",
+            }),
+          );
+          const last = await sentinel();
+          const seen = await collectUntil(
+            stream,
+            (events) => created(events, last),
+            "the sentinel note",
+            signal,
+          );
+          expect(attentionTo(seen.events, "Health")).toHaveLength(1);
+          expect(
+            attentionTo(seen.events, "backup").filter(
+              (event) =>
+                (event.data as { attention: { kind: string } }).attention
+                  .kind === "job",
+            ),
+          ).toEqual([]);
+        } finally {
+          await server.clearFault("fail:attention");
+          renameSync(away, backups);
+        }
+      },
+    );
+  },
+);

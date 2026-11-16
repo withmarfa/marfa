@@ -3,6 +3,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -65,6 +66,26 @@ impl Concern {
             "reference": self.reference,
             "title": self.title,
             "description": self.description,
+        })
+    }
+
+    /// What an event says of the entry: no title or description, which can name a path or an
+    /// error, only a sentence fixed for its kind.
+    fn to_event(&self) -> Value {
+        let description = match self.kind {
+            "health" => "A part of the server is degraded or down.",
+            "job" => "A housekeeping job failed its last run.",
+            "connector" => "A connector failed its last run, reports problems or has gone quiet.",
+            "folder" => "A folder's sync needs a look.",
+            "key" => "An API key expires within seven days.",
+            "backup" => "The backups need a look.",
+            "clock" => "The server's clock disagrees with the time it last trusted.",
+            _ => "A check of what needs attention could not answer.",
+        };
+        json!({
+            "kind": self.kind,
+            "reference": self.reference,
+            "description": description,
         })
     }
 }
@@ -445,14 +466,39 @@ fn without_covered_jobs(health: &[Concern], jobs: Vec<Concern>) -> Vec<Concern> 
         .collect()
 }
 
+/// Checks are numbered as they begin, so a check's write knows whether a newer one has looked.
+#[derive(Default)]
+pub struct Order {
+    begun: AtomicU64,
+    looked: Arc<AtomicU64>,
+}
+
 /// Every entry, and the kinds of entry a check that could not answer would have found.
 #[derive(Clone)]
 struct Gathered {
     concerns: Vec<Concern>,
     unknown: Vec<&'static str>,
+    order: u64,
 }
 
+impl Gathered {
+    /// The entries an event may name. A job whose failure the health check would tell is held
+    /// back while that check cannot answer, so one fault is never announced twice.
+    fn announceable(&self) -> impl Iterator<Item = &Concern> {
+        let health_unknown = self.unknown.contains(&"health");
+        self.concerns.iter().filter(move |concern| {
+            !(health_unknown
+                && concern.kind == "job"
+                && COVERED_JOBS.contains(&concern.reference.as_str()))
+        })
+    }
+}
+
+/// The jobs whose failure a backup entry of the health check tells.
+const COVERED_JOBS: [&str; 2] = ["backup", "blob-replicate"];
+
 async fn gather(app: &Arc<App>) -> Gathered {
+    let order = app.attention.begun.fetch_add(1, Ordering::AcqRel) + 1;
     let at = app.clock.stamp();
     let (health, jobs, connectors, folders, keys) = tokio::join!(
         checked(app, HEALTH, healthy(app)),
@@ -479,7 +525,12 @@ async fn gather(app: &Arc<App>) -> Gathered {
         .into_iter()
         .flatten()
         .collect();
-    Gathered { concerns, unknown }
+    app.attention.looked.fetch_max(order, Ordering::AcqRel);
+    Gathered {
+        concerns,
+        unknown,
+        order,
+    }
 }
 
 fn announced(tx: &Transaction<'_>) -> Result<Vec<(String, String)>> {
@@ -494,8 +545,7 @@ fn announced(tx: &Transaction<'_>) -> Result<Vec<(String, String)>> {
 fn unannounced<'a>(tx: &Transaction<'_>, gathered: &'a Gathered) -> Result<Vec<&'a Concern>> {
     let announced = announced(tx)?;
     Ok(gathered
-        .concerns
-        .iter()
+        .announceable()
         .filter(|concern| {
             !announced
                 .iter()
@@ -519,7 +569,8 @@ fn forgotten(tx: &Transaction<'_>, gathered: &Gathered) -> Result<Vec<(String, S
         .collect())
 }
 
-/// Writes only when an entry is new or gone, and decides that again inside the write.
+/// Writes only when an entry is new or gone, and decides that again inside the write, where a
+/// check that a newer one has overtaken writes nothing.
 async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     let looking = gathered.clone();
     let changed = app
@@ -531,8 +582,11 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     if !changed {
         return Ok(0);
     }
-    let writing = gathered.clone();
+    let (writing, looked) = (gathered.clone(), app.attention.looked.clone());
     app.write(&Caller::Server, "attention.check", move |unit| {
+        if looked.load(Ordering::Acquire) > writing.order {
+            return Ok(0);
+        }
         let tx = unit.tx();
         for (kind, reference) in forgotten(tx, &writing)? {
             tx.execute(
@@ -552,7 +606,7 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
                 item_id: "",
                 type_id: "",
                 source: "",
-                payload: json!({ "attention": concern.to_json() }).to_string(),
+                payload: json!({ "attention": concern.to_event() }).to_string(),
             })?;
         }
         Ok(new.len())
