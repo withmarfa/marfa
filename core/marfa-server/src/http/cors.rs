@@ -200,8 +200,7 @@ async fn preflight(pages: &Pages, path: &Path, headers: &HeaderMap) -> Option<Re
     Some(preflight_answer(&pages.app, origin, &path.methods, asked))
 }
 
-/// Answers a page's origin with `Access-Control-Allow-Origin` only while the owner has approved it
-/// or `cors_origins` names it, judged on every request from the settings and grants as they stand.
+/// Allows an origin only while `cors_origins` names it or an approved grant covers it, judged per request.
 pub async fn pages(State(pages): State<Pages>, request: Request, next: Next) -> Response {
     let uri_path = request.uri().path();
     if AUTHORIZATION_DOORS.contains(&uri_path) {
