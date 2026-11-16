@@ -661,8 +661,8 @@ describe("null and format", () => {
     const source = await note();
     const target = await note();
     const bad = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { when: "2026-02-28 10:00" },
     });
@@ -670,8 +670,8 @@ describe("null and format", () => {
     expect(bad.error?.error.code).toBe("invalid_properties");
     expect(named(bad.error?.error)).toEqual(["when"]);
     const ok = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { when: "2026-02-28T10:00:00Z" },
     });
