@@ -1609,7 +1609,7 @@ mod tests {
             vec![scripted::certified(scripted::json(
                 200,
                 &serde_json::json!({
-                    "items": [item_json(&host, serde_json::json!({
+                    "data": [item_json(&host, serde_json::json!({
                         "references": { "data": [edge_json(&edges[0])], "next_cursor": "c1" }
                     }))],
                     "metadata": [{ "item_id": host, "tags": [] }],
@@ -1662,7 +1662,7 @@ mod tests {
             vec![scripted::certified(scripted::json(
                 200,
                 &serde_json::json!({
-                    "items": [item_json(&host, serde_json::json!({
+                    "data": [item_json(&host, serde_json::json!({
                         "references": { "data": [edge_json(&edges[0])], "next_cursor": null }
                     }))],
                     "metadata": [{ "item_id": host, "tags": [] }],
@@ -1964,7 +1964,7 @@ mod tests {
             vec![scripted::certified(scripted::json(
                 200,
                 &serde_json::json!({
-                    "items": [item_json(&host, serde_json::json!({
+                    "data": [item_json(&host, serde_json::json!({
                         "references": { "data": [edge_json(&edges[0])], "next_cursor": "p0" }
                     }))],
                     "metadata": [{ "item_id": host, "tags": [] }],

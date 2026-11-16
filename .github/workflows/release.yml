@@ -191,6 +191,12 @@ jobs:
 
   # Only `ci.yml` on `main` saves the native cache, and only for x86_64 Linux,
   # so this build starts with a cold PDFium.
+  #
+  # PDFium is built against the system C++ library, so `libpdfium.a` holds the
+  # macOS SDK's version and paths, and its hash in `pdfium-libraries.txt` holds
+  # only for the Xcode named here. This is the only job that builds PDFium on a
+  # Mac. The runner's `Xcode.app` follows the image's default, which GitHub
+  # moves; to move Xcode, move the pin through the `move-pdfium` skill.
   programs-macos:
     name: Build the programs (macOS)
     needs: version
@@ -200,7 +206,23 @@ jobs:
       contents: read
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      XCODE_VERSION: "26.6"
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
+      - name: Check that the Xcode the PDFium pin holds for is installed
+        run: |
+          if [ ! -d "$DEVELOPER_DIR" ]; then
+            echo "::error::Xcode $XCODE_VERSION is missing from this runner image ($DEVELOPER_DIR), and the PDFium hash for aarch64-apple-darwin holds only for it. Move the pin through the move-pdfium skill, then change XCODE_VERSION and DEVELOPER_DIR."
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          xcodebuild -version
+          reported=$(xcodebuild -version | awk 'NR == 1 { print $2 }')
+          if [ "$reported" != "$XCODE_VERSION" ]; then
+            echo "::error::Xcode $reported is selected, not Xcode $XCODE_VERSION, and the PDFium hash for aarch64-apple-darwin holds only for $XCODE_VERSION."
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install cmake and ninja if the runner lacks them

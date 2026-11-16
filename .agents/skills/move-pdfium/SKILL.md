@@ -58,6 +58,10 @@ A build installs a PDFium library only when its hash is the one `core/marfa-enri
 
 7. Merge with a squash once `Full CI` is green and the dry run passed, and check that the issue closed. The next weekly run then finds the pin current and does nothing.
 
+## Xcode
+
+The `aarch64-apple-darwin` hash holds only for the Xcode that `release.yml` selects in `programs-macos` (`XCODE_VERSION` and `DEVELOPER_DIR`), because PDFium is built against the system C++ library and `libpdfium.a` holds the macOS SDK's version and paths. Moving Xcode means moving that line through steps 3 and 6, and changing both values in the workflow in the same pull request. A Mac with another Xcode builds a different library: build there with `MARFA_PDFIUM_UNPINNED=1`, never for a release.
+
 ## Rules
 
 - Move Tesseract, Leptonica and the Rust toolchain in pull requests of their own, not in this one.
