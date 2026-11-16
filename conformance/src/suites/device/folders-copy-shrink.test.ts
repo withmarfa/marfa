@@ -435,8 +435,8 @@ const shrinks: Array<
       edges: {
         "parent-of": [4, 5].map((n) => ({
           id: edgeId(n),
-          source_id: id(1),
-          target_id: id(n),
+          from_id: id(1),
+          to_id: id(n),
         })),
       },
     },
@@ -797,7 +797,7 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(held?.tags).toEqual(["x"]);
   });
 
-  it("keeps the target of a waiting edge write when an event takes it out of the query", async () => {
+  it("keeps the to item of a waiting edge write when an event takes it out of the query", async () => {
     const log = await narrowed("copy-query-edge-target", [
       note(1, "source", ["a"]),
       note(2, "target", ["a"]),
@@ -839,14 +839,14 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(await heldIds(harness!)).toEqual([id(1)]);
   });
 
-  it("keeps the target of an answered edge write that another waiting write still names", async () => {
+  it("keeps the to item of an answered edge write that another waiting write still names", async () => {
     const edges = new EdgeDoor();
     // The edge to the second note meets a server failing now, so its write
     // still waits once the drain is done.
     edges.placing = (edge) =>
-      edge.target_id === id(2)
+      edge.to_id === id(2)
         ? refusal(503, "service_unavailable", "Unavailable")
-        : edge.target_id === id(4)
+        : edge.to_id === id(4)
           ? refusal(400, "validation_error", "Not an edge this server takes")
           : undefined;
     const log = await narrowed(
@@ -893,7 +893,7 @@ describe("a narrowed copy kept by catch-up", () => {
     const verdicts = Object.fromEntries(
       value(await device.queue())
         .filter((write) => write.kind === "create_edge")
-        .map((write) => [String(write.target_id), write.verdict]),
+        .map((write) => [String(write.to_id), write.verdict]),
     );
     expect(verdicts).toEqual({
       [id(2)]: null,
@@ -905,7 +905,7 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(await heldIds(harness!)).toEqual([id(1), id(2)]);
   });
 
-  it("lets go of the target of an edge write withdrawn after an event took it out of the query", async () => {
+  it("lets go of the to item of an edge write withdrawn after an event took it out of the query", async () => {
     const edges = new EdgeDoor();
     // A blocked write, which only a withdraw takes out of the queue.
     edges.placing = () => refusal(409, "version_conflict", "The edge moved on");
@@ -979,8 +979,8 @@ describe("a narrowed copy kept by catch-up", () => {
 describe("a folder's copy narrowed beneath an item", () => {
   const parentOf = (n: number, source: number, target: number) => ({
     id: edgeId(n),
-    source_id: id(source),
-    target_id: id(target),
+    from_id: id(source),
+    to_id: id(target),
   });
 
   /** A folder of the notes beneath `id(1)`, with a held stream a fixture
@@ -1051,7 +1051,7 @@ describe("a folder's copy narrowed beneath an item", () => {
     // An edge between two items the copy does not hold is held all the same.
     expect(
       value(await harness!.folder.device().edgesFrom(id(4))).map(
-        (edge) => edge.target_id,
+        (edge) => edge.to_id,
       ),
     ).toEqual([id(7)]);
 

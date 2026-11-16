@@ -92,8 +92,8 @@ function edgeRow(
 ): Record<string, unknown> {
   return {
     id,
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: "references",
     properties,
     version,
@@ -1611,11 +1611,11 @@ describe("what a drain sends and reports", () => {
   async function moving(label: string): Promise<Harness> {
     const beneath = {
       id: "kept-beneath",
-      source_id: HELD.id,
-      target_id: "below",
+      from_id: HELD.id,
+      to_id: "below",
       edge_type: "parent-of",
     };
-    const drawn = { id: "drawn", source_id: HELD.id, target_id: "below" };
+    const drawn = { id: "drawn", from_id: HELD.id, to_id: "below" };
     const made = await startHarness(label);
     scriptHydration(made.server, {
       head: "1",
@@ -1867,8 +1867,8 @@ describe("what a drain sends and reports", () => {
     const answered = writeAnswers.edge(
       {
         id: EDGE,
-        source_id: HELD.id,
-        target_id: TARGET,
+        from_id: HELD.id,
+        to_id: TARGET,
         version: 2,
         properties: { weight: 2 },
       },
@@ -2245,8 +2245,8 @@ describe("what a queue holds", () => {
       writeAnswers.edge(
         {
           id: "01a00000-0000-7000-8000-0000000000ee",
-          source_id: HELD.id,
-          target_id: id,
+          from_id: HELD.id,
+          to_id: id,
         },
         200,
       ),
@@ -2259,8 +2259,8 @@ describe("what a queue holds", () => {
       edges: [
         writeAnswers.edge({
           id: "01a00000-0000-7000-8000-0000000000ee",
-          source_id: HELD.id,
-          target_id: id,
+          from_id: HELD.id,
+          to_id: id,
         }),
       ],
     });
@@ -2350,8 +2350,8 @@ describe("a write that is not about an item's fields", () => {
       writeAnswers.edge(
         {
           id: edgeId,
-          source_id: HELD.id,
-          target_id: otherId,
+          from_id: HELD.id,
+          to_id: otherId,
         },
         200,
       ),
@@ -2368,8 +2368,8 @@ describe("a write that is not about an item's fields", () => {
       edges: [
         writeAnswers.edge({
           id: edgeId,
-          source_id: HELD.id,
-          target_id: otherId,
+          from_id: HELD.id,
+          to_id: otherId,
         }),
       ],
     });
@@ -3320,7 +3320,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         .filter((request) => request.pathname === "/edges")
         .map(
           (request) =>
-            (JSON.parse(request.body) as { source_id?: string }).source_id,
+            (JSON.parse(request.body) as { from_id?: string }).from_id,
         ),
     ).toEqual([HELD.id]);
     expect(
@@ -3764,7 +3764,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     const edge = server.requests.find(
       (request) => request.method === "POST" && request.pathname === "/edges",
     );
-    expect(JSON.parse(edge?.body ?? "{}").target_id).toBe(theirs);
+    expect(JSON.parse(edge?.body ?? "{}").to_id).toBe(theirs);
   });
 
   it("discards a refused create no read can land, refusing unsent the writes waiting on it", async () => {
@@ -4277,8 +4277,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
                 data: [
                   wireEdge({
                     id: "01a00000-0000-7000-8000-0000000000e8",
-                    source_id: DRAWN,
-                    target_id: THEIRS,
+                    from_id: DRAWN,
+                    to_id: THEIRS,
                     edge_type: "references",
                   }),
                 ],
@@ -4307,7 +4307,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ]);
     // The copy holds the server's edge to the item, and none to the minted id.
     const edges = await device.edgesTo(THEIRS);
-    expect(edges.ok && edges.value.map((edge) => edge.source_id)).toEqual([
+    expect(edges.ok && edges.value.map((edge) => edge.from_id)).toEqual([
       DRAWN,
     ]);
     const stale = await device.edgesTo(local);
@@ -4694,14 +4694,14 @@ describe("an answer the device applies keeps what it has not had answered", () =
       "GET",
       `/edges/${edgeId}`,
       writeAnswers.edge(
-        { id: edgeId, source_id: HELD.id, target_id: target, version: 1 },
+        { id: edgeId, from_id: HELD.id, to_id: target, version: 1 },
         200,
       ),
       writeAnswers.edge(
         {
           id: edgeId,
-          source_id: HELD.id,
-          target_id: target,
+          from_id: HELD.id,
+          to_id: target,
           version: 2,
           properties: { weight: 2 },
         },
@@ -4714,8 +4714,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
       "/edges",
       writeAnswers.edge({
         id: edgeId,
-        source_id: HELD.id,
-        target_id: target,
+        from_id: HELD.id,
+        to_id: target,
         version: 1,
       }),
     );
@@ -4725,8 +4725,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
       writeAnswers.edge(
         {
           id: edgeId,
-          source_id: HELD.id,
-          target_id: target,
+          from_id: HELD.id,
+          to_id: target,
           version: 2,
           properties: { weight: 2 },
         },
@@ -4841,7 +4841,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       "GET",
       `/edges/${edgeId}`,
       writeAnswers.edge(
-        { id: edgeId, source_id: HELD.id, target_id: target, version: 1 },
+        { id: edgeId, from_id: HELD.id, to_id: target, version: 1 },
         200,
       ),
     );
@@ -4999,7 +4999,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
     ).toBe(5);
   });
 
-  it("holds no waiting edge whose source a re-hydration left outside the slice, nor its answer", async () => {
+  it("holds no waiting edge whose from item a re-hydration left outside the slice, nor its answer", async () => {
     harness = await startHarness("queue-overlay-edge-source");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -5354,8 +5354,8 @@ describe("an upload is a queued write", () => {
         "{}",
     ) as Record<string, unknown>;
     expect(link).toMatchObject({
-      source_id: item?.item_id,
-      target_id: HELD.id,
+      from_id: item?.item_id,
+      to_id: HELD.id,
       edge_type: "attached-to",
     });
   });
@@ -6001,8 +6001,8 @@ describe("an edit behind an edit of the same item", () => {
       return writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: edge.version,
           properties: edge.properties,
         },
@@ -6013,8 +6013,8 @@ describe("an edit behind an edit of the same item", () => {
       writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: edge.version,
           properties: edge.properties,
         },
@@ -6294,8 +6294,8 @@ describe("an edit behind an edit of the same item", () => {
       writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: edge.version,
           properties: edge.properties,
         },
@@ -6317,8 +6317,8 @@ describe("an edit behind an edit of the same item", () => {
       return writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: edge.version,
           properties: edge.properties,
         },
@@ -6499,8 +6499,8 @@ describe("an edit behind an edit of the same item", () => {
       writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: held.version,
           properties: held.properties,
         },
@@ -6522,8 +6522,8 @@ describe("an edit behind an edit of the same item", () => {
       return writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: held.version,
           properties: held.properties,
         },
@@ -7356,8 +7356,8 @@ describe("an edit behind an edit of the same item", () => {
     const atTwo = writeAnswers.edge(
       {
         id: EDGE,
-        source_id: HELD.id,
-        target_id: QUIET.id,
+        from_id: HELD.id,
+        to_id: QUIET.id,
         version: 2,
         properties: { weight: 2 },
       },
@@ -7369,8 +7369,8 @@ describe("an edit behind an edit of the same item", () => {
       writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version: 3,
           properties: { weight: 2, color: "red" },
         },
@@ -7429,8 +7429,8 @@ describe("an edit behind an edit of the same item", () => {
     const atTwo = writeAnswers.edge(
       {
         id: EDGE,
-        source_id: HELD.id,
-        target_id: QUIET.id,
+        from_id: HELD.id,
+        to_id: QUIET.id,
         version: 2,
         properties: { weight: 2 },
       },
@@ -7467,8 +7467,8 @@ describe("an edit behind an edit of the same item", () => {
       writeAnswers.edge(
         {
           id: EDGE,
-          source_id: HELD.id,
-          target_id: QUIET.id,
+          from_id: HELD.id,
+          to_id: QUIET.id,
           version,
           properties,
         },
@@ -8290,8 +8290,8 @@ describe("an edit behind an edit of the same item", () => {
     // other version is refused naming the edge.
     const linkNow = {
       id: linkId,
-      source_id: HELD.id,
-      target_id: QUIET.id,
+      from_id: HELD.id,
+      to_id: QUIET.id,
       edge_type: "about",
       version: 3,
       properties: { weight: 5 },

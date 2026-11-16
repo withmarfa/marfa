@@ -206,16 +206,16 @@ impl Core {
                     return Ok(None);
                 };
                 for (end, edge_type, other) in edges {
-                    let (source_id, target_id) = match end {
-                        End::Target => (other.clone(), id.clone()),
-                        End::Source => (id.clone(), other.clone()),
+                    let (from_id, to_id) = match end {
+                        End::To => (other.clone(), id.clone()),
+                        End::From => (id.clone(), other.clone()),
                     };
                     tx.execute_batch("SAVEPOINT default_edge")?;
                     match crate::queue_edge(
                         tx,
                         &crate::model::EdgeDraft {
-                            source_id,
-                            target_id,
+                            from_id,
+                            to_id,
                             edge_type: edge_type.clone(),
                             ..Default::default()
                         },

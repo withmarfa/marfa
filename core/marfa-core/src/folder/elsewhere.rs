@@ -185,9 +185,8 @@ impl Peer {
         folder.core.edges_from(item_id).map_or(true, |edges| {
             edges.iter().any(|edge| {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
-                    && self.bound_to(&edge.target_id).is_some()
-                    && !(taking.contains(&edge.target_id)
-                        && self.holds(&edge.target_id) == Some(false))
+                    && self.bound_to(&edge.to_id).is_some()
+                    && !(taking.contains(&edge.to_id) && self.holds(&edge.to_id) == Some(false))
             })
         })
     }
@@ -201,7 +200,7 @@ impl Peer {
         folder.core.edges_from(item_id).is_ok_and(|edges| {
             edges.iter().any(|edge| {
                 edge.edge_type == super::embeds::ATTACHMENT_EDGE
-                    && self.holds(&edge.target_id) == Some(true)
+                    && self.holds(&edge.to_id) == Some(true)
             })
         })
     }

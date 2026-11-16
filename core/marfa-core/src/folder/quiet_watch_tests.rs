@@ -674,7 +674,7 @@ fn a_deleted_held_file_comes_back_once_another_device_removes_an_edge_its_line_m
         .conn()
         .unwrap()
         .execute(
-            "DELETE FROM edges WHERE edge_type = 'about' AND source_id = ?1",
+            "DELETE FROM edges WHERE edge_type = 'about' AND from_id = ?1",
             [id.as_str()],
         )
         .unwrap();
@@ -987,7 +987,7 @@ fn a_quiet_watch_over_a_refused_placement_wakes_once_the_key_can_be_read_again()
         .conn()
         .unwrap()
         .execute(
-            "DELETE FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+            "DELETE FROM edges WHERE from_id = ?1 AND edge_type = ?2",
             [&id, PLACEMENT_EDGE],
         )
         .unwrap();

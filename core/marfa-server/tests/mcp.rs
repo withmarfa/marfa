@@ -929,7 +929,7 @@ async fn a_trash_plan_that_grows_between_the_check_and_the_commit_trashes_nothin
                 .to_string(),
         );
     }
-    let link = |source: &str, target: &str| json!({ "source_id": source, "target_id": target, "edge_type": "user.owns" });
+    let link = |source: &str, target: &str| json!({ "from_id": source, "to_id": target, "edge_type": "user.owns" });
     let made = instance
         .call(&token, Method::POST, "/edges", Some(link(&ids[0], &ids[1])))
         .await;
@@ -2063,7 +2063,7 @@ async fn the_health_tool_reports_to_a_credential_that_holds_instance_read() {
 
 struct Revocable {
     admin: String,
-    target_id: String,
+    to_id: String,
     target: String,
 }
 
@@ -2086,7 +2086,7 @@ impl Instance {
             .await;
         Revocable {
             admin,
-            target_id: made.payload()["key"]["id"].as_str().unwrap().to_string(),
+            to_id: made.payload()["key"]["id"].as_str().unwrap().to_string(),
             target: made.payload()["secret"].as_str().unwrap().to_string(),
         }
     }
@@ -2104,10 +2104,10 @@ impl Instance {
                 ADMIN,
                 &who.admin,
                 "marfa_revoke_key",
-                json!({ "id": who.target_id }),
+                json!({ "id": who.to_id }),
             )
             .await;
-        assert_eq!(shown.payload()["key"]["id"], who.target_id.as_str());
+        assert_eq!(shown.payload()["key"]["id"], who.to_id.as_str());
         shown.payload()["confirm"].as_str().unwrap().to_string()
     }
 }
@@ -2123,12 +2123,12 @@ async fn a_revoke_without_a_confirmation_revokes_nothing_and_the_confirmation_re
             ADMIN,
             &who.admin,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": confirm }),
+            json!({ "id": who.to_id, "confirm": confirm }),
         )
         .await;
     assert_eq!(
         done.payload()["revoked"],
-        who.target_id.as_str(),
+        who.to_id.as_str(),
         "{}",
         done.value
     );
@@ -2142,7 +2142,7 @@ async fn a_revoke_without_a_confirmation_revokes_nothing_and_the_confirmation_re
             ADMIN,
             &who.admin,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": confirm }),
+            json!({ "id": who.to_id, "confirm": confirm }),
         )
         .await;
     assert_eq!(again.payload()["already_revoked"], true, "{}", again.value);
@@ -2162,11 +2162,11 @@ async fn a_revoke_confirmation_sent_by_another_credential_revokes_nothing() {
             ADMIN,
             &other,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": confirm.clone() }),
+            json!({ "id": who.to_id, "confirm": confirm.clone() }),
         )
         .await;
     assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
-    assert_eq!(refused.value["error"]["key"]["id"], who.target_id.as_str());
+    assert_eq!(refused.value["error"]["key"]["id"], who.to_id.as_str());
     assert!(instance.works(&who.target).await);
     // The witness: the credential it was issued to spends it.
     let spent = instance
@@ -2174,7 +2174,7 @@ async fn a_revoke_confirmation_sent_by_another_credential_revokes_nothing() {
             ADMIN,
             &who.admin,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": confirm }),
+            json!({ "id": who.to_id, "confirm": confirm }),
         )
         .await;
     assert!(!spent.failed, "{}", spent.value);
@@ -2191,7 +2191,7 @@ async fn a_revoke_confirmation_sent_after_five_minutes_revokes_nothing() {
             ADMIN,
             &who.admin,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": confirm }),
+            json!({ "id": who.to_id, "confirm": confirm }),
         )
         .await;
     assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
@@ -2214,7 +2214,7 @@ async fn a_revoke_confirmation_for_a_key_that_changed_revokes_nothing_but_use_do
     let narrowed = instance
         .local(
             Method::PATCH,
-            &format!("/keys/{}", who.target_id),
+            &format!("/keys/{}", who.to_id),
             Some(json!({ "label": "renamed" })),
         )
         .await;
@@ -2224,7 +2224,7 @@ async fn a_revoke_confirmation_for_a_key_that_changed_revokes_nothing_but_use_do
             ADMIN,
             &who.admin,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": confirm }),
+            json!({ "id": who.to_id, "confirm": confirm }),
         )
         .await;
     assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
@@ -2238,7 +2238,7 @@ async fn a_revoke_confirmation_for_a_key_that_changed_revokes_nothing_but_use_do
             ADMIN,
             &who.admin,
             "marfa_revoke_key",
-            json!({ "id": who.target_id, "confirm": again }),
+            json!({ "id": who.to_id, "confirm": again }),
         )
         .await;
     assert!(!done.failed, "{}", done.value);

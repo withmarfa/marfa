@@ -1100,7 +1100,7 @@ const invocations: Record<string, () => string[]> = {
   "items edges": () => [ID],
   "items backrefs": () => [ID],
   "edges list": () => [],
-  "edges create": () => ["--from", ID, "--to", ID, "--type", "about"],
+  "edges create": () => ["--from-id", ID, "--to-id", ID, "--type", "about"],
   "edges get": () => [ID],
   "edges update": () => ["--properties", "{}", "--version", "1", ID],
   "edges delete": () => [ID],

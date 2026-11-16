@@ -20,10 +20,10 @@ test("a move is checked as its update would be, and queues nothing", () => {
     const note = (title) =>
       core.createItem({ type: "core.note", properties: { title } }).itemId ?? "";
     const [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map(note);
-    /** @param {string} sourceId @param {string} targetId */
-    const supersedes = (sourceId, targetId) => ({
-      sourceId,
-      targetId,
+    /** @param {string} fromId @param {string} toId */
+    const supersedes = (fromId, toId) => ({
+      fromId,
+      toId,
       edgeType: "supersedes",
       properties: {},
     });
@@ -31,21 +31,21 @@ test("a move is checked as its update would be, and queues nothing", () => {
     core.createEdge(supersedes(c, d));
     const queued = core.queue().length;
 
-    assert.throws(() => core.checkEdge(supersedes(a, b)), constraint({ edge_type: "supersedes", source_id: a, target_id: b, constraint: "duplicate" }));
+    assert.throws(() => core.checkEdge(supersedes(a, b)), constraint({ edge_type: "supersedes", from_id: a, to_id: b, constraint: "duplicate" }));
     assert.throws(
-      () => core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: d }),
-      constraint({ edge_type: "supersedes", target_id: d, constraint: "cardinality" }),
+      () => core.checkEdgeMove(moving, { end: EdgeEnd.To, to: d }),
+      constraint({ edge_type: "supersedes", to_id: d, constraint: "cardinality" }),
       "d already has an inbound supersedes edge",
     );
     assert.throws(
-      () => core.checkEdgeMove(moving, { end: EdgeEnd.Source, to: c }),
-      constraint({ edge_type: "supersedes", source_id: c, constraint: "cardinality" }),
+      () => core.checkEdgeMove(moving, { end: EdgeEnd.From, to: c }),
+      constraint({ edge_type: "supersedes", from_id: c, constraint: "cardinality" }),
       "c already has an outbound supersedes edge",
     );
-    core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: b });
-    core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: e });
+    core.checkEdgeMove(moving, { end: EdgeEnd.To, to: b });
+    core.checkEdgeMove(moving, { end: EdgeEnd.To, to: e });
     assert.throws(
-      () => core.checkEdgeMove("00000000-0000-7000-8000-000000000009", { end: EdgeEnd.Target, to: e }),
+      () => core.checkEdgeMove("00000000-0000-7000-8000-000000000009", { end: EdgeEnd.To, to: e }),
       { code: "not_found", local: { code: "edge_not_found", details: null } },
     );
     assert.equal(core.queue().length, queued);

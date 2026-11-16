@@ -317,7 +317,7 @@ fn an_attachment_is_an_upload_a_file_item_and_an_edge() {
     let edge = items::attached_to_request("file-item", "note");
     assert_eq!(
         body(&edge),
-        &json!({ "source_id": "file-item", "target_id": "note", "edge_type": "attached-to" })
+        &json!({ "from_id": "file-item", "to_id": "note", "edge_type": "attached-to" })
     );
 }
 
@@ -366,8 +366,8 @@ fn a_file_added_on_its_own_is_a_file_item_with_its_tags_and_tier() {
 #[test]
 fn edges_are_created_between_two_items_and_updated_under_a_version() {
     let created = edges::create_request(&edges::EdgeCreateArgs {
-        source: "a".into(),
-        target: "b".into(),
+        from: "a".into(),
+        to: "b".into(),
         type_: "references".into(),
         properties: Some(r#"{"weight":1}"#.into()),
         ..Default::default()
@@ -376,7 +376,7 @@ fn edges_are_created_between_two_items_and_updated_under_a_version() {
     assert_eq!(created.path(), "/edges");
     assert_eq!(
         body(&created),
-        &json!({ "source_id": "a", "target_id": "b", "edge_type": "references", "properties": { "weight": 1 } })
+        &json!({ "from_id": "a", "to_id": "b", "edge_type": "references", "properties": { "weight": 1 } })
     );
     let updated = edges::update_request("e", Some(r#"{"weight":2}"#), (None, None), 4).unwrap();
     assert_eq!(updated.method, Method::Patch);
@@ -385,7 +385,7 @@ fn edges_are_created_between_two_items_and_updated_under_a_version() {
         &json!({ "properties": { "weight": 2 }, "version": 4 })
     );
     let moved = edges::update_request("e", None, (None, Some("c".into())), 5).unwrap();
-    assert_eq!(body(&moved), &json!({ "target_id": "c", "version": 5 }));
+    assert_eq!(body(&moved), &json!({ "to_id": "c", "version": 5 }));
     assert_eq!(edges::delete_request("e").method, Method::Delete);
     let listed = edges::list_request(&edges::EdgeListArgs {
         type_: Some("about".into()),
@@ -431,8 +431,8 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
     );
     refused(
         edges::create_request(&edges::EdgeCreateArgs {
-            source: "a".into(),
-            target: "b".into(),
+            from: "a".into(),
+            to: "b".into(),
             type_: "references".into(),
             properties: Some(text.into()),
             ..Default::default()
@@ -478,11 +478,11 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
     std::fs::create_dir_all(&dir).unwrap();
     for (text, expected) in [
         (
-            r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":99999999999999999999999}}]"#,
+            r#"[{"from_id":"a","to_id":"b","edge_type":"references","properties":{"n":99999999999999999999999}}]"#,
             "0.properties.n: Must be a whole number that Marfa serves back with the same digits, not 99999999999999999999999, which it serves as 1e+23. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.",
         ),
         (
-            r#"{"edges":[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":-0}}]}"#,
+            r#"{"edges":[{"from_id":"a","to_id":"b","edge_type":"references","properties":{"n":-0}}]}"#,
             "edges.0.properties.n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.",
         ),
     ] {
@@ -496,7 +496,7 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
     }
     std::fs::write(
         &edges,
-        r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":1152921504606847000,"m":1.5,"s":"99999999999999999999999"}}]"#,
+        r#"[{"from_id":"a","to_id":"b","edge_type":"references","properties":{"n":1152921504606847000,"m":1.5,"s":"99999999999999999999999"}}]"#,
     )
     .unwrap();
     let kept = edges::bulk_request(&edges::EdgeBulkArgs {
@@ -2185,8 +2185,8 @@ mod dispatch {
         assert_eq!(item["properties"]["blob_ref"], "sha256:h");
         let edge: serde_json::Value = serde_json::from_str(&received[2].body).unwrap();
         assert_eq!(received[2].path(), "/edges");
-        assert_eq!(edge["source_id"], "f1");
-        assert_eq!(edge["target_id"], "target");
+        assert_eq!(edge["from_id"], "f1");
+        assert_eq!(edge["to_id"], "target");
         assert_eq!(edge["edge_type"], "attached-to");
     }
 

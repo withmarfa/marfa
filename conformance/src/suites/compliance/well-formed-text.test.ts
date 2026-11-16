@@ -280,8 +280,8 @@ const doors: Door[] = [
     prepare: edgeWorld,
     body: (text, p) => ({
       id: p.edgeId,
-      source_id: p.source,
-      target_id: p.target,
+      from_id: p.source,
+      to_id: p.target,
       edge_type: p.edgeType,
       properties: { label: text },
     }),
@@ -297,8 +297,8 @@ const doors: Door[] = [
       const world = await edgeWorld();
       const made = await client.createEdge({
         id: world.edgeId!,
-        source_id: world.source!,
-        target_id: world.target!,
+        from_id: world.source!,
+        to_id: world.target!,
         edge_type: world.edgeType!,
         properties: { label: "first" },
       });
@@ -319,8 +319,8 @@ const doors: Door[] = [
       edges: [
         {
           id: p.edgeId,
-          source_id: p.source,
-          target_id: p.target,
+          from_id: p.source,
+          to_id: p.target,
           edge_type: p.edgeType,
           properties: { label: text },
         },
@@ -593,8 +593,8 @@ describe("a restore", () => {
     let metadata: Record<string, unknown> = { tags: [], extensions: {} };
     const edge: Record<string, unknown> = {
       id: ids.edge,
-      source_id: ids.first,
-      target_id: ids.second,
+      from_id: ids.first,
+      to_id: ids.second,
       edge_type: "references",
       properties: {},
       version: 1,

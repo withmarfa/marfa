@@ -22,8 +22,8 @@ const ACTION: &str = "edges.bulk";
 #[derive(Debug)]
 pub struct Entry {
     pub id: Option<String>,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     pub properties: Option<Map<String, Value>>,
     pub version: Option<i64>,
@@ -46,12 +46,10 @@ impl Writing<'_, '_, '_> {
     /// be one, and a grant the caller lacks.
     fn entry_gates(&self, entry: &Entry) -> Result<()> {
         edges::check_entry_ids(entry)?;
-        if let Some(source) = items::row(self.unit.tx(), &entry.source_id)?
+        if let Some(from) = items::row(self.unit.tx(), &entry.from_id)?
             .filter(|row| self.unit.caller.may_read_type(&row.type_id))
         {
-            self.unit
-                .caller
-                .require_type(&source.type_id, Level::Write)?;
+            self.unit.caller.require_type(&from.type_id, Level::Write)?;
         }
         self.unit
             .caller
@@ -60,25 +58,25 @@ impl Writing<'_, '_, '_> {
 
     fn entry(&self, entry: Entry, create_only: bool) -> Result<Entered> {
         self.entry_gates(&entry)?;
-        let source = self.source_row(&entry.source_id)?;
-        self.require_row_write(&source)?;
+        let from = self.row_as_from(&entry.from_id)?;
+        self.require_row_write(&from)?;
         self.require_edge_write(&entry.edge_type)?;
-        let reachable = items::row(self.unit.tx(), &entry.target_id)?
+        let reachable = items::row(self.unit.tx(), &entry.to_id)?
             .is_some_and(|row| self.unit.caller.may_read_type(&row.type_id));
         if !reachable {
-            return Err(edges::target_missing(&entry.target_id));
+            return Err(edges::to_missing(&entry.to_id));
         }
         self.note(Need::Reach);
         if let Some(id) = &entry.id
             && let Some(held) = rows::by_id(self.unit.tx(), id)?
             && self.may_read(&held)?
         {
-            edges::repeat(&held, &entry.source_id, &entry.target_id, &entry.edge_type)?;
+            edges::repeat(&held, &entry.from_id, &entry.to_id, &entry.edge_type)?;
         }
         let matched = rows::by_triple(
             self.unit.tx(),
-            &entry.source_id,
-            &entry.target_id,
+            &entry.from_id,
+            &entry.to_id,
             &entry.edge_type,
         )?;
         let Some(matched) = matched else {
@@ -86,11 +84,11 @@ impl Writing<'_, '_, '_> {
                 self,
                 Op::Create(Create {
                     id: entry.id,
-                    source_id: entry.source_id,
-                    target_id: entry.target_id,
+                    from_id: entry.from_id,
+                    to_id: entry.to_id,
                     edge_type: entry.edge_type,
                     properties: entry.properties.unwrap_or_default(),
-                    source_version: None,
+                    from_version: None,
                 }),
                 By::Caller,
             )?;
@@ -108,8 +106,8 @@ impl Writing<'_, '_, '_> {
             Op::Update(Update {
                 id,
                 version: entry.version.unwrap_or(matched.version),
-                source_id: None,
-                target_id: None,
+                from_id: None,
+                to_id: None,
                 properties: Some(entry.properties.unwrap_or_default()),
             }),
             By::Caller,

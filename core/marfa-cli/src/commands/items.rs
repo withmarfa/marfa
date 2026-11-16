@@ -128,7 +128,7 @@ pub enum ItemsCommand {
     /// item for them.
     Add(AddArgs),
     /// Attach a file: upload its bytes, create a file item for them, and link
-    /// it to the target with an `attached-to` edge.
+    /// it to the item with an `attached-to` edge.
     Attach(AttachArgs),
     /// Item counts, by state, by type or by source.
     Stats {
@@ -1082,10 +1082,10 @@ fn file_item_body(
     body
 }
 
-pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
+pub fn attached_to_request(file_item_id: &str, to_id: &str) -> Request {
     Request::post(&["edges"]).json(json!({
-        "source_id": file_item_id,
-        "target_id": target_id,
+        "from_id": file_item_id,
+        "to_id": to_id,
         "edge_type": "attached-to",
     }))
 }

@@ -168,7 +168,7 @@ describe("an item's read_only in a working copy", () => {
       properties: { title: "Made here", body: "not sent" },
     });
     if (!made.ok) throw new Error(JSON.stringify(made.refusal));
-    const id = String(made.value.item_id ?? made.value.target_id);
+    const id = String(made.value.item_id ?? made.value.to_id);
     expect(await readOnlyOf(device, id)).toBe(false);
 
     const answered = wireItem({ id, read_only: true });

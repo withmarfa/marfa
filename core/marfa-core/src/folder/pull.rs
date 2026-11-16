@@ -275,7 +275,7 @@ impl Folder {
                     || renaming
                         .reserved
                         .get(&marfa_rules::names::folded(candidate))
-                        .is_some_and(|edges| edges.iter().any(|edge| edge.source_id != item_id)))
+                        .is_some_and(|edges| edges.iter().any(|edge| edge.from_id != item_id)))
         };
         let renamed = if taken(&renamed) {
             beside(&renamed, taken)
@@ -1747,7 +1747,7 @@ impl Folder {
     ) -> Result<()> {
         for (host, path) in hosts {
             for edge in self.core.edges_to(&host.id)? {
-                if let Some(error) = unread.get(&edge.source_id)
+                if let Some(error) = unread.get(&edge.from_id)
                     && edge.edge_type == ATTACHMENT_EDGE
                 {
                     embedded.reports.push(Flagged {
@@ -1755,9 +1755,9 @@ impl Folder {
                         flag: "attachment",
                         reason: format!(
                             "its attached file {} cannot be read ({error}); it is written once it can be read",
-                            edge.source_id
+                            edge.from_id
                         ),
-                        item: Some(edge.source_id),
+                        item: Some(edge.from_id),
                     });
                 }
             }
@@ -1792,12 +1792,12 @@ impl Folder {
             .core
             .edges_of_type(ATTACHMENT_EDGE)?
             .into_iter()
-            .map(|edge| edge.target_id)
+            .map(|edge| edge.to_id)
             .chain(
                 self.core
                     .edges_of_type(super::LINK_EDGE)?
                     .into_iter()
-                    .map(|edge| edge.source_id),
+                    .map(|edge| edge.from_id),
             )
             .filter(|id| members.contains(id) || bound.contains(id))
             .collect();
@@ -2074,7 +2074,7 @@ impl Folder {
             .edges_from(item_id)?
             .into_iter()
             .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
-            .map(|edge| edge.target_id)
+            .map(|edge| edge.to_id)
             .collect();
         if documents.is_empty() {
             return Ok(false);
@@ -2351,11 +2351,11 @@ impl Folder {
                     edges.iter().any(|edge| {
                         edge.edge_type == edge_type.id
                             && match end {
-                                marfa_rules::catalog::End::Source => {
-                                    edge.source_id == item.id && edge.target_id == line.other
+                                marfa_rules::catalog::End::From => {
+                                    edge.from_id == item.id && edge.to_id == line.other
                                 }
-                                marfa_rules::catalog::End::Target => {
-                                    edge.target_id == item.id && edge.source_id == line.other
+                                marfa_rules::catalog::End::To => {
+                                    edge.to_id == item.id && edge.from_id == line.other
                                 }
                             }
                     })
@@ -2629,7 +2629,7 @@ impl Folder {
                         .edges_to(&item.id)?
                         .into_iter()
                         .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
-                        .map(|edge| edge.source_id),
+                        .map(|edge| edge.from_id),
                 );
             }
         }
@@ -2674,8 +2674,8 @@ impl Folder {
             .core
             .edges_of_type(ATTACHMENT_EDGE)?
             .into_iter()
-            .filter(|edge| members.contains(&edge.target_id))
-            .map(|edge| edge.source_id)
+            .filter(|edge| members.contains(&edge.to_id))
+            .map(|edge| edge.from_id)
             .collect();
         let mut unread = HashMap::new();
         self.hold_ends(&wanted, |id, error| {

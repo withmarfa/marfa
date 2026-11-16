@@ -197,14 +197,14 @@ impl Core {
                         )));
                     }
                     let (own, other) = if backref {
-                        ("target_id", "source_id")
+                        ("to_id", "from_id")
                     } else {
-                        ("source_id", "target_id")
+                        ("from_id", "to_id")
                     };
                     (
                         format!("json_quote(view_edges.{other})"),
                         format!(
-                            "LEFT JOIN (SELECT DISTINCT source_id,target_id FROM edges WHERE edge_type = {}) view_edges ON view_edges.{own} = items.id",
+                            "LEFT JOIN (SELECT DISTINCT from_id,to_id FROM edges WHERE edge_type = {}) view_edges ON view_edges.{own} = items.id",
                             quoted(edge_type)
                         ),
                     )
@@ -818,8 +818,8 @@ mod tests {
                     &conn,
                     &crate::wire::WireEdge {
                         id: id.into(),
-                        source_id: source.into(),
-                        target_id: target.into(),
+                        from_id: source.into(),
+                        to_id: target.into(),
                         edge_type: "parent-of".into(),
                         properties: Default::default(),
                         version: 1,
@@ -862,8 +862,8 @@ mod tests {
             &core.conn().unwrap(),
             &crate::wire::WireEdge {
                 id: id.into(),
-                source_id: source.into(),
-                target_id: target.into(),
+                from_id: source.into(),
+                to_id: target.into(),
                 edge_type: edge_type.into(),
                 properties: Default::default(),
                 version: 1,

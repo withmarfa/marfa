@@ -62,8 +62,8 @@ pub struct WireReadOnly {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WireEdge {
     pub id: String,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     #[serde(default)]
     pub properties: Map<String, Value>,

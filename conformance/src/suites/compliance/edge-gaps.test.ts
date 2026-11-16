@@ -38,29 +38,29 @@ describe("POST /edges", () => {
     const target = await note();
     const refused = await client.rawRequest("/edges", {
       method: "POST",
-      body: { source_id: source, target_id: target },
+      body: { from_id: source, to_id: target },
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("missing_required_field");
 
     // The witness: the same body with an edge type lands.
     const made = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(made.status).toBe(201);
     trackEdge(ctx, made.data.edge.id);
   });
 
-  it("answers a target in the bin as item_not_found", async () => {
+  it("answers a to item in the bin as item_not_found", async () => {
     const source = await note();
     const target = await note();
 
     // The witness: the same edge lands while the target is live.
     const live = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(live.status).toBe(201);
@@ -69,8 +69,8 @@ describe("POST /edges", () => {
     const other = await note();
     expect((await client.deleteItem(other)).status).toBe(200);
     const gone = await client.createEdge({
-      source_id: source,
-      target_id: other,
+      from_id: source,
+      to_id: other,
       edge_type: "about",
     });
     expect(gone.status).toBe(404);
@@ -83,8 +83,8 @@ describe("GET /items/{id}/backrefs", () => {
     const target = await note();
     const source = await note();
     const made = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(made.status).toBe(201);
@@ -107,8 +107,8 @@ describe("GET /items/{id}/backrefs", () => {
     const target = await note();
     const source = await note();
     const made = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(made.status).toBe(201);

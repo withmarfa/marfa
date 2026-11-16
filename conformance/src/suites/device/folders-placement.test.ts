@@ -145,8 +145,8 @@ describe("where a file sits", () => {
       if (note.path === undefined) return;
       const edge: WireEdgeOptions = {
         id: randomUUID(),
-        source_id: note.id,
-        target_id: made.settings.id,
+        from_id: note.id,
+        to_id: made.settings.id,
         edge_type: "in-folder",
         properties: { path: note.path },
       };
@@ -365,8 +365,8 @@ describe("where a file sits", () => {
       "a file made in the folder went without its placement, so no other Mac knows where it sits",
     ).toMatchObject([
       {
-        source_id: created?.id,
-        target_id: harness.settings.id,
+        from_id: created?.id,
+        to_id: harness.settings.id,
         properties: { path: "Inbox/idea.md" },
       },
     ]);
@@ -1302,7 +1302,7 @@ describe("where a file sits", () => {
     );
     expect((await harness.folder.push()).ok).toBe(true);
     const edge = [...placed.edges.edges.values()].find(
-      (held) => held.source_id === id && held.edge_type === "in-folder",
+      (held) => held.from_id === id && held.edge_type === "in-folder",
     )!;
     const read = { ...edge, properties: { ...edge.properties } };
     mkdirSync(join(harness.dir, "Third"));
@@ -1747,8 +1747,8 @@ describe("where a file sits", () => {
             "Write access to edge type denied",
           )
         : answers.edgeDuplicate({
-            source_id: edge.source_id,
-            target_id: edge.target_id,
+            from_id: edge.from_id,
+            to_id: edge.to_id,
             edge_type: "references",
           });
     };
@@ -2276,7 +2276,7 @@ describe("where a file sits", () => {
     // their paths with none.
     const known = new Set([placedId, fresh]);
     placed.edges.placing = (edge) =>
-      edge.edge_type === "in-folder" && !known.has(edge.source_id)
+      edge.edge_type === "in-folder" && !known.has(edge.from_id)
         ? refusal(400, "validation_error", "Not now")
         : undefined;
     put(harness, "Shared.md", "---\ntitle: Mine\n---\nmade here\n");

@@ -928,13 +928,13 @@ If `PATCH /items/{id}` carries a top-level body key the operation does not decla
 
 ### `items/update-inline-edges`
 
-When `PATCH /items/{id}` names `edges`, the server MUST replace the item's outbound edges of each edge type named with edges to the targets listed, and leave every other edge type as it stands.
+When `PATCH /items/{id}` names `edges`, the server MUST replace the item's outbound edges of each edge type named with edges to the to items listed, and leave every other edge type as it stands.
 
-**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items with edges replaces edges of specified types only`, `› PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`.
+**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items with edges replaces edges of specified types only`, `› PATCH /items keeps the edge to a to item it still lists, with its id, version and properties, and announces only what it changes`.
 
 ### `items/update-inline-edges-all`
 
-When `PATCH /items/{id}`, or a `POST /items` that lands on an item by its natural key, names `edges` for an edge type, the server MUST remove each outbound edge of that type from the item to a target the list leaves out, whichever key added the edge.
+When `PATCH /items/{id}`, or a `POST /items` that lands on an item by its natural key, names `edges` for an edge type, the server MUST remove each outbound edge of that type from the item to a to item the list leaves out, whichever key added the edge.
 
 **Reason:** the list is the item's whole set of edges of that type, so an edge another key added is replaced as one the writer added.
 
@@ -942,17 +942,17 @@ When `PATCH /items/{id}`, or a `POST /items` that lands on an item by its natura
 
 ### `items/update-inline-edges-keep`
 
-When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a target the item already has an outbound edge of that edge type to, the server MUST leave that edge with its id, version and properties.
+When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a to item the item already has an outbound edge of that edge type to, the server MUST leave that edge with its id, version and properties.
 
 **Reason:** an app that sends back the list it read is not asking to change the edges in it, and an edge's properties, such as `position` on `in-collection` or `path` on `in-folder`, are not part of the list.
 
-**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`, `› %s landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`.
+**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items keeps the edge to a to item it still lists, with its id, version and properties, and announces only what it changes`, `› %s landing on an item by its natural key keeps the edge to a to item it still lists, and announces only what it changes`.
 
 ### `items/update-inline-edges-quiet`
 
-When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a target the item already has an outbound edge of that edge type to, the server MUST NOT send an `edge.deleted` or `edge.created` event for that edge.
+When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a to item the item already has an outbound edge of that edge type to, the server MUST NOT send an `edge.deleted` or `edge.created` event for that edge.
 
-**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`, `› %s landing on an item by its natural key keeps the edge to a target it still lists, and announces only what it changes`.
+**Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items keeps the edge to a to item it still lists, with its id, version and properties, and announces only what it changes`, `› %s landing on an item by its natural key keeps the edge to a to item it still lists, and announces only what it changes`.
 
 ## Moving an item to another type
 
@@ -1176,7 +1176,7 @@ If a kept answer discloses a conflict snapshot, an extension namespace, a hydrat
 
 When the server reauthorizes a replay about an item or edge that still exists, the server MUST judge it by the item's or edge's current type and source as well as those the first answer recorded.
 
-**Tests:** `sync/idempotency-replay.test.ts › judges a replay by the item's current type after a retype`, `› judges a tag replay by the item's current type after a retype`, `› judges an edge replay by the edge's current source`.
+**Tests:** `sync/idempotency-replay.test.ts › judges a replay by the item's current type after a retype`, `› judges a tag replay by the item's current type after a retype`, `› judges an edge replay by the edge's current from item`.
 
 ### `items/replay-removed-subject`
 
@@ -1196,13 +1196,13 @@ When the server reauthorizes a kept `edge_constraint_violation`, the server MUST
 
 **Tests:** `sync/idempotency-replay.test.ts › replays a blocking-edge refusal whose hidden blocker the first answer never named`.
 
-### `items/replay-edge-target`
+### `items/replay-edge-to`
 
-When the server reauthorizes a kept answer about an edge, the server MUST NOT require read on the edge's target.
+When the server reauthorizes a kept answer about an edge, the server MUST NOT require read on the edge's to item.
 
-**Reason:** an edge's ordinary answer names its target to whoever may read the edge (`edges/target-named`).
+**Reason:** an edge's ordinary answer names its to item to whoever may read the edge (`edges/to-named`).
 
-**Tests:** `sync/idempotency-replay.test.ts › replays an edge answer without read on its target`.
+**Tests:** `sync/idempotency-replay.test.ts › replays an edge answer without read on its to item`.
 
 ### `items/replay-refused-inert`
 
@@ -1374,7 +1374,7 @@ When a delete or a transition into the bin moves an item into the bin, the serve
 
 ### `items/trash-blocked`
 
-If a delete or a transition into the bin would move an item that a `block` edge holds, as its source or its target, the item named or one the trash takes with it, then the server MUST answer `400 edge_constraint_violation`.
+If a delete or a transition into the bin would move an item that a `block` edge holds, as its from item or its to item, the item named or one the trash takes with it, then the server MUST answer `400 edge_constraint_violation`.
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`, `› refuses a transition into the bin held by a block edge into the item, or on an item the cascade reaches`.
 
@@ -1864,7 +1864,7 @@ When the server refuses an entry of a `POST /items/bulk` page under `atomic: fal
 
 When the server reports a `POST /items/bulk` entry `errored` without `error.details.write_outcome: "unknown"`, the server MUST have written none of its item, tags and inline edges.
 
-**Tests:** `compliance/bulk.test.ts › writes nothing for a best-effort entry whose edge target is missing`.
+**Tests:** `compliance/bulk.test.ts › writes nothing for a best-effort entry whose edge's to item is missing`.
 
 ### `items/bulk-outcome-unknown`
 
@@ -2436,7 +2436,7 @@ If a change or a revoke names a revoked folder, then the server MUST answer `400
 
 If a folder setting is malformed, other than by a key it does not declare, then the server MUST answer `400`, naming the setting in `details.errors[0].path`, before it writes anything.
 
-**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 to items for each`.
 
 ### `items/folder-setting-unknown-type`
 
@@ -2446,9 +2446,9 @@ If `query.types`, `defaults.type` or a `first_placement` key names a well-formed
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `removal_threshold.ceiling` other than a whole number from 0 to 9007199254740991, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or an ID an edge points to that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 to items for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `removal_threshold.ceiling` other than a whole number from 0 to 9007199254740991, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 to items for each`.
 
 ### `items/folder-setting-undeclared`
 

@@ -55,8 +55,8 @@ async function makeNote(body: string): Promise<string> {
 
 async function makeEdge(source: string, target: string): Promise<string> {
   const created = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: "about",
   });
   expect(
@@ -166,8 +166,8 @@ describe("resuming from the head", () => {
       doomed = created.data.item.id;
       for (const target of [before[2]!, before[3]!]) {
         const made = await client.createEdge({
-          source_id: doomed,
-          target_id: target,
+          from_id: doomed,
+          to_id: target,
           edge_type: "about",
         });
         expect(made.ok, "an edge of the item to purge failed").toBe(true);
@@ -333,8 +333,8 @@ describe("the order across item and edge frames", () => {
     const edgeIds: string[] = [];
     for (const target of peers) {
       const made = await client.createEdge({
-        source_id: doomedId,
-        target_id: target,
+        from_id: doomedId,
+        to_id: target,
         edge_type: "about",
       });
       expect(made.ok, "an edge of the item to purge failed").toBe(true);

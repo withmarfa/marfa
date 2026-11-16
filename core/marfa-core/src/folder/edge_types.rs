@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::body::text::Typed;
 use crate::error::CoreError;
-use marfa_rules::catalog::{EdgeType, End, WrittenAt};
+use marfa_rules::catalog::{EdgeType, End, WrittenFrom};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeTypes {
@@ -39,9 +39,9 @@ impl EdgeTypes {
     pub fn named(&self, name: &str) -> Option<(&EdgeType, End)> {
         self.types.iter().find_map(|held| {
             if held.id == name {
-                Some((held, End::Source))
+                Some((held, End::From))
             } else if held.reverse_name.as_deref() == Some(name) {
-                Some((held, End::Target))
+                Some((held, End::To))
             } else {
                 None
             }
@@ -54,11 +54,11 @@ impl EdgeTypes {
 
     /// The types written at their target: a copy holds such an edge from
     /// the target's side only when it holds the type whole.
-    pub fn written_at_targets(&self) -> Vec<String> {
+    pub fn written_from_to(&self) -> Vec<String> {
         let mut found: Vec<String> = self
             .types
             .iter()
-            .filter(|held| held.written_at == WrittenAt::Target)
+            .filter(|held| held.written_from == WrittenFrom::To)
             .map(|held| held.id.clone())
             .collect();
         found.sort();
@@ -66,7 +66,7 @@ impl EdgeTypes {
     }
 }
 
-/// The targets a line names, once each whatever their case or form; unquoted
+/// The items a line names, once each whatever their case or form; unquoted
 /// `[[name]]` is YAML for a list inside a list.
 pub(crate) fn typed(value: &Value) -> Result<Vec<Typed>, String> {
     let named: Vec<&Value> = match value {
@@ -143,19 +143,16 @@ mod tests {
         let parent = crate::catalog::edge_type_for_tests(
             "parent-of",
             Some("child-of"),
-            End::Target,
+            End::To,
             "one-to-many",
         );
-        assert!(parent.one_at(End::Target) && !parent.one_at(End::Source));
-        assert_eq!(parent.name_at(End::Target), Some("child-of"));
+        assert!(parent.one_at(End::To) && !parent.one_at(End::From));
+        assert_eq!(parent.name_at(End::To), Some("child-of"));
         let types = EdgeTypes::of(vec![parent]);
-        assert_eq!(
-            types.named("child-of").map(|(_, end)| end),
-            Some(End::Target)
-        );
+        assert_eq!(types.named("child-of").map(|(_, end)| end), Some(End::To));
         assert_eq!(
             types.named("parent-of").map(|(_, end)| end),
-            Some(End::Source)
+            Some(End::From)
         );
         assert!(types.named("references").is_none());
     }

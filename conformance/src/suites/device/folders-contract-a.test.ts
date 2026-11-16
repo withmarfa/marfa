@@ -88,10 +88,10 @@ it("materializes only readable copy items reached by a beneath query", async () 
       ],
     },
     edges: {
-      "parent-of": [child, unreadable].map((target_id, index) => ({
+      "parent-of": [child, unreadable].map((to_id, index) => ({
         id: `01a00000-0000-7000-8000-00000000a21${index}`,
-        source_id: root,
-        target_id,
+        from_id: root,
+        to_id,
         edge_type: "parent-of",
       })),
     },

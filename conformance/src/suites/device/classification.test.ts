@@ -1788,21 +1788,21 @@ describe("the ceiling, and releasing what it stopped", () => {
         (request) => {
           const sent = JSON.parse(request.body) as {
             id?: string;
-            source_id?: string;
-            target_id?: string;
+            from_id?: string;
+            to_id?: string;
             version?: number;
           };
           const row =
             request.method === "POST"
               ? wireEdge({
                   id: sent.id ?? "",
-                  source_id: sent.source_id ?? "",
-                  target_id: sent.target_id ?? "",
+                  from_id: sent.from_id ?? "",
+                  to_id: sent.to_id ?? "",
                 })
               : wireEdge({
                   id: request.pathname.split("/").at(-1) ?? "",
-                  source_id: minted.get("a.md") ?? "",
-                  target_id: HELD.id,
+                  from_id: minted.get("a.md") ?? "",
+                  to_id: HELD.id,
                   version: (sent.version ?? 0) + 1,
                 });
           edgeRows.set(String(row.id), row);
@@ -2435,8 +2435,8 @@ describe("withdrawing a write that can never be sent", () => {
         writeAnswers.edge(
           {
             id: edgeId,
-            source_id: local,
-            target_id: HELD.id,
+            from_id: local,
+            to_id: HELD.id,
             version: edgeVersion,
             properties: { note: edgeVersion === 1 ? "original" : "edited" },
           },

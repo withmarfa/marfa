@@ -128,7 +128,7 @@ mod tests {
             .unwrap();
         }
         db.execute(
-            "INSERT INTO edges (id,source_id,target_id,edge_type,properties,version,created_at,updated_at) VALUES ('ab','a','b','references','{}',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+            "INSERT INTO edges (id,from_id,to_id,edge_type,properties,version,created_at,updated_at) VALUES ('ab','a','b','references','{}',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
             [],
         )
         .unwrap();
@@ -151,7 +151,7 @@ mod tests {
         let with_bin = core.get_items(ids(&["binned"]), true).unwrap();
         assert_eq!(with_bin.items()[0].id, "binned");
 
-        assert_eq!(core.edge("ab".into()).unwrap().unwrap().target_id, "b");
+        assert_eq!(core.edge("ab".into()).unwrap().unwrap().to_id, "b");
         assert!(core.edge("gone".into()).unwrap().is_none());
         assert_eq!(core.get_edges(ids(&["gone", "ab"])).unwrap().len(), 1);
 

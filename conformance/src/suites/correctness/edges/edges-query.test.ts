@@ -128,7 +128,7 @@ describe("edge query filters on /items", () => {
       limit: 500,
     });
     expect(listing.ok).toBe(true);
-    const fromListing = listing.data.data.map((e) => e.source_id).sort();
+    const fromListing = listing.data.data.map((e) => e.from_id).sort();
     expect(fromListing).toEqual([...linked].sort());
 
     const full = await client.listItems({

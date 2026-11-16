@@ -82,16 +82,16 @@ describe("core.collection", () => {
     const [note, task, album] = members;
     for (const source of [note, task]) {
       const edge = await client.createEdge({
-        source_id: source,
-        target_id: collection,
+        from_id: source,
+        to_id: collection,
         edge_type: "in-collection",
       });
       expect(edge.status, JSON.stringify(edge.error)).toBe(201);
       trackEdge(ctx, edge.data.edge.id);
     }
     const nested = await client.createEdge({
-      source_id: album,
-      target_id: collection,
+      from_id: album,
+      to_id: collection,
       edge_type: "in-collection",
     });
     expect(nested.status).toBe(400);

@@ -929,7 +929,7 @@ describe("bulk", () => {
     expect(await listed()).toEqual([best.data.results[2]!.id]);
   });
 
-  it("writes nothing for a best-effort entry whose edge target is missing", async (context) => {
+  it("writes nothing for a best-effort entry whose edge's to item is missing", async (context) => {
     // The edge step is the last of an entry's writes, and a child syncing
     // before its parent meets it in ordinary use: the entry is reported
     // errored, so its item must not have landed either. The entry after it is
@@ -1165,13 +1165,13 @@ describe("bulk_action", () => {
     // Restoring the parent brings the other two back before the job reaches them.
     const tag = `ba-restore-${ctx.runId}`;
     const [grandchild, child, parent] = await seedTagged(3, tag);
-    for (const [source_id, target_id] of [
+    for (const [from_id, to_id] of [
       [parent!, child!],
       [child!, grandchild!],
     ]) {
       const edge = await client.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type: "parent-of",
       });
       expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

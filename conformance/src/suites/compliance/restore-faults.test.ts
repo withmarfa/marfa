@@ -91,11 +91,11 @@ const edgeTypeOf = (id: string) => ({
   id,
   label: "Test edge type",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
   property_schema: {},
-  written_at: "source",
+  written_from: "from",
 });
 
 /** What an archive carries: a type, an edge type, a blob, two items and an edge. */
@@ -148,7 +148,7 @@ function carrying(bytes?: Uint8Array): Carried {
       "edges",
       () =>
         `${JSON.stringify({
-          edge: { id: edgeId, source_id: a, target_id: b, edge_type: edgeType },
+          edge: { id: edgeId, from_id: a, to_id: b, edge_type: edgeType },
         })}\n`,
     ),
     "instance",
@@ -527,15 +527,13 @@ describe("a writer while a restore writes", () => {
         }),
       "POST /edges": () =>
         working.createEdge({
-          source_id: ends[0]!,
-          target_id: ends[1]!,
+          from_id: ends[0]!,
+          to_id: ends[1]!,
           edge_type: edgeType,
         }),
       "POST /edges/bulk": () =>
         working.bulkEdges({
-          edges: [
-            { source_id: ends[1]!, target_id: ends[0]!, edge_type: edgeType },
-          ],
+          edges: [{ from_id: ends[1]!, to_id: ends[0]!, edge_type: edgeType }],
         }),
       "POST /blobs": () =>
         working.uploadBlob(

@@ -130,7 +130,7 @@ it.each([
       await client.rawRequest("/edges", {
         method: "POST",
         headers: json,
-        body: `{"source_id":"${from}","target_id":"${to}","edge_type":"about","properties":${nested}}`,
+        body: `{"from_id":"${from}","to_id":"${to}","edge_type":"about","properties":${nested}}`,
       }),
       await device.createEdge({
         source: from,

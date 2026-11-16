@@ -711,8 +711,8 @@ describe("an archive's dates and history, refused before anything is written", (
     const missing = uuidv7();
     const edge = (extra: Record<string, unknown>) => ({
       id: uuidv7(),
-      source_id: first,
-      target_id: missing,
+      from_id: first,
+      to_id: missing,
       edge_type: "references",
       ...extra,
     });

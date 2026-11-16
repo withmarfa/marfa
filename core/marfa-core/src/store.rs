@@ -91,7 +91,7 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 /// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
@@ -105,7 +105,7 @@ fn upgraded(found: i64) -> bool {
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
-    "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
+    "id, from_id, to_id, edge_type, properties, version, created_at, updated_at";
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
     crate::damage::refuse_emptied(path)?;
@@ -209,15 +209,23 @@ fn folder_store(conn: &Connection) -> Result<crate::FolderStore, CoreError> {
 }
 
 /// The first of the folder's tables that `conn`'s store holds in a shape
-/// other than this build's, which a replacement cannot carry.
+/// other than this build's, which a replacement cannot carry: its statement,
+/// or for `folder_files` also a file's record this build does not read.
 #[cfg(unix)]
 fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
     let held = held_shape(conn)?;
     let built = built_shape()?;
-    Ok(FOLDER_TABLES.into_iter().find(|table| {
+    if let Some(table) = FOLDER_TABLES.into_iter().find(|table| {
         held.get(*table)
             .is_some_and(|statement| built.get(*table) != Some(statement))
-    }))
+    }) {
+        return Ok(Some(table));
+    }
+    if held.contains_key("folder_files") && crate::folder::state::unreadable_record(conn)?.is_some()
+    {
+        return Ok(Some("folder_files"));
+    }
+    Ok(None)
 }
 
 /// Opens another process's store to read: makes no store and applies no
@@ -1171,26 +1179,42 @@ fn unrecorded_answers(conn: &Connection) -> Result<HashSet<String>, CoreError> {
         HashSet::new()
     };
     let is_bound = |item: &Option<String>| item.as_ref().is_some_and(|item| bound.contains(item));
-    let mut statement = conn.prepare(
-        "SELECT id, kind, item_id, target_id, verdict, reason
-           FROM main.queue WHERE verdict IN (?1, ?2)",
-    )?;
+    // A queue of another shape may not hold an edge's to end under this
+    // build's name: its refusals are then judged by the from end alone.
+    let to_end = if queue_holds(conn, "to_id")? {
+        "to_id"
+    } else {
+        "NULL"
+    };
+    let mut statement = conn.prepare(&format!(
+        "SELECT id, kind, item_id, {to_end}, verdict, reason
+           FROM main.queue WHERE verdict IN (?1, ?2)"
+    ))?;
     let mut unrecorded = HashSet::new();
     let mut rows = statement.query([Verdict::Refused.as_str(), Verdict::Dead.as_str()])?;
     while let Some(row) = rows.next()? {
         let kind: String = row.get(1)?;
-        let (item, target): (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
+        let (item, to): (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
         let refused = row.get::<_, String>(4)? == Verdict::Refused.as_str();
         // A delete of an edge refused as already gone did what it asked.
         let done = kind == WriteKind::DeleteEdge.as_str()
             && row.get::<_, Option<String>>(5)?.as_deref() == Some("edge_not_found");
-        let handled = recorded_against_files.contains(&kind.as_str())
-            && (is_bound(&item) || is_bound(&target));
+        let handled =
+            recorded_against_files.contains(&kind.as_str()) && (is_bound(&item) || is_bound(&to));
         if !(refused && (done || handled)) {
             unrecorded.insert(row.get(0)?);
         }
     }
     Ok(unrecorded)
+}
+
+#[cfg(unix)]
+fn queue_holds(conn: &Connection, column: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('queue', 'main') WHERE name = ?1)",
+        [column],
+        |row| row.get(0),
+    )?)
 }
 
 /// The writes in the queue that a folder's file state names as waiting on
@@ -2078,8 +2102,8 @@ pub fn hold_beneath_edge(conn: &Connection, id: &str) -> Result<(), CoreError> {
 pub struct Owed {
     pub subject: Subject,
     pub id: String,
-    /// An edge's source, whose listing of the edge's type it is read from.
-    pub source_id: Option<String>,
+    /// An edge's from item, whose listing of the edge's type it is read from.
+    pub from_id: Option<String>,
     pub edge_type: Option<String>,
     /// The refused write moved the row, so a read outside the slice lets it go.
     pub moved: bool,
@@ -2092,7 +2116,7 @@ pub fn owed_of(conn: &Connection, row: &QueuedWrite) -> Result<Option<Owed>, Cor
         Some(Subject::Item) => Ok(row.item_id.as_ref().map(|id| Owed {
             subject: Subject::Item,
             id: id.clone(),
-            source_id: None,
+            from_id: None,
             edge_type: None,
             moved: row.kind == WriteKind::UpdateItem && moves(&row.body),
         })),
@@ -2113,7 +2137,7 @@ pub fn owed_of(conn: &Connection, row: &QueuedWrite) -> Result<Option<Owed>, Cor
             Ok(Some(Owed {
                 subject: Subject::Edge,
                 id: id.clone(),
-                source_id: Some(source.clone()),
+                from_id: Some(source.clone()),
                 edge_type,
                 moved: false,
             }))
@@ -2129,16 +2153,16 @@ pub fn moves(body: &Value) -> bool {
 
 pub fn owe_read_back(conn: &Connection, owed: &Owed) -> Result<(), CoreError> {
     conn.execute(
-        "INSERT INTO read_backs (subject, id, source_id, edge_type, moved)
+        "INSERT INTO read_backs (subject, id, from_id, edge_type, moved)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (subject, id) DO UPDATE SET
-           source_id = coalesce(excluded.source_id, source_id),
+           from_id = coalesce(excluded.from_id, from_id),
            edge_type = coalesce(excluded.edge_type, edge_type),
            moved = moved OR excluded.moved",
         params![
             subject_name(owed.subject),
             owed.id,
-            owed.source_id,
+            owed.from_id,
             owed.edge_type,
             owed.moved
         ],
@@ -2148,7 +2172,7 @@ pub fn owe_read_back(conn: &Connection, owed: &Owed) -> Result<(), CoreError> {
 
 pub fn owed_read_backs(conn: &Connection) -> Result<Vec<Owed>, CoreError> {
     let mut statement = conn.prepare(
-        "SELECT subject, id, source_id, edge_type, moved FROM read_backs ORDER BY subject, id",
+        "SELECT subject, id, from_id, edge_type, moved FROM read_backs ORDER BY subject, id",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
@@ -2156,7 +2180,7 @@ pub fn owed_read_backs(conn: &Connection) -> Result<Vec<Owed>, CoreError> {
             Owed {
                 subject: Subject::Item,
                 id: row.get(1)?,
-                source_id: row.get(2)?,
+                from_id: row.get(2)?,
                 edge_type: row.get(3)?,
                 moved: row.get(4)?,
             },
@@ -2189,7 +2213,7 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
         .optional()?)
 }
 
-const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
+const QUEUE_COLUMNS: &str = "id, kind, item_id, to_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
      conflicted_copy_id, refusals, queued_at, answered_at, blob, follows, payload, \
      environmental_streak, last_failure, row_table, batched_with, conflicts";
@@ -2197,7 +2221,7 @@ const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, t
 pub struct NewWrite<'a> {
     pub kind: WriteKind,
     pub item_id: Option<&'a str>,
-    pub target_id: Option<&'a str>,
+    pub to_id: Option<&'a str>,
     pub edge_id: Option<&'a str>,
     pub namespace: Option<&'a str>,
     pub tag: Option<&'a str>,
@@ -2254,7 +2278,7 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
     let follows = write_ahead(conn, write)?;
     conn.execute(
         "INSERT INTO queue (
-             id, kind, item_id, target_id, edge_id, namespace, tag, blob,
+             id, kind, item_id, to_id, edge_id, namespace, tag, blob,
              base_version, idempotency_key, payload, depends_on, queued_at,
              follows
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -2262,7 +2286,7 @@ pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, C
             id,
             write.kind.as_str(),
             write.item_id,
-            write.target_id,
+            write.to_id,
             write.edge_id,
             write.namespace,
             write.tag,
@@ -3176,15 +3200,15 @@ pub struct Attachment {
     pub stated: Option<u64>,
 }
 
-/// Every file item the copy holds, out of the bin, that is the source of an
-/// `attached-to` edge whose target the copy holds out of the bin. A row whose
+/// Every file item the copy holds, out of the bin, that is the from item of an
+/// `attached-to` edge whose to item the copy holds out of the bin. A row whose
 /// stored properties are not JSON, or that names its bytes by no text, is
 /// none.
 pub fn attachments(conn: &Connection) -> Result<Vec<Attachment>, CoreError> {
     attachments_where(conn, "1", &[])
 }
 
-/// The attachments among `ids` and among the sources of `attached-to` edges
+/// The attachments among `ids` and among the from items of `attached-to` edges
 /// to `ids`: those a change to the rows or edges of `ids` can make or end.
 fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachment>, CoreError> {
     if ids.is_empty() {
@@ -3195,8 +3219,8 @@ fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachmen
     // indexes answer without reading a row.
     let attached: bool = conn
         .prepare_cached(&format!(
-            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND source_id IN ({marks}))
-                 OR EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND target_id IN ({marks}))"
+            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND from_id IN ({marks}))
+                 OR EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND to_id IN ({marks}))"
         ))?
         .query_row(params_from_iter([ids, ids].concat()), |row| row.get(0))?;
     if !attached {
@@ -3206,8 +3230,8 @@ fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachmen
         conn,
         &format!(
             "(f.id IN ({marks}) OR f.id IN (
-               SELECT source_id FROM edges
-                WHERE edge_type = '{ATTACHED_TO}' AND target_id IN ({marks})))"
+               SELECT from_id FROM edges
+                WHERE edge_type = '{ATTACHED_TO}' AND to_id IN ({marks})))"
         ),
         &[ids, ids].concat(),
     )
@@ -3233,8 +3257,8 @@ fn attachments_where(
              FROM items AS f
             WHERE {IS_FILE} AND f.state != 'trashed'
               AND EXISTS (
-                SELECT 1 FROM edges AS e JOIN items AS t ON t.id = e.target_id
-                 WHERE e.source_id = f.id AND e.edge_type = '{ATTACHED_TO}'
+                SELECT 1 FROM edges AS e JOIN items AS t ON t.id = e.to_id
+                 WHERE e.from_id = f.id AND e.edge_type = '{ATTACHED_TO}'
                    AND t.state != 'trashed')
               AND {condition})
           WHERE hash IS NOT NULL
@@ -3256,15 +3280,15 @@ fn attachments_where(
     Ok(found)
 }
 
-/// How many sources of `attached-to` edges to items the copy holds out of
+/// How many from items of `attached-to` edges to items the copy holds out of
 /// the bin the copy holds no row of.
 pub fn attachments_not_in_copy(conn: &Connection) -> Result<u64, CoreError> {
     let outside: i64 = conn.query_row(
         &format!(
-            "SELECT COUNT(DISTINCT e.source_id)
-               FROM edges AS e JOIN items AS t ON t.id = e.target_id
+            "SELECT COUNT(DISTINCT e.from_id)
+               FROM edges AS e JOIN items AS t ON t.id = e.to_id
               WHERE e.edge_type = '{ATTACHED_TO}' AND t.state != 'trashed'
-                AND NOT EXISTS (SELECT 1 FROM items AS f WHERE f.id = e.source_id)"
+                AND NOT EXISTS (SELECT 1 FROM items AS f WHERE f.id = e.from_id)"
         ),
         [],
         |row| row.get(0),
@@ -3682,7 +3706,7 @@ pub(crate) fn read_writes(
             id: row.get(0)?,
             kind: row.get(1)?,
             item_id: row.get(2)?,
-            target_id: row.get(3)?,
+            to_id: row.get(3)?,
             edge_id: row.get(4)?,
             namespace: row.get(5)?,
             tag: row.get(6)?,
@@ -3774,7 +3798,7 @@ pub(crate) fn read_writes(
             kind: raw.kind.parse()?,
             id: raw.id,
             item_id: raw.item_id,
-            target_id: raw.target_id,
+            to_id: raw.to_id,
             edge_id: raw.edge_id,
             namespace: raw.namespace,
             tag: raw.tag,
@@ -3806,7 +3830,7 @@ struct RawWrite {
     id: String,
     kind: String,
     item_id: Option<String>,
-    target_id: Option<String>,
+    to_id: Option<String>,
     edge_id: Option<String>,
     namespace: Option<String>,
     tag: Option<String>,
@@ -4218,8 +4242,8 @@ pub(crate) struct NamingHost {
     pub properties: Map<String, Value>,
 }
 
-/// The target of the oldest edge of a `with-hosts` type or of `excerpt-of`
-/// that `id` draws, by `created_at` and then id, among the targets the copy
+/// The to item of the oldest edge of a `with-hosts` type or of `excerpt-of`
+/// that `id` draws, by `created_at` and then id, among the to items the copy
 /// holds out of the bin. The mode is read from the held catalog, so a
 /// registered type counts.
 pub(crate) fn naming_host(conn: &Connection, id: &str) -> Result<Option<NamingHost>, CoreError> {
@@ -4228,8 +4252,8 @@ pub(crate) fn naming_host(conn: &Connection, id: &str) -> Result<Option<NamingHo
             "SELECT t.json, h.type, h.properties
                FROM edges e
                JOIN edge_types t ON t.id = e.edge_type
-               JOIN items h ON h.id = e.target_id
-              WHERE e.source_id = ?1
+               JOIN items h ON h.id = e.to_id
+              WHERE e.from_id = ?1
                 AND (e.edge_type = 'excerpt-of'
                      OR CASE WHEN json_valid(t.json)
                         THEN json_extract(t.json, '$.cascade_on_delete') END = 'with-hosts')
@@ -4535,7 +4559,7 @@ pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     forget_marks_of_the_walk(conn)
 }
 
-/// The ids a waiting write names: as its item or its target, or as an end
+/// The ids a waiting write names: as its item or its to item, or as an end
 /// of the edge it writes, whether the ends it was queued with, those a move
 /// in its payload names or those of the edge the copy shows. The one rule a
 /// copy keeps rows by for its waiting writes, whatever lets rows go.
@@ -4543,14 +4567,14 @@ fn named_by_waiting() -> String {
     format!(
         "SELECT id FROM (
          SELECT item_id AS id FROM queue WHERE {WAITING}
-         UNION SELECT target_id FROM queue WHERE {WAITING}
-         UNION SELECT json_extract(payload, '$.source_id') FROM queue
+         UNION SELECT to_id FROM queue WHERE {WAITING}
+         UNION SELECT json_extract(payload, '$.from_id') FROM queue
                 WHERE {WAITING} AND edge_id IS NOT NULL AND json_valid(payload)
-         UNION SELECT json_extract(payload, '$.target_id') FROM queue
+         UNION SELECT json_extract(payload, '$.to_id') FROM queue
                 WHERE {WAITING} AND edge_id IS NOT NULL AND json_valid(payload)
-         UNION SELECT edges.source_id FROM edges JOIN queue ON queue.edge_id = edges.id
+         UNION SELECT edges.from_id FROM edges JOIN queue ON queue.edge_id = edges.id
                 WHERE {WAITING}
-         UNION SELECT edges.target_id FROM edges JOIN queue ON queue.edge_id = edges.id
+         UNION SELECT edges.to_id FROM edges JOIN queue ON queue.edge_id = edges.id
                 WHERE {WAITING}
          ) WHERE id IS NOT NULL"
     )
@@ -4578,10 +4602,10 @@ pub fn waiting_write_names(conn: &Connection, id: &str) -> Result<bool, CoreErro
 /// them for one row. Empty for an item write.
 fn edge_write_ends(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
     let mut statement = conn.prepare_cached(
-        "SELECT queue.item_id, queue.target_id,
-                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.source_id') END,
-                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.target_id') END,
-                edges.source_id, edges.target_id
+        "SELECT queue.item_id, queue.to_id,
+                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.from_id') END,
+                CASE WHEN json_valid(queue.payload) THEN json_extract(queue.payload, '$.to_id') END,
+                edges.from_id, edges.to_id
            FROM queue LEFT JOIN edges ON edges.id = queue.edge_id
           WHERE queue.id = ?1 AND queue.edge_id IS NOT NULL",
     )?;
@@ -4730,11 +4754,11 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [local])?;
     conn.execute("DELETE FROM items WHERE id = ?1", [local])?;
     for statement in [
-        "UPDATE edges SET source_id = ?2 WHERE source_id = ?1",
-        "UPDATE edges SET target_id = ?2 WHERE target_id = ?1",
+        "UPDATE edges SET from_id = ?2 WHERE from_id = ?1",
+        "UPDATE edges SET to_id = ?2 WHERE to_id = ?1",
         "UPDATE queue SET item_id = ?2 WHERE item_id = ?1 AND
          (sent = 0 OR (kind = 'create_item' AND verdict IN ('accepted', 'merged', 'conflicted', 'refused')))",
-        "UPDATE queue SET target_id = ?2 WHERE target_id = ?1 AND sent = 0",
+        "UPDATE queue SET to_id = ?2 WHERE to_id = ?1 AND sent = 0",
         "UPDATE body_checks SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE body_edges SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE body_edges SET other_id = ?2 WHERE other_id = ?1",
@@ -4796,7 +4820,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     for (id, payload) in waiting {
         let mut body: Value = serde_json::from_str(&payload)?;
         let mut moved = false;
-        for endpoint in ["source_id", "target_id"] {
+        for endpoint in ["from_id", "to_id"] {
             if body.get(endpoint).and_then(Value::as_str) == Some(local) {
                 body[endpoint] = Value::String(answered.to_string());
                 moved = true;
@@ -4841,8 +4865,8 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
 /// to `answered` the edge takes the name of its new ends.
 fn rename_shown_edges(conn: &Connection, local: &str, answered: &str) -> Result<(), CoreError> {
     let mut shown = conn.prepare(
-        "SELECT id, source_id, target_id, edge_type FROM edges
-          WHERE version = 0 AND (source_id = ?1 OR target_id = ?1)",
+        "SELECT id, from_id, to_id, edge_type FROM edges
+          WHERE version = 0 AND (from_id = ?1 OR to_id = ?1)",
     )?;
     let ends: Vec<(String, String, String, String)> = shown
         .query_map([local], |row| {
@@ -4858,9 +4882,9 @@ fn rename_shown_edges(conn: &Connection, local: &str, answered: &str) -> Result<
             continue;
         };
         let mut wire = edge.as_wire();
-        wire.source_id = moved(&source);
-        wire.target_id = moved(&target);
-        wire.id = crate::model::projected_edge_id(&wire.source_id, &edge_type, &wire.target_id);
+        wire.from_id = moved(&source);
+        wire.to_id = moved(&target);
+        wire.id = crate::model::projected_edge_id(&wire.from_id, &edge_type, &wire.to_id);
         forget_edge(conn, &id)?;
         upsert_edge(conn, &wire)?;
         readdress_edge_writes(conn, &id, &wire.id, false)?;
@@ -4868,14 +4892,14 @@ fn rename_shown_edges(conn: &Connection, local: &str, answered: &str) -> Result<
     // A delete already took its edge out of the copy, so the delete names it.
     let deletes = read_writes(
         conn,
-        "WHERE kind = ?1 AND sent = 0 AND (item_id = ?2 OR target_id = ?2)",
+        "WHERE kind = ?1 AND sent = 0 AND (item_id = ?2 OR to_id = ?2)",
         [WriteKind::DeleteEdge.as_str(), local],
     )?;
     for row in deletes {
         let (Some(id), Some(source), Some(target), Some(edge_type)) = (
             row.edge_id.as_deref(),
             row.item_id.as_deref(),
-            row.target_id.as_deref(),
+            row.to_id.as_deref(),
             row.body.get("edge_type").and_then(Value::as_str),
         ) else {
             continue;
@@ -5025,7 +5049,7 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     if unpinned {
         meta_set(conn, &purged_key(id), "true")?;
     }
-    let removed = remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
+    let removed = remove_item(conn, id, "from_id = ?1 OR to_id = ?1", &[])?;
     Ok(removed || unpinned)
 }
 
@@ -5039,9 +5063,9 @@ pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool,
     let waits =
         format!("id NOT IN (SELECT edge_id FROM queue WHERE edge_id IS NOT NULL AND {WAITING})");
     let edges = if whole.is_empty() {
-        format!("source_id = ?1 AND {waits}")
+        format!("from_id = ?1 AND {waits}")
     } else {
-        format!("source_id = ?1 AND edge_type NOT IN ({kept}) AND {waits}")
+        format!("from_id = ?1 AND edge_type NOT IN ({kept}) AND {waits}")
     };
     remove_item(conn, id, &edges, whole)
 }
@@ -5076,10 +5100,10 @@ fn remove_item(
     let leaving: Vec<String> = conn
         .prepare(&format!(
             "SELECT id FROM (
-               SELECT id, source_id, target_id, edge_type FROM edges
+               SELECT id, from_id, to_id, edge_type FROM edges
                UNION
-               SELECT id, json_extract(row, '$.source_id') AS source_id,
-                      json_extract(row, '$.target_id') AS target_id,
+               SELECT id, json_extract(row, '$.from_id') AS from_id,
+                      json_extract(row, '$.to_id') AS to_id,
                       json_extract(row, '$.edge_type') AS edge_type
                  FROM beneath
                 WHERE subject = 'edge' AND id NOT IN (SELECT id FROM edges)
@@ -5109,11 +5133,11 @@ pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
 
 pub fn takes_edge(
     conn: &Connection,
-    source_id: &str,
+    from_id: &str,
     edge_type: &str,
     whole: &[String],
 ) -> Result<bool, CoreError> {
-    Ok(whole.iter().any(|held| held == edge_type) || item_held(conn, source_id)?)
+    Ok(whole.iter().any(|held| held == edge_type) || item_held(conn, from_id)?)
 }
 
 /// Keeps an edge a waiting write of this device's is laid over.
@@ -5123,7 +5147,7 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
     };
     if takes_edge(
         conn,
-        &edge.source_id,
+        &edge.from_id,
         &edge.edge_type,
         &whole_edge_types(conn)?,
     )? || edge_write_waits(conn, id)?
@@ -5283,22 +5307,22 @@ pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> {
     crate::body::rule::edge_changing(conn, edge)?;
     let mut ends = edge_sources(conn, &edge.id)?;
-    ends.push(edge.source_id.clone());
+    ends.push(edge.from_id.clone());
     let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
     let before = attachments_before(conn, &ends)?;
     conn.prepare_cached(
-        "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
+        "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (id) DO UPDATE SET
-           source_id = excluded.source_id, target_id = excluded.target_id,
+           from_id = excluded.from_id, to_id = excluded.to_id,
            edge_type = excluded.edge_type, properties = excluded.properties,
            version = excluded.version, created_at = excluded.created_at,
            updated_at = excluded.updated_at",
     )?
     .execute(params![
             edge.id,
-            edge.source_id,
-            edge.target_id,
+            edge.from_id,
+            edge.to_id,
             edge.edge_type,
             number::object(&edge.properties),
             edge.version,
@@ -5308,10 +5332,10 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
     attachments_changed(conn, &ends, before)
 }
 
-/// The source of the edge `id` as the copy holds it, which a change to the
+/// The from item of the edge `id` as the copy holds it, which a change to the
 /// edge can make or end an attachment of.
 fn edge_sources(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
-    let mut statement = conn.prepare_cached("SELECT source_id FROM edges WHERE id = ?1")?;
+    let mut statement = conn.prepare_cached("SELECT from_id FROM edges WHERE id = ?1")?;
     let found = statement
         .query_map([id], |row| row.get(0))?
         .collect::<Result<Vec<String>, _>>()?;
@@ -5457,12 +5481,12 @@ pub fn items_where(
     Ok(items)
 }
 
-pub fn edges_from(conn: &Connection, source_id: &str) -> Result<Vec<Edge>, CoreError> {
-    edges_at(conn, "source_id", source_id, &mut Unreadable::Refuse)
+pub fn edges_from(conn: &Connection, from_id: &str) -> Result<Vec<Edge>, CoreError> {
+    edges_at(conn, "from_id", from_id, &mut Unreadable::Refuse)
 }
 
-pub fn edges_to(conn: &Connection, target_id: &str) -> Result<Vec<Edge>, CoreError> {
-    edges_at(conn, "target_id", target_id, &mut Unreadable::Refuse)
+pub fn edges_to(conn: &Connection, to_id: &str) -> Result<Vec<Edge>, CoreError> {
+    edges_at(conn, "to_id", to_id, &mut Unreadable::Refuse)
 }
 
 /// The items at the other end of each edge of `id` that is not of type
@@ -5474,8 +5498,8 @@ pub(crate) fn edge_neighbors(
     except: &str,
 ) -> Result<Vec<(String, String)>, CoreError> {
     let mut statement = conn.prepare_cached(
-        "SELECT source_id, target_id FROM edges
-          WHERE (source_id = ?1 OR target_id = ?1) AND edge_type != ?2",
+        "SELECT from_id, to_id FROM edges
+          WHERE (from_id = ?1 OR to_id = ?1) AND edge_type != ?2",
     )?;
     let ends = statement
         .query_map(params![id, except], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -5614,8 +5638,8 @@ fn read_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Edge, Option<String>)
     let (properties, why) = split_properties(&properties);
     let edge = Edge {
         id: row.get(0)?,
-        source_id: row.get(1)?,
-        target_id: row.get(2)?,
+        from_id: row.get(1)?,
+        to_id: row.get(2)?,
         edge_type: row.get(3)?,
         properties,
         version: row.get(5)?,
@@ -6402,18 +6426,14 @@ impl RefusedEdgeCreate {
     pub(crate) fn satisfied_by_server(&self, conn: &Connection) -> Result<bool, CoreError> {
         let mut statement = conn.prepare_cached(
             "SELECT properties FROM edges AS edge
-              WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3 AND version > 0
+              WHERE from_id = ?1 AND edge_type = ?2 AND to_id = ?3 AND version > 0
                 AND NOT EXISTS (SELECT 1 FROM queue AS write WHERE write.edge_id = edge.id
                       AND (write.verdict IS NULL OR write.verdict IN ('blocked', 'dead')))
                 AND NOT EXISTS (SELECT 1 FROM read_backs AS owed
                       WHERE owed.subject = 'edge' AND owed.id = edge.id)",
         )?;
         let held = statement.query_map(
-            params![
-                self.asked.source_id,
-                self.asked.edge_type,
-                self.asked.target_id
-            ],
+            params![self.asked.from_id, self.asked.edge_type, self.asked.to_id],
             |row| row.get::<_, String>(0),
         )?;
         for properties in held {
@@ -6435,17 +6455,17 @@ impl RefusedEdgeCreate {
     pub(crate) fn carried_by_later_create(&self, conn: &Connection) -> Result<bool, CoreError> {
         let mut statement = conn.prepare_cached(
             "SELECT payload FROM queue
-              WHERE item_id = ?1 AND target_id = ?2 AND kind = 'create_edge' AND seq > ?3
+              WHERE item_id = ?1 AND to_id = ?2 AND kind = 'create_edge' AND seq > ?3
                 AND (verdict IS NULL OR verdict = 'blocked' OR (verdict = 'refused' AND sent = 1))",
         )?;
         let later = statement.query_map(
-            params![self.asked.source_id, self.asked.target_id, self.seq],
+            params![self.asked.from_id, self.asked.to_id, self.seq],
             |row| row.get::<_, String>(0),
         )?;
         for payload in later {
             if EdgeDraft::from_payload(&payload?).is_ok_and(|(_, later)| {
-                later.source_id == self.asked.source_id
-                    && later.target_id == self.asked.target_id
+                later.from_id == self.asked.from_id
+                    && later.to_id == self.asked.to_id
                     && later.edge_type == self.asked.edge_type
                     && carries(&later.properties, &self.asked.properties)
             }) {
@@ -6694,7 +6714,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             &Owed {
                 subject: Subject::Item,
                 id: minted.into(),
-                source_id: None,
+                from_id: None,
                 edge_type: None,
                 moved: false,
             },
@@ -6709,7 +6729,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 fn read_of_row_owed_elsewhere(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(item_held(conn, id)?
         || conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM queue WHERE item_id = ?1 OR target_id = ?1)
+            "SELECT EXISTS (SELECT 1 FROM queue WHERE item_id = ?1 OR to_id = ?1)
                  OR EXISTS (SELECT 1 FROM meta
                              WHERE key >= ?2 AND key < ?3 AND value = 'land:' || ?1)",
             params![id, RECEIPT_PENDING, prefix_end(RECEIPT_PENDING)],
@@ -6760,7 +6780,7 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 
 /// `forget_item`, keeping a pin.
 fn forget_row(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
+    remove_item(conn, id, "from_id = ?1 OR to_id = ?1", &[])?;
     Ok(())
 }
 
@@ -6787,7 +6807,7 @@ pub fn take_server_item(
 /// the server's came leaves, and each write waiting on it moves onto the
 /// server's (`device/edge-write-waits-projected`).
 pub fn take_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
-    let shown = crate::model::projected_edge_id(&edge.source_id, &edge.edge_type, &edge.target_id);
+    let shown = crate::model::projected_edge_id(&edge.from_id, &edge.edge_type, &edge.to_id);
     let moved = shown != edge.id && readdress_edge_writes(conn, &shown, &edge.id, true)?;
     let taken = put_server_edge(conn, edge)?;
     if shown != edge.id {
@@ -7184,8 +7204,8 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
             WriteKind::CreateEdge => {
                 let (_, draft) =
                     crate::model::EdgeDraft::from_payload(&payload_of(conn, &row.id)?)?;
-                edge.source_id = draft.source_id;
-                edge.target_id = draft.target_id;
+                edge.from_id = draft.from_id;
+                edge.to_id = draft.to_id;
                 edge.edge_type = draft.edge_type;
                 edge.properties.extend(draft.properties);
             }
@@ -7196,11 +7216,11 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
                         edge.properties.insert(key.clone(), value.clone());
                     }
                 }
-                if let Some(source) = payload.get("source_id").and_then(Value::as_str) {
-                    edge.source_id = source.to_string();
+                if let Some(source) = payload.get("from_id").and_then(Value::as_str) {
+                    edge.from_id = source.to_string();
                 }
-                if let Some(target) = payload.get("target_id").and_then(Value::as_str) {
-                    edge.target_id = target.to_string();
+                if let Some(target) = payload.get("to_id").and_then(Value::as_str) {
+                    edge.to_id = target.to_string();
                 }
             }
             WriteKind::DeleteEdge => {
@@ -7497,7 +7517,7 @@ pub fn edge_by_id_with(
 ) -> Result<Option<Edge>, CoreError> {
     let read = conn
         .query_row(
-            "SELECT id, source_id, target_id, edge_type, properties, version, created_at, updated_at
+            "SELECT id, from_id, to_id, edge_type, properties, version, created_at, updated_at
                FROM edges WHERE id = ?1",
             [id],
             read_edge,
@@ -7523,10 +7543,10 @@ pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<S
         .map(|row| row.id)
         .collect();
     if let Some(edge) = edge_by_id(conn, edge_id)? {
-        for create in untaken_creates_for_item(conn, &edge.source_id)? {
+        for create in untaken_creates_for_item(conn, &edge.from_id)? {
             let draft = crate::model::Draft::from_payload(&payload_of(conn, &create)?)?;
             if draft.edge_pairs().iter().any(|(edge_type, target)| {
-                crate::model::projected_edge_id(&edge.source_id, edge_type, target) == edge_id
+                crate::model::projected_edge_id(&edge.from_id, edge_type, target) == edge_id
             }) {
                 creates.push(create);
             }
@@ -7654,8 +7674,8 @@ pub(crate) mod testing {
     pub fn wire_edge(id: &str, source: &str, target: &str, edge_type: &str) -> WireEdge {
         WireEdge {
             id: id.into(),
-            source_id: source.into(),
-            target_id: target.into(),
+            from_id: source.into(),
+            to_id: target.into(),
             edge_type: edge_type.into(),
             properties: Map::new(),
             version: 1,
@@ -7861,7 +7881,7 @@ mod tests {
         };
         let edge = |id: &str, source: &str, target: &str, kind: &str| {
             conn.execute(
-                "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version,
+                "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version,
                    created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, '{}', 1, 't', 't')",
                 [id, source, target, kind],
@@ -8382,10 +8402,10 @@ mod tests {
         let mut icon_and_edge = and_label.clone();
         icon_and_edge.types[0].display_hints.as_mut().unwrap().icon = Some("lucide:moon".into());
         icon_and_edge.edge_types = vec![json!({
-            "id": "mentor-of", "source_type_constraints": ["*"],
-            "target_type_constraints": ["*"], "cardinality": "many-to-many",
+            "id": "mentor-of", "from_type_constraints": ["*"],
+            "to_type_constraints": ["*"], "cardinality": "many-to-many",
             "cascade_on_delete": "orphan", "property_schema": {},
-            "written_at": "source", "shipped": false
+            "written_from": "from", "shipped": false
         })];
         assert_eq!(
             replace_catalog(&conn, &icon_and_edge).unwrap(),
@@ -8540,10 +8560,10 @@ mod tests {
         upsert_edge(&conn, &wire_edge("e2", "other", "local", "references")).unwrap();
         upsert_edge(&conn, &wire_edge("e3", "other", "other", "references")).unwrap();
         conn.execute(
-            "INSERT INTO queue (id, kind, item_id, target_id, payload, idempotency_key, depends_on, queued_at)
+            "INSERT INTO queue (id, kind, item_id, to_id, payload, idempotency_key, depends_on, queued_at)
              VALUES ('q1', 'create_edge', 'other', 'local', ?1, 'k1', '[]', ''),
                     ('q2', 'update_item', 'local', NULL, '{}', 'k2', '[]', '')",
-            [serde_json::json!({ "source_id": "other", "target_id": "local" }).to_string()],
+            [serde_json::json!({ "from_id": "other", "to_id": "local" }).to_string()],
         )
         .unwrap();
 
@@ -8556,7 +8576,7 @@ mod tests {
         assert!(item_by_id(&conn, "server").unwrap().is_some());
         let endpoints = |id: &str| -> (String, String) {
             conn.query_row(
-                "SELECT source_id, target_id FROM edges WHERE id = ?1",
+                "SELECT from_id, to_id FROM edges WHERE id = ?1",
                 [id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -8567,7 +8587,7 @@ mod tests {
         assert_eq!(endpoints("e3"), ("other".into(), "other".into()));
         let queued = |id: &str| -> (Option<String>, Option<String>, String) {
             conn.query_row(
-                "SELECT item_id, target_id, payload FROM queue WHERE id = ?1",
+                "SELECT item_id, to_id, payload FROM queue WHERE id = ?1",
                 [id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -8579,8 +8599,8 @@ mod tests {
             (Some("other"), Some("server"))
         );
         let payload: Value = serde_json::from_str(&payload).unwrap();
-        assert_eq!(payload["source_id"], "other");
-        assert_eq!(payload["target_id"], "server");
+        assert_eq!(payload["from_id"], "other");
+        assert_eq!(payload["to_id"], "server");
         assert_eq!(queued("q2").0.as_deref(), Some("server"));
     }
 
@@ -9251,7 +9271,7 @@ mod tests {
         // Every value distinct, because the reader is positional.
         conn.execute(
             "INSERT INTO queue (
-                 id, kind, item_id, target_id, edge_id, namespace, tag, blob,
+                 id, kind, item_id, to_id, edge_id, namespace, tag, blob,
                  base_version, idempotency_key, payload, depends_on, verdict, reason,
                  answer, conflicted_copy_id, refusals, environmental_streak,
                  last_failure, queued_at, answered_at
@@ -9273,7 +9293,7 @@ mod tests {
         assert_eq!(write.id, "q-id");
         assert_eq!(write.kind, WriteKind::UpdateItem);
         assert_eq!(write.item_id.as_deref(), Some("the-item"));
-        assert_eq!(write.target_id.as_deref(), Some("the-target"));
+        assert_eq!(write.to_id.as_deref(), Some("the-target"));
         assert_eq!(write.edge_id.as_deref(), Some("the-edge"));
         assert_eq!(write.namespace.as_deref(), Some("the-namespace"));
         assert_eq!(write.tag.as_deref(), Some("the-tag"));
@@ -9306,7 +9326,7 @@ mod tests {
             &NewWrite {
                 kind: WriteKind::UploadBlob,
                 item_id: None,
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,
@@ -9327,7 +9347,7 @@ mod tests {
             &NewWrite {
                 kind: WriteKind::UploadBlob,
                 item_id: None,
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,
@@ -9365,7 +9385,7 @@ mod tests {
                 &NewWrite {
                     kind: WriteKind::UploadBlob,
                     item_id: None,
-                    target_id: None,
+                    to_id: None,
                     edge_id: None,
                     namespace: None,
                     tag: None,
@@ -9414,7 +9434,7 @@ mod tests {
                 &NewWrite {
                     kind: WriteKind::UploadBlob,
                     item_id: None,
-                    target_id: None,
+                    to_id: None,
                     edge_id: None,
                     namespace: None,
                     tag: None,
@@ -9572,7 +9592,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some("an-item"),
-                    target_id: None,
+                    to_id: None,
                     edge_id: None,
                     namespace: None,
                     tag: None,
@@ -9639,7 +9659,7 @@ mod tests {
                 &NewWrite {
                     kind: WriteKind::CreateItem,
                     item_id: Some("held"),
-                    target_id: None,
+                    to_id: None,
                     edge_id: None,
                     namespace: None,
                     tag: None,
@@ -9692,7 +9712,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some("n1"),
-                    target_id: None,
+                    to_id: None,
                     edge_id: None,
                     namespace: None,
                     tag,
@@ -9773,7 +9793,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some(item),
-                    target_id: edge_id.map(|_| "b"),
+                    to_id: edge_id.map(|_| "b"),
                     edge_id,
                     namespace: None,
                     tag: None,
@@ -9832,7 +9852,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some("a"),
-                    target_id: Some("b"),
+                    to_id: Some("b"),
                     edge_id: Some("e1"),
                     namespace: None,
                     tag: None,
@@ -9908,7 +9928,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some(item),
-                    target_id: None,
+                    to_id: None,
                     edge_id: None,
                     namespace: None,
                     tag: None,
@@ -9964,7 +9984,7 @@ mod tests {
         ),
         (
             "edges",
-            "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at) VALUES ('g', 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, created_at, updated_at) VALUES ('g', 'a', 'b', 'references', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
             "UPDATE edges SET version = 2 WHERE id = 'g'",
             "DELETE FROM edges WHERE id = 'g'",
         ),
@@ -10049,7 +10069,7 @@ mod tests {
             (Some(Verdict::Refused), false),
         ] {
             conn.execute(
-                "INSERT INTO queue (id, kind, item_id, target_id, idempotency_key, payload, queued_at, verdict)
+                "INSERT INTO queue (id, kind, item_id, to_id, idempotency_key, payload, queued_at, verdict)
                  VALUES ('w', 'create_edge', 'a', 'b', 'k', '{}', '2026-01-01T00:00:00Z', ?1)",
                 [verdict.map(Verdict::as_str)],
             )
@@ -10118,7 +10138,7 @@ mod tests {
             &Owed {
                 subject: Subject::Item,
                 id: "row".into(),
-                source_id: None,
+                from_id: None,
                 edge_type: None,
                 moved: false,
             },
@@ -10156,7 +10176,7 @@ mod tests {
             &NewWrite {
                 kind: WriteKind::UpdateItem,
                 item_id: Some("n1"),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,
@@ -10187,7 +10207,7 @@ mod tests {
             &NewWrite {
                 kind: WriteKind::UpdateItem,
                 item_id: Some("n1"),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,
@@ -10214,7 +10234,7 @@ mod tests {
             &NewWrite {
                 kind: WriteKind::UpdateEdge,
                 item_id: Some("a"),
-                target_id: Some("b"),
+                to_id: Some("b"),
                 edge_id: Some("e1"),
                 namespace: None,
                 tag: None,
@@ -10244,7 +10264,7 @@ mod tests {
             &NewWrite {
                 kind: WriteKind::UpdateEdge,
                 item_id: Some("a"),
-                target_id: Some("b"),
+                to_id: Some("b"),
                 edge_id: Some("e1"),
                 namespace: None,
                 tag: None,
@@ -10298,7 +10318,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some("row"),
-                    target_id: None,
+                    to_id: None,
                     edge_id: edge,
                     namespace: None,
                     tag: None,
@@ -10359,7 +10379,7 @@ mod tests {
                 &NewWrite {
                     kind,
                     item_id: Some(item),
-                    target_id: None,
+                    to_id: None,
                     edge_id: edge,
                     namespace: None,
                     tag: None,
@@ -10781,11 +10801,12 @@ mod tests {
     }
 
     /// Append one hash per schema version; never change an existing entry.
-    const SHAPES: [&str; 4] = [
+    const SHAPES: [&str; 5] = [
         "9a505dc1b14cecc6",
         "115c1d4def4a3d91",
         "2d4e4e1e76ec61dc",
         "c2b64b3a6428a46c",
+        "e5029183e86b7c37",
     ];
 
     #[test]

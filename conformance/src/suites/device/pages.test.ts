@@ -218,7 +218,7 @@ class Door {
   private edgesFrom(source: string): Record<string, unknown> {
     const byType: Record<string, unknown[]> = {};
     for (const edge of this.edges.values()) {
-      if (edge.source_id !== source || this.unlisted.has(edge.id)) continue;
+      if (edge.from_id !== source || this.unlisted.has(edge.id)) continue;
       const type = edge.edge_type ?? "references";
       (byType[type] ??= []).push(wireEdge(edge));
     }
@@ -695,7 +695,7 @@ describe("creates in pages", () => {
     expect(verdicts.get(edges[1]?.id ?? "")).toBe("refused");
   });
 
-  it("sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat", async () => {
+  it("sends an edge the read of its from item does not hold on its own door, under its key, answered as a repeat", async () => {
     const made = await start("pages-edge-unread");
     harness = made.harness;
     const { door } = made;
@@ -848,7 +848,7 @@ describe("creates in pages", () => {
     ]);
   });
 
-  it("settles an edge the owed read of its source leaves out by a read of the edge, and sends it no more", async () => {
+  it("settles an edge the owed read of its from item leaves out by a read of the edge, and sends it no more", async () => {
     const made = await start("pages-owed-edge");
     harness = made.harness;
     const { door } = made;
@@ -1109,8 +1109,7 @@ describe("a folder's first sync", () => {
     expect(
       [...edges.edges.values()].filter(
         (edge) =>
-          edge.edge_type === "in-folder" &&
-          edge.target_id === folder?.settings.id,
+          edge.edge_type === "in-folder" && edge.to_id === folder?.settings.id,
       ),
     ).toHaveLength(60);
   });

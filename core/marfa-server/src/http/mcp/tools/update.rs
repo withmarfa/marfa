@@ -28,9 +28,9 @@ pub fn definition() -> Definition {
         "type": "object",
         "properties": {
             "edge_type": { "type": "string", "minLength": 1 },
-            "target_id": { "type": "string", "minLength": 1 },
+            "to_id": { "type": "string", "minLength": 1 },
         },
-        "required": ["edge_type", "target_id"],
+        "required": ["edge_type", "to_id"],
         "additionalProperties": false,
     });
     Definition {
@@ -83,7 +83,7 @@ pub fn definition() -> Definition {
 
 struct EdgeRef {
     edge_type: String,
-    target_id: String,
+    to_id: String,
 }
 
 fn edge_refs(arguments: &Map<String, Value>, name: &str) -> Result<Vec<EdgeRef>, Stop> {
@@ -94,16 +94,16 @@ fn edge_refs(arguments: &Map<String, Value>, name: &str) -> Result<Vec<EdgeRef>,
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let (Some(edge_type), Some(target_id)) = (
+        let (Some(edge_type), Some(to_id)) = (
             entry.get("edge_type").and_then(Value::as_str),
-            entry.get("target_id").and_then(Value::as_str),
+            entry.get("to_id").and_then(Value::as_str),
         ) else {
             continue;
         };
-        item_id(target_id)?;
+        item_id(to_id)?;
         refs.push(EdgeRef {
             edge_type: edge_type.to_string(),
-            target_id: target_id.to_string(),
+            to_id: to_id.to_string(),
         });
     }
     Ok(refs)
@@ -302,13 +302,13 @@ async fn stale_answer(
     }
 }
 
-/// The edge of the item's `edge_type` to `target_id`, from its outgoing edges.
+/// The edge of the item's `edge_type` to `to_id`, from its outgoing edges.
 async fn find_edge(
     app: &Arc<App>,
     caller: &Caller,
     id: &str,
     edge_type: &str,
-    target_id: &str,
+    to_id: &str,
 ) -> Result<Option<String>, Refusal> {
     let mut cursor: Option<String> = None;
     loop {
@@ -318,7 +318,7 @@ async fn find_edge(
             .and_then(Value::as_array)
             .and_then(|data| {
                 data.iter()
-                    .find(|edge| edge.get("target_id").and_then(Value::as_str) == Some(target_id))
+                    .find(|edge| edge.get("to_id").and_then(Value::as_str) == Some(to_id))
             })
             .and_then(|edge| edge.get("id").and_then(Value::as_str))
         {
@@ -454,21 +454,21 @@ pub async fn run(
         let step = format!("add_edge {}", edge.edge_type);
         let op = Op::Create(Create {
             id: None,
-            source_id: id.clone(),
-            target_id: edge.target_id.clone(),
+            from_id: id.clone(),
+            to_id: edge.to_id.clone(),
             edge_type: edge.edge_type.clone(),
             properties: Map::new(),
-            source_version: Some(version),
+            from_version: Some(version),
         });
         crate::app::edges::write::run(app, caller, None, op)
             .await
             .map_err(|refusal| stop_at(step, &applied, refusal))?;
-        applied.push(format!("add_edge {} {}", edge.edge_type, edge.target_id));
+        applied.push(format!("add_edge {} {}", edge.edge_type, edge.to_id));
     }
 
     for edge in &remove_edges {
         let step = format!("remove_edge {}", edge.edge_type);
-        let found = find_edge(app, caller, &id, &edge.edge_type, &edge.target_id)
+        let found = find_edge(app, caller, &id, &edge.edge_type, &edge.to_id)
             .await
             .map_err(|refusal| stop_at(step.clone(), &applied, refusal))?;
         let Some(edge_id) = found else {
@@ -477,21 +477,18 @@ pub async fn run(
                 &applied,
                 Refusal::new(
                     Code::EdgeNotFound,
-                    format!(
-                        "The item has no {} edge to {}.",
-                        edge.edge_type, edge.target_id
-                    ),
+                    format!("The item has no {} edge to {}.", edge.edge_type, edge.to_id),
                 ),
             ));
         };
         let op = Op::Delete(Delete {
             id: edge_id,
-            source_version: Some(version),
+            from_version: Some(version),
         });
         crate::app::edges::write::run(app, caller, None, op)
             .await
             .map_err(|refusal| stop_at(step, &applied, refusal))?;
-        applied.push(format!("remove_edge {} {}", edge.edge_type, edge.target_id));
+        applied.push(format!("remove_edge {} {}", edge.edge_type, edge.to_id));
     }
 
     if let Some(wanted) = wanted_state.filter(|wanted| *wanted != state) {

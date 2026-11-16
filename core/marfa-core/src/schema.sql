@@ -55,18 +55,18 @@ CREATE INDEX IF NOT EXISTS items_read_only ON items (source, type, read_only);
 
 CREATE TABLE IF NOT EXISTS edges (
   id TEXT PRIMARY KEY,
-  source_id TEXT NOT NULL,
-  target_id TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
   edge_type TEXT NOT NULL,
   properties TEXT NOT NULL,
   version INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
--- Ends with the target so the duplicate check finds a triple without reading
--- the source's other edges of the type.
-CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type, target_id);
-CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type);
+-- Ends with the to item so the duplicate check finds a triple without reading
+-- the from item's other edges of the type.
+CREATE INDEX IF NOT EXISTS edges_from ON edges (from_id, edge_type, to_id);
+CREATE INDEX IF NOT EXISTS edges_to ON edges (to_id, edge_type);
 
 CREATE TABLE IF NOT EXISTS tags (
   item_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS read_backs (
   subject TEXT NOT NULL CHECK (subject IN ('item', 'edge')),
   id TEXT NOT NULL,
   -- An edge is read through its source's listing of its type.
-  source_id TEXT,
+  from_id TEXT,
   edge_type TEXT,
   -- Whether a refused write owed here was a move, which lets the row go
   -- where the read lands outside the slice.
@@ -281,7 +281,7 @@ CREATE TABLE IF NOT EXISTS queue (
   -- An edge write names both endpoints too: an edge create can wait on two
   -- unanswered local creates, which a single subject cannot say.
   item_id TEXT,
-  target_id TEXT,
+  to_id TEXT,
   edge_id TEXT,
   -- Also in `payload`; columns so outstanding writes can be looked up by them.
   namespace TEXT,
@@ -612,7 +612,7 @@ BEGIN
 END;
 CREATE TRIGGER IF NOT EXISTS edges_beneath_update AFTER UPDATE ON edges
   WHEN (OLD.edge_type = 'parent-of' OR NEW.edge_type = 'parent-of')
-   AND (OLD.source_id IS NOT NEW.source_id OR OLD.target_id IS NOT NEW.target_id
+   AND (OLD.from_id IS NOT NEW.from_id OR OLD.to_id IS NOT NEW.to_id
         OR OLD.edge_type IS NOT NEW.edge_type)
    AND EXISTS (SELECT 1 FROM meta WHERE key = 'slice_query'
          AND CASE WHEN json_valid(value) THEN json_extract(value, '$.beneath') END IS NOT NULL)
@@ -757,19 +757,19 @@ END;
 CREATE TRIGGER IF NOT EXISTS edges_change_insert AFTER INSERT ON edges BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-    FROM (SELECT NEW.source_id AS id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    FROM (SELECT NEW.from_id AS id UNION SELECT NEW.to_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
 CREATE TRIGGER IF NOT EXISTS edges_change_update AFTER UPDATE ON edges BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-    FROM (SELECT OLD.source_id AS id UNION SELECT OLD.target_id UNION SELECT NEW.source_id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    FROM (SELECT OLD.from_id AS id UNION SELECT OLD.to_id UNION SELECT NEW.from_id UNION SELECT NEW.to_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
 CREATE TRIGGER IF NOT EXISTS edges_change_delete AFTER DELETE ON edges BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-    FROM (SELECT OLD.source_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
+    FROM (SELECT OLD.from_id AS id UNION SELECT OLD.to_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
 CREATE TRIGGER IF NOT EXISTS tags_change_insert AFTER INSERT ON tags BEGIN
@@ -811,13 +811,13 @@ END;
 CREATE TRIGGER IF NOT EXISTS queue_change_insert AFTER INSERT ON queue BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-    FROM (SELECT NEW.item_id AS id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    FROM (SELECT NEW.item_id AS id UNION SELECT NEW.to_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
 CREATE TRIGGER IF NOT EXISTS queue_change_update AFTER UPDATE ON queue BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-    FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id UNION SELECT NEW.item_id UNION SELECT NEW.target_id) WHERE id IS NOT NULL
+    FROM (SELECT OLD.item_id AS id UNION SELECT OLD.to_id UNION SELECT NEW.item_id UNION SELECT NEW.to_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
 -- As for `queue_revise_delete`: an answered write leaving the queue renders
@@ -826,7 +826,7 @@ CREATE TRIGGER IF NOT EXISTS queue_change_delete AFTER DELETE ON queue
   WHEN OLD.verdict IS NULL OR OLD.verdict IN ('blocked', 'dead') BEGIN
   INSERT INTO copy_changes (item_id, seq)
     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-    FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
+    FROM (SELECT OLD.item_id AS id UNION SELECT OLD.to_id) WHERE id IS NOT NULL
     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
 END;
 

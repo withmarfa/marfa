@@ -21,13 +21,13 @@ use crate::app::items::write::ruled;
 use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
 
-const CREATE_FIELDS: [&str; 5] = ["id", "source_id", "target_id", "edge_type", "properties"];
-const UPDATE_FIELDS: [&str; 4] = ["version", "source_id", "target_id", "properties"];
+const CREATE_FIELDS: [&str; 5] = ["id", "from_id", "to_id", "edge_type", "properties"];
+const UPDATE_FIELDS: [&str; 4] = ["version", "from_id", "to_id", "properties"];
 const PAGE_FIELDS: [&str; 4] = ["edges", "atomic", "mode", "enable_fanout"];
 const ENTRY_FIELDS: [&str; 6] = [
     "id",
-    "source_id",
-    "target_id",
+    "from_id",
+    "to_id",
     "edge_type",
     "properties",
     "version",
@@ -40,7 +40,7 @@ const LIST_PARAMETERS: [&str; 5] = [
     "limit",
 ];
 const ITEM_PARAMETERS: [&str; 3] = ["edge_type", "cursor", "limit"];
-const SOURCE_VERSION: [&str; 1] = ["source_version"];
+const FROM_VERSION: [&str; 1] = ["from_version"];
 const MAX_ENTRIES: usize = 5000;
 const MAX_EDGE_TYPES: usize = 10;
 const MAX_LIMIT: i64 = 500;
@@ -57,11 +57,11 @@ fn check_edge_id(field: &str, id: &str) -> Result<()> {
     validation::id(field, id).map_err(ruled)
 }
 
-fn source_version_of(uri: &Uri) -> Result<Option<i64>> {
-    query::only(uri, &SOURCE_VERSION)?;
+fn from_version_of(uri: &Uri) -> Result<Option<i64>> {
+    query::only(uri, &FROM_VERSION)?;
     let named = query::pairs(uri)?
         .into_iter()
-        .find(|(name, _)| name == "source_version");
+        .find(|(name, _)| name == "from_version");
     named
         .map(|(_, value)| {
             value
@@ -70,8 +70,8 @@ fn source_version_of(uri: &Uri) -> Result<Option<i64>> {
                 .filter(|version| *version >= 0)
                 .ok_or_else(|| {
                     invalid_field(
-                        "source_version",
-                        "source_version must be a whole number of 0 or more.",
+                        "from_version",
+                        "from_version must be a whole number of 0 or more.",
                     )
                 })
         })
@@ -79,9 +79,9 @@ fn source_version_of(uri: &Uri) -> Result<Option<i64>> {
 }
 
 fn create_of(body: &ReadBody, uri: &Uri) -> Result<Op> {
-    let source_version = source_version_of(uri)?;
+    let from_version = from_version_of(uri)?;
     let sent = body.object(Bag::Properties)?;
-    for field in ["source_id", "target_id", "edge_type"] {
+    for field in ["from_id", "to_id", "edge_type"] {
         if !sent.contains_key(field) {
             return Err(missing_field(field));
         }
@@ -89,21 +89,21 @@ fn create_of(body: &ReadBody, uri: &Uri) -> Result<Op> {
     let mut sent = only_declared(sent, &CREATE_FIELDS)?;
     body.refuse_inexact_numbers(Bag::Properties)?;
     let properties = properties_of(&mut sent)?.unwrap_or_default();
-    let (source_id, target_id) = (required(&sent, "source_id")?, required(&sent, "target_id")?);
+    let (from_id, to_id) = (required(&sent, "from_id")?, required(&sent, "to_id")?);
     let edge_type = required(&sent, "edge_type")?;
     let id = text_of(&sent, "id")?;
-    check_edge_id("source_id", &source_id)?;
-    check_edge_id("target_id", &target_id)?;
+    check_edge_id("from_id", &from_id)?;
+    check_edge_id("to_id", &to_id)?;
     if let Some(id) = &id {
         check_edge_id("id", id)?;
     }
     Ok(Op::Create(Create {
         id,
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type,
         properties,
-        source_version,
+        from_version,
     }))
 }
 
@@ -130,8 +130,8 @@ fn update_of(id: String, body: &ReadBody) -> Result<Op> {
     Ok(Op::Update(Update {
         id,
         version,
-        source_id: text_of(&sent, "source_id")?,
-        target_id: text_of(&sent, "target_id")?,
+        from_id: text_of(&sent, "from_id")?,
+        to_id: text_of(&sent, "to_id")?,
         properties,
     }))
 }
@@ -160,14 +160,8 @@ pub async fn delete(
     caller.require_reach()?;
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, _| async move {
-        let source_version = source_version_of(&uri)?;
-        write::run(
-            &door,
-            &who,
-            claim,
-            Op::Delete(Delete { id, source_version }),
-        )
-        .await
+        let from_version = from_version_of(&uri)?;
+        write::run(&door, &who, claim, Op::Delete(Delete { id, from_version })).await
     })
     .await
 }
@@ -286,8 +280,8 @@ fn entry_of(mut sent: Map<String, Value>) -> Result<Entry> {
     let properties = properties_of(&mut sent)?;
     Ok(Entry {
         id: text_of(&sent, "id")?,
-        source_id: required(&sent, "source_id")?,
-        target_id: required(&sent, "target_id")?,
+        from_id: required(&sent, "from_id")?,
+        to_id: required(&sent, "to_id")?,
         edge_type: required(&sent, "edge_type")?,
         properties,
         version: version_of(&sent)?,

@@ -64,8 +64,8 @@ async function makeEdge(
   edgeType: string,
 ): Promise<MarfaEdge> {
   const r = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(r.status, JSON.stringify(r.error)).toBe(201);
@@ -89,8 +89,8 @@ describe("the edge listings", () => {
     for (const id of targets) trackItem(ctx, id);
     const edges = await client.bulkEdges({
       edges: targets.map((target) => ({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       })),
     });
@@ -99,8 +99,8 @@ describe("the edge listings", () => {
     const inbound = await registerEdgeType("limit-in");
     const backrefs = await client.bulkEdges({
       edges: targets.map((target) => ({
-        source_id: target,
-        target_id: source,
+        from_id: target,
+        to_id: source,
         edge_type: inbound,
       })),
     });
@@ -292,8 +292,8 @@ describe("GET /edges with updated_after", () => {
     const made = await client.bulkEdges({
       edges: [ids[2]!, ids[0]!, ids[1]!].map((id, at) => ({
         id,
-        source_id: source,
-        target_id: [...targets, third][at]!,
+        from_id: source,
+        to_id: [...targets, third][at]!,
         edge_type: edgeType,
       })),
     });

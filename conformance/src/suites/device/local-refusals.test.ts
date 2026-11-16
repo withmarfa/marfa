@@ -339,7 +339,7 @@ describe("a device refuses a condition its copy cannot answer as the server does
       head: "10",
       items: { "core.note": [{ item: { id: "n1" } }, { item: { id: "n2" } }] },
       edges: {
-        "parent-of": [{ id: "e1", source_id: "n1", target_id: "n2" }],
+        "parent-of": [{ id: "e1", from_id: "n1", to_id: "n2" }],
       },
     });
     expect(

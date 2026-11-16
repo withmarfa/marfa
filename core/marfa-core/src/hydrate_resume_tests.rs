@@ -559,7 +559,7 @@ fn contents(core: &Core) -> Contents {
     items.sort();
     let conn = core.conn().unwrap();
     let mut statement = conn
-        .prepare("SELECT id, source_id, target_id FROM edges ORDER BY id")
+        .prepare("SELECT id, from_id, to_id FROM edges ORDER BY id")
         .unwrap();
     let edges = statement
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -717,8 +717,8 @@ const CITES: &str = "user.cites";
 fn edge(id: &str, source: &str, target: &str) -> Value {
     json!({
         "id": id,
-        "source_id": source,
-        "target_id": target,
+        "from_id": source,
+        "to_id": target,
         "edge_type": CITES,
         "properties": {},
         "version": 1,

@@ -490,8 +490,8 @@ describe("catch-up replays from the cursor", () => {
     const { server, device } = harness;
     const edge = {
       id: "link",
-      source_id: "from",
-      target_id: "to",
+      from_id: "from",
+      to_id: "to",
       edge_type: "references",
       properties: { weight: 1 },
       version: 1,
@@ -831,9 +831,9 @@ describe("catch-up replays from the cursor", () => {
     const { server, device } = harness;
     const edge = {
       id: "link",
-      source_id: "from",
+      from_id: "from",
       type: "core.note",
-      target_id: "to",
+      to_id: "to",
       edge_type: "references",
       properties: { weight: 1 },
       version: 1,
@@ -2228,7 +2228,7 @@ describe("catch-up keeps the copy to its slice", () => {
     ).not.toContain("leaves");
   });
 
-  it("keeps an edge a queued write names when its source leaves the slice", async () => {
+  it("keeps an edge a queued write names when its from item leaves the slice", async () => {
     harness = await startHarness("eviction-queued-edge");
     const { server, device } = harness;
     scriptHydration(server, {
@@ -2264,7 +2264,7 @@ describe("catch-up keeps the copy to its slice", () => {
     const edges = await device.edgesTo("stays");
     expect(edges.ok, JSON.stringify(edges)).toBe(true);
     expect(
-      edges.ok && edges.value.map((edge) => edge.source_id),
+      edges.ok && edges.value.map((edge) => edge.from_id),
       "the item that left took an edge the person is still waiting to send",
     ).toEqual(["leaves"]);
     expect(await device.queue()).toEqual(queued);
@@ -2358,8 +2358,8 @@ describe("catch-up keeps the copy to its slice", () => {
             data: [
               wireEdge({
                 id: "its-own",
-                source_id: "entered",
-                target_id: "elsewhere",
+                from_id: "entered",
+                to_id: "elsewhere",
               }),
             ],
             next_cursor: null,
@@ -2403,8 +2403,8 @@ describe("catch-up keeps the copy to its slice", () => {
             data: [
               wireEdge({
                 id: "its-own",
-                source_id: "moved",
-                target_id: "elsewhere",
+                from_id: "moved",
+                to_id: "elsewhere",
               }),
             ],
             next_cursor: null,
@@ -2435,7 +2435,7 @@ describe("catch-up keeps the copy to its slice", () => {
       copyReplay("11", [copyItemEvent("11", "item.updated", entered)]),
     );
     const edge = (id: string): Record<string, unknown> =>
-      wireEdge({ id, source_id: "entered", target_id: "elsewhere" });
+      wireEdge({ id, from_id: "entered", to_id: "elsewhere" });
     server.copyAnswer(
       "GET",
       "/items/entered",
@@ -2488,8 +2488,8 @@ describe("catch-up keeps the copy to its slice", () => {
             data: [
               wireEdge({
                 id: "its-own",
-                source_id: "entered",
-                target_id: "elsewhere",
+                from_id: "entered",
+                to_id: "elsewhere",
               }),
             ],
             next_cursor: null,
@@ -2660,8 +2660,8 @@ describe("catch-up keeps the copy to its slice", () => {
               edges: inline(
                 wireEdge({
                   id: "toward",
-                  source_id: "stays",
-                  target_id: "leaves",
+                  from_id: "stays",
+                  to_id: "leaves",
                 }),
               ),
             },
@@ -2672,8 +2672,8 @@ describe("catch-up keeps the copy to its slice", () => {
               edges: inline(
                 wireEdge({
                   id: "away",
-                  source_id: "leaves",
-                  target_id: "stays",
+                  from_id: "leaves",
+                  to_id: "stays",
                 }),
               ),
             },
@@ -2718,16 +2718,16 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
-  it("applies an edge of a type held whole whatever its source", async () => {
+  it("applies an edge of a type held whole whatever its from item", async () => {
     harness = await startHarness("whole-edge-events");
     const { server, device } = harness;
     const beneath = {
       id: "kept-beneath",
-      source_id: "leaves",
-      target_id: "below",
+      from_id: "leaves",
+      to_id: "below",
       edge_type: "parent-of",
     };
-    const drawn = { id: "drawn", source_id: "leaves", target_id: "below" };
+    const drawn = { id: "drawn", from_id: "leaves", to_id: "below" };
     scriptHydration(server, {
       head: "10",
       items: {
@@ -2754,15 +2754,15 @@ describe("catch-up keeps the copy to its slice", () => {
           "edge.created",
           wireEdge({
             id: "between-outsiders",
-            source_id: "outer",
-            target_id: "inner",
+            from_id: "outer",
+            to_id: "inner",
             edge_type: "parent-of",
           }),
         ),
         edgeEvent(
           "12",
           "edge.created",
-          wireEdge({ id: "not-whole", source_id: "outer", target_id: "inner" }),
+          wireEdge({ id: "not-whole", from_id: "outer", to_id: "inner" }),
         ),
         copyItemEvent(
           "13",
@@ -2805,19 +2805,19 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["kept-beneath"]);
   });
 
-  it("moves an edge whose source moved within the slice, and drops one whose source moved outside it", async () => {
+  it("moves an edge whose from item moved within the slice, and drops one whose from item moved outside it", async () => {
     harness = await startHarness("moved-edge-events");
     const { server, device } = harness;
     const within = {
       id: "within",
-      source_id: "first",
-      target_id: "older",
+      from_id: "first",
+      to_id: "older",
       edge_type: "supersedes",
     };
     const outside = {
       id: "outside",
-      source_id: "first",
-      target_id: "oldest",
+      from_id: "first",
+      to_id: "oldest",
       edge_type: "in-thread",
     };
     scriptHydration(server, {
@@ -2844,12 +2844,12 @@ describe("catch-up keeps the copy to its slice", () => {
         edgeEvent(
           "11",
           "edge.updated",
-          wireEdge({ ...within, source_id: "second", version: 2 }),
+          wireEdge({ ...within, from_id: "second", version: 2 }),
         ),
         edgeEvent(
           "12",
           "edge.updated",
-          wireEdge({ ...outside, source_id: "outer", version: 2 }),
+          wireEdge({ ...outside, from_id: "outer", version: 2 }),
         ),
       ]),
     );
@@ -2878,13 +2878,13 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
-  it("keeps an edge whose source moved outside the slice while a move of its own waits", async () => {
+  it("keeps an edge whose from item moved outside the slice while a move of its own waits", async () => {
     harness = await startHarness("moved-edge-waiting");
     const { server, device } = harness;
     const moving = {
       id: "moving",
-      source_id: "first",
-      target_id: "older",
+      from_id: "first",
+      to_id: "older",
       edge_type: "supersedes",
     };
     scriptHydration(server, {
@@ -2910,7 +2910,7 @@ describe("catch-up keeps the copy to its slice", () => {
         edgeEvent(
           "11",
           "edge.updated",
-          wireEdge({ ...moving, source_id: "outer", version: 2 }),
+          wireEdge({ ...moving, from_id: "outer", version: 2 }),
         ),
       ]),
     );
@@ -2926,7 +2926,7 @@ describe("catch-up keeps the copy to its slice", () => {
     const queued = await device.updateEdge("moving", {
       properties: {},
       version: 1,
-      source_id: "second",
+      from_id: "second",
     });
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
     // The witness: the move is laid over the copy before the catch-up.
@@ -2940,13 +2940,13 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["moving"]);
   });
 
-  it("lays its own waiting move of an edge's target over the server's change to the edge", async () => {
+  it("lays its own waiting move of an edge's to item over the server's change to the edge", async () => {
     harness = await startHarness("moved-edge-waiting-target");
     const { server, device } = harness;
     const moving = {
       id: "moving",
-      source_id: "first",
-      target_id: "older",
+      from_id: "first",
+      to_id: "older",
       edge_type: "supersedes",
     };
     scriptHydration(server, {
@@ -2986,9 +2986,7 @@ describe("catch-up keeps the copy to its slice", () => {
       const outcome = await read;
       expect(outcome.ok).toBe(true);
       return outcome.ok
-        ? (outcome.value as { target_id: string }[]).map(
-            (edge) => edge.target_id,
-          )
+        ? (outcome.value as { to_id: string }[]).map((edge) => edge.to_id)
         : [];
     };
 
@@ -2996,7 +2994,7 @@ describe("catch-up keeps the copy to its slice", () => {
     const queued = await device.updateEdge("moving", {
       properties: {},
       version: 1,
-      target_id: "oldest",
+      to_id: "oldest",
     });
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
     // The witness: the move is laid over the copy before the catch-up.
@@ -3013,8 +3011,8 @@ describe("catch-up keeps the copy to its slice", () => {
   describe("an item entering the slice draws an edge whose write of its own waits", () => {
     const link = {
       id: "link",
-      source_id: "entering",
-      target_id: "elsewhere",
+      from_id: "entering",
+      to_id: "elsewhere",
       edge_type: "parent-of",
       properties: { weight: 1 },
     };
@@ -3788,11 +3786,11 @@ describe("catch-up keeps the copy to its slice", () => {
     const { server, device } = harness;
     const beneath = {
       id: "kept-beneath",
-      source_id: "settings",
-      target_id: "below",
+      from_id: "settings",
+      to_id: "below",
       edge_type: "parent-of",
     };
-    const drawn = { id: "drawn", source_id: "settings", target_id: "below" };
+    const drawn = { id: "drawn", from_id: "settings", to_id: "below" };
     scriptHydration(server, {
       head: "10",
       items: { "core.note": [{ item: { id: "note" } }] },
@@ -3864,7 +3862,7 @@ describe("catch-up keeps the copy to its slice", () => {
     const edges = await device.edgesTo("note");
     expect(edges.ok, JSON.stringify(edges)).toBe(true);
     expect(
-      edges.ok && edges.value.map((edge) => edge.source_id),
+      edges.ok && edges.value.map((edge) => edge.from_id),
       "an unpin took an edge the person is still waiting to send",
     ).toEqual(["settings"]);
     expect(await device.queue()).toEqual(queued);
@@ -3926,7 +3924,7 @@ describe("catch-up keeps the copy to its slice", () => {
       head: "10",
       items: { "core.note": [{ item: { id: "note" } }] },
       edges: {
-        "parent-of": [{ id: "old", source_id: "outer", target_id: "inner" }],
+        "parent-of": [{ id: "old", from_id: "outer", to_id: "inner" }],
         supersedes: [],
       },
     });
@@ -3941,8 +3939,8 @@ describe("catch-up keeps the copy to its slice", () => {
           "edge.created",
           wireEdge({
             id: "no-longer-whole",
-            source_id: "outer",
-            target_id: "inner",
+            from_id: "outer",
+            to_id: "inner",
             edge_type: "parent-of",
           }),
         ),
@@ -3951,8 +3949,8 @@ describe("catch-up keeps the copy to its slice", () => {
           "edge.created",
           wireEdge({
             id: "now-whole",
-            source_id: "outer",
-            target_id: "inner",
+            from_id: "outer",
+            to_id: "inner",
             edge_type: "supersedes",
           }),
         ),
@@ -4007,8 +4005,8 @@ describe("catch-up keeps the copy to its slice", () => {
                   data: [
                     wireEdge({
                       id: "toward",
-                      source_id: "stays",
-                      target_id: "purged",
+                      from_id: "stays",
+                      to_id: "purged",
                     }),
                   ],
                   next_cursor: null,
@@ -4024,8 +4022,8 @@ describe("catch-up keeps the copy to its slice", () => {
                   data: [
                     wireEdge({
                       id: "away",
-                      source_id: "purged",
-                      target_id: "stays",
+                      from_id: "purged",
+                      to_id: "stays",
                     }),
                   ],
                   next_cursor: null,
@@ -4907,8 +4905,8 @@ describe("what a catch-up takes from the stream", () => {
           "edge.created",
           wireEdge({
             id: "fresh-to-n1",
-            source_id: "fresh",
-            target_id: "n1",
+            from_id: "fresh",
+            to_id: "n1",
             edge_type: "references",
           }),
         ),
@@ -5130,8 +5128,8 @@ describe("what a held stream takes and tells", () => {
           "edge.created",
           wireEdge({
             id: "n1-to-n2",
-            source_id: "n1",
-            target_id: "n2",
+            from_id: "n1",
+            to_id: "n2",
             edge_type: "references",
           }),
         ),

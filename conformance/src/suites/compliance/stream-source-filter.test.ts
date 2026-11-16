@@ -108,8 +108,8 @@ async function edge(
   target: string,
 ): Promise<string> {
   const r = await writer.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(r.status, JSON.stringify(r.error)).toBe(201);
@@ -185,7 +185,7 @@ function expectNarrowed(filtered: string[], witness: string[], w: Written) {
 }
 
 describe("the source filter on the event stream", () => {
-  it("leaves out of a live stream the items and edges whose source item the filter hides, and nothing else", async ({
+  it("leaves out of a live stream the items and edges whose from item the filter hides, and nothing else", async ({
     signal,
   }) => {
     const filtered = await openEventStream(apiUrl, filteredKey, {

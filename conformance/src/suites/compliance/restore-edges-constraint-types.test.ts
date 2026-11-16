@@ -90,9 +90,9 @@ function registeredTypeIds(body: string) {
 }
 
 /** One `edges.ndjson.gz` line for an edge no instance wrote. */
-const edgeLine = (source_id: string, target_id: string, edge_type: string) =>
+const edgeLine = (from_id: string, to_id: string, edge_type: string) =>
   `${JSON.stringify({
-    edge: { id: uuidv7(), source_id, target_id, edge_type, properties: {} },
+    edge: { id: uuidv7(), from_id, to_id, edge_type, properties: {} },
   })}\n`;
 
 interface Story {
@@ -131,8 +131,8 @@ async function register(
   source: MarfaClient,
   id: string,
   constraints: {
-    source_type_constraints?: string[];
-    target_type_constraints?: string[];
+    from_type_constraints?: string[];
+    to_type_constraints?: string[];
   },
 ) {
   const registered = await source.registerEdgeType({
@@ -146,24 +146,24 @@ async function register(
 
 async function link(
   source: MarfaClient,
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ) {
-  const made = await source.createEdge({ source_id, target_id, edge_type });
+  const made = await source.createEdge({ from_id, to_id, edge_type });
   expect(made.status, JSON.stringify(made.error)).toBe(201);
 }
 
 /** An ordinary write the registered constraint refuses. */
 async function expectRefused(
   client: MarfaClient,
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
 ) {
   const refused = await client.createEdge({
-    source_id,
-    target_id,
+    from_id,
+    to_id,
     edge_type,
   });
   expect(refused.status, JSON.stringify(refused.error)).toBe(400);
@@ -215,11 +215,11 @@ async function roundTrip(
 }
 
 describe("an edge whose endpoint constraint names a force-deleted item type", () => {
-  it("keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit", async () => {
+  it("keeps an edge whose from constraint names the deleted type, and still refuses a registered end the constraint does not admit", async () => {
     const source = working(origin);
     const { papers, note } = await populate(source);
     const type = "user.cites-source";
-    await register(source, type, { source_type_constraints: [PAPER] });
+    await register(source, type, { from_type_constraints: [PAPER] });
     await link(source, papers[0], papers[1], type);
     await link(source, papers[0], note, type);
 
@@ -230,7 +230,7 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     expect((await source.getType(PAPER)).status).toBe(404);
     const edgeTypes = await source.listEdgeTypes();
     expect(
-      edgeTypes.data.data.find((t) => t.id === type)?.source_type_constraints,
+      edgeTypes.data.data.find((t) => t.id === type)?.from_type_constraints,
     ).toEqual([PAPER]);
 
     // Ordinary writes are unchanged: an end of an unregistered type is still
@@ -259,11 +259,11 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     });
   }, 240_000);
 
-  it("keeps an edge whose target constraint names the deleted type", async () => {
+  it("keeps an edge whose to constraint names the deleted type", async () => {
     const source = working(origin);
     const { papers, note } = await populate(source);
     const type = "user.cites-target";
-    await register(source, type, { target_type_constraints: [PAPER] });
+    await register(source, type, { to_type_constraints: [PAPER] });
     await link(source, note, papers[0], type);
     await link(source, papers[1], papers[0], type);
     await expectRefused(source, papers[0], note, type);
@@ -277,8 +277,8 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     const { papers, note, task } = await populate(source);
     const type = "user.cites-either";
     await register(source, type, {
-      source_type_constraints: [PAPER, "core.task"],
-      target_type_constraints: ["core.note", PAPER],
+      from_type_constraints: [PAPER, "core.task"],
+      to_type_constraints: ["core.note", PAPER],
     });
     await link(source, papers[0], note, type);
     await link(source, task, papers[1], type);
@@ -312,8 +312,8 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     const { papers, note } = await populate(source);
     const type = "user.cites-older";
     await register(source, type, {
-      source_type_constraints: [PAPER],
-      target_type_constraints: [PAPER, "core.note"],
+      from_type_constraints: [PAPER],
+      to_type_constraints: [PAPER, "core.note"],
     });
     await link(source, papers[0], papers[1], type);
     await link(source, papers[1], note, type);

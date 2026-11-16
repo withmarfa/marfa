@@ -107,7 +107,7 @@ The server MUST match a credential's type map entry against a type identifier ch
 
 When an operation names by id, in its path or its body, an item whose type the credential may not read, live or in the bin, the server MUST answer exactly as it answers an id no item holds, status, body and headers alike.
 
-**Reason:** The answer says nothing of whether the item exists or what type it is. A key learns its own reach from `GET /keys/current`, never from a refusal. `items/create-id-unreadable`, `edges/end-source-hidden`, `edges/end-target-hidden`, `edges/read-id-source` and `edges/filter-backref-anchor` hold the same for a create, an edge's ends and a filter.
+**Reason:** The answer says nothing of whether the item exists or what type it is. A key learns its own reach from `GET /keys/current`, never from a refusal. `items/create-id-unreadable`, `edges/end-from-hidden`, `edges/end-to-hidden`, `edges/read-id-from` and `edges/filter-backref-anchor` hold the same for a create, an edge's ends and a filter.
 
 **Tests:** `compliance/unreadable-items.test.ts › an item the key cannot read answers as a missing one`, `compliance/type-permissions.test.ts › a key without reach on the item's type is answered as if the item, its edges and its backrefs were not there`.
 

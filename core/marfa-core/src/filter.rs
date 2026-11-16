@@ -14,8 +14,8 @@ pub use marfa_rules::filter::{
     FilterValue, SystemField,
 };
 
-/// The edge type `beneath` walks: an edge's source is the parent and its
-/// target the child.
+/// The edge type `beneath` walks: an edge's from item is the parent and its
+/// to item the child.
 pub(crate) const PARENT_OF: &str = "parent-of";
 
 /// An expression the copy cannot answer as the server would is refused,
@@ -52,7 +52,7 @@ pub(crate) fn beneath_walk() -> String {
         "WITH RECURSIVE beneath(id) AS (
            SELECT ?
            UNION
-           SELECT edges.target_id FROM edges JOIN beneath ON edges.source_id = beneath.id
+           SELECT edges.to_id FROM edges JOIN beneath ON edges.from_id = beneath.id
            WHERE edges.edge_type = '{PARENT_OF}'
          ) SELECT id FROM beneath"
     )
@@ -128,9 +128,9 @@ fn expression_clause(
                     )));
                 }
                 let (own, far) = if backref {
-                    ("target_id", "source_id")
+                    ("to_id", "from_id")
                 } else {
-                    ("source_id", "target_id")
+                    ("from_id", "to_id")
                 };
                 out.push(if negated { "NOT " } else { "" });
                 out.push(&format!(
@@ -179,8 +179,8 @@ pub(crate) fn row_clause(expression: &Expression, values: &mut Vec<Value>) -> Re
 /// bin. A host the copy does not hold counts as out of the bin: the copy
 /// cannot know its state (`device/filter-part-unheld-host`).
 const PART_SQL: &str = "(items.state <> 'trashed' AND EXISTS (
-    SELECT 1 FROM edges e LEFT JOIN items h ON h.id = e.target_id
-    WHERE e.source_id = items.id
+    SELECT 1 FROM edges e LEFT JOIN items h ON h.id = e.to_id
+    WHERE e.from_id = items.id
       AND e.edge_type IN (
         SELECT id FROM edge_types
         WHERE CASE WHEN json_valid(json) THEN json_extract(json, '$.cascade_on_delete') END = 'with-hosts'
@@ -376,8 +376,8 @@ mod tests {
         let conn = conn();
         let edge_type = |id: &str, mode: &str| {
             json!({ "id": id, "label": id, "reverse_label": id, "cardinality": "many-to-many",
-                    "source_type_constraints": ["*"], "target_type_constraints": ["*"],
-                    "cascade_on_delete": mode, "property_schema": {}, "written_at": "source" })
+                    "from_type_constraints": ["*"], "to_type_constraints": ["*"],
+                    "cascade_on_delete": mode, "property_schema": {}, "written_from": "from" })
         };
         let catalog = marfa_rules::wire::WireCatalog {
             types: Vec::new(),

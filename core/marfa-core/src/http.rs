@@ -3922,7 +3922,7 @@ mod tests {
             "/edge-types",
             vec![crate::scripted::json(
                 200,
-                r#"{"data":[{"id":"acme.list-member","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{},"written_at":"source","shipped":false}],"next_cursor":null}"#,
+                r#"{"data":[{"id":"acme.list-member","cardinality":"many-to-many","from_type_constraints":["*"],"to_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{},"written_from":"from","shipped":false}],"next_cursor":null}"#,
             )],
         );
         let http = Http::new(&server.url(), "k").unwrap();

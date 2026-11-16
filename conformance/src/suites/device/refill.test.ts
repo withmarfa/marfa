@@ -619,7 +619,7 @@ describe("a refill's sweep", () => {
     const edges = await h.device.edgesFrom("from");
     expect(edges.ok, JSON.stringify(edges)).toBe(true);
     expect(
-      edges.ok && edges.value.map((edge) => edge.target_id),
+      edges.ok && edges.value.map((edge) => edge.to_id),
       "the sweep took the edge a queued write names",
     ).toEqual(["aimed"]);
     expect(await h.device.queue()).toEqual(queued);
@@ -721,8 +721,8 @@ describe("a stale copy before its refill reads a page", () => {
 describe("an edge write to a copy that is not whole", () => {
   const link = {
     id: "link",
-    source_id: "from",
-    target_id: "to",
+    from_id: "from",
+    to_id: "to",
     edge_type: "references",
   };
   const linked: Rows = {
@@ -768,7 +768,7 @@ describe("an edge write to a copy that is not whole", () => {
           h.device.updateEdge("link", {
             properties: {},
             version: 1,
-            target_id: "other",
+            to_id: "other",
           }),
       ],
       ["a delete", () => h.device.deleteEdge("link")],
@@ -897,10 +897,10 @@ describe("an edge write to a copy that is not whole", () => {
         )
         .map((request) => {
           const sent = JSON.parse(request.body) as {
-            source_id: string;
-            target_id: string;
+            from_id: string;
+            to_id: string;
           };
-          return [sent.source_id, sent.target_id];
+          return [sent.from_id, sent.to_id];
         }),
       "the body's link was not read once the server answered the edit",
     ).toEqual([["host", "other"]]);
@@ -1148,8 +1148,8 @@ describe("a fill asked to happen only in place", () => {
   ): Promise<Awaited<ReturnType<typeof agedOut>> & { rows: Rows }> {
     const link = {
       id: "a-b",
-      source_id: "a",
-      target_id: "b",
+      from_id: "a",
+      to_id: "b",
       edge_type: "references",
     };
     const rows: Rows = {

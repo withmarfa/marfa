@@ -335,7 +335,7 @@ pub(crate) fn beneath_ids(
         "WITH RECURSIVE down(id) AS (
            SELECT ?1
            UNION
-           SELECT edges.target_id FROM edges JOIN down ON edges.source_id = down.id
+           SELECT edges.to_id FROM edges JOIN down ON edges.from_id = down.id
            WHERE edges.edge_type = '{}' AND {}
          ) SELECT id FROM down",
         crate::filter::PARENT_OF,

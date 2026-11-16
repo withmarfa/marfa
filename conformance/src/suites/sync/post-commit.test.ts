@@ -93,8 +93,8 @@ describe("post-commit emission", () => {
 
     // The hierarchy the rolled-back write below tries to close into a loop.
     const hierarchy = await client.createEdge({
-      source_id: parentId,
-      target_id: id,
+      from_id: parentId,
+      to_id: id,
       edge_type: "parent-of",
     });
     expect(
@@ -237,8 +237,8 @@ describe("post-commit emission", () => {
     trackItem(ctx, parent.data.item.id);
     trackItem(ctx, child.data.item.id);
     const hierarchy = await client.createEdge({
-      source_id: parent.data.item.id,
-      target_id: child.data.item.id,
+      from_id: parent.data.item.id,
+      to_id: child.data.item.id,
       edge_type: "parent-of",
     });
     expect(hierarchy.ok).toBe(true);

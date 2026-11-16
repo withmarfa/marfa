@@ -79,12 +79,12 @@ const EDGE_KEYS: [&str; 11] = [
     "reverse_label",
     "description",
     "cardinality",
-    "source_type_constraints",
-    "target_type_constraints",
+    "from_type_constraints",
+    "to_type_constraints",
     "cascade_on_delete",
     "property_schema",
     "reverse_name",
-    "written_at",
+    "written_from",
 ];
 const EDGE_PROPERTY_KEYS: [&str; 6] = [
     "type",

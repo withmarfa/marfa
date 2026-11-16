@@ -79,8 +79,8 @@ export function edgeTypeRows(): EdgeTypeRow[] {
       : { reverseName: schema.reverse_name }),
     cardinality: schema.cardinality,
     cascadeOnDelete: schema.cascade_on_delete,
-    sourceTypes: schema.source_type_constraints,
-    targetTypes: schema.target_type_constraints,
+    fromTypes: schema.from_type_constraints,
+    toTypes: schema.to_type_constraints,
   }));
 }
 

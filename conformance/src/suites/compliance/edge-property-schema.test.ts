@@ -84,8 +84,8 @@ describe("POST /edges", () => {
     const target = await note();
     for (const [what, properties, property] of BROKEN) {
       const r = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
         properties,
       });
@@ -94,8 +94,8 @@ describe("POST /edges", () => {
       expect(named(r.error?.error), what).toEqual([property]);
     }
     const none = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(none.status, "an edge that names no properties").toBe(400);
@@ -105,8 +105,8 @@ describe("POST /edges", () => {
 
     // The witness: the same edge with properties that fit is created.
     const ok = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { label: "a", weight: 2.5, status: "open" },
     });
@@ -121,8 +121,8 @@ describe("POST /edges", () => {
     const source = await note();
     const target = await note();
     const refused = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { roles: ["a", 1] },
     });
@@ -133,8 +133,8 @@ describe("POST /edges", () => {
     // The witness: the same edge with strings, an empty list and no list.
     for (const roles of [["a", "b"], [], undefined]) {
       const ok = await client.createEdge({
-        source_id: source,
-        target_id: await note(),
+        from_id: source,
+        to_id: await note(),
         edge_type: edgeType,
         ...(roles === undefined ? {} : { properties: { roles } }),
       });
@@ -143,8 +143,8 @@ describe("POST /edges", () => {
     }
 
     const made = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { roles: ["a"] },
     });
@@ -162,8 +162,8 @@ describe("POST /edges", () => {
   it("accepts a property the schema does not declare and stores it", async () => {
     const edgeType = await register();
     const r = await client.createEdge({
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       edge_type: edgeType,
       properties: { label: "a", undeclared: { nested: [1] } },
     });
@@ -178,8 +178,8 @@ describe("POST /edges", () => {
   it("takes any properties on an edge type whose property_schema is empty", async () => {
     const edgeType = await register({});
     const r = await client.createEdge({
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       edge_type: edgeType,
       properties: { weight: "heavy", anything: null },
     });
@@ -193,8 +193,8 @@ describe("PATCH /edges/{id}", () => {
     edgeType: string,
   ): Promise<{ id: string; version: number }> {
     const r = await client.createEdge({
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       edge_type: edgeType,
       properties: { label: "kept", weight: 1 },
     });
@@ -280,7 +280,7 @@ describe("PATCH /edges/{id}", () => {
     const { id, version } = await held(edgeType);
     const moved = await client.updateEdge(id, {
       version,
-      target_id: await note(),
+      to_id: await note(),
       properties: { weight: "heavy" },
     });
     expect(moved.status).toBe(400);
@@ -300,8 +300,8 @@ describe("PATCH /edges/{id}", () => {
     expect(first.status).toBe(201);
     trackEdgeType(ctx, id);
     const made = await client.createEdge({
-      source_id: await note(),
-      target_id: await note(),
+      from_id: await note(),
+      to_id: await note(),
       edge_type: id,
       properties: { weight: "heavy" },
     });
@@ -347,8 +347,8 @@ describe("POST /edges/bulk", () => {
     const target = await note();
     const fresh = await note();
     const placed = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { label: "kept" },
     });
@@ -356,8 +356,8 @@ describe("POST /edges/bulk", () => {
     trackEdge(ctx, placed.data.edge.id);
 
     const entry = (src: string, properties?: Record<string, unknown>) => ({
-      source_id: src,
-      target_id: target,
+      from_id: src,
+      to_id: target,
       edge_type: edgeType,
       ...(properties !== undefined && { properties }),
     });
@@ -411,14 +411,14 @@ describe("POST /edges/bulk", () => {
       atomic: true,
       edges: [
         {
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: edgeType,
           properties: { label: "fits" },
         },
         {
-          source_id: target,
-          target_id: source,
+          from_id: target,
+          to_id: source,
           edge_type: edgeType,
           properties: { label: "a", weight: "heavy" },
         },
@@ -519,7 +519,7 @@ describe("edges written inline with an item", () => {
     const edges = await client.listItemEdges(r.data.item.id, {
       edge_type: edgeType,
     });
-    expect(edges.data.data.map((e) => e.target_id)).toEqual([target]);
+    expect(edges.data.data.map((e) => e.to_id)).toEqual([target]);
     expect(edges.data.data[0]?.properties).toEqual({});
   });
 });
@@ -529,8 +529,8 @@ describe("the shipped edge types", () => {
     const source = await note();
     const target = await note();
     const refused = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "in-thread",
       properties: { position: "first" },
     });
@@ -539,8 +539,8 @@ describe("the shipped edge types", () => {
     expect(named(refused.error?.error)).toEqual(["position"]);
 
     const ok = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "in-thread",
       properties: { position: 1 },
     });
@@ -554,8 +554,8 @@ describe("null and format", () => {
     const edgeType = await register();
     const source = await note();
     const made = await client.createEdge({
-      source_id: source,
-      target_id: await note(),
+      from_id: source,
+      to_id: await note(),
       edge_type: edgeType,
       properties: { label: "a", weight: null },
     });
@@ -575,8 +575,8 @@ describe("null and format", () => {
     });
 
     const refused = await client.createEdge({
-      source_id: source,
-      target_id: await note(),
+      from_id: source,
+      to_id: await note(),
       edge_type: edgeType,
       properties: { label: null },
     });
@@ -607,8 +607,8 @@ describe("null and format", () => {
     const target = await note();
     for (const [format, bad] of FORMATS) {
       const refused = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
         properties: { [format]: bad },
       });
@@ -617,8 +617,8 @@ describe("null and format", () => {
       expect(named(refused.error?.error), format).toEqual([format]);
     }
     const ok = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: Object.fromEntries(FORMATS.map(([f, , good]) => [f, good])),
     });
@@ -635,8 +635,8 @@ describe("null and format", () => {
       atomic: false,
       edges: [
         {
-          source_id: source,
-          target_id: await note(),
+          from_id: source,
+          to_id: await note(),
           edge_type: edgeType,
           properties: { url: "not a url" },
         },
@@ -660,8 +660,8 @@ describe("null and format", () => {
     const source = await note();
     const target = await note();
     const refused = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { code: "gbp" },
     });
@@ -670,8 +670,8 @@ describe("null and format", () => {
     expect(named(refused.error?.error)).toEqual(["code"]);
 
     const ok = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
       properties: { code: "GBP" },
     });
@@ -688,8 +688,8 @@ describe("null and format", () => {
       atomic: false,
       edges: [
         {
-          source_id: source,
-          target_id: await note(),
+          from_id: source,
+          to_id: await note(),
           edge_type: edgeType,
           properties: { code: "gbp" },
         },

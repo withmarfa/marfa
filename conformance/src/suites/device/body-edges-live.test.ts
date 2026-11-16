@@ -120,8 +120,8 @@ async function writtenElsewhere(id: string, body: string) {
 /** Makes the edge a link makes, through the server, as another device does. */
 async function linkedElsewhere(source: string, target: string) {
   const made = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: "references",
   });
   expect(made.ok, JSON.stringify(made.error)).toBe(true);
@@ -141,7 +141,7 @@ async function unsent(on: CliDevice): Promise<QueuedWrite[]> {
 async function referencesFrom(id: string): Promise<string[]> {
   const listed = await client.listItemEdges(id, { edge_type: "references" });
   expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
-  return listed.data.data.map((edge) => edge.target_id).sort();
+  return listed.data.data.map((edge) => edge.to_id).sort();
 }
 
 async function attachedTo(id: string): Promise<string[]> {
@@ -149,7 +149,7 @@ async function attachedTo(id: string): Promise<string[]> {
     edge_type: "attached-to",
   });
   expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
-  return listed.data.data.map((edge) => edge.source_id).sort();
+  return listed.data.data.map((edge) => edge.from_id).sort();
 }
 
 function targets(names: BodyLinks["links"]): BodyTarget[] {
@@ -306,8 +306,8 @@ describe("links", () => {
       }),
     );
     const made = await client.createEdge({
-      source_id: host.id,
-      target_id: elsewhere,
+      from_id: host.id,
+      to_id: elsewhere,
       edge_type: "references",
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
@@ -317,14 +317,14 @@ describe("links", () => {
     const deletes = (await unsent(device)).filter(
       (write) => write.kind === "delete_edge",
     );
-    expect(deletes.map((write) => [write.item_id, write.target_id])).toEqual([
+    expect(deletes.map((write) => [write.item_id, write.to_id])).toEqual([
       [host.id, gone.id],
     ]);
     await drained(device);
     expect(await referencesFrom(host.id)).toEqual([kept.id, elsewhere].sort());
     const about = await client.listItemEdges(host.id, { edge_type: "about" });
     expect(about.ok).toBe(true);
-    expect(about.data.data.map((edge) => edge.target_id)).toEqual([gone.id]);
+    expect(about.data.data.map((edge) => edge.to_id)).toEqual([gone.id]);
   });
 
   it("reads an alias and a heading as the name before them, and a link in code as text", async () => {
@@ -525,7 +525,7 @@ describe("links", () => {
     const edge = (await unsent(device)).find(
       (write) => write.kind === "create_edge" && write.item_id === host.id,
     );
-    expect(edge?.target_id).toBe(target.id);
+    expect(edge?.to_id).toBe(target.id);
     expect(
       edge?.depends_on,
       "the edge would be sent whatever became of the body's write",
@@ -603,7 +603,7 @@ describe("links", () => {
       (write) => write.kind === "create_edge" && write.item_id === host.id,
     );
     expect(
-      queued.map((write) => write.target_id),
+      queued.map((write) => write.to_id),
       "the merged body's link was not read once the server answered",
     ).toEqual([target.id]);
     await drained(device);
@@ -635,7 +635,7 @@ describe("links", () => {
     const deletes = (await unsent(device)).filter(
       (write) => write.kind === "delete_edge",
     );
-    expect(deletes.map((write) => [write.item_id, write.target_id])).toEqual([
+    expect(deletes.map((write) => [write.item_id, write.to_id])).toEqual([
       [host.id, plan.id],
     ]);
     await drained(device);
@@ -671,7 +671,7 @@ describe("links", () => {
       const edges = async (kind: string) =>
         (await unsent(device))
           .filter((write) => write.kind === kind && write.item_id === host.id)
-          .map((write) => write.target_id);
+          .map((write) => write.to_id);
 
       for (const added of [taker.id, `${taker.id}|${title}`]) {
         await setBody(device, host.id, `${original} [[${added}]]`);
@@ -751,7 +751,7 @@ describe("links", () => {
     expect(
       (await unsent(device))
         .filter((write) => write.kind === "delete_edge")
-        .map((write) => write.target_id),
+        .map((write) => write.to_id),
     ).toEqual([plan.id]);
     await drained(device);
     expect(await referencesFrom(host.id)).toEqual([taker.id]);
@@ -808,7 +808,7 @@ describe("links", () => {
       expect(
         queued
           .filter((write) => write.kind === "create_edge")
-          .map((write) => write.target_id),
+          .map((write) => write.to_id),
       ).toEqual([taker.id]);
       expect(queued.filter((write) => write.kind === "delete_edge")).toEqual(
         [],
@@ -916,7 +916,7 @@ describe("links", () => {
     expect(
       (await unsent(device))
         .filter((write) => write.kind === "delete_edge")
-        .map((write) => [write.item_id, write.target_id]),
+        .map((write) => [write.item_id, write.to_id]),
       "the edit's answer was read without what the link it took out named",
     ).toEqual([[host.id, plan.id]]);
     await drained(device);
@@ -1020,7 +1020,7 @@ describe("links", () => {
         (write) => write.kind === "create_edge" && write.item_id === host.id,
       );
       expect(
-        queued.map((write) => write.target_id),
+        queued.map((write) => write.to_id),
         `the id of an item the copy ${held ? "holds" : "does not hold"} was taken for the item titled with it`,
       ).toEqual(held ? [target] : []);
       expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
@@ -1131,7 +1131,7 @@ describe("embeds", () => {
     const deletes = (await unsent(device)).filter(
       (write) => write.kind === "delete_edge",
     );
-    expect(deletes.map((write) => [write.item_id, write.target_id])).toEqual([
+    expect(deletes.map((write) => [write.item_id, write.to_id])).toEqual([
       [host.id, photo.item_id!],
     ]);
     await drained(device);
@@ -1277,7 +1277,7 @@ describe("embeds", () => {
     await setBody(device, host.id, texts.join("\n"));
     const after = (await unsent(device)).slice(before);
     expect(
-      after.map((write) => [write.kind, write.item_id, write.target_id]),
+      after.map((write) => [write.kind, write.item_id, write.to_id]),
       "an embed made an edge other than its reference",
     ).toEqual([
       ["update_item", host.id, null],
@@ -1295,7 +1295,7 @@ describe("embeds", () => {
     expect(
       (await unsent(device))
         .filter((write) => write.kind === "delete_edge")
-        .map((write) => [write.item_id, write.target_id]),
+        .map((write) => [write.item_id, write.to_id]),
       "taking the embed out deleted more than its reference",
     ).toEqual([[host.id, files[0]!]]);
     await drained(device);
@@ -1353,7 +1353,7 @@ describe("embeds", () => {
     await drained(device);
     await setBody(device, host.id, `![[${name}]]`);
     expect(
-      (await unsent(device)).map((write) => [write.kind, write.target_id]),
+      (await unsent(device)).map((write) => [write.kind, write.to_id]),
       "the embed made an edge to another file of the name",
     ).toEqual([
       ["update_item", null],
@@ -1417,8 +1417,8 @@ describe("between writers", () => {
     const host = await remoteNote(named("Earlier embed host"));
     await writtenElsewhere(host, `![[${name}]]`);
     const attachment = await client.createEdge({
-      source_id: file,
-      target_id: host,
+      from_id: file,
+      to_id: host,
       edge_type: "attached-to",
     });
     expect(attachment.ok, JSON.stringify(attachment.error)).toBe(true);

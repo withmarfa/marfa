@@ -36,7 +36,7 @@ fn row(id: &str, version: i64, edges: &[(&str, &str)]) -> Value {
 
 fn edge_of(id: &str, source: &str, target: &str) -> Value {
     json!({
-        "id": id, "source_id": source, "target_id": target, "edge_type": "core.related",
+        "id": id, "from_id": source, "to_id": target, "edge_type": "core.related",
         "properties": {}, "version": 1,
         "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
     })
@@ -691,7 +691,7 @@ fn a_refill_keeps_the_rows_a_waiting_edge_write_names_as_either_end() {
             "stays",
             &crate::EdgeEdit {
                 base_version: Some(1),
-                source_id: Some("moved-to".into()),
+                from_id: Some("moved-to".into()),
                 ..Default::default()
             },
         )
@@ -699,8 +699,8 @@ fn a_refill_keeps_the_rows_a_waiting_edge_write_names_as_either_end() {
         .unwrap();
         aimed = Some(
             core.create_edge(&crate::EdgeDraft {
-                source_id: "kept".into(),
-                target_id: "aimed-at".into(),
+                from_id: "kept".into(),
+                to_id: "aimed-at".into(),
                 edge_type: "core.related".into(),
                 ..Default::default()
             })
@@ -731,7 +731,7 @@ fn a_refill_keeps_the_rows_a_waiting_edge_write_names_as_either_end() {
     let moved = store::edge_by_id(&core.conn().unwrap(), "stays")
         .unwrap()
         .unwrap();
-    assert_eq!(moved.source_id, "moved-to");
+    assert_eq!(moved.from_id, "moved-to");
     assert!(edge_held(&core, aimed.edge_id.as_deref().unwrap()));
     assert_eq!(core.queue().unwrap().len(), 2);
 }
@@ -1229,12 +1229,12 @@ fn an_edge_write_waits_for_a_whole_copy_and_an_item_write_does_not() {
     let queued = core.queue().unwrap().len();
     let moved = crate::EdgeEdit {
         base_version: Some(1),
-        target_id: Some("gone".into()),
+        to_id: Some("gone".into()),
         ..Default::default()
     };
     let created = crate::EdgeDraft {
-        source_id: "kept".into(),
-        target_id: "gone".into(),
+        from_id: "kept".into(),
+        to_id: "gone".into(),
         edge_type: "core.related".into(),
         ..Default::default()
     };
@@ -1263,7 +1263,7 @@ fn an_edge_write_waits_for_a_whole_copy_and_an_item_write_does_not() {
     assert_eq!(
         store::edge_by_id(&core.conn().unwrap(), "stays")
             .unwrap()
-            .map(|edge| edge.target_id),
+            .map(|edge| edge.to_id),
         Some("changed".into())
     );
     // An item write is still taken.
@@ -1277,7 +1277,7 @@ fn an_edge_write_waits_for_a_whole_copy_and_an_item_write_does_not() {
     // The witness: the whole copy takes each of them.
     core.update_edge("stays", &edited).unwrap().unwrap();
     core.create_edge(&crate::EdgeDraft {
-        target_id: "added".into(),
+        to_id: "added".into(),
         ..created
     })
     .unwrap();
@@ -1295,8 +1295,8 @@ fn an_edge_write_part_way_through_a_first_fill_is_refused() {
         .unwrap();
     assert_eq!(
         core.create_edge(&crate::EdgeDraft {
-            source_id: "held".into(),
-            target_id: new,
+            from_id: "held".into(),
+            to_id: new,
             edge_type: "core.related".into(),
             ..Default::default()
         })

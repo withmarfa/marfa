@@ -76,9 +76,9 @@ async function copy(
     ]),
     edges: {
       references: [
-        { id: id(101), source_id: id(1), target_id: id(2) },
-        { id: id(102), source_id: id(1), target_id: id(3) },
-        { id: id(103), source_id: id(2), target_id: id(3) },
+        { id: id(101), from_id: id(1), to_id: id(2) },
+        { id: id(102), from_id: id(1), to_id: id(3) },
+        { id: id(103), from_id: id(2), to_id: id(3) },
       ],
     },
     ...(options.replay ? { replay: options.replay } : {}),

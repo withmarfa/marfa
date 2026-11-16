@@ -68,9 +68,9 @@ fn refuse(writes: &mut state::Writes, line: &state::Line, file: bool, reason: St
 /// The end of the edge the file is: a `parent-of` default names the parent.
 fn end_of(edge_type: &str) -> End {
     if edge_type == crate::filter::PARENT_OF {
-        End::Target
+        End::To
     } else {
-        End::Source
+        End::From
     }
 }
 
@@ -151,13 +151,13 @@ impl Folder {
         item_id: &str,
         line: &state::Line,
     ) -> Result<std::result::Result<String, String>> {
-        let (source_id, target_id) = match line.end {
-            End::Target => (line.other.clone(), item_id.to_string()),
-            End::Source => (item_id.to_string(), line.other.clone()),
+        let (from_id, to_id) = match line.end {
+            End::To => (line.other.clone(), item_id.to_string()),
+            End::From => (item_id.to_string(), line.other.clone()),
         };
         match self.core.create_edge(&crate::model::EdgeDraft {
-            source_id,
-            target_id,
+            from_id,
+            to_id,
             edge_type: line.edge_type.clone(),
             ..Default::default()
         }) {
@@ -173,12 +173,12 @@ impl Folder {
     /// write once showed does not.
     fn holds_edge(&self, item_id: &str, line: &state::Line) -> Result<bool> {
         let (source, target) = match line.end {
-            End::Target => (line.other.as_str(), item_id),
-            End::Source => (item_id, line.other.as_str()),
+            End::To => (line.other.as_str(), item_id),
+            End::From => (item_id, line.other.as_str()),
         };
         let edges = match line.end {
-            End::Target => self.core.edges_to(item_id)?,
-            End::Source => self.core.edges_from(item_id)?,
+            End::To => self.core.edges_to(item_id)?,
+            End::From => self.core.edges_from(item_id)?,
         };
         let waiting = |edge: &crate::model::Edge| -> Result<bool> {
             Ok(!crate::store::read_writes(
@@ -193,8 +193,8 @@ impl Folder {
         };
         for edge in edges {
             if edge.edge_type == line.edge_type
-                && edge.source_id == source
-                && edge.target_id == target
+                && edge.from_id == source
+                && edge.to_id == target
                 && (edge.version > 0 || waiting(&edge)?)
             {
                 return Ok(true);

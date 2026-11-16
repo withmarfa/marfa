@@ -88,7 +88,7 @@ impl Folder {
             .core
             .edges_from(item_id)?
             .into_iter()
-            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder)
+            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.to_id == self.folder)
             .min_by_key(rank_of))
     }
 
@@ -153,7 +153,7 @@ impl Folder {
             .core
             .edges_from(item_id)?
             .into_iter()
-            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder)
+            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.to_id == self.folder)
         {
             match self.core.delete_edge(&edge.id) {
                 Ok(_) => ended += 1,
@@ -188,8 +188,8 @@ impl Folder {
             }
             None => {
                 self.core.create_edge(&EdgeDraft {
-                    source_id: item_id.to_string(),
-                    target_id: self.folder.clone(),
+                    from_id: item_id.to_string(),
+                    to_id: self.folder.clone(),
                     edge_type: PLACEMENT_EDGE.into(),
                     properties,
                     id: None,
@@ -250,9 +250,7 @@ impl Folder {
             .edges_from(item_id)?
             .into_iter()
             .filter(|edge| {
-                edge.edge_type == PLACEMENT_EDGE
-                    && edge.target_id == self.folder
-                    && edge.version > 0
+                edge.edge_type == PLACEMENT_EDGE && edge.to_id == self.folder && edge.version > 0
             })
             .min_by_key(rank_of)
             .map(|edge| (edge.id, edge.version)))
@@ -476,7 +474,7 @@ impl Folder {
     /// Whether a queued write is one of this folder's placements: an
     /// `in-folder` edge to it, and not another edge to the same row.
     fn places_by(&self, row: &QueuedWrite) -> Result<bool> {
-        if row.target_id.as_deref() != Some(self.folder.as_str()) {
+        if row.to_id.as_deref() != Some(self.folder.as_str()) {
             return Ok(false);
         }
         let conn = self.core.conn()?;
@@ -518,7 +516,7 @@ impl Folder {
             let context = crate::reach::Context::capture(&conn)?;
             let mut known = Vec::new();
             for edge in store::edges_from(&conn, source)? {
-                if edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder {
+                if edge.edge_type == PLACEMENT_EDGE && edge.to_id == self.folder {
                     let before = store::stamp(&conn, Subject::Edge, &edge.id)?;
                     known.push((edge.id, before));
                 }
@@ -541,7 +539,7 @@ impl Folder {
             loop {
                 let page = http.item_edges_page(source, PLACEMENT_EDGE, cursor.as_deref())?;
                 for edge in page.data {
-                    if edge.target_id == self.folder {
+                    if edge.to_id == self.folder {
                         reads.push(read(edge.id.clone(), Some(edge), None));
                     }
                 }
@@ -855,8 +853,8 @@ mod tests {
     fn edge_json(edge: crate::wire::WireEdge) -> Value {
         json!({
             "id": edge.id,
-            "source_id": edge.source_id,
-            "target_id": edge.target_id,
+            "from_id": edge.from_id,
+            "to_id": edge.to_id,
             "edge_type": edge.edge_type,
             "properties": edge.properties,
             "version": edge.version,
@@ -1134,7 +1132,7 @@ mod tests {
     fn memo_at(version: i64, path: &str) -> crate::wire::WireEdge {
         let mut edge = placed_at(version, path);
         edge.id = "memo-placed".into();
-        edge.source_id = "memo".into();
+        edge.from_id = "memo".into();
         edge
     }
 

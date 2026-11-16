@@ -126,7 +126,7 @@ impl InstanceNeed {
     }
 }
 
-/// The edge types of one segment's edges, each with its source's type.
+/// The edge types of one segment's edges, each with its from item's type.
 #[derive(Clone, Debug, Default)]
 struct EdgeNeed(BTreeSet<(String, String)>);
 
@@ -663,14 +663,14 @@ fn select(
         after = last.edge.seq();
         for edges::Ended {
             edge,
-            source,
-            target,
+            from,
+            to,
             lending,
         } in page
         {
-            let both = selected.binary_search(&source.seq).is_ok()
-                && selected.binary_search(&target.seq).is_ok();
-            if !both || !caller.may_read_edge(&edge.edge_type, &source.type_id) {
+            let both = selected.binary_search(&from.seq).is_ok()
+                && selected.binary_search(&to.seq).is_ok();
+            if !both || !caller.may_read_edge(&edge.edge_type, &from.type_id) {
                 continue;
             }
             let text = format!(
@@ -680,13 +680,13 @@ fn select(
             );
             let value = line_value(&text)?;
             let ends = |id: &str| {
-                if id == edge.source_id {
+                if id == edge.from_id {
                     Some(checks::End {
-                        type_id: &source.type_id,
+                        type_id: &from.type_id,
                     })
-                } else if id == edge.target_id {
+                } else if id == edge.to_id {
                     Some(checks::End {
-                        type_id: &target.type_id,
+                        type_id: &to.type_id,
                     })
                 } else {
                     None
@@ -707,7 +707,7 @@ fn select(
             }
             edges.push(&text, |need| {
                 need.0
-                    .insert((edge.edge_type.clone(), source.type_id.clone()));
+                    .insert((edge.edge_type.clone(), from.type_id.clone()));
             })?;
             digests.extend(references::digests(&items::parsed(&edge.properties)?));
         }

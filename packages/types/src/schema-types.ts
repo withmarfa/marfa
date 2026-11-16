@@ -326,9 +326,9 @@ export interface EdgeTypeSchema {
    *   relationship admit a type nobody had written when the edge shipped,
    *   including one published by somebody who cannot edit this file.
    */
-  source_type_constraints: string[];
+  from_type_constraints: string[];
   /** As above, for the target side. */
-  target_type_constraints: string[];
+  to_type_constraints: string[];
   /** Cascade behavior when endpoints are deleted. */
   cascade_on_delete: EdgeCascade;
   /**
@@ -353,8 +353,8 @@ export interface EdgeTypeSchema {
    * edge no file writes: the server keeps it, and a folder neither renders it
    * nor reads a line naming it.
    */
-  written_at: EdgeWrittenAt;
+  written_from: EdgeWrittenFrom;
 }
 
 /** The end of an edge whose file writes it, or `none` where no file does. */
-export type EdgeWrittenAt = "source" | "target" | "none";
+export type EdgeWrittenFrom = "from" | "to" | "none";

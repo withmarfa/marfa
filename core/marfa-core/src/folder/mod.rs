@@ -1350,7 +1350,7 @@ impl Folder {
 
 /// Held whole, since their other ends may lie outside the slice.
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
-    let mut whole = edge_types.written_at_targets();
+    let mut whole = edge_types.written_from_to();
     // `beneath` walks `parent-of` from rows the slice may not hold.
     if settings.query.beneath.is_some() {
         whole.push(crate::filter::PARENT_OF.into());
@@ -1944,18 +1944,16 @@ fn moved_line(
     row: &crate::model::QueuedWrite,
     bound: &state::Bound,
 ) -> Result<Option<MovedLine>> {
-    let (Some(source), Some(target), Some(edge_id)) = (&row.item_id, &row.target_id, &row.edge_id)
+    let (Some(source), Some(target), Some(edge_id)) = (&row.item_id, &row.to_id, &row.edge_id)
     else {
         return Ok(None);
     };
     let body: Value = serde_json::from_str(&crate::store::payload_of(conn, &row.id)?)?;
-    let (end, from, to) = match (body["source_id"].as_str(), body["target_id"].as_str()) {
+    let (end, from, to) = match (body["from_id"].as_str(), body["to_id"].as_str()) {
         (None, Some(to)) if source == &bound.item_id => {
-            (marfa_rules::catalog::End::Source, target, to)
+            (marfa_rules::catalog::End::From, target, to)
         }
-        (Some(to), None) if target == &bound.item_id => {
-            (marfa_rules::catalog::End::Target, source, to)
-        }
+        (Some(to), None) if target == &bound.item_id => (marfa_rules::catalog::End::To, source, to),
         _ => return Ok(None),
     };
     let edge_type = match crate::store::edge_ends(conn, edge_id)? {
@@ -1984,7 +1982,7 @@ fn edge_change(
     row: &crate::model::QueuedWrite,
     item_id: &str,
 ) -> Result<Option<state::Change>> {
-    let (Some(source), Some(target)) = (&row.item_id, &row.target_id) else {
+    let (Some(source), Some(target)) = (&row.item_id, &row.to_id) else {
         return Ok(None);
     };
     let body: Value = serde_json::from_str(&crate::store::payload_of(conn, &row.id)?)?;
@@ -1992,9 +1990,9 @@ fn edge_change(
         return Ok(None);
     };
     let (end, other) = if source == item_id {
-        (marfa_rules::catalog::End::Source, target)
+        (marfa_rules::catalog::End::From, target)
     } else {
-        (marfa_rules::catalog::End::Target, source)
+        (marfa_rules::catalog::End::To, source)
     };
     Ok(Some(state::Change::Edge {
         line: state::Line {
@@ -2314,17 +2312,17 @@ impl Folder {
                 };
                 let body: Value =
                     serde_json::from_str(&crate::store::payload_of(&*self.core.conn()?, &row.id)?)?;
-                let (source_id, target_id) = match moved.to.end {
-                    marfa_rules::catalog::End::Source => {
+                let (from_id, to_id) = match moved.to.end {
+                    marfa_rules::catalog::End::From => {
                         (bound.item_id.clone(), moved.to.other.clone())
                     }
-                    marfa_rules::catalog::End::Target => {
+                    marfa_rules::catalog::End::To => {
                         (moved.to.other.clone(), bound.item_id.clone())
                     }
                 };
                 let made_again = self.core.create_edge(&crate::model::EdgeDraft {
-                    source_id,
-                    target_id,
+                    from_id,
+                    to_id,
                     edge_type: moved.to.edge_type.clone(),
                     properties: body["properties"].as_object().cloned().unwrap_or_default(),
                     id: None,
@@ -2721,8 +2719,8 @@ mod tests {
         let (from, to, other) = (note("from"), note("to"), note("other"));
         let edge = core
             .create_edge(&EdgeDraft {
-                source_id: from,
-                target_id: to.clone(),
+                from_id: from,
+                to_id: to.clone(),
                 edge_type: "parent-of".into(),
                 ..Default::default()
             })
@@ -2733,7 +2731,7 @@ mod tests {
             .update_edge(
                 &edge,
                 &EdgeEdit {
-                    source_id: Some(other),
+                    from_id: Some(other),
                     base_version: Some(0),
                     ..EdgeEdit::default()
                 },
@@ -4648,7 +4646,7 @@ mod tests {
             .conn()
             .unwrap()
             .execute(
-                "DELETE FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+                "DELETE FROM edges WHERE from_id = ?1 AND edge_type = ?2",
                 [&id, PLACEMENT_EDGE],
             )
             .unwrap();
@@ -5059,7 +5057,7 @@ mod tests {
             .edges_from(&id)
             .unwrap()
             .into_iter()
-            .find(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == folder.folder)
+            .find(|edge| edge.edge_type == PLACEMENT_EDGE && edge.to_id == folder.folder)
             .unwrap();
         let mut edge = place.as_wire();
         edge.properties.insert("path".into(), serde_json::json!(to));
@@ -6456,8 +6454,8 @@ mod tests {
                 folder
                     .core
                     .create_edge(&crate::model::EdgeDraft {
-                        source_id: id.to_string(),
-                        target_id: other,
+                        from_id: id.to_string(),
+                        to_id: other,
                         edge_type: "about".into(),
                         properties: Default::default(),
                         id: None,
@@ -7573,13 +7571,13 @@ mod tests {
                 std::fs::write(dir.path().join(name), format!("{name} words\n")).unwrap();
             }
             assert_eq!(folder.scan().unwrap().created, 2);
-            let [target_id, host_id] = [target, host].map(|name| landed(&folder, name));
+            let [to_id, host_id] = [target, host].map(|name| landed(&folder, name));
             // An edge the server holds, which the host's file shows as a line.
             folder
                 .core
                 .create_edge(&crate::model::EdgeDraft {
-                    source_id: host_id.clone(),
-                    target_id: target_id.clone(),
+                    from_id: host_id.clone(),
+                    to_id: to_id.clone(),
                     edge_type: "about".into(),
                     properties: Default::default(),
                     id: None,
@@ -7617,7 +7615,7 @@ mod tests {
                 .filter_map(|write| write.item_id)
                 .collect();
             deleted.sort();
-            let mut both = vec![target_id.clone(), host_id.clone()];
+            let mut both = vec![to_id.clone(), host_id.clone()];
             both.sort();
             assert_eq!(deleted, both, "{target}: {swept:?}");
             assert_eq!(swept.deleted, 2, "{target}: {swept:?}");
@@ -8074,9 +8072,7 @@ mod tests {
             .queue()
             .unwrap()
             .into_iter()
-            .filter(|row| {
-                row.kind == WriteKind::CreateEdge && row.target_id.as_deref() == Some(SHELF)
-            })
+            .filter(|row| row.kind == WriteKind::CreateEdge && row.to_id.as_deref() == Some(SHELF))
             .count();
         assert_eq!(shelved, 2);
 
@@ -8140,9 +8136,7 @@ mod tests {
             .queue()
             .unwrap()
             .iter()
-            .filter(|row| {
-                row.kind == WriteKind::CreateEdge && row.target_id.as_deref() == Some(target)
-            })
+            .filter(|row| row.kind == WriteKind::CreateEdge && row.to_id.as_deref() == Some(target))
             .count()
     }
 
@@ -8625,7 +8619,7 @@ mod tests {
         );
         let shelved = state::Line {
             edge_type: "in-collection".into(),
-            end: marfa_rules::catalog::End::Source,
+            end: marfa_rules::catalog::End::From,
             other: OTHER.into(),
         };
         assert!(bound.lines.contains(&shelved), "{bound:?}");
@@ -8712,7 +8706,7 @@ mod tests {
             .into_iter()
             .find(|edge| edge.edge_type == "in-collection")
             .expect("the line's edge is queued");
-        assert_eq!(shelved.target_id, OTHER);
+        assert_eq!(shelved.to_id, OTHER);
         assert!(
             bound.writes.queued.iter().any(|queued| folder
                 .core
@@ -8876,7 +8870,7 @@ mod tests {
             .unwrap()
             .into_iter()
             .filter(|edge| edge.edge_type == "in-collection")
-            .map(|edge| edge.target_id)
+            .map(|edge| edge.to_id)
             .collect();
         assert_eq!(targets, [ELSEWHERE.to_string()]);
         let bound = state::bound_at(&folder.core.conn().unwrap(), "n.md")
@@ -8980,7 +8974,7 @@ mod tests {
                     == state::Change::Edge {
                         line: state::Line {
                             edge_type: "in-thread".into(),
-                            end: marfa_rules::catalog::End::Source,
+                            end: marfa_rules::catalog::End::From,
                             other: SECOND.into(),
                         },
                         shown: true,
@@ -9578,12 +9572,7 @@ mod tests {
             match row.kind {
                 WriteKind::CreateEdge => {
                     let end = |field: &str| row.body[field].as_str().unwrap().to_string();
-                    found.push((
-                        "create",
-                        end("source_id"),
-                        end("edge_type"),
-                        end("target_id"),
-                    ));
+                    found.push(("create", end("from_id"), end("edge_type"), end("to_id")));
                 }
                 WriteKind::DeleteEdge => found.push((
                     "delete",
@@ -9635,7 +9624,7 @@ mod tests {
                         embeds: Vec::new(),
                         lines: vec![state::Line {
                             edge_type: ATTACHMENT_EDGE.into(),
-                            end: marfa_rules::catalog::End::Target,
+                            end: marfa_rules::catalog::End::To,
                             other: file.clone(),
                         }],
                         ..bound
@@ -9694,7 +9683,7 @@ mod tests {
                 .edges_from(from)
                 .unwrap()
                 .iter()
-                .any(|edge| edge.edge_type == edge_type && edge.target_id == to)
+                .any(|edge| edge.edge_type == edge_type && edge.to_id == to)
         };
         assert!(!held(LINK_EDGE, &a, &file), "the embed's reference stayed");
         assert!(
@@ -9809,7 +9798,7 @@ mod tests {
                     embeds: Vec::new(),
                     lines: vec![state::Line {
                         edge_type: ATTACHMENT_EDGE.into(),
-                        end: marfa_rules::catalog::End::Target,
+                        end: marfa_rules::catalog::End::To,
                         other: file.clone(),
                     }],
                     ..bound
@@ -9854,7 +9843,7 @@ mod tests {
                 .edges_from(from)
                 .unwrap()
                 .iter()
-                .any(|edge| edge.edge_type == edge_type && edge.target_id == to)
+                .any(|edge| edge.edge_type == edge_type && edge.to_id == to)
         };
         assert!(
             held(LINK_EDGE, &a, &file),

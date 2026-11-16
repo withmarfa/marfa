@@ -253,7 +253,7 @@ fn fit_to_budget(items: Vec<Value>, not_found: &[String], budget: usize) -> Valu
     }
 }
 
-/// An item as the tool shows it: its tags beside its fields, and its edges as target lists.
+/// An item as the tool shows it: its tags beside its fields, and its edges as lists of to items.
 fn compact(item: &Value, tags: Vec<String>) -> Value {
     let mut out = Map::new();
     for name in [
@@ -285,7 +285,7 @@ fn compact(item: &Value, tags: Vec<String>) -> Value {
                     .and_then(Value::as_array)
                     .map(|data| {
                         data.iter()
-                            .filter_map(|edge| edge.get("target_id").cloned())
+                            .filter_map(|edge| edge.get("to_id").cloned())
                             .collect()
                     })
                     .unwrap_or_default();

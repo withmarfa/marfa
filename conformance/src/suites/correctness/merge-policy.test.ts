@@ -183,7 +183,7 @@ describe("core.note — body keep-both, title last-writer-wins", () => {
     });
     expect(link.ok).toBe(true);
     expect(
-      link.data.data.map((edge) => edge.target_id),
+      link.data.data.map((edge) => edge.to_id),
       "the copy a client resolved does not name its original, as the server's copy does",
     ).toEqual([id]);
     expect(sib.data.item.properties.title).toBe("Title from A");

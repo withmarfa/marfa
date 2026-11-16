@@ -83,14 +83,14 @@ export async function seed(): Promise<void> {
       const parent = plan.parent === null ? undefined : ids[plan.parent];
       if (parent !== undefined) {
         edges.push({
-          source_id: parent,
-          target_id: self,
+          from_id: parent,
+          to_id: self,
           edge_type: "parent-of",
         });
       }
       const about = plan.about === null ? undefined : ids[plan.about];
       if (about !== undefined) {
-        edges.push({ source_id: self, target_id: about, edge_type: "about" });
+        edges.push({ from_id: self, to_id: about, edge_type: "about" });
       }
     }
     if (edges.length > 0) {

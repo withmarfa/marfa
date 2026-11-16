@@ -314,8 +314,8 @@ it("moves an item to the bin with the children it takes, and leaves a key unable
   const root = await note("Owner move parent");
   const child = await note("Owner move child");
   const edge = await key("/edges", {
-    source_id: root.id,
-    target_id: child.id,
+    from_id: root.id,
+    to_id: child.id,
     edge_type: "parent-of",
   });
   expect(edge.status).toBe(201);
@@ -335,8 +335,8 @@ it("restores an item with the children that went to the bin with it", async () =
   expect(
     (
       await key("/edges", {
-        source_id: root.id,
-        target_id: child.id,
+        from_id: root.id,
+        to_id: child.id,
         edge_type: "parent-of",
       })
     ).status,
@@ -381,8 +381,8 @@ it("refuses a move to the bin of an item that a block edge points to, with 400 a
   expect(
     (
       await key("/edges", {
-        source_id: holder.id,
-        target_id: held.id,
+        from_id: holder.id,
+        to_id: held.id,
         edge_type: id,
       })
     ).status,
@@ -732,8 +732,8 @@ it("counts every item emptying the bin removes, parts included, and reports no f
     [nested.id, part.id],
   ] as const) {
     const edge = await key("/edges", {
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "comments-on",
     });
     expect(edge.status).toBe(201);

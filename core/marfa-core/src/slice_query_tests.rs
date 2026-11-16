@@ -726,7 +726,7 @@ fn following_beneath(server: &Scripted, dir: &Path) -> Arc<Core> {
 
 fn edge_json(id: &str, source: &str, target: &str, version: i64) -> Value {
     json!({
-        "id": id, "source_id": source, "target_id": target, "edge_type": PARENT_OF,
+        "id": id, "from_id": source, "to_id": target, "edge_type": PARENT_OF,
         "properties": {}, "version": version,
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": format!("2026-01-0{version}T00:00:00Z"),
@@ -1289,8 +1289,8 @@ fn a_branch_the_devices_own_edge_draws_under_the_root_arrives() {
     catalog_answers(&server, &[]);
     let own = core
         .create_edge(&crate::EdgeDraft {
-            source_id: "root".into(),
-            target_id: "top".into(),
+            from_id: "root".into(),
+            to_id: "top".into(),
             edge_type: PARENT_OF.into(),
             properties: serde_json::Map::new(),
             id: None,
@@ -1604,7 +1604,7 @@ fn the_devices_own_move_of_a_branch_edge_out_lets_the_branch_go_at_its_echo() {
     core.update_edge(
         "e-branch",
         &crate::EdgeEdit {
-            source_id: Some("elsewhere".into()),
+            from_id: Some("elsewhere".into()),
             base_version: Some(1),
             ..crate::EdgeEdit::default()
         },

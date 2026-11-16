@@ -344,8 +344,8 @@ describe("the catch-up window, at both ends", () => {
       [a, d],
     ] as const) {
       const edge = await client.createEdge({
-        source_id: source.data.item.id,
-        target_id: target.data.item.id,
+        from_id: source.data.item.id,
+        to_id: target.data.item.id,
         edge_type: "about",
       });
       expect(edge.ok).toBe(true);
@@ -455,8 +455,8 @@ describe("the catch-up window, at both ends", () => {
       [a, d],
     ] as const) {
       const edge = await client.createEdge({
-        source_id: source.data.item.id,
-        target_id: target.data.item.id,
+        from_id: source.data.item.id,
+        to_id: target.data.item.id,
         edge_type: "about",
       });
       expect(edge.ok).toBe(true);
@@ -539,8 +539,8 @@ describe("the catch-up read covers the graph", () => {
     // or the read is returning the whole listing and the assertion that
     // matters is satisfied by a filter that does nothing.
     const held = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: "about",
     });
     expect(held.ok).toBe(true);
@@ -554,8 +554,8 @@ describe("the catch-up read covers the graph", () => {
     await new Promise((r) => setTimeout(r, 1100));
 
     const missed = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: c.data.item.id,
+      from_id: a.data.item.id,
+      to_id: c.data.item.id,
       edge_type: "about",
     });
     expect(missed.ok).toBe(true);

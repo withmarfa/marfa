@@ -171,9 +171,9 @@ describe("an unhandled fault met by one entry of a bulk page", () => {
       string,
       string,
     ];
-    const edges = [kept, poisoned, alsoKept].map((target_id) => ({
-      source_id: source,
-      target_id,
+    const edges = [kept, poisoned, alsoKept].map((to_id) => ({
+      from_id: source,
+      to_id,
       edge_type: "references",
     }));
     await server!.setFault("fail:audit=edges.bulk@2");

@@ -62,7 +62,7 @@ async function scopedItem(c: MarfaClient, label: string): Promise<string> {
 }
 
 describe("per-edge-type permissions", () => {
-  it("dual-gate: source-type write + edge-type write required", async () => {
+  it("dual-gate: from item type write + edge-type write required", async () => {
     const noEdgeScope = await makeKey("no-edge-scope", {
       type_permissions: { "*": "write" },
     });
@@ -75,8 +75,8 @@ describe("per-edge-type permissions", () => {
     const b = await scopedItem(noEdgeClient, "b");
 
     const r1 = await noEdgeClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(r1.ok).toBe(false);
@@ -93,8 +93,8 @@ describe("per-edge-type permissions", () => {
     });
 
     const r2 = await noTypeClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(r2.ok).toBe(false);
@@ -112,8 +112,8 @@ describe("per-edge-type permissions", () => {
     const a2 = await scopedItem(bothClient, "a2");
     const b2 = await scopedItem(bothClient, "b2");
     const r3 = await bothClient.createEdge({
-      source_id: a2,
-      target_id: b2,
+      from_id: a2,
+      to_id: b2,
       edge_type: "about",
     });
     expect(r3.ok).toBe(true);
@@ -125,8 +125,8 @@ describe("per-edge-type permissions", () => {
     const b = await scopedItem(client, "adm-b");
 
     const r = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "parent-of",
     });
     expect(r.ok).toBe(true);
@@ -147,16 +147,16 @@ describe("per-edge-type permissions", () => {
     const b = await scopedItem(narrowClient, "narrow-b");
 
     const about = await narrowClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(about.ok).toBe(true);
     trackEdge(ctx, about.data.edge.id);
 
     const po = await narrowClient.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "parent-of",
     });
     expect(po.ok).toBe(false);
@@ -181,8 +181,8 @@ describe("per-edge-type permissions", () => {
     ]) {
       const target = await scopedItem(wildClient, `w-t-${edgeType}`);
       const r = await wildClient.createEdge({
-        source_id: a,
-        target_id: target,
+        from_id: a,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(r.ok).toBe(true);
@@ -190,24 +190,24 @@ describe("per-edge-type permissions", () => {
     }
   });
 
-  // The type-permission gate on an edge write reads the source item whether
+  // The type-permission gate on an edge write reads the from item whether
   // it is live or trashed.
-  it("trashed source: PATCH/DELETE edge still gated on source type", async () => {
-    // Register two custom types so we can gate a key strictly on the target
+  it("trashed from item: PATCH/DELETE edge still gated on from item type", async () => {
+    // Register two custom types so we can gate a key strictly on the to item's
     // type without granting core.note blanket access through wildcards.
-    const sourceType = `user.evaluator-edgesrc-${ctx.runId}`;
-    const targetType = `user.evaluator-edgetgt-${ctx.runId}`;
+    const fromType = `user.evaluator-edgefrom-${ctx.runId}`;
+    const toType = `user.evaluator-edgeto-${ctx.runId}`;
     await client.registerType({
-      id: sourceType,
+      id: fromType,
       fields: { title: { type: "string", required: true } },
     });
     await client.registerType({
-      id: targetType,
+      id: toType,
       fields: { title: { type: "string", required: true } },
     });
 
     const srcResp = await client.createItem({
-      type: sourceType,
+      type: fromType,
       properties: { title: "src" },
       source: ctx.source,
     });
@@ -215,7 +215,7 @@ describe("per-edge-type permissions", () => {
     trackItem(ctx, srcResp.data.item.id);
 
     const tgtResp = await client.createItem({
-      type: targetType,
+      type: toType,
       properties: { title: "tgt" },
       source: ctx.source,
     });
@@ -223,8 +223,8 @@ describe("per-edge-type permissions", () => {
     trackItem(ctx, tgtResp.data.item.id);
 
     const edge = await client.createEdge({
-      source_id: srcResp.data.item.id,
-      target_id: tgtResp.data.item.id,
+      from_id: srcResp.data.item.id,
+      to_id: tgtResp.data.item.id,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -236,7 +236,7 @@ describe("per-edge-type permissions", () => {
     // Key scoped to the TARGET type only (plus edge.about read/write so the
     // dual-gate on edge-type isn't what denies). No access to source type.
     const targetOnly = await makeKey("target-only", {
-      type_permissions: { [targetType]: "write" },
+      type_permissions: { [toType]: "write" },
       edge_permissions: { about: "write" },
     });
     const targetOnlyClient = new MarfaClient({
@@ -260,7 +260,7 @@ describe("per-edge-type permissions", () => {
 
     // One that reads the source and does not write it is refused the write.
     const sourceReader = await makeKey("source-reader", {
-      type_permissions: { [sourceType]: "read", [targetType]: "write" },
+      type_permissions: { [fromType]: "read", [toType]: "write" },
       edge_permissions: { about: "write" },
     });
     const sourceReaderClient = new MarfaClient({
@@ -281,7 +281,7 @@ describe("per-edge-type permissions", () => {
     expect(refusedDel.error?.error.code).toBe("type_not_permitted");
 
     const sourceOnly = await makeKey("source-only", {
-      type_permissions: { [sourceType]: "write", [targetType]: "read" },
+      type_permissions: { [fromType]: "write", [toType]: "read" },
       edge_permissions: { about: "write" },
     });
     const sourceOnlyClient = new MarfaClient({
@@ -303,8 +303,8 @@ describe("per-edge-type permissions", () => {
     const source = await scopedItem(client, "read-src");
     const target = await scopedItem(client, "read-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -326,8 +326,8 @@ describe("per-edge-type permissions", () => {
     expect(list.data.data.some((e) => e.id === edge.data.edge.id)).toBe(true);
 
     const write = await readClient.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(write.ok).toBe(false);
@@ -339,8 +339,8 @@ describe("per-edge-type permissions", () => {
     const source = await scopedItem(client, "wr-src");
     const target = await scopedItem(client, "wr-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect(edge.ok).toBe(true);
@@ -392,7 +392,7 @@ describe("per-edge-type permissions", () => {
  * run's shared instance holds.
  */
 describe("the edge listing answers only what the credential may read", () => {
-  it("drops an edge whose source is a type the credential cannot read", async () => {
+  it("drops an edge whose from item is a type the credential cannot read", async () => {
     const edgeType = `mock.disclosure.src.${ctx.runId}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
@@ -411,15 +411,15 @@ describe("the edge listing answers only what the credential may read", () => {
     trackItem(ctx, hidden.data.item.id);
 
     const readableEdge = await client.createEdge({
-      source_id: readableSource,
-      target_id: target,
+      from_id: readableSource,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(readableEdge.ok, JSON.stringify(readableEdge.error)).toBe(true);
     trackEdge(ctx, readableEdge.data.edge.id);
     const hiddenEdge = await client.createEdge({
-      source_id: hidden.data.item.id,
-      target_id: target,
+      from_id: hidden.data.item.id,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(hiddenEdge.ok, JSON.stringify(hiddenEdge.error)).toBe(true);
@@ -485,8 +485,8 @@ describe("the edge listing answers only what the credential may read", () => {
     const source = await scopedItem(client, "kind-src");
     const target = await scopedItem(client, "kind-tgt");
     const edge = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -522,7 +522,7 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(widePage.data.data.map((e) => e.id)).toContain(edge.data.edge.id);
   });
 
-  it("drops it still when the source is trashed, which is when a null source would read as no source at all", async () => {
+  it("drops it still when the from item is trashed, which is when a null from item would read as none at all", async () => {
     // The door resolves the source including trashed items on purpose. A
     // plain read answers null for a trashed item, and a null source has
     // no type to refuse — so trashing the source item would turn the
@@ -544,8 +544,8 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(hidden.ok, JSON.stringify(hidden.error)).toBe(true);
     trackItem(ctx, hidden.data.item.id);
     const edge = await client.createEdge({
-      source_id: hidden.data.item.id,
-      target_id: target,
+      from_id: hidden.data.item.id,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -614,8 +614,8 @@ describe("the edge listing answers only what the credential may read", () => {
               return r.data.item.id;
             })();
       const edge = await client.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -714,8 +714,8 @@ describe("the doors under an item answer only what the credential may read", () 
     edgeType: string,
   ): Promise<string> {
     const r = await client.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: edgeType,
     });
     expect(r.ok, JSON.stringify(r.error)).toBe(true);
@@ -771,7 +771,7 @@ describe("the doors under an item answer only what the credential may read", () 
     );
   });
 
-  it("leaves an edge with an unreadable source out of GET /items/{id}/backrefs", async () => {
+  it("leaves an edge with an unreadable from item out of GET /items/{id}/backrefs", async () => {
     const edgeType = await kind("back");
     const anchor = await scopedItem(client, "backref-anchor");
     const readableSource = await scopedItem(client, "backref-readable");
@@ -1196,7 +1196,7 @@ describe("the doors under an item answer only what the credential may read", () 
   });
 });
 
-describe("an edge write says nothing of a target the credential cannot read", () => {
+describe("an edge write says nothing of a to item the credential cannot read", () => {
   let writer: MarfaClient;
   let source: string;
   let unreadable: string;
@@ -1242,8 +1242,8 @@ describe("an edge write says nothing of a target the credential cannot read", ()
       name: "POST /edges",
       write: (edgeType, target) =>
         writer.createEdge({
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: edgeType,
         }),
     },
@@ -1251,9 +1251,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
       name: "POST /edges/bulk (atomic)",
       write: (edgeType, target) =>
         writer.bulkEdges({
-          edges: [
-            { source_id: source, target_id: target, edge_type: edgeType },
-          ],
+          edges: [{ from_id: source, to_id: target, edge_type: edgeType }],
         }),
     },
     {
@@ -1261,9 +1259,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
       write: (edgeType, target) =>
         writer.bulkEdges({
           atomic: false,
-          edges: [
-            { source_id: source, target_id: target, edge_type: edgeType },
-          ],
+          edges: [{ from_id: source, to_id: target, edge_type: edgeType }],
         }),
     },
     {
@@ -1334,7 +1330,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
   }
 
   it.each(doors)(
-    "$name answers an unreadable target as a missing one, whatever its type",
+    "$name answers an unreadable to item as a missing one, whatever its type",
     async (door) => {
       // The witnesses: a readable target is written, and a readable target
       // of the wrong type meets the constraint, so both answers exist.
@@ -1361,12 +1357,12 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     },
   );
 
-  it("answers an unreadable target as a missing one on the bulk door, where an edge to it already exists", async () => {
+  it("answers an unreadable to item as a missing one on the bulk door, where an edge to it already exists", async () => {
     const from = await scopedItem(writer, "target-blind-existing");
     for (const target of [readable, unreadable]) {
       const held = await client.createEdge({
-        source_id: from,
-        target_id: target,
+        from_id: from,
+        to_id: target,
         edge_type: "about",
       });
       expect(held.status).toBe(201);
@@ -1380,7 +1376,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
           writer.bulkEdges({
             mode,
             atomic,
-            edges: [{ source_id: from, target_id: target, edge_type: "about" }],
+            edges: [{ from_id: from, to_id: target, edge_type: "about" }],
           });
         // The witness: the matched edge answers for a target the key reads.
         const matched = await write(readable);
@@ -1396,7 +1392,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     }
   });
 
-  it("answers an unreadable target as a missing one on a stale PATCH, before the version is read", async () => {
+  it("answers an unreadable to item as a missing one on a stale PATCH, before the version is read", async () => {
     const from = await scopedItem(writer, "target-blind-stale");
     const bumped = await writer.updateItem(from, {
       version: 1,

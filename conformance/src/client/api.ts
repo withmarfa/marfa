@@ -350,10 +350,10 @@ export class MarfaClient {
           params.append("tags", tag);
         }
       } else if (key === "edge" && value && typeof value === "object") {
-        for (const [edgeType, targetId] of Object.entries(
+        for (const [edgeType, toId] of Object.entries(
           value as Record<string, string>,
         )) {
-          params.append(`edge[${edgeType}]`, targetId);
+          params.append(`edge[${edgeType}]`, toId);
         }
       } else if (key === "backref" && value && typeof value === "object") {
         for (const [edgeType, sourceId] of Object.entries(
@@ -918,8 +918,8 @@ export class MarfaClient {
    */
   async createEdge(input: {
     id?: string;
-    source_id: string;
-    target_id: string;
+    from_id: string;
+    to_id: string;
     edge_type: string;
     properties?: Record<string, unknown>;
   }): Promise<ApiResponse<{ edge: MarfaEdge; acknowledged?: boolean }>> {
@@ -938,8 +938,8 @@ export class MarfaClient {
     id: string,
     changes: {
       properties?: Record<string, unknown>;
-      source_id?: string;
-      target_id?: string;
+      from_id?: string;
+      to_id?: string;
       version: number;
     },
     headers?: Record<string, string>,

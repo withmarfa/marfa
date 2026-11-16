@@ -416,13 +416,13 @@ mod tests {
             crate::catalog::edge_type_for_tests(
                 "parent-of",
                 Some("child-of"),
-                End::Target,
+                End::To,
                 "one-to-many",
             ),
             crate::catalog::edge_type_for_tests(
                 "cites",
                 Some("cited-by"),
-                End::Source,
+                End::From,
                 "many-to-many",
             ),
         ])

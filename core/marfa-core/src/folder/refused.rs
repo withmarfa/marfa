@@ -455,12 +455,11 @@ mod tests {
     fn a_refused_write_to_an_item_a_file_is_bound_to_does_not_keep_its_store_refused() {
         let line = state::Line {
             edge_type: "references".into(),
-            end: marfa_rules::catalog::End::Source,
+            end: marfa_rules::catalog::End::From,
             other: "other".into(),
         };
-        let edge = "{\"edge_type\":\"references\",\"source_id\":\"note\",\"target_id\":\"other\"}";
-        let to_note =
-            "{\"edge_type\":\"references\",\"source_id\":\"other\",\"target_id\":\"note\"}";
+        let edge = "{\"edge_type\":\"references\",\"from_id\":\"note\",\"to_id\":\"other\"}";
+        let to_note = "{\"edge_type\":\"references\",\"from_id\":\"other\",\"to_id\":\"note\"}";
         for (kind, extra) in [
             ("update_item", vec![]),
             ("add_tag", vec![("tag", "kept")]),
@@ -469,28 +468,22 @@ mod tests {
                 "transition_item",
                 vec![("payload", "{\"state\":\"archived\"}")],
             ),
-            (
-                "create_edge",
-                vec![("target_id", "other"), ("payload", edge)],
-            ),
+            ("create_edge", vec![("to_id", "other"), ("payload", edge)]),
             (
                 "create_edge",
                 vec![
                     ("item_id", "other"),
-                    ("target_id", "note"),
+                    ("to_id", "note"),
                     ("payload", to_note),
                 ],
             ),
-            (
-                "delete_edge",
-                vec![("target_id", "other"), ("payload", edge)],
-            ),
+            ("delete_edge", vec![("to_id", "other"), ("payload", edge)]),
             (
                 "update_edge",
                 vec![
-                    ("target_id", "was"),
+                    ("to_id", "was"),
                     ("edge_id", "e"),
-                    ("payload", "{\"target_id\":\"other\"}"),
+                    ("payload", "{\"to_id\":\"other\"}"),
                 ],
             ),
         ] {
@@ -561,7 +554,7 @@ mod tests {
                 "refused",
                 &[
                     ("item_id", item),
-                    ("target_id", FOLDER),
+                    ("to_id", FOLDER),
                     (
                         "payload",
                         "{\"edge_type\":\"in-folder\",\"properties\":{\"path\":\"Note.md\"}}",
@@ -633,5 +626,127 @@ mod tests {
             ),
             "{refused:?}"
         );
+    }
+
+    /// The previous build's queue, whose column for an edge's to end had
+    /// another name, holding `rows` once it is renamed.
+    fn previous_queue(rows: &str) -> String {
+        format!("ALTER TABLE queue RENAME COLUMN to_id TO target_id; {rows}")
+    }
+
+    #[test]
+    fn a_store_whose_queue_names_an_edge_end_otherwise_is_counted() {
+        let (dir, path) = refused_folder(true, &format!("{RECORD} {}", previous_queue("")));
+        let record = recorded(&path);
+        let folder = Folder::open(dir.path(), None)
+            .unwrap_or_else(|error| panic!("the store was left: {error:?}"));
+        assert!(folder.replaced_store().is_some());
+        drop(folder);
+        assert_eq!(recorded(&path), record);
+
+        let waiting = answered("waiting", "update_item", "blocked", &[]);
+        let (dir, path) = refused_folder(true, &format!("{RECORD} {}", previous_queue(&waiting)));
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(unsent_of(&refused_with(dir.path())), Some(1));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_refused_edge_write_in_such_a_queue_is_judged_by_its_from_end() {
+        let line = state::Line {
+            edge_type: "references".into(),
+            end: marfa_rules::catalog::End::From,
+            other: "other".into(),
+        };
+        let recorded = bound_recording(&[state::Refused {
+            change: state::Change::Edge { line, shown: true },
+            save: 2,
+            reason: "validation_error".into(),
+        }]);
+        let edge = "{\"edge_type\":\"references\"}";
+        let from_note = answered(
+            "refused",
+            "create_edge",
+            "refused",
+            &[("target_id", "other"), ("payload", edge)],
+        );
+        let (dir, _) = refused_folder(true, &format!("{recorded} {}", previous_queue(&from_note)));
+        assert!(
+            Folder::open(dir.path(), None)
+                .unwrap_or_else(|error| panic!("the store was left: {error:?}"))
+                .replaced_store()
+                .is_some()
+        );
+
+        // Its to end is not read, so a write bound only there counts.
+        let to_note = answered(
+            "refused",
+            "create_edge",
+            "refused",
+            &[
+                ("item_id", "other"),
+                ("target_id", "note"),
+                ("payload", edge),
+            ],
+        );
+        let (dir, _) = refused_folder(true, &format!("{recorded} {}", previous_queue(&to_note)));
+        assert_eq!(unsent_of(&refused_with(dir.path())), Some(1));
+    }
+
+    /// `RECORD` with `Note.md`'s lines and writes as given.
+    fn recording(lines: &str, writes: &str) -> String {
+        RECORD
+            .replace("'h', '[]', '[]'", &format!("'h', '[]', '{lines}'"))
+            .replace(
+                "'{\"save\":2,\"queued\":[],\"refused\":[]}'",
+                &format!("'{writes}'"),
+            )
+    }
+
+    #[test]
+    fn a_store_recording_edge_ends_this_build_cannot_read_is_left_alone() {
+        let writes = "{\"save\":2,\"queued\":[],\"refused\":[]}";
+        let refused_line = |end: &str| {
+            format!(
+                "{{\"save\":2,\"queued\":[],\"refused\":[{{\"change\":{{\"edge\":{{\"line\":{{\"edge_type\":\"parent-of\",\"end\":\"{end}\",\"other\":\"shelf\"}},\"shown\":true}}}},\"save\":2,\"reason\":\"validation_error\"}}]}}"
+            )
+        };
+        let line = |end: &str| {
+            format!("[{{\"edge_type\":\"parent-of\",\"end\":\"{end}\",\"other\":\"shelf\"}}]")
+        };
+        for sql in [
+            recording(&line("target"), writes),
+            recording("[]", &refused_line("source")),
+        ] {
+            let (dir, path) = refused_folder(true, &sql);
+            let before = std::fs::read(&path).unwrap();
+            let refused = Folder::open(dir.path(), None).err().unwrap();
+            assert!(
+                matches!(
+                    &refused,
+                    CoreError::WrongSchema {
+                        unsent: Some(0),
+                        folder: Some(FolderStore::Uncarried(table)),
+                        ..
+                    } if table == "folder_files"
+                ),
+                "{refused:?}"
+            );
+            let said = refused.to_string();
+            assert!(said.contains("marfa folders remove"), "{said}");
+            assert!(!said.contains("next push"), "{said}");
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+
+        // The witness: the same records in this build's words are carried.
+        let (dir, path) = refused_folder(true, &recording(&line("to"), &refused_line("from")));
+        let folder = Folder::open(dir.path(), None)
+            .unwrap_or_else(|error| panic!("the store was left: {error:?}"));
+        assert!(folder.replaced_store().is_some());
+        drop(folder);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let bound = state::bound_at(&conn, "Note.md").unwrap().unwrap();
+        assert_eq!(bound.lines.len(), 1, "{:?}", bound.lines);
+        assert_eq!(bound.writes.refused.len(), 1, "{:?}", bound.writes);
     }
 }

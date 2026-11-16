@@ -157,13 +157,13 @@ it("takes the edges at both ends of a purged item out of the copy", async () => 
   const doomed = await note("Purged with its edges");
   const other = await note("At the far end of both edges");
   trackItem(ctx, other.id);
-  for (const [source_id, target_id] of [
+  for (const [from_id, to_id] of [
     [other.id, doomed.id],
     [doomed.id, other.id],
   ] as const) {
     const made = await client.createEdge({
-      source_id,
-      target_id,
+      from_id,
+      to_id,
       edge_type: "references",
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);

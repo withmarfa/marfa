@@ -181,7 +181,7 @@ describe("a link's parts", () => {
     ]);
     const edges = value(await device.queue())
       .filter((write) => write.kind === "create_edge" && write.item_id === host)
-      .map((write) => write.target_id);
+      .map((write) => write.to_id);
     expect(sorted(edges as string[])).toEqual(sorted([first, second]));
   });
 

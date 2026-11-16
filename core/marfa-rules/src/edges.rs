@@ -31,8 +31,8 @@ impl OnDelete {
 pub struct Link {
     pub id: String,
     pub edge_type: String,
-    pub source: String,
-    pub target: String,
+    pub from: String,
+    pub to: String,
 }
 
 pub trait Graph {
@@ -43,8 +43,8 @@ pub trait Graph {
     /// The id of an edge of the triple other than `except`.
     fn triple(
         &self,
-        source: &str,
-        target: &str,
+        from: &str,
+        to: &str,
         edge_type: &str,
         except: Option<&str>,
     ) -> Result<Option<String>, Self::Error>;
@@ -57,16 +57,16 @@ pub trait Graph {
 #[derive(Debug, Clone, Copy)]
 pub struct Proposed<'a> {
     pub edge_type: &'a str,
-    pub source: &'a str,
-    pub target: &'a str,
+    pub from: &'a str,
+    pub to: &'a str,
     pub moving: Option<&'a str>,
 }
 
 pub fn duplicate<G: Graph>(graph: &G, edge: &Proposed<'_>) -> Result<Option<String>, G::Error> {
-    graph.triple(edge.source, edge.target, edge.edge_type, edge.moving)
+    graph.triple(edge.from, edge.to, edge.edge_type, edge.moving)
 }
 
-/// The source is judged first.
+/// The from end is judged first.
 pub fn full_end<G: Graph>(
     graph: &G,
     edge_type: &EdgeType,
@@ -77,11 +77,11 @@ pub fn full_end<G: Graph>(
             .iter()
             .any(|link| link.edge_type == edge.edge_type && Some(link.id.as_str()) != edge.moving)
     };
-    if edge_type.one_at(End::Source) && holds_one(graph.outbound(edge.source)?) {
-        return Ok(Some(End::Source));
+    if edge_type.one_at(End::From) && holds_one(graph.outbound(edge.from)?) {
+        return Ok(Some(End::From));
     }
-    if edge_type.one_at(End::Target) && holds_one(graph.inbound(edge.target)?) {
-        return Ok(Some(End::Target));
+    if edge_type.one_at(End::To) && holds_one(graph.inbound(edge.to)?) {
+        return Ok(Some(End::To));
     }
     Ok(None)
 }
@@ -91,18 +91,18 @@ pub fn closes_cycle<G: Graph>(
     edge: &Proposed<'_>,
     follows: impl Fn(&str) -> bool,
 ) -> Result<bool, G::Error> {
-    let mut seen = HashSet::from([edge.target.to_string()]);
-    let mut waiting = vec![edge.target.to_string()];
+    let mut seen = HashSet::from([edge.to.to_string()]);
+    let mut waiting = vec![edge.to.to_string()];
     while let Some(at) = waiting.pop() {
-        if at == edge.source {
+        if at == edge.from {
             return Ok(true);
         }
         for link in graph.outbound(&at)? {
             if follows(&link.edge_type)
                 && Some(link.id.as_str()) != edge.moving
-                && seen.insert(link.target.clone())
+                && seen.insert(link.to.clone())
             {
-                waiting.push(link.target);
+                waiting.push(link.to);
             }
         }
     }
@@ -118,7 +118,7 @@ pub struct Closure {
     pub with_hosts: HashSet<String>,
 }
 
-/// Runs until nothing new joins: cascade targets of rows in the set, and `with-hosts` sources once all their hosts are in the set or the bin.
+/// Runs until nothing new joins: the to items of cascading edges from rows in the set, and the from items of `with-hosts` edges once all their hosts are in the set or the bin.
 /// A named part goes beneath its hosts when they all go, else heads its own group. Rows already in the bin are walked and stand in `ordered`; the caller skips moving them.
 pub fn closure<G: Graph>(graph: &G, named: &[String]) -> Result<Closure, G::Error> {
     let mut roots = Vec::new();
@@ -172,18 +172,18 @@ impl<G: Graph> Walk<'_, G> {
             self.children.entry(id.clone()).or_default();
             for link in self.graph.outbound(&id)? {
                 if self.graph.on_delete(&link.edge_type) == OnDelete::Cascade {
-                    self.cascaded.insert(link.target.clone());
+                    self.cascaded.insert(link.to.clone());
                     self.children
                         .entry(id.clone())
                         .or_default()
-                        .push(link.target.clone());
-                    self.waiting.push_back(link.target);
+                        .push(link.to.clone());
+                    self.waiting.push_back(link.to);
                 }
             }
             for link in self.graph.inbound(&id)? {
                 if self.graph.on_delete(&link.edge_type) == OnDelete::WithHosts {
                     self.candidates
-                        .entry(link.source)
+                        .entry(link.from)
                         .or_default()
                         .push(id.clone());
                 }
@@ -199,7 +199,7 @@ impl<G: Graph> Walk<'_, G> {
             .outbound(part)?
             .into_iter()
             .filter(|link| self.graph.on_delete(&link.edge_type) == OnDelete::WithHosts)
-            .map(|link| link.target)
+            .map(|link| link.to)
             .filter(|host| seen.insert(host.clone()))
             .collect())
     }
@@ -336,11 +336,10 @@ pub fn cascade_reach<G: Graph>(graph: &G, start: &str) -> Result<Vec<String>, G:
     let mut reached = Vec::new();
     while let Some(at) = waiting.pop() {
         for link in graph.outbound(&at)? {
-            if graph.on_delete(&link.edge_type) == OnDelete::Cascade
-                && seen.insert(link.target.clone())
+            if graph.on_delete(&link.edge_type) == OnDelete::Cascade && seen.insert(link.to.clone())
             {
-                reached.push(link.target.clone());
-                waiting.push(link.target);
+                reached.push(link.to.clone());
+                waiting.push(link.to);
             }
         }
     }
@@ -374,40 +373,40 @@ pub struct Refused {
 pub fn refused_end(edge_type: &EdgeType, end: End, item_type: &str) -> Refused {
     let id = &edge_type.id;
     let (end, allowed) = match end {
-        End::Source => ("source", &edge_type.source_type_constraints),
-        End::Target => ("target", &edge_type.target_type_constraints),
+        End::From => ("from", &edge_type.from_type_constraints),
+        End::To => ("to", &edge_type.to_type_constraints),
     };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(id));
     details.insert(format!("{end}_type"), json!(item_type));
     details.insert("allowed".into(), json!(allowed));
     Refused {
-        message: format!("Edge \"{id}\" does not allow {end} type \"{item_type}\""),
+        message: format!("Edge \"{id}\" does not allow type \"{item_type}\" at its {end} end"),
         details: Value::Object(details),
     }
 }
 
-pub fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> Refused {
+pub fn refused_nesting(edge_type: &str, from_id: &str, from_type: &str) -> Refused {
     Refused {
         message: format!(
-            "Edge \"{edge_type}\" does not take a source its target constraints admit; use \"parent-of\" for hierarchy"
+            "Edge \"{edge_type}\" does not take a from item its to constraints admit; use \"parent-of\" for hierarchy"
         ),
         details: json!({
             "edge_type": edge_type,
-            "source_id": source_id,
-            "source_type": source_type,
+            "from_id": from_id,
+            "from_type": from_type,
             "constraint": "nesting",
         }),
     }
 }
 
-pub fn refused_parts_cycle(edge_type: &str, source_id: &str, target_id: &str) -> Refused {
+pub fn refused_parts_cycle(edge_type: &str, from_id: &str, to_id: &str) -> Refused {
     Refused {
         message: format!("Edge \"{edge_type}\" would make an item a part of its own part"),
         details: json!({
             "edge_type": edge_type,
-            "source_id": source_id,
-            "target_id": target_id,
+            "from_id": from_id,
+            "to_id": to_id,
             "constraint": "cycle",
         }),
     }
@@ -415,12 +414,12 @@ pub fn refused_parts_cycle(edge_type: &str, source_id: &str, target_id: &str) ->
 
 pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused {
     let (end, edge) = match end {
-        End::Source => ("source", "outbound"),
-        End::Target => ("target", "inbound"),
+        End::From => ("from", "outbound"),
+        End::To => ("to", "inbound"),
     };
     let limit = match edge_type.cardinality.as_str() {
-        "one-to-one" => format!("is one-to-one; {end} already has one"),
-        cardinality => format!("is {cardinality} on the {end} side; {end} already has an"),
+        "one-to-one" => format!("is one-to-one; the {end} item already has one"),
+        cardinality => format!("is {cardinality} on the {end} side; the {end} item already has an"),
     };
     let mut details = Map::new();
     details.insert("edge_type".into(), json!(edge_type.id));
@@ -464,8 +463,8 @@ mod tests {
                 .map(|(at, (kind, source, target))| Link {
                     id: format!("e{at}"),
                     edge_type: kind.to_string(),
-                    source: source.clone(),
-                    target: target.clone(),
+                    from: source.clone(),
+                    to: target.clone(),
                 })
                 .filter(keep)
                 .collect()
@@ -481,21 +480,21 @@ mod tests {
                 return Ok(vec![Link {
                     id: format!("e{at}"),
                     edge_type: "parent-of".into(),
-                    source: id.into(),
-                    target: (at + 1).to_string(),
+                    from: id.into(),
+                    to: (at + 1).to_string(),
                 }]
                 .into_iter()
                 .filter(|_| at + 1 < DEEP)
                 .collect());
             }
-            Ok(self.links(|link| link.source == id))
+            Ok(self.links(|link| link.from == id))
         }
 
         fn inbound(&self, id: &str) -> Result<Vec<Link>, ()> {
             if self.deep {
                 return Ok(Vec::new());
             }
-            Ok(self.links(|link| link.target == id))
+            Ok(self.links(|link| link.to == id))
         }
 
         fn triple(
@@ -507,8 +506,8 @@ mod tests {
         ) -> Result<Option<String>, ()> {
             Ok(self
                 .links(|link| {
-                    link.source == source
-                        && link.target == target
+                    link.from == source
+                        && link.to == target
                         && link.edge_type == kind
                         && Some(link.id.as_str()) != except
                 })
@@ -540,9 +539,9 @@ mod tests {
         let wire = serde_json::from_value(json!({
             "id": id,
             "cardinality": cardinality,
-            "written_at": "none",
-            "source_type_constraints": [],
-            "target_type_constraints": [],
+            "written_from": "none",
+            "from_type_constraints": [],
+            "to_type_constraints": [],
             "cascade_on_delete": "orphan",
             "property_schema": {},
             "shipped": false,
@@ -554,8 +553,8 @@ mod tests {
     fn proposed<'a>(kind: &'a str, source: &'a str, target: &'a str) -> Proposed<'a> {
         Proposed {
             edge_type: kind,
-            source,
-            target,
+            from: source,
+            to: target,
             moving: None,
         }
     }
@@ -584,12 +583,12 @@ mod tests {
         let held = graph(&[("x", "a", "b")], &[]);
         for (cardinality, source, target, moving, full) in [
             ("many-to-many", "a", "c", None, None),
-            ("many-to-one", "a", "c", None, Some(End::Source)),
+            ("many-to-one", "a", "c", None, Some(End::From)),
             ("many-to-one", "c", "b", None, None),
-            ("one-to-many", "c", "b", None, Some(End::Target)),
+            ("one-to-many", "c", "b", None, Some(End::To)),
             ("one-to-many", "a", "c", None, None),
-            ("one-to-one", "a", "c", None, Some(End::Source)),
-            ("one-to-one", "c", "b", None, Some(End::Target)),
+            ("one-to-one", "a", "c", None, Some(End::From)),
+            ("one-to-one", "c", "b", None, Some(End::To)),
             ("one-to-one", "a", "c", Some("e0"), None),
             ("many-to-one", "a", "c", Some("e0"), None),
         ] {

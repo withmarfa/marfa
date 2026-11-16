@@ -36,8 +36,8 @@ async function note(title: string): Promise<string> {
 
 interface Edge {
   id: string;
-  source_id: string;
-  target_id: string;
+  from_id: string;
+  to_id: string;
   edge_type: string;
   version: number;
   properties: Record<string, unknown>;
@@ -57,9 +57,9 @@ describe("edges from the terminal", () => {
     const created = await c.cli.json<{ edge: Edge }>([
       "edges",
       "create",
-      "--from",
+      "--from-id",
       a,
-      "--to",
+      "--to-id",
       b,
       "--type",
       "references",
@@ -67,8 +67,8 @@ describe("edges from the terminal", () => {
       JSON.stringify({ weight: 1 }),
     ]);
     const edge = created.edge;
-    expect(edge.source_id).toBe(a);
-    expect(edge.target_id).toBe(b);
+    expect(edge.from_id).toBe(a);
+    expect(edge.to_id).toBe(b);
     expect(edge.edge_type).toBe("references");
 
     const outbound = rows(await c.cli.json(["items", "edges", a]));
@@ -117,8 +117,8 @@ describe("edges from the terminal", () => {
     }>(["edges", "bulk", "--file", "-"], {
       stdin: JSON.stringify({
         edges: [
-          { source_id: a, target_id: b, edge_type: "references" },
-          { source_id: a, target_id: c2, edge_type: "references" },
+          { from_id: a, to_id: b, edge_type: "references" },
+          { from_id: a, to_id: c2, edge_type: "references" },
         ],
       }),
     });
@@ -128,7 +128,7 @@ describe("edges from the terminal", () => {
       "created",
     ]);
     const outbound = rows(await c.cli.json(["items", "edges", a]));
-    expect(outbound.map((row) => row.target_id).sort()).toEqual([b, c2].sort());
+    expect(outbound.map((row) => row.to_id).sort()).toEqual([b, c2].sort());
     for (const row of written.results) {
       await c.cli.json(["edges", "delete", row.id!]);
     }
@@ -143,9 +143,9 @@ describe("edges from the terminal", () => {
     const linked = await c.cli.run([
       "edges",
       "create",
-      "--from",
+      "--from-id",
       a,
-      "--to",
+      "--to-id",
       b,
       "--type",
       "references",
@@ -189,9 +189,9 @@ describe("edges from the terminal", () => {
     const refused = await c.cli.refused([
       "edges",
       "create",
-      "--from",
+      "--from-id",
       a,
-      "--to",
+      "--to-id",
       a,
       "--type",
       "references",
@@ -242,20 +242,20 @@ describe("a conflicted copy from the terminal", () => {
 
     // The server holds the link.
     const served = rows(await c.cli.json(["items", "edges", copy]));
-    expect(
-      served.map((edge) => `${edge.edge_type} ${edge.target_id}`),
-    ).toContain(`derived-from ${id}`);
+    expect(served.map((edge) => `${edge.edge_type} ${edge.to_id}`)).toContain(
+      `derived-from ${id}`,
+    );
 
     // Each command below opens the store again, so the copy answers the link
     // from what it saved, not from the process that caught up.
     await c.cli.json([...device, "catch-up"]);
     const from = await c.cli.json<Edge[]>([...device, "edges", "list", copy]);
     expect(
-      from.map((edge) => `${edge.edge_type} ${edge.target_id}`),
+      from.map((edge) => `${edge.edge_type} ${edge.to_id}`),
       "the copy holds the conflicted copy and not its link to the original",
     ).toEqual([`derived-from ${id}`]);
     const to = await c.cli.json<Edge[]>([...device, "edges", "to", id]);
-    expect(to.map((edge) => edge.source_id)).toContain(copy);
+    expect(to.map((edge) => edge.from_id)).toContain(copy);
     const held = await c.cli.json<{ tags: string[] }>([
       ...device,
       "items",

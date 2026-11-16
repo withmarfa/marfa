@@ -38,22 +38,22 @@ describe("edge response hydration + pagination", () => {
     const basis = await makeItem("basis");
 
     const eA = await client.createEdge({
-      source_id: subject,
-      target_id: t1,
+      from_id: subject,
+      to_id: t1,
       edge_type: "about",
     });
     expect(eA.ok).toBe(true);
     trackEdge(ctx, eA.data.edge.id);
     const eB = await client.createEdge({
-      source_id: subject,
-      target_id: t2,
+      from_id: subject,
+      to_id: t2,
       edge_type: "about",
     });
     expect(eB.ok).toBe(true);
     trackEdge(ctx, eB.data.edge.id);
     const eDerived = await client.createEdge({
-      source_id: subject,
-      target_id: basis,
+      from_id: subject,
+      to_id: basis,
       edge_type: "derived-from",
     });
     expect(eDerived.ok).toBe(true);
@@ -80,8 +80,8 @@ describe("edge response hydration + pagination", () => {
     for (let i = 0; i < SEED; i++) {
       const t = await makeItem(`t${i}`);
       const e = await client.createEdge({
-        source_id: subject,
-        target_id: t,
+        from_id: subject,
+        to_id: t,
         edge_type: "about",
       });
       expect(e.ok).toBe(true);
@@ -120,8 +120,8 @@ describe("edge response hydration + pagination", () => {
     const SEED = 51;
     for (let i = 0; i < SEED; i++) {
       const e = await client.createEdge({
-        source_id: await makeItem(`s${String(i)}`),
-        target_id: target,
+        from_id: await makeItem(`s${String(i)}`),
+        to_id: target,
         edge_type: "about",
       });
       expect(e.ok).toBe(true);

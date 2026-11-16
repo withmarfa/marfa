@@ -95,8 +95,8 @@ describe("a refusal caused by a missing grant names it", () => {
     });
 
     const edge = await writer.createEdge({
-      source_id: target.id,
-      target_id: target.id,
+      from_id: target.id,
+      to_id: target.id,
       edge_type: "references",
     });
     expect(edge.status).toBe(403);
@@ -205,8 +205,8 @@ describe("a refusal caused by a missing grant names it", () => {
     const source = await note("edge refusal source");
     const target = await note("edge refusal target");
     const made = await client.createEdge({
-      source_id: source.id,
-      target_id: target.id,
+      from_id: source.id,
+      to_id: target.id,
       edge_type: "references",
     });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
@@ -224,8 +224,8 @@ describe("a refusal caused by a missing grant names it", () => {
 
     // The witness: a key holding the write is served.
     const created = await holder.createEdge({
-      source_id: target.id,
-      target_id: source.id,
+      from_id: target.id,
+      to_id: source.id,
       edge_type: "references",
     });
     expect(created.status, JSON.stringify(created.error)).toBe(201);
@@ -233,8 +233,8 @@ describe("a refusal caused by a missing grant names it", () => {
 
     const refusals = [
       await reader.createEdge({
-        source_id: source.id,
-        target_id: target.id,
+        from_id: source.id,
+        to_id: target.id,
         edge_type: "references",
       }),
       await reader.updateEdge(edgeId, { properties: {}, version: 1 }),
@@ -280,8 +280,8 @@ describe("a refusal caused by a missing grant names it", () => {
     expect(loose.data.results[0]?.error?.details?.grant).toEqual(typeWrite);
 
     const edge = {
-      source_id: target.id,
-      target_id: target.id,
+      from_id: target.id,
+      to_id: target.id,
       edge_type: "references",
     };
     const edgesAtomic = await writer.bulkEdges({ atomic: true, edges: [edge] });

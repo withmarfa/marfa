@@ -40,8 +40,8 @@ async function link(
   edgeType = "parent-of",
 ): Promise<string> {
   const r = await client.createEdge({
-    source_id: parent,
-    target_id: child,
+    from_id: parent,
+    to_id: child,
     edge_type: edgeType,
   });
   expect(r.status).toBe(201);

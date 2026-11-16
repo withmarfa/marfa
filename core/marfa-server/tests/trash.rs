@@ -128,7 +128,7 @@ impl Instance {
     }
 
     async fn edge(&self, source: &str, target: &str, edge_type: &str) {
-        let body = json!({ "source_id": source, "target_id": target, "edge_type": edge_type });
+        let body = json!({ "from_id": source, "to_id": target, "edge_type": edge_type });
         self.call(Method::POST, "/edges", Some(body))
             .await
             .landed(StatusCode::CREATED);

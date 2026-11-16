@@ -181,8 +181,8 @@ describe("backups to a folder", () => {
     });
     expect(file.status, JSON.stringify(file.error)).toBe(201);
     const edge = await working.createEdge({
-      source_id: ledger.data.item.id,
-      target_id: file.data.item.id,
+      from_id: ledger.data.item.id,
+      to_id: file.data.item.id,
       edge_type: "references",
     } as never);
     expect(edge.status, JSON.stringify(edge.error)).toBe(201);

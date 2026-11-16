@@ -103,8 +103,8 @@ describe("a restore of items whose type no longer shapes them", () => {
     expect(
       (
         await source.createEdge({
-          source_id: id,
-          target_id: note.data.item.id,
+          from_id: id,
+          to_id: note.data.item.id,
           edge_type: "references",
         })
       ).status,
@@ -147,7 +147,7 @@ describe("a restore of items whose type no longer shapes them", () => {
       const edges = await client.listItemEdges(id);
       expect(edges.status, "edges").toBe(200);
       expect(
-        edges.data.data.map((edge) => edge.target_id),
+        edges.data.data.map((edge) => edge.to_id),
         "edges",
       ).toEqual([note.data.item.id]);
       expect(

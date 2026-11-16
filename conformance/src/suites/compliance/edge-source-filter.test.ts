@@ -100,8 +100,8 @@ async function edge(
   target: string,
 ): Promise<string> {
   const r = await writer.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(r.status, JSON.stringify(r.error)).toBe(201);
@@ -140,7 +140,7 @@ const allEdges: Listing = (reader, opts) =>
   reader.listEdges({ edge_type: edgeType, ...opts });
 
 describe("the source filter on the edge listings", () => {
-  it("decides an edge on GET /edges by the source of its source item, whatever the source of its target", async () => {
+  it("decides an edge on GET /edges by the source of its from item, whatever the source of its to item", async () => {
     const fromShown = await note(shownWriter);
     const fromHidden = await note(hiddenWriter);
     const toShown = await note(shownWriter);
@@ -168,7 +168,7 @@ describe("the source filter on the edge listings", () => {
     expect(narrowed).not.toContain(hiddenToHidden);
   });
 
-  it("decides an edge on GET /items/{id}/edges by the source of its source item, whatever the source of its target", async () => {
+  it("decides an edge on GET /items/{id}/edges by the source of its from item, whatever the source of its to item", async () => {
     const anchorShown = await note(shownWriter);
     const anchorHidden = await note(hiddenWriter);
     const target = await note(hiddenWriter);
@@ -197,7 +197,7 @@ describe("the source filter on the edge listings", () => {
     expect((await walk(itemEdges(anchorHidden), filtered)).ids).toEqual([]);
   });
 
-  it("decides an edge on GET /items/{id}/backrefs by the source of its source item, whatever the source of its target", async () => {
+  it("decides an edge on GET /items/{id}/backrefs by the source of its from item, whatever the source of its to item", async () => {
     const targetShown = await note(shownWriter);
     const targetHidden = await note(hiddenWriter);
     const fromShown = await note(shownWriter);
@@ -229,7 +229,7 @@ describe("the source filter on the edge listings", () => {
     ]);
   });
 
-  it("lists an edge on every listing while its source item is in the bin, by that item's source", async () => {
+  it("lists an edge on every listing while its from item is in the bin, by that item's source", async () => {
     const binnedShown = await note(shownWriter);
     const binnedHidden = await note(hiddenWriter);
     const target = await note(hiddenWriter);
@@ -339,7 +339,7 @@ describe("the source filter on the edge listings", () => {
     expect(sorted(fromAnchor.ids)).toEqual(sorted(outbound));
   });
 
-  it("answers an edge by id whose source item the filter hides", async () => {
+  it("answers an edge by id whose from item the filter hides", async () => {
     const source = await note(hiddenWriter);
     const target = await note(shownWriter);
     const hiddenEdge = await edge(hiddenWriter, source, target);
@@ -358,7 +358,7 @@ describe("the source filter on the edges an item read carries", () => {
     blocks: Record<string, { data: MarfaEdge[] }> | undefined,
   ): string[] => (blocks?.[edgeType]?.data ?? []).map((e) => e.id).sort();
 
-  it("leaves an edge out of the inbound block of an item read when the filter hides its source item, whatever the source of its target", async () => {
+  it("leaves an edge out of the inbound block of an item read when the filter hides its from item, whatever the source of its to item", async () => {
     const target = await note(shownWriter);
     const shownFrom = await note(shownWriter);
     const hiddenFrom = await note(hiddenWriter);
@@ -393,7 +393,7 @@ describe("the source filter on the edges an item read carries", () => {
     expect(narrowed.data.backrefs ?? {}).toEqual({});
   });
 
-  it("judges the outbound edges of an item read by the source of that item, whatever the source of their targets", async () => {
+  it("judges the outbound edges of an item read by the source of that item, whatever the source of their to items", async () => {
     const shown = await note(shownWriter);
     const hidden = await note(hiddenWriter);
     const hiddenTarget = await note(hiddenWriter);
@@ -558,7 +558,7 @@ describe("the source filter on the edges an item read carries", () => {
     ).toEqual(sorted(shownIds));
   });
 
-  it("fills the block an item listing carries to its cap, whatever the source of the targets, and continues it at the listing", async () => {
+  it("fills the block an item listing carries to its cap, whatever the source of the to items, and continues it at the listing", async () => {
     // Every outbound edge of an item has the item's own source, so a block
     // is all kept or all left out; what the filter must not do is let the
     // hidden targets count, or cut the block short of its cap.
@@ -688,7 +688,7 @@ describe("the source filter on backref filter terms", () => {
     return r.data["core.note"] ?? 0;
   }
 
-  it("counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats, POST /items/bulk-actions and a view's items", async () => {
+  it("counts only edges whose from item the filter shows, on GET /items, GET /search, GET /items/stats, POST /items/bulk-actions and a view's items", async () => {
     const hiddenPointer = await note(hiddenWriter);
     const shownPointer = await note(shownWriter);
     const pointedByHidden = await note(shownWriter);

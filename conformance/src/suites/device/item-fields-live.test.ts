@@ -431,9 +431,7 @@ it("drains a draft carrying a state, a capture location and edges as one write",
     51.5, -0.25,
   ]);
   const drawn = value(await device.edgesFrom(id));
-  expect(drawn.map((edge) => edge.target_id).sort()).toEqual(
-    [...targets].sort(),
-  );
+  expect(drawn.map((edge) => edge.to_id).sort()).toEqual([...targets].sort());
 
   expect(
     value(await device.drain()).verdicts.map((verdict) => verdict.verdict),
@@ -463,7 +461,7 @@ it("drains a draft carrying a state, a capture location and edges as one write",
 
 /** Every edge of `type` the server holds from `id`, walked to the end. */
 async function servedEdges(id: string, type: string) {
-  const all: { id: string; target_id: string; version: number }[] = [];
+  const all: { id: string; to_id: string; version: number }[] = [];
   let cursor: string | undefined;
   do {
     const page = await client.listItemEdges(id, {
@@ -508,7 +506,7 @@ async function drainedWithSixtyEdges(body: string) {
   const block = read.data.item.edges?.references;
   expect(block?.data).toHaveLength(50);
   expect(block?.next_cursor).toBeTruthy();
-  const inline = new Set(block?.data.map((edge) => edge.target_id));
+  const inline = new Set(block?.data.map((edge) => edge.to_id));
   const cut = targets.filter((target) => !inline.has(target));
   expect(cut).toHaveLength(10);
   return { id, targets, served, cut };
@@ -519,9 +517,7 @@ it("reads the rest of a create's edges the answer cuts off, before the drain ret
   // Every target shows one edge, and each is the server's own: the ten the
   // answer left out were read while the create settled.
   const shown = value(await device.edgesFrom(id));
-  expect(shown.map((edge) => edge.target_id).sort()).toEqual(
-    [...targets].sort(),
-  );
+  expect(shown.map((edge) => edge.to_id).sort()).toEqual([...targets].sort());
   expect(shown.map((edge) => edge.id).sort()).toEqual(
     served.map((edge) => edge.id).sort(),
   );
@@ -531,21 +527,21 @@ it("sends a delete of an edge the create's answer cut off to the server's edge",
   const { id, served, cut } = await drainedWithSixtyEdges("delete one");
   const gone = cut[4];
   const edge = value(await device.edgesFrom(id)).find(
-    (row) => row.target_id === gone,
+    (row) => row.to_id === gone,
   );
   // The witness: the server holds an edge to the target before the delete.
-  expect(served.map((row) => row.target_id)).toContain(gone);
+  expect(served.map((row) => row.to_id)).toContain(gone);
   value(await device.deleteEdge(edge?.id ?? ""));
   expect(
     value(await device.drain()).verdicts.map((verdict) => verdict.verdict),
   ).toEqual(["accepted"]);
   const after = await servedEdges(id, "references");
   expect(after).toHaveLength(59);
-  expect(after.map((row) => row.target_id)).not.toContain(gone);
+  expect(after.map((row) => row.to_id)).not.toContain(gone);
   // The delete stays done on the device too.
   value(await device.catchUp());
   const shown = value(await device.edgesFrom(id));
-  expect(shown.map((row) => row.target_id)).not.toContain(gone);
+  expect(shown.map((row) => row.to_id)).not.toContain(gone);
   expect(shown.map((row) => row.id).sort()).toEqual(
     after.map((row) => row.id).sort(),
   );
@@ -555,7 +551,7 @@ it("sends an edit of an edge the create's answer cut off to the server's edge", 
   const { id, cut } = await drainedWithSixtyEdges("edit one");
   const edited = cut[4];
   const edge = value(await device.edgesFrom(id)).find(
-    (row) => row.target_id === edited,
+    (row) => row.to_id === edited,
   );
   value(
     await device.updateEdge(edge?.id ?? "", {
@@ -568,7 +564,7 @@ it("sends an edit of an edge the create's answer cut off to the server's edge", 
   ).toEqual(["accepted"]);
   const after = await servedEdges(id, "references");
   expect(after).toHaveLength(60);
-  const served = after.find((row) => row.target_id === edited);
+  const served = after.find((row) => row.to_id === edited);
   expect(served?.id).toBe(edge?.id);
   expect(served?.version).toBe(2);
 });
@@ -617,7 +613,7 @@ it("refuses a waiting delete of an edge no read of the created item brings, with
     // The witness: the server made the edge, and the delete never reached it.
     const served = await client.listItemEdges(id, { edge_type: "references" });
     expect(served.ok, JSON.stringify(served.error)).toBe(true);
-    expect(served.data.data.map((edge) => edge.target_id)).toEqual([target]);
+    expect(served.data.data.map((edge) => edge.to_id)).toEqual([target]);
     const write = value(await unread.queue()).find(
       (row) => row.kind === "delete_edge",
     );

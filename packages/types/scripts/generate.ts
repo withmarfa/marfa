@@ -497,15 +497,15 @@ for (const edge of edgeSchemas) {
     edgeLines.push(`  description: ${quote(edge.description)},`);
   }
   edgeLines.push(`  cardinality: ${quote(edge.cardinality)},`);
-  const src = edge.source_type_constraints;
-  const tgt = edge.target_type_constraints;
-  edgeLines.push(`  source_type_constraints: [${src.map(quote).join(", ")}],`);
-  edgeLines.push(`  target_type_constraints: [${tgt.map(quote).join(", ")}],`);
+  const src = edge.from_type_constraints;
+  const tgt = edge.to_type_constraints;
+  edgeLines.push(`  from_type_constraints: [${src.map(quote).join(", ")}],`);
+  edgeLines.push(`  to_type_constraints: [${tgt.map(quote).join(", ")}],`);
   edgeLines.push(`  cascade_on_delete: ${quote(edge.cascade_on_delete)},`);
   if (edge.reverse_name) {
     edgeLines.push(`  reverse_name: ${quote(edge.reverse_name)},`);
   }
-  edgeLines.push(`  written_at: ${quote(edge.written_at)},`);
+  edgeLines.push(`  written_from: ${quote(edge.written_from)},`);
   const propSchema = edge.property_schema;
   if (Object.keys(propSchema).length === 0) {
     edgeLines.push(`  property_schema: {},`);

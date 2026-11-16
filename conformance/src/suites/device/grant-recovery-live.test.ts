@@ -163,7 +163,7 @@ it.each(["edit", "create", "metadata", "edge", "extension"] as const)(
         case "edge": {
           const read = await client.getEdge(write.edge_id ?? "");
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
-          expect(read.data.edge.target_id).toBe(target.data.item.id);
+          expect(read.data.edge.to_id).toBe(target.data.item.id);
           break;
         }
         case "extension": {

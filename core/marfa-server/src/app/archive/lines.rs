@@ -106,19 +106,13 @@ async fn edge_page(
         let next = page.last().map(|ended| ended.edge.seq());
         let mut text = String::new();
         let mut whole = true;
-        for edges::Ended {
-            edge,
-            source,
-            target,
-            ..
-        } in page
-        {
-            let carried = exported.binary_search(&source.seq).is_ok()
-                && exported.binary_search(&target.seq).is_ok();
-            if !carried || !admitted.may_read_edge(&edge.edge_type, &source.type_id) {
+        for edges::Ended { edge, from, to, .. } in page {
+            let carried = exported.binary_search(&from.seq).is_ok()
+                && exported.binary_search(&to.seq).is_ok();
+            if !carried || !admitted.may_read_edge(&edge.edge_type, &from.type_id) {
                 continue;
             }
-            whole &= read.caller.may_read_edge(&edge.edge_type, &source.type_id);
+            whole &= read.caller.may_read_edge(&edge.edge_type, &from.type_id);
             text.push_str(&format!("{{\"edge\":{}}}\n", edge.answered()?));
         }
         Ok(Page {

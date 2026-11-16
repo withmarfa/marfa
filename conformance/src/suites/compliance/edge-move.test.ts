@@ -64,12 +64,12 @@ async function makeBookmark(): Promise<string> {
 }
 
 async function makeEdge(
-  source_id: string,
-  target_id: string,
+  from_id: string,
+  to_id: string,
   edge_type: string,
   as: MarfaClient = client,
 ): Promise<MarfaEdge> {
-  const r = await as.createEdge({ source_id, target_id, edge_type });
+  const r = await as.createEdge({ from_id, to_id, edge_type });
   expect(r.ok, JSON.stringify(r.error)).toBe(true);
   trackEdge(ctx, r.data.edge.id);
   return r.data.edge;
@@ -106,7 +106,7 @@ describe("moving an edge's end", () => {
       const child = await makeItem("stream-child");
       const held = await makeEdge(first, child, "parent-of");
       const moved = await client.updateEdge(held.id, {
-        source_id: second,
+        from_id: second,
         version: held.version,
       });
       expect(moved.status, JSON.stringify(moved.error)).toBe(200);
@@ -144,8 +144,8 @@ describe("moving an edge's end", () => {
       const frame = ours[1]?.data as { edge: MarfaEdge };
       expect(frame.edge).toMatchObject({
         id: held.id,
-        source_id: second,
-        target_id: child,
+        from_id: second,
+        to_id: child,
         version: held.version + 1,
       });
       // The created frame carries the same keys, so any key more on the move
@@ -154,7 +154,7 @@ describe("moving an edge's end", () => {
         const data = event?.data as { edge: Record<string, unknown> };
         return [Object.keys(data).sort(), Object.keys(data.edge).sort()];
       };
-      expect(keysOf(ours[0])[1]).toContain("source_id");
+      expect(keysOf(ours[0])[1]).toContain("from_id");
       expect(
         keysOf(ours[1]),
         "the move's frame names something more than the edge as it stands",
@@ -173,19 +173,19 @@ describe("moving an edge's end", () => {
     await makeEdge(await makeItem("card-rival"), taken, "supersedes");
 
     const refused = await client.updateEdge(held.id, {
-      target_id: taken,
+      to_id: taken,
       version: held.version,
     });
     expect(refusal(refused)).toMatchObject({
       status: 400,
       code: "edge_constraint_violation",
-      details: { constraint: "cardinality", target_id: taken },
+      details: { constraint: "cardinality", to_id: taken },
     });
     expect(await stored(held.id)).toEqual(held);
 
     // The witness: the same move onto a target holding none is taken.
     const moved = await client.updateEdge(held.id, {
-      target_id: free,
+      to_id: free,
       version: held.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
@@ -202,12 +202,12 @@ describe("moving an edge's end", () => {
     // The middle moved under its own child: bottom parent-of middle, while
     // middle parent-of bottom stands.
     const deep = await client.updateEdge(upper.id, {
-      source_id: bottom,
+      from_id: bottom,
       version: upper.version,
     });
     expect(refusal(deep)).toMatchObject({ status: 400, code: "edge_cycle" });
     const loop = await client.updateEdge(upper.id, {
-      source_id: middle,
+      from_id: middle,
       version: upper.version,
     });
     expect(refusal(loop)).toMatchObject({
@@ -227,7 +227,7 @@ describe("moving an edge's end", () => {
         edgeType,
       );
       const self = await client.updateEdge(held.id, {
-        target_id: source,
+        to_id: source,
         version: held.version,
       });
       expect(
@@ -241,7 +241,7 @@ describe("moving an edge's end", () => {
       expect(await stored(held.id)).toEqual(held);
       // The witness: the same edge moves onto another item.
       const elsewhere = await client.updateEdge(held.id, {
-        target_id: aside,
+        to_id: aside,
         version: held.version,
       });
       expect(elsewhere.status, JSON.stringify(elsewhere.error)).toBe(200);
@@ -249,19 +249,19 @@ describe("moving an edge's end", () => {
 
     // The witness: a parent outside the chain is taken.
     const moved = await client.updateEdge(upper.id, {
-      source_id: aside,
+      from_id: aside,
       version: upper.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
   });
 
-  it("refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one", async () => {
+  it("refuses a move onto a to item its type's constraint refuses, and answers one the key cannot read exactly as a missing one", async () => {
     const edgeType = `mock.move.${ctx.runId}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
       id: edgeType,
       cardinality: "many-to-one",
-      target_type_constraints: ["core.note"],
+      to_type_constraints: ["core.note"],
       cascade_on_delete: "orphan",
     });
     expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
@@ -289,13 +289,13 @@ describe("moving an edge's end", () => {
     // The witness: a key that reads the bookmark is refused by the constraint,
     // which reads the target's type.
     const constrained = await client.updateEdge(held.id, {
-      target_id: bookmark,
+      to_id: bookmark,
       version: held.version,
     });
     expect(refusal(constrained)).toMatchObject({
       status: 400,
       code: "edge_constraint_violation",
-      details: { target_type: "core.bookmark" },
+      details: { to_type: "core.bookmark" },
     });
 
     const masked = (r: ApiResponse<unknown>, id: string) =>
@@ -307,7 +307,7 @@ describe("moving an edge's end", () => {
       ) as unknown;
     const missing = "01a00000-0000-7000-8000-00000000abcd";
     const toMissing = await notesOnly.updateEdge(held.id, {
-      target_id: missing,
+      to_id: missing,
       version: held.version,
     });
     expect(refusal(toMissing)).toMatchObject({
@@ -315,7 +315,7 @@ describe("moving an edge's end", () => {
       code: "item_not_found",
     });
     const toUnreadable = await notesOnly.updateEdge(held.id, {
-      target_id: bookmark,
+      to_id: bookmark,
       version: held.version,
     });
     expect(
@@ -326,13 +326,13 @@ describe("moving an edge's end", () => {
 
     // The witness: the same key moves the edge onto a target it can read.
     const moved = await notesOnly.updateEdge(held.id, {
-      target_id: readable,
+      to_id: readable,
       version: held.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
   });
 
-  it("refuses a new source that does not exist, or whose type the key cannot write", async () => {
+  it("refuses a new from item that does not exist, or whose type the key cannot write", async () => {
     const minted = await client.createKey({
       label: "edge-move-writer",
       source: `${ctx.source}-edge-move-writer`,
@@ -353,7 +353,7 @@ describe("moving an edge's end", () => {
     const held = await makeEdge(parent, child, "parent-of", writer);
 
     const refused = await writer.updateEdge(held.id, {
-      source_id: bookmark,
+      from_id: bookmark,
       version: held.version,
     });
     expect(refusal(refused)).toMatchObject({
@@ -361,7 +361,7 @@ describe("moving an edge's end", () => {
       code: "type_not_permitted",
     });
     const missing = await writer.updateEdge(held.id, {
-      source_id: "01a00000-0000-7000-8000-00000000abce",
+      from_id: "01a00000-0000-7000-8000-00000000abce",
       version: held.version,
     });
     expect(refusal(missing)).toMatchObject({
@@ -370,7 +370,7 @@ describe("moving an edge's end", () => {
     });
     expect(await stored(held.id)).toEqual(held);
     const moved = await writer.updateEdge(held.id, {
-      source_id: note,
+      from_id: note,
       version: held.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
@@ -383,7 +383,7 @@ describe("moving an edge's end", () => {
     expect((await client.deleteItem(message)).ok).toBe(true);
 
     const refused = await client.updateEdge(held.id, {
-      target_id: threads[1]!,
+      to_id: threads[1]!,
       version: held.version,
     });
     expect(refusal(refused)).toMatchObject({
@@ -392,8 +392,8 @@ describe("moving an edge's end", () => {
     });
     expect(await stored(held.id)).toEqual(held);
     const created = await client.createEdge({
-      source_id: message,
-      target_id: threads[1]!,
+      from_id: message,
+      to_id: threads[1]!,
       edge_type: "in-thread",
     });
     expect(
@@ -404,7 +404,7 @@ describe("moving an edge's end", () => {
     // The witness: restored, the same move is taken.
     expect((await client.restoreItem(message)).ok).toBe(true);
     const moved = await client.updateEdge(held.id, {
-      target_id: threads[1]!,
+      to_id: threads[1]!,
       version: held.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
@@ -419,13 +419,13 @@ describe("moving an edge's end", () => {
     ];
     const held = await makeEdge(message, threads[0]!, "in-thread");
     const first = await client.updateEdge(held.id, {
-      target_id: threads[1]!,
+      to_id: threads[1]!,
       version: held.version,
     });
     expect(first.status, JSON.stringify(first.error)).toBe(200);
 
     const stale = await client.updateEdge(held.id, {
-      target_id: threads[2]!,
+      to_id: threads[2]!,
       version: held.version,
     });
     expect(stale.status).toBe(409);
@@ -448,9 +448,9 @@ describe("moving an edge's end", () => {
     const about = await makeEdge(message, threads[1]!, "about");
     const missing = "01a00000-0000-7000-8000-00000000abcf";
     const cases = [
-      { edge: held, body: { target_id: missing } },
-      { edge: about, body: { target_id: threads[0]! } },
-      { edge: held, body: { target_id: "not-an-id" } },
+      { edge: held, body: { to_id: missing } },
+      { edge: about, body: { to_id: threads[0]! } },
+      { edge: held, body: { to_id: "not-an-id" } },
     ];
 
     // The witness: at the version held, each is refused for what it names.
@@ -487,7 +487,7 @@ describe("moving an edge's end", () => {
     const held = await makeEdge(message, thread, "in-thread");
     for (const body of [
       { version: held.version },
-      { target_id: thread, version: held.version },
+      { to_id: thread, version: held.version },
     ]) {
       expect(
         refusal(await client.updateEdge(held.id, body)),
@@ -511,8 +511,8 @@ describe("moving an edge's end", () => {
     const d = await makeItem("many-d");
     const about = await makeEdge(a, b, "about");
     for (const body of [
-      { target_id: c, version: about.version },
-      { source_id: c, version: about.version },
+      { to_id: c, version: about.version },
+      { from_id: c, version: about.version },
     ]) {
       const refused = await client.updateEdge(about.id, body);
       expect(refusal(refused)).toMatchObject({
@@ -525,7 +525,7 @@ describe("moving an edge's end", () => {
     const parent = await makeEdge(a, c, "parent-of");
     // The child's end holds one parent-of, the parent's many.
     const childMoved = await client.updateEdge(parent.id, {
-      target_id: d,
+      to_id: d,
       version: parent.version,
     });
     expect(refusal(childMoved)).toMatchObject({
@@ -533,8 +533,8 @@ describe("moving an edge's end", () => {
       code: "validation_error",
     });
     const both = await client.updateEdge(parent.id, {
-      source_id: b,
-      target_id: d,
+      from_id: b,
+      to_id: d,
       version: parent.version,
     });
     expect(refusal(both)).toMatchObject({
@@ -545,7 +545,7 @@ describe("moving an edge's end", () => {
 
     // The witness: the end its type lets move does.
     const moved = await client.updateEdge(parent.id, {
-      source_id: b,
+      from_id: b,
       version: parent.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
@@ -560,7 +560,7 @@ describe("moving an edge's end", () => {
       "Idempotency-Key": `edge-move-${ctx.runId}-${randomUUID()}`,
     };
     const body = {
-      target_id: to,
+      to_id: to,
       properties: { via: "replay" },
       version: held.version,
     };

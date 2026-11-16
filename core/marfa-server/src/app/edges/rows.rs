@@ -8,15 +8,15 @@ use crate::app::blobs::references;
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Refusal, Result};
 
-const EDGE: &str = "SELECT seq, id, source_id, target_id, edge_type, json(properties), version, \
+const EDGE: &str = "SELECT seq, id, from_id, to_id, edge_type, json(properties), version, \
      created_at, updated_at FROM edges";
 
 fn edge_of(row: &Row<'_>) -> rusqlite::Result<Edge> {
     Ok(Edge {
         seq: row.get(0)?,
         id: row.get(1)?,
-        source_id: row.get(2)?,
-        target_id: row.get(3)?,
+        from_id: row.get(2)?,
+        to_id: row.get(3)?,
         edge_type: row.get(4)?,
         properties: row.get(5)?,
         version: row.get(6)?,
@@ -37,7 +37,7 @@ pub(super) fn by_triple(
     edge_type: &str,
 ) -> Result<Option<Edge>> {
     let mut statement = tx.prepare_cached(&format!(
-        "{EDGE} WHERE source_id = ?1 AND target_id = ?2 AND edge_type = ?3"
+        "{EDGE} WHERE from_id = ?1 AND to_id = ?2 AND edge_type = ?3"
     ))?;
     Ok(statement
         .query_row([source, target, edge_type], edge_of)
@@ -46,7 +46,7 @@ pub(super) fn by_triple(
 
 pub(super) fn leaving(tx: &Transaction<'_>, id: &str, edge_type: &str) -> Result<Vec<Edge>> {
     let mut statement = tx.prepare_cached(&format!(
-        "{EDGE} WHERE source_id = ?1 AND edge_type = ?2 ORDER BY created_at, id"
+        "{EDGE} WHERE from_id = ?1 AND edge_type = ?2 ORDER BY created_at, id"
     ))?;
     let found = statement.query_map([id, edge_type], edge_of)?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
@@ -54,7 +54,7 @@ pub(super) fn leaving(tx: &Transaction<'_>, id: &str, edge_type: &str) -> Result
 
 pub(super) fn touching(tx: &Transaction<'_>, id: &str) -> Result<Vec<Edge>> {
     let mut statement = tx.prepare_cached(&format!(
-        "{EDGE} WHERE source_id = ?1 UNION ALL {EDGE} WHERE target_id = ?1 AND source_id <> ?1"
+        "{EDGE} WHERE from_id = ?1 UNION ALL {EDGE} WHERE to_id = ?1 AND from_id <> ?1"
     ))?;
     let found = statement.query_map([id], edge_of)?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
@@ -62,8 +62,8 @@ pub(super) fn touching(tx: &Transaction<'_>, id: &str) -> Result<Vec<Edge>> {
 
 pub(super) struct NewEdge<'a> {
     pub id: &'a str,
-    pub source_id: &'a str,
-    pub target_id: &'a str,
+    pub from_id: &'a str,
+    pub to_id: &'a str,
     pub edge_type: &'a str,
     pub properties: &'a str,
     pub at: &'a str,
@@ -71,13 +71,13 @@ pub(super) struct NewEdge<'a> {
 
 pub(super) fn insert(tx: &Transaction<'_>, edge: &NewEdge<'_>) -> Result<Edge> {
     tx.prepare_cached(
-        "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, \
+        "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, \
          created_at, updated_at) VALUES (?1, ?2, ?3, ?4, jsonb(?5), 1, ?6, ?6)",
     )?
     .execute(params![
         edge.id,
-        edge.source_id,
-        edge.target_id,
+        edge.from_id,
+        edge.to_id,
         edge.edge_type,
         edge.properties,
         edge.at
@@ -93,13 +93,13 @@ pub(super) fn insert_restored(
     updated_at: &str,
 ) -> Result<Edge> {
     tx.prepare_cached(
-        "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, \
+        "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, \
          created_at, updated_at) VALUES (?1, ?2, ?3, ?4, jsonb(?5), ?6, ?7, ?8)",
     )?
     .execute(params![
         edge.id,
-        edge.source_id,
-        edge.target_id,
+        edge.from_id,
+        edge.to_id,
         edge.edge_type,
         edge.properties,
         version,
@@ -110,21 +110,21 @@ pub(super) fn insert_restored(
 }
 
 pub(super) struct Landed<'a> {
-    pub source_id: &'a str,
-    pub target_id: &'a str,
+    pub from_id: &'a str,
+    pub to_id: &'a str,
     pub properties: &'a str,
     pub at: &'a str,
 }
 
 pub(super) fn advance(tx: &Transaction<'_>, edge: &Edge, next: &Landed<'_>) -> Result<Edge> {
     tx.prepare_cached(
-        "UPDATE edges SET source_id = ?2, target_id = ?3, properties = jsonb(?4), \
+        "UPDATE edges SET from_id = ?2, to_id = ?3, properties = jsonb(?4), \
          version = version + 1, updated_at = ?5 WHERE seq = ?1",
     )?
     .execute(params![
         edge.seq,
-        next.source_id,
-        next.target_id,
+        next.from_id,
+        next.to_id,
         next.properties,
         next.at
     ])?;
@@ -148,9 +148,9 @@ pub(super) fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64
         .query_row([edge_type], |row| row.get(0))?)
 }
 
-pub(super) fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
+pub(super) fn to_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare(
-        "SELECT DISTINCT i.type FROM edges e JOIN items i ON i.id = e.target_id \
+        "SELECT DISTINCT i.type FROM edges e JOIN items i ON i.id = e.to_id \
          WHERE e.edge_type = ?1 ORDER BY i.type",
     )?;
     let found = statement.query_map([edge_type], |row| row.get(0))?;
@@ -163,8 +163,8 @@ pub(super) fn kinds_at(
     to: Option<&str>,
 ) -> Result<Vec<String>> {
     let (column, id) = match (from, to) {
-        (Some(id), _) => ("source_id", id),
-        (None, Some(id)) => ("target_id", id),
+        (Some(id), _) => ("from_id", id),
+        (None, Some(id)) => ("to_id", id),
         (None, None) => return Ok(Vec::new()),
     };
     let mut statement = tx.prepare_cached(&format!(
@@ -197,11 +197,11 @@ pub(super) fn page(
     let mut values: Vec<&dyn ToSql> = Vec::new();
     if let Some(from) = &page.from {
         values.push(from);
-        sql.push_str(&format!(" AND source_id = ?{}", values.len()));
+        sql.push_str(&format!(" AND from_id = ?{}", values.len()));
     }
     if let Some(to) = &page.to {
         values.push(to);
-        sql.push_str(&format!(" AND target_id = ?{}", values.len()));
+        sql.push_str(&format!(" AND to_id = ?{}", values.len()));
     }
     if !page.edge_types.is_empty() {
         let mut marks = Vec::with_capacity(page.edge_types.len());
@@ -240,7 +240,7 @@ pub(super) fn page(
     let mut sources = SourceCache::new(tx);
     while let Some(row) = found.next()? {
         let edge = edge_of(row)?;
-        let held = sources.of(&edge.source_id)?;
+        let held = sources.of(&edge.from_id)?;
         if held.is_some_and(|(type_id, source)| keeps(type_id, source)) {
             kept.push(edge);
             if kept.len() as i64 >= page.limit {
@@ -287,8 +287,8 @@ pub(super) fn hosts_out_of_bin(
 ) -> Result<Vec<(String, String, String)>> {
     let mut statement = tx.prepare_cached(
         "SELECT e.edge_type, h.type, json(h.properties) FROM edges e \
-         JOIN items h ON h.id = e.target_id \
-         WHERE e.source_id = ?1 AND h.state <> 'trashed' \
+         JOIN items h ON h.id = e.to_id \
+         WHERE e.from_id = ?1 AND h.state <> 'trashed' \
          ORDER BY e.created_at, e.id",
     )?;
     let found = statement.query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
@@ -302,14 +302,14 @@ pub(crate) struct Store<'a, 'c> {
 
 fn links(tx: &Transaction<'_>, column: &str, id: &str) -> Result<Vec<Link>> {
     let mut statement = tx.prepare_cached(&format!(
-        "SELECT id, edge_type, source_id, target_id FROM edges WHERE {column} = ?1"
+        "SELECT id, edge_type, from_id, to_id FROM edges WHERE {column} = ?1"
     ))?;
     let found = statement.query_map([id], |row| {
         Ok(Link {
             id: row.get(0)?,
             edge_type: row.get(1)?,
-            source: row.get(2)?,
-            target: row.get(3)?,
+            from: row.get(2)?,
+            to: row.get(3)?,
         })
     })?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
@@ -319,11 +319,11 @@ impl Graph for Store<'_, '_> {
     type Error = Refusal;
 
     fn outbound(&self, id: &str) -> Result<Vec<Link>> {
-        links(self.tx, "source_id", id)
+        links(self.tx, "from_id", id)
     }
 
     fn inbound(&self, id: &str) -> Result<Vec<Link>> {
-        links(self.tx, "target_id", id)
+        links(self.tx, "to_id", id)
     }
 
     fn triple(
@@ -337,7 +337,7 @@ impl Graph for Store<'_, '_> {
             .tx
             .prepare_cached(
                 "SELECT id FROM edges
-                  WHERE source_id = ?1 AND target_id = ?2 AND edge_type = ?3
+                  WHERE from_id = ?1 AND to_id = ?2 AND edge_type = ?3
                     AND (?4 IS NULL OR id <> ?4)",
             )?
             .query_row(params![source, target, edge_type, except], |row| row.get(0))
@@ -386,9 +386,9 @@ pub(super) fn with_ends(
     limit: i64,
 ) -> Result<Vec<(Edge, End, End)>> {
     let mut statement = tx.prepare_cached(
-        "SELECT e.seq, e.id, e.source_id, e.target_id, e.edge_type, json(e.properties), \
+        "SELECT e.seq, e.id, e.from_id, e.to_id, e.edge_type, json(e.properties), \
          e.version, e.created_at, e.updated_at, s.seq, s.type, s.state, t.seq, t.type, t.state \
-         FROM edges e JOIN items s ON s.id = e.source_id JOIN items t ON t.id = e.target_id \
+         FROM edges e JOIN items s ON s.id = e.from_id JOIN items t ON t.id = e.to_id \
          WHERE e.seq > ?1 ORDER BY e.seq LIMIT ?2",
     )?;
     let found = statement.query_map([after, limit], |row| {

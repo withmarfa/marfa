@@ -564,8 +564,8 @@ pub enum FolderStore {
     Replaceable,
     /// It names no folder, so only `folders add` replaces it.
     Unnamed,
-    /// The named table of the folder's own is of another shape, so this
-    /// build cannot carry it.
+    /// The named table of the folder's own, or what it records, is of
+    /// another shape, so this build cannot carry it.
     Uncarried(String),
 }
 
@@ -583,7 +583,7 @@ fn wrong_schema(
         (Some(0), Some(FolderStore::Replaceable)) => "It holds no write still to be sent and no answer the folder has yet to record, so the folder's next push, pull, scan or watch replaces it with a store of this build's shape that keeps what the folder records of each file, and fills that from the server; the replacement changes none of the folder's files".to_string(),
         (Some(0), Some(FolderStore::Unnamed)) => "It holds no write still to be sent, but it names no folder, so no push, pull, scan or watch replaces it: add the folder again (`marfa folders add`), which replaces it".to_string(),
         (Some(0), Some(FolderStore::Uncarried(table))) => format!(
-            "It holds no write still to be sent and no answer the folder has yet to record, but its table {table}, part of what the folder records of its files, is not of a shape this build can keep, so this build leaves the store and the folder's files as they are: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build"
+            "It holds no write still to be sent and no answer the folder has yet to record, but its table {table}, part of what the folder records of its files, holds that record in a shape this build cannot keep, so this build leaves the store and the folder's files as they are: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build"
         ),
         (Some(count), None) => format!(
             "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store",

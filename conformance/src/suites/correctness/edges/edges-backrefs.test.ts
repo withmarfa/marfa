@@ -37,15 +37,15 @@ describe("edge backrefs", () => {
     const srcB = await makeItem("srcB");
 
     const eA = await client.createEdge({
-      source_id: srcA,
-      target_id: target,
+      from_id: srcA,
+      to_id: target,
       edge_type: "about",
     });
     expect(eA.ok).toBe(true);
     trackEdge(ctx, eA.data.edge.id);
     const eB = await client.createEdge({
-      source_id: srcB,
-      target_id: target,
+      from_id: srcB,
+      to_id: target,
       edge_type: "derived-from",
     });
     expect(eB.ok).toBe(true);
@@ -65,15 +65,15 @@ describe("edge backrefs", () => {
     const s2 = await makeItem("s2");
 
     const about = await client.createEdge({
-      source_id: s1,
-      target_id: target,
+      from_id: s1,
+      to_id: target,
       edge_type: "about",
     });
     expect(about.ok).toBe(true);
     trackEdge(ctx, about.data.edge.id);
     const derived = await client.createEdge({
-      source_id: s2,
-      target_id: target,
+      from_id: s2,
+      to_id: target,
       edge_type: "derived-from",
     });
     expect(derived.ok).toBe(true);
@@ -94,8 +94,8 @@ describe("edge backrefs", () => {
     for (let i = 0; i < 15; i++) {
       const src = await makeItem(`p-src-${i}`);
       const e = await client.createEdge({
-        source_id: src,
-        target_id: target,
+        from_id: src,
+        to_id: target,
         edge_type: "about",
       });
       expect(e.ok).toBe(true);

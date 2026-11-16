@@ -38,8 +38,8 @@ export async function edges(): Promise<void> {
       continue;
     }
     const answer = await api("POST", "/edges", {
-      source_id: childIds[(i * 3) % childIds.length],
-      target_id: leaf,
+      from_id: childIds[(i * 3) % childIds.length],
+      to_id: leaf,
       edge_type: "parent-of",
     });
     if (!ok(answer)) {

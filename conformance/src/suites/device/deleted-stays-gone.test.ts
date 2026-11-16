@@ -41,7 +41,7 @@ async function following(
   label: string,
   rows: Array<{ id: string; state?: "active" | "trashed"; version?: number }>,
   events: { frames: SseFrame[] },
-  edges?: Array<{ id: string; source_id: string; target_id: string }>,
+  edges?: Array<{ id: string; from_id: string; to_id: string }>,
 ): Promise<Harness> {
   const started = await startHarness(label);
   scriptHydration(started.server, {
@@ -102,7 +102,7 @@ describe("an item this device purged stays gone until the purge's event", () => 
         { id: THIRD },
       ],
       events,
-      [{ id: "drawn", source_id: STAYS, target_id: GONE }],
+      [{ id: "drawn", from_id: STAYS, to_id: GONE }],
     );
     // The witness: the copy holds the item in the bin, and an edge to it,
     // before the purge.
@@ -153,8 +153,8 @@ describe("an item this device purged stays gone until the purge's event", () => 
     const edge = (id: string, target: string, version: number) =>
       wireEdge({
         id,
-        source_id: STAYS,
-        target_id: target,
+        from_id: STAYS,
+        to_id: target,
         edge_type: "references",
         version,
       });
@@ -197,8 +197,8 @@ describe("an edge this device deleted stays gone until the delete's event", () =
   const link = (version: number) =>
     wireEdge({
       id: "link",
-      source_id: STAYS,
-      target_id: GONE,
+      from_id: STAYS,
+      to_id: GONE,
       edge_type: "references",
       version,
     });
@@ -209,7 +209,7 @@ describe("an edge this device deleted stays gone until the delete's event", () =
       label,
       [{ id: STAYS }, { id: GONE }],
       events,
-      [{ id: "link", source_id: STAYS, target_id: GONE }],
+      [{ id: "link", from_id: STAYS, to_id: GONE }],
     );
     // The witness: the copy held the edge before the delete.
     expect(await edgesFrom(started, STAYS)).toEqual(["link"]);
@@ -240,8 +240,8 @@ describe("an edge this device deleted stays gone until the delete's event", () =
         "edge.created",
         wireEdge({
           id: "other",
-          source_id: STAYS,
-          target_id: GONE,
+          from_id: STAYS,
+          to_id: GONE,
           edge_type: "references",
         }),
       ),

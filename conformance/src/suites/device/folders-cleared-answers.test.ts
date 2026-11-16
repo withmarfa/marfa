@@ -126,7 +126,7 @@ describe("a folder's refused edge creates", () => {
     const target = idIn(made, "Target.md") ?? "";
     edges.placing = (edge) =>
       edge.edge_type === "about"
-        ? answers.edgeCardinality({ target_id: target, edge_type: "about" })
+        ? answers.edgeCardinality({ to_id: target, edge_type: "about" })
         : undefined;
     return { made, edges, source: idIn(made, "Source.md") ?? "", target };
   }
@@ -172,8 +172,8 @@ describe("a folder's refused edge creates", () => {
     edges.placing = undefined;
     edges.create({
       id: "01a00000-0000-7000-8000-0000000e0001",
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
     });
     expect((await made.folder.push()).ok).toBe(true);
@@ -185,7 +185,7 @@ describe("a folder's refused edge creates", () => {
     expect(
       held.ok && held.value.filter((edge) => edge.edge_type === "about"),
       "the witness: the copy holds the edge",
-    ).toMatchObject([{ target_id: target, version: 1 }]);
+    ).toMatchObject([{ to_id: target, version: 1 }]);
 
     expect(
       await refused(made),

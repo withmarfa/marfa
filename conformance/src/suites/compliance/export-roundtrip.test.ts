@@ -116,8 +116,8 @@ describe("export → purge → restore round trip", () => {
     trackItem(ctx, b.data.item.id);
 
     const edge = await client.createEdge({
-      source_id: a.data.item.id,
-      target_id: b.data.item.id,
+      from_id: a.data.item.id,
+      to_id: b.data.item.id,
       edge_type: "references",
       properties: { context: "round trip" },
     });
@@ -149,7 +149,7 @@ describe("export → purge → restore round trip", () => {
     expect(outbound.ok).toBe(true);
     const forward = outbound.data.data.find((e) => e.id === edgeId);
     expect(forward).toEqual(edge.data.edge);
-    expect(forward?.target_id).toBe(b.data.item.id);
+    expect(forward?.to_id).toBe(b.data.item.id);
     expect(forward?.properties).toEqual({ context: "round trip" });
 
     const inbound = await client.listItemBackrefs(b.data.item.id, {
@@ -180,8 +180,8 @@ describe("export → purge → restore round trip", () => {
       [binned, after],
     ] as const) {
       const created = await client.createEdge({
-        source_id: from,
-        target_id: to,
+        from_id: from,
+        to_id: to,
         edge_type: "references",
         properties: { context: `bin round trip from ${from}` },
       });

@@ -86,10 +86,10 @@ describe("a restore of an edge whose type was force-deleted", () => {
       [c, a, blocking],
       [a, c, "references"],
     ];
-    for (const [source_id, target_id, edge_type] of links) {
+    for (const [from_id, to_id, edge_type] of links) {
       const made = await source.createEdge({
-        source_id,
-        target_id,
+        from_id,
+        to_id,
         edge_type,
         properties: edge_type === kept ? { weight: "heavy" } : {},
       });
@@ -196,8 +196,8 @@ describe("a restore of an edge whose type was force-deleted", () => {
 
     // The edge's type stays unregistered for ordinary writes.
     const refused = await reader.createEdge({
-      source_id: b,
-      target_id: c,
+      from_id: b,
+      to_id: c,
       edge_type: kept,
     });
     expect(refused.status).toBe(404);
@@ -223,7 +223,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
           label: "Test edge type",
           id: type,
           cardinality: "one-to-one",
-          source_type_constraints: ["core.note"],
+          from_type_constraints: ["core.note"],
         })
       ).status,
     ).toBe(201);
@@ -237,7 +237,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
     }
     const [x, y, z] = ids as [string, string, string];
     expect(
-      (await source.createEdge({ source_id: x, target_id: y, edge_type: type }))
+      (await source.createEdge({ from_id: x, to_id: y, edge_type: type }))
         .status,
     ).toBe(201);
     const exported = await archiveOf(source);
@@ -245,8 +245,8 @@ describe("a restore of an edge whose type was force-deleted", () => {
       `${JSON.stringify({
         edge: {
           id: uuidv7(),
-          source_id: x,
-          target_id: z,
+          from_id: x,
+          to_id: z,
           edge_type,
           properties: {},
         },
@@ -260,9 +260,9 @@ describe("a restore of an edge whose type was force-deleted", () => {
     // `x -> z` is kept, and its second copy, a loop and an edge to an item the
     // archive does not carry are skipped.
     const gone = "user.gone-link";
-    const line = (source_id: string, target_id: string, edge_type: string) =>
+    const line = (from_id: string, to_id: string, edge_type: string) =>
       `${JSON.stringify({
-        edge: { id: uuidv7(), source_id, target_id, edge_type, properties: {} },
+        edge: { id: uuidv7(), from_id, to_id, edge_type, properties: {} },
       })}\n`;
     const reader = working(destination);
     const crowded = await owner(destination).restoreArchive(
@@ -290,7 +290,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
       endpoint_missing: 1,
     });
     const held = await edgesOf(reader);
-    expect(held.map((edge) => [edge.edge_type, edge.source_id])).toEqual(
+    expect(held.map((edge) => [edge.edge_type, edge.from_id])).toEqual(
       expect.arrayContaining([
         [type, x],
         [gone, x],
@@ -298,7 +298,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
     );
     expect(held).toHaveLength(2);
     expect(held.find((edge) => edge.edge_type === gone)).toMatchObject({
-      target_id: z,
+      to_id: z,
     });
 
     // An edge whose type no instance could have registered is no archive an

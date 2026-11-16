@@ -241,8 +241,8 @@ async function fill(
     expectOk(
       "linking a file to the ledger",
       await client.createEdge({
-        source_id: ledger,
-        target_id: item.id,
+        from_id: ledger,
+        to_id: item.id,
         edge_type: "references",
         properties: { why: `holds ${name}` },
       } as never),
@@ -252,8 +252,8 @@ async function fill(
     expectOk(
       "linking two notes",
       await client.createEdge({
-        source_id: notes[i - 1]!,
-        target_id: notes[i]!,
+        from_id: notes[i - 1]!,
+        to_id: notes[i]!,
         edge_type: "references",
       } as never),
     );

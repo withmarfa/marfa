@@ -254,19 +254,19 @@ When a write names the type the item already has, the server MUST leave the reac
 
 **Tests:** `compliance/reach.test.ts › changes the reach when a bulk write retypes an item, and keeps it when the type is unchanged`.
 
-### `reach/moves-edge-source`
+### `reach/moves-edge-from`
 
-When `PATCH /edges/{id}` moves the source of an edge, the server MUST change the reach.
+When `PATCH /edges/{id}` moves the from item of an edge, the server MUST change the reach.
 
-**Reason:** the server makes the change on the move alone and never from the items a copy holds, so a copy cannot tell a move that leaves its items as they were from one that does, and a device expires its copy for every move it sends (`queue-and-verdicts/edge-source-move-expires`).
+**Reason:** the server makes the change on the move alone and never from the items a copy holds, so a copy cannot tell a move that leaves its items as they were from one that does, and a device expires its copy for every move it sends (`queue-and-verdicts/edge-from-move-expires`).
 
-**Tests:** `compliance/reach.test.ts › changes the reach when an edge moves to another source, and keeps it when only the target moves`.
+**Tests:** `compliance/reach.test.ts › changes the reach when an edge moves to another from item, and keeps it when only the to item moves`.
 
 ### `reach/keeps-edge-writes`
 
-When a write that moves no item to another type creates or deletes an edge, or `PATCH /edges/{id}` moves only the target of an edge, the server MUST leave the reach as it was.
+When a write that moves no item to another type creates or deletes an edge, or `PATCH /edges/{id}` moves only the to item of an edge, the server MUST leave the reach as it was.
 
-**Tests:** `compliance/reach.test.ts › changes the reach when an edge moves to another source, and keeps it when only the target moves`.
+**Tests:** `compliance/reach.test.ts › changes the reach when an edge moves to another from item, and keeps it when only the to item moves`.
 
 ### `reach/moves-type-topology`
 
@@ -576,6 +576,6 @@ When the source filter that applies to a credential excludes an item the credent
 
 ### `reach/frame-edge-shape`
 
-When a copy stream sends `edge.created`, `edge.updated` or `edge.deleted`, the server MUST send the frame with `event_type`, `edge` and `source_type` and without `listed`, on a live stream and on a replayed one.
+When a copy stream sends `edge.created`, `edge.updated` or `edge.deleted`, the server MUST send the frame with `event_type`, `edge` and `from_type` and without `listed`, on a live stream and on a replayed one.
 
 **Tests:** `compliance/reach.test.ts › sends edge frames on a copy stream in their ordinary shape, live and replayed`.

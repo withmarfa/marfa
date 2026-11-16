@@ -37,8 +37,8 @@ function item(id, type) {
 function parentOf(id, source, target) {
   return {
     id,
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: "parent-of",
     properties: {},
     version: 1,
@@ -76,11 +76,11 @@ async function scripted() {
             label: "Children",
             reverse_label: "Parent",
             cardinality: "one-to-many",
-            source_type_constraints: ["*"],
-            target_type_constraints: ["*"],
+            from_type_constraints: ["*"],
+            to_type_constraints: ["*"],
             cascade_on_delete: "orphan",
             property_schema: {},
-            written_at: "target",
+            written_from: "to",
             shipped: true,
           },
         ],
@@ -198,15 +198,15 @@ test("reads every edge of one type the copy holds in one call", async (t) => {
   const core = await opened(t);
   await core.hydrateWith(["core.note"], SliceTier.Library, ["parent-of"]);
   core.createEdge({
-    sourceId: "note",
-    targetId: "outer",
+    fromId: "note",
+    toId: "outer",
     edgeType: "parent-of",
     properties: {},
   });
   assert.deepEqual(
     core
       .edgesOfType("parent-of")
-      .map((edge) => [edge.id === "beneath", edge.sourceId]),
+      .map((edge) => [edge.id === "beneath", edge.fromId]),
     [
       [true, "outer"],
       [false, "note"],

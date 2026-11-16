@@ -149,8 +149,8 @@ describe("a bulk page leaves the server answering other requests", () => {
       send("POST", "/edges/bulk", {
         atomic: true,
         edges: targets.map((target) => ({
-          source_id: hub!,
-          target_id: target,
+          from_id: hub!,
+          to_id: target,
           edge_type: "about",
         })),
       }),

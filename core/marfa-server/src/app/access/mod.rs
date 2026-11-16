@@ -851,9 +851,9 @@ mod tests {
         let note = || Lender::Item {
             type_id: "core.note".into(),
         };
-        let link = |source_type: &str| Lender::Edge {
+        let link = |from_type: &str| Lender::Edge {
             edge_type: "core.links".into(),
-            source_type: source_type.into(),
+            from_type: from_type.into(),
         };
         let extension = |item_type: &str| Lender::Extension {
             namespace: "acme".into(),

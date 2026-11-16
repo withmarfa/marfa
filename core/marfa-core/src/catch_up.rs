@@ -2352,7 +2352,7 @@ fn hold_beneath(
             }
             for edge in edges {
                 if !store::removed(tx, Subject::Edge, &edge.id)?
-                    && !store::removed(tx, Subject::Item, &edge.target_id)?
+                    && !store::removed(tx, Subject::Item, &edge.to_id)?
                 {
                     store::take_server_edge(tx, edge)?;
                 }
@@ -2423,15 +2423,15 @@ fn apply(
                 return Ok(false);
             };
             if store::removed(tx, Subject::Edge, &edge.id)?
-                || store::removed(tx, Subject::Item, &edge.source_id)?
-                || store::removed(tx, Subject::Item, &edge.target_id)?
+                || store::removed(tx, Subject::Item, &edge.from_id)?
+                || store::removed(tx, Subject::Item, &edge.to_id)?
                 || store::holds_later(tx, Subject::Edge, &edge.id, edge.version, &edge.updated_at)?
             {
                 return Ok(false);
             }
             // Kept where it waits on this device's own write, until that is
             // answered.
-            if store::item_held(tx, &edge.source_id)?
+            if store::item_held(tx, &edge.from_id)?
                 || slice.whole.contains(&edge.edge_type)
                 || store::edge_write_waits(tx, &edge.id)?
             {
@@ -4316,7 +4316,7 @@ mod tests {
         };
         let link = |id: &str, source: &str| {
             format!(
-                r#"{{"event_type":"edge.created","edge":{{"id":"{id}","source_id":"{source}","target_id":"original","edge_type":"derived-from","properties":{{}},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}}}"#
+                r#"{{"event_type":"edge.created","edge":{{"id":"{id}","from_id":"{source}","to_id":"original","edge_type":"derived-from","properties":{{}},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}}}"#
             )
         };
         // The copy does not hold the original. A row made from it and not
@@ -4377,7 +4377,7 @@ mod tests {
     fn a_change_to_an_edge_names_the_edge() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        let edge = r#"{"event_type":"edge.created","edge":{"id":"e1","source_id":"row","target_id":"other","edge_type":"references","properties":{},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#;
+        let edge = r#"{"event_type":"edge.created","edge":{"id":"e1","from_id":"row","to_id":"other","edge_type":"references","properties":{},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#;
         server.on(
             "/events",
             vec![stream(vec![event("11", "edge.created", edge)], held())],

@@ -52,8 +52,8 @@ describe("a stream that reaches a row the server cannot read", () => {
       const from = await note("edge-source");
       const to = await note("edge-target");
       const created = await writer.createEdge({
-        source_id: from,
-        target_id: to,
+        from_id: from,
+        to_id: to,
         edge_type: "about",
       });
       expect(created.ok, JSON.stringify(created.error)).toBe(true);

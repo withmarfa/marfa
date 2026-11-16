@@ -55,8 +55,8 @@ fn a_create_or_an_edge_naming_an_id_the_server_refuses_is_refused_before_it_is_q
     let one = core.create_item(&note(None)).unwrap().item_id.unwrap();
     let other = core.create_item(&note(None)).unwrap().item_id.unwrap();
     let edge = |id: Option<&str>, target: &str| crate::EdgeDraft {
-        source_id: one.clone(),
-        target_id: target.into(),
+        from_id: one.clone(),
+        to_id: target.into(),
         edge_type: "references".into(),
         id: id.map(str::to_string),
         ..Default::default()
@@ -88,7 +88,7 @@ fn a_create_refused_for_its_id_is_put_back_and_can_be_discarded() {
             &store::NewWrite {
                 kind: crate::WriteKind::CreateItem,
                 item_id: Some("my-note-1"),
-                target_id: None,
+                to_id: None,
                 edge_id: None,
                 namespace: None,
                 tag: None,

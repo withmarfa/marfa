@@ -668,8 +668,8 @@ it("refuses every parent component in a placement even when it climbs back insid
         data: [
           wireEdge({
             id: "01a00000-0000-7000-8000-000000004444",
-            source_id: rows[0]!.item.id,
-            target_id: harness.settings.id,
+            from_id: rows[0]!.item.id,
+            to_id: harness.settings.id,
             edge_type: "in-folder",
             properties: { path: "Elsewhere/../inside.md" },
           }),
@@ -1158,8 +1158,8 @@ it.each(restoredBodies)(
         "attached-to": [
           {
             id: "01a00000-0000-7000-8000-000000008888",
-            source_id: file.id,
-            target_id: host.id,
+            from_id: file.id,
+            to_id: host.id,
             edge_type: "attached-to",
           },
         ],

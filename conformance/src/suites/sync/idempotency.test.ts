@@ -238,8 +238,8 @@ describe("idempotency keys", () => {
         expect(updateRepeat.headers.get("Idempotency-Replayed")).toBe("true");
 
         const edge = {
-          source_id: itemId,
-          target_id: peer.data.item.id,
+          from_id: itemId,
+          to_id: peer.data.item.id,
           edge_type: "about",
         };
         const edgeKey = `sync-announce-edge-${randomUUID()}`;
@@ -440,8 +440,8 @@ describe("idempotency keys", () => {
 
     const key = `sync-edge-${randomUUID()}`;
     const body = {
-      source_id: source.data.item.id,
-      target_id: target.data.item.id,
+      from_id: source.data.item.id,
+      to_id: target.data.item.id,
       edge_type: "about",
     };
 

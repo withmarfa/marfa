@@ -250,7 +250,7 @@ it("refuses an item whose type was deleted before its write starts", async () =>
   await note("too late", id("order_gone"));
 });
 
-it("refuses edge creation after its source is retyped outside write reach", async () => {
+it("refuses edge creation after its from item is retyped outside write reach", async () => {
   await register(id("edge_before"));
   await register(id("edge_after"));
   const source = await note("edge source", id("edge_before"));
@@ -272,8 +272,8 @@ it("refuses edge creation after its source is retyped outside write reach", asyn
     apiKey: minted.data.key,
   });
   const body = {
-    source_id: source.id,
-    target_id: target.id,
+    from_id: source.id,
+    to_id: target.id,
     edge_type: "references",
   };
   const witness = await limited.createEdge(body);
@@ -312,8 +312,8 @@ it("announces the moved endpoints when a waiting delete removes the edge", async
       signal,
     );
     const made = await client.createEdge({
-      source_id: source.id,
-      target_id: first.id,
+      from_id: source.id,
+      to_id: first.id,
       edge_type: "in-thread",
     });
     expect(made.status).toBe(201);
@@ -322,7 +322,7 @@ it("announces the moved endpoints when a waiting delete removes the edge", async
     await server.waitForHold("hold:write");
     const moved = await client.updateEdge(made.data.edge.id, {
       version: made.data.edge.version,
-      target_id: second.id,
+      to_id: second.id,
     });
     expect(moved.status).toBe(200);
     await server.clearFault("hold:write");
@@ -337,11 +337,10 @@ it("announces the moved endpoints when a waiting delete removes the edge", async
       .filter((event) => event.event.startsWith("edge."))
       .map((event) => ({
         event: event.event,
-        edge: (event.data as { edge: { source_id: string; target_id: string } })
-          .edge,
+        edge: (event.data as { edge: { from_id: string; to_id: string } }).edge,
       }));
     expect(
-      edges.map(({ event, edge }) => [event, edge.source_id, edge.target_id]),
+      edges.map(({ event, edge }) => [event, edge.from_id, edge.to_id]),
     ).toEqual([
       ["edge.created", source.id, first.id],
       ["edge.updated", source.id, second.id],

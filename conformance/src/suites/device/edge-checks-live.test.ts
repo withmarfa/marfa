@@ -87,8 +87,8 @@ async function edge(
   edgeType: string,
 ): Promise<{ id: string; version: number }> {
   const made = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(made.ok, JSON.stringify(made.error)).toBe(true);
@@ -107,8 +107,8 @@ async function edgeType(
     id,
     label: name,
     cardinality,
-    source_type_constraints: source,
-    target_type_constraints: target,
+    from_type_constraints: source,
+    to_type_constraints: target,
     cascade_on_delete: "orphan",
   });
   expect(made.ok, JSON.stringify(made.error)).toBe(true);
@@ -190,8 +190,8 @@ async function refusedAlike(
     `${what} was queued all the same`,
   ).toBe(before);
   const served = await client.createEdge({
-    source_id: draft.source,
-    target_id: draft.target,
+    from_id: draft.source,
+    to_id: draft.target,
     edge_type: draft.type,
   });
   if (served.ok) trackEdge(ctx, served.data.edge.id);
@@ -234,18 +234,18 @@ const CONSTRAINT: [string, string] = [
  */
 const DUPLICATE = (draft: EdgeDraft) => ({
   edge_type: draft.type,
-  source_id: draft.source,
-  target_id: draft.target,
+  from_id: draft.source,
+  to_id: draft.target,
   constraint: "duplicate",
 });
 const SOURCE_FULL = (draft: EdgeDraft) => ({
   edge_type: draft.type,
-  source_id: draft.source,
+  from_id: draft.source,
   constraint: "cardinality",
 });
 const TARGET_FULL = (draft: EdgeDraft) => ({
   edge_type: draft.type,
-  target_id: draft.target,
+  to_id: draft.target,
   constraint: "cardinality",
 });
 type Details = (draft: EdgeDraft) => Record<string, unknown>;
@@ -292,8 +292,8 @@ async function constraintAlike(
     `${what} was queued all the same`,
   ).toBe(before);
   const served = await client.createEdge({
-    source_id: draft.source,
-    target_id: draft.target,
+    from_id: draft.source,
+    to_id: draft.target,
     edge_type: draft.type,
   });
   if (served.ok) trackEdge(ctx, served.data.edge.id);
@@ -577,8 +577,8 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
       detailsOf(refused),
       `${what}: the device's details are not the server's`,
     ).toEqual(
-      details !== undefined && "source_id" in details
-        ? { ...details, source_id: expect.any(String) }
+      details !== undefined && "from_id" in details
+        ? { ...details, from_id: expect.any(String) }
         : details,
     );
   }
@@ -587,21 +587,21 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
     [
       link.id,
       link.version,
-      { target_id: chore },
+      { to_id: chore },
       CONSTRAINT,
       "a move of a notes edge onto a task",
     ],
     [
       upper.id,
       upper.version,
-      { source_id: bottom },
+      { from_id: bottom },
       ["validation", "edge_cycle"],
       "a move of top to middle onto bottom, closing middle, bottom, middle",
     ],
     [
       link.id,
       link.version,
-      { target_id: first },
+      { to_id: first },
       ["validation", "edge_cycle"],
       "a move of a notes edge onto its own source",
     ],
@@ -622,14 +622,14 @@ it("refuses an inline edge of a create and a move of an edge as the server refus
     before,
   );
   // The witness: the same edge moves onto a note.
-  expect(
-    value(await device.checkEdgeMove(link.id, { target_id: third })),
-  ).toEqual({ refused: false });
+  expect(value(await device.checkEdgeMove(link.id, { to_id: third }))).toEqual({
+    refused: false,
+  });
   value(
     await device.updateEdge(link.id, {
       properties: {},
       version: link.version,
-      target_id: third,
+      to_id: third,
     }),
   );
 });
@@ -763,8 +763,8 @@ it("counts an edge waiting to be sent, and frees the end a waiting delete leaves
   // with the details the device gave.
   for (const [draft, details, what] of waiting) {
     const served = await client.createEdge({
-      source_id: draft.source,
-      target_id: draft.target,
+      from_id: draft.source,
+      to_id: draft.target,
       edge_type: draft.type,
     });
     if (served.ok) trackEdge(ctx, served.data.edge.id);
@@ -816,12 +816,12 @@ it("refuses a move onto a full end, checked or made, and finds nothing against a
 
   for (const [ends, details, what] of [
     [
-      { target_id: d },
+      { to_id: d },
       TARGET_FULL({ source: a, target: d, type: "supersedes" }),
       "a move onto d, which c's edge reaches",
     ],
     [
-      { source_id: c },
+      { from_id: c },
       SOURCE_FULL({ source: c, target: b, type: "supersedes" }),
       "a move onto c, whose edge leaves it",
     ],
@@ -851,14 +851,14 @@ it("refuses a move onto a full end, checked or made, and finds nothing against a
   }
 
   // The edge does not count against itself at the ends it holds.
-  for (const ends of [{ target_id: b }, { source_id: a }]) {
+  for (const ends of [{ to_id: b }, { from_id: a }]) {
     expect(
       value(await device.checkEdgeMove(link.id, ends)),
       `a move onto ${JSON.stringify(ends)}, the edge's own end`,
     ).toEqual({ refused: false });
   }
   // The witness: a move onto a free end.
-  expect(value(await device.checkEdgeMove(link.id, { target_id: e }))).toEqual({
+  expect(value(await device.checkEdgeMove(link.id, { to_id: e }))).toEqual({
     refused: false,
   });
   expect(
@@ -869,7 +869,7 @@ it("refuses a move onto a full end, checked or made, and finds nothing against a
   // properties.
   const served = await client.updateEdge(link.id, {
     version: link.version,
-    target_id: b,
+    to_id: b,
     properties: {},
   });
   expect(

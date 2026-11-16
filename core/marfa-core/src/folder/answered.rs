@@ -105,8 +105,8 @@ fn settled_edge_refusals(conn: &Connection, kept: &HashSet<String>) -> Result<Ve
 /// Whether a file at either end of the edge still shows a refusal of it.
 fn shown_by_a_file(conn: &Connection, edge: &EdgeDraft) -> Result<bool> {
     let ends = [
-        (&edge.source_id, End::Source, &edge.target_id),
-        (&edge.target_id, End::Target, &edge.source_id),
+        (&edge.from_id, End::From, &edge.to_id),
+        (&edge.to_id, End::To, &edge.from_id),
     ];
     for (item, end, other) in ends {
         let line = state::Line {

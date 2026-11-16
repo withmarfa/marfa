@@ -1677,8 +1677,8 @@ describe("POST /items/lookup", () => {
     const from = await row({ vendor_id: value });
     const to = await row({ body: "the edge's target" }, { type: "core.note" });
     const edge = await client.createEdge({
-      source_id: from.id,
-      target_id: to.id,
+      from_id: from.id,
+      to_id: to.id,
       edge_type: "about",
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -1700,9 +1700,7 @@ describe("POST /items/lookup", () => {
       limit: 200,
     });
     const listedRow = listed.data.data.find((i) => i.id === from.id);
-    expect(listedRow?.edges?.about?.data.map((e) => e.target_id)).toEqual([
-      to.id,
-    ]);
+    expect(listedRow?.edges?.about?.data.map((e) => e.to_id)).toEqual([to.id]);
     expect(hydrated.data.data[0]?.edges).toEqual(listedRow?.edges);
   });
 

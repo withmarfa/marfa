@@ -622,7 +622,7 @@ describe("a held file the person deletes", () => {
   it("writes back a deleted held file when another device removes an edge its held line made", async () => {
     const { edgeElsewhere, door } = await deletedHeldLine("child-of");
     const edge = [...door.edges.values()].find(
-      (held) => held.edge_type === "parent-of" && held.target_id === ticket.id,
+      (held) => held.edge_type === "parent-of" && held.to_id === ticket.id,
     );
     expect(edge, "the server holds the line's edge").toBeDefined();
     edgeElsewhere("edge.deleted", edge!);
@@ -636,8 +636,8 @@ describe("a held file the person deletes", () => {
     expect(caught.ok && caught.value.applied).toBe(1);
     edgeElsewhere("edge.created", {
       id: id(14),
-      source_id: ticket.id,
-      target_id: id(13),
+      from_id: ticket.id,
+      to_id: id(13),
       edge_type: "about",
     });
     expect(await writtenBack()).toContain("[[Other]]");

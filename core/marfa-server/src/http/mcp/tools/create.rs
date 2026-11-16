@@ -266,11 +266,11 @@ pub async fn run(
     if let Some(target) = attach_to {
         let edge = Op::Create(Create {
             id: None,
-            source_id: item_id_made.clone(),
-            target_id: target.clone(),
+            from_id: item_id_made.clone(),
+            to_id: target.clone(),
             edge_type: ATTACHED_TO.to_string(),
             properties: Map::new(),
-            source_version: None,
+            from_version: None,
         });
         match crate::app::edges::write::run(app, caller, None, edge).await {
             Ok(_) => {}

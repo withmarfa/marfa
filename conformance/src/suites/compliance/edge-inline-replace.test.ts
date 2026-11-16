@@ -58,7 +58,7 @@ async function targetsOf(id: string): Promise<string[]> {
   const r = await client.listItemEdges(id, { edge_type: edgeType });
   expect(r.status).toBe(200);
   for (const edge of r.data.data) trackEdge(ctx, edge.id);
-  return r.data.data.map((edge) => edge.target_id).sort();
+  return r.data.data.map((edge) => edge.to_id).sort();
 }
 
 describe("an edges list that replaces an item's edges of a type", () => {
@@ -79,8 +79,8 @@ describe("an edges list that replaces an item's edges of a type", () => {
     const id = made.data.item.id;
 
     const second = await other.createEdge({
-      source_id: id,
-      target_id: added,
+      from_id: id,
+      to_id: added,
       edge_type: edgeType,
     });
     expect(second.status, JSON.stringify(second.error)).toBe(201);
@@ -98,8 +98,8 @@ describe("an edges list that replaces an item's edges of a type", () => {
 
     // The same list through POST /items, landing on the item by its natural key.
     const again = await other.createEdge({
-      source_id: id,
-      target_id: added,
+      from_id: id,
+      to_id: added,
       edge_type: edgeType,
     });
     expect(again.status, JSON.stringify(again.error)).toBe(201);

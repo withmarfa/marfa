@@ -45,8 +45,8 @@ async function setup(items: WireItemOptions[]) {
   });
   const edges: WireEdgeOptions[] = items.map((row, index) => ({
     id: `01a00000-0000-7000-8000-${String(100 + index).padStart(12, "0")}`,
-    source_id: row.id,
-    target_id: settings.id,
+    from_id: row.id,
+    to_id: settings.id,
     edge_type: "in-folder",
     properties: { path: `Note${String(index + 1)}.md` },
   }));
@@ -76,7 +76,7 @@ async function setup(items: WireItemOptions[]) {
       ...(JSON.parse(request.body) as WireEdgeOptions),
       version: 1,
     };
-    const index = items.findIndex((item) => item.id === edge.source_id);
+    const index = items.findIndex((item) => item.id === edge.from_id);
     if (index >= 0) edges[index] = { ...edges[index], ...edge };
     return writeAnswers.edge(edge, 201);
   });
@@ -264,7 +264,7 @@ describe("completed effects of a restarted folder pull", () => {
       queue.ok &&
         queue.value
           .filter((write) => write.kind === "delete_edge")
-          .map((write) => write.target_id),
+          .map((write) => write.to_id),
     ).toEqual([folder.settings.id]);
     expect(
       queue.ok && queue.value.filter((write) => write.kind === "delete_item"),

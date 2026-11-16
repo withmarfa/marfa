@@ -130,11 +130,11 @@ When two `PATCH /items/{id}` writes that name one version, name no `conflict=aut
 
 ### `versions/update-order`
 
-When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an id no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; an inline edge of an edge type nothing registered, a self-loop, `properties` the edge type refuses, a target no item holds, in the bin or that the key may not read, or an endpoint type the edge type refuses; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks; an inline edge that duplicates one the item holds, breaks a cardinality or closes a cycle.
+When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an id no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; an inline edge of an edge type nothing registered, a self-loop, `properties` the edge type refuses, a to item no item holds, in the bin or that the key may not read, or an endpoint type the edge type refuses; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks; an inline edge that duplicates one the item holds, breaks a cardinality or closes a cycle.
 
 **Reason:** the answers about the item itself, such as `404 item_not_found` and `409 type_mismatch`, come after the check for nothing to change and before the version is looked at. What an edge's own definition decides is asked before the version, and what depends on the edges the item holds after the merge, as `edges/inline-order` says.
 
-**Tests:** `sync/conflict.test.ts › writes no copy where the resolution is refused after it, and writes it where the same write is not`, `compliance/version-order.test.ts › asks for the version before an undeclared body key`, `› asks for the version before the id`, `› asks for the version before whether the update names anything to change`, `› asks whether the id is well formed before whether the update names anything to change`, `› asks whether the update names anything to change before it looks the item up`, `› asks whether occurred_at is a time before it looks the item up`, `› asks whether the update names anything to change before the version`, `› looks the item up before it asks the version`, `› asks whether the key may write the item's type before it asks the version`, `› asks whether the type named is the item's before it asks the version`, `› asks whether a type to move to is registered before it asks the version`, `› asks whether a snapshot exists before it looks for a collision`, `› asks whether a snapshot exists before it judges the properties`, `› asks for a collision before it judges the properties, without conflict=auto`, `compliance/version-order.test.ts › asks whether conflict is a mode before it asks for the version`, `› answers unknown_type for an item whose type a forced delete removed before it asks the version, stale or current`, `› answers a snapshot the key may not read as ancestor_unavailable before it looks for a collision`, `compliance/edge-check-order.test.ts › answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same`, `› answers a missing target of an edge type with a required property as invalid properties in an item write that names a stale version`, `› answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version`.
+**Tests:** `sync/conflict.test.ts › writes no copy where the resolution is refused after it, and writes it where the same write is not`, `compliance/version-order.test.ts › asks for the version before an undeclared body key`, `› asks for the version before the id`, `› asks for the version before whether the update names anything to change`, `› asks whether the id is well formed before whether the update names anything to change`, `› asks whether the update names anything to change before it looks the item up`, `› asks whether occurred_at is a time before it looks the item up`, `› asks whether the update names anything to change before the version`, `› looks the item up before it asks the version`, `› asks whether the key may write the item's type before it asks the version`, `› asks whether the type named is the item's before it asks the version`, `› asks whether a type to move to is registered before it asks the version`, `› asks whether a snapshot exists before it looks for a collision`, `› asks whether a snapshot exists before it judges the properties`, `› asks for a collision before it judges the properties, without conflict=auto`, `compliance/version-order.test.ts › asks whether conflict is a mode before it asks for the version`, `› answers unknown_type for an item whose type a forced delete removed before it asks the version, stale or current`, `› answers a snapshot the key may not read as ancestor_unavailable before it looks for a collision`, `compliance/edge-check-order.test.ts › answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same`, `› answers a missing to item of an edge type with a required property as invalid properties in an item write that names a stale version`, `› answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version`.
 
 ## Snapshots and the history
 
@@ -410,27 +410,27 @@ When `POST /items/{id}/transition` names a `version` query parameter other than 
 
 **Reason:** a lifecycle decision can depend on the properties the caller read; the optional precondition is checked in the same transaction as the move.
 
-**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the from item's version without replacing other edges`.
 
-### `versions/edge-source-exact`
+### `versions/edge-from-exact`
 
-When `POST /edges` or `DELETE /edges/{id}` names a `source_version` query parameter other than the source item's current version, the server MUST answer `409 version_conflict` before changing an edge.
+When `POST /edges` or `DELETE /edges/{id}` names a `from_version` query parameter other than the from item's current version, the server MUST answer `409 version_conflict` before changing an edge.
 
 **Reason:** apps can own some items and observe others under the same type; replacing a whole edge set to check item ownership would risk unrelated edges.
 
-**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the from item's version without replacing other edges`.
 
-### `versions/source-exact-envelope`
+### `versions/from-exact-envelope`
 
-When a lifecycle or edge write refuses a `version` or `source_version` precondition, the server MUST carry the item whose version was checked in the `current`-only envelope of `versions/exact-envelope`.
+When a lifecycle or edge write refuses a `version` or `from_version` precondition, the server MUST carry the item whose version was checked in the `current`-only envelope of `versions/exact-envelope`.
 
-**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the from item's version without replacing other edges`.
 
-### `versions/source-exact-current`
+### `versions/from-exact-current`
 
-When an otherwise valid lifecycle or edge write names the current item version in its `version` or `source_version` query parameter, the server MUST apply that individual write.
+When an otherwise valid lifecycle or edge write names the current item version in its `version` or `from_version` query parameter, the server MUST apply that individual write.
 
-**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the from item's version without replacing other edges`.
 
 ## A stale write that collides
 
@@ -942,7 +942,7 @@ When the server writes a conflicted copy, the server MUST give it the original's
 
 ### `versions/copy-edges-own`
 
-When the server writes a conflicted copy, the server MUST give it a copy of each outbound edge of the original whose type is written at its source or at neither end and each inbound edge whose type is written at its target, that no other rule of this section withholds.
+When the server writes a conflicted copy, the server MUST give it a copy of each outbound edge of the original whose type is written from its from end or from neither end and each inbound edge whose type is written from its to end, that no other rule of this section withholds.
 
 **Reason:** a track names its album, so the copy takes the album's place under its parent and what the album is about, and is not made the album of the tracks. A copy with no edges and no tags sits outside every project, tag and view the original was in, which is where nobody looks for it. An edge no file writes, such as a file's place in a folder, stays with the item it leaves, so the copy has a place too.
 
@@ -956,7 +956,7 @@ When the server writes a conflicted copy, the server MUST NOT give it an edge th
 
 ### `versions/copy-edges-grants`
 
-When the server writes a conflicted copy, the server MUST NOT give it an edge the writer could not have made with `POST /edges`, which asks write on the source's type, write on the edge type and read on the target's type.
+When the server writes a conflicted copy, the server MUST NOT give it an edge the writer could not have made with `POST /edges`, which asks write on the from item's type, write on the edge type and read on the to item's type.
 
 **Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge its writer could not have made, and none to an item in the bin`.
 
@@ -1010,7 +1010,7 @@ When the server writes a conflicted copy, the server MUST announce `edge.created
 
 When the server writes a conflicted copy, the server MUST write one `derived-from` edge from the copy to the original, with no properties and at version 1.
 
-**Reason:** nothing else joins the two items. Without the edge an app that reads the copy later, on this device after a restart or on another, cannot show it beside its original, and an app that reads the original cannot find the copies made from it. `derived-from` is the shipped edge type for an item made from another, many to many, written at its source.
+**Reason:** nothing else joins the two items. Without the edge an app that reads the copy later, on this device after a restart or on another, cannot show it beside its original, and an app that reads the original cannot find the copies made from it. `derived-from` is the shipped edge type for an item made from another, many to many, written at its from item.
 
 **Tests:** `sync/conflict.test.ts › links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds`, `› links the conflicted copy to its original for a writer holding the edge grants, and gives it the edges those grants allow`.
 

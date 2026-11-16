@@ -37,8 +37,8 @@ it("restores an archive as its selection stood when read, whatever lands while i
   const oldest = listed.data.data.at(-1)!;
   const retained = listed.data.data[1]!;
   const witness = await client.createEdge({
-    source_id: newest.id,
-    target_id: retained.id,
+    from_id: newest.id,
+    to_id: retained.id,
     edge_type: "references",
   });
   expect(witness.status).toBe(201);
@@ -63,8 +63,8 @@ it("restores an archive as its selection stood when read, whatever lands while i
     expect(
       (
         await client.createEdge({
-          source_id: added.data.item.id,
-          target_id: newest.id,
+          from_id: added.data.item.id,
+          to_id: newest.id,
           edge_type: "references",
         })
       ).status,
@@ -100,9 +100,9 @@ it("restores an archive as its selection stood when read, whatever lands while i
     expect((await reader.getItem(newest.id)).data.item.properties).toEqual(
       newest.properties,
     );
-    expect(
-      (await reader.getEdge(witness.data.edge.id)).data.edge.target_id,
-    ).toBe(retained.id);
+    expect((await reader.getEdge(witness.data.edge.id)).data.edge.to_id).toBe(
+      retained.id,
+    );
   } finally {
     await source.clearFault();
     await pending;

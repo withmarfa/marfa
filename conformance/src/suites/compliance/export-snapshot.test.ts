@@ -47,8 +47,8 @@ async function note(title: string): Promise<MarfaItem> {
 
 async function edge(source: string, target: string): Promise<string> {
   const made = await working.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: "about",
   });
   expect(made.status, JSON.stringify(made.error)).toBe(201);

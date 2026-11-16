@@ -17,11 +17,11 @@ describe("validateEdgeTypeSchema", () => {
       id: "cites",
       label: "Test label",
       cardinality: "many-to-many",
-      source_type_constraints: ["*"],
-      target_type_constraints: ["*"],
+      from_type_constraints: ["*"],
+      to_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       property_schema: {},
-      written_at: "source",
+      written_from: "from",
     });
   });
 
@@ -128,11 +128,11 @@ describe("validateEdgeTypeSchema", () => {
         id: "cites",
         label: "Test label",
         cardinality: "many-to-many",
-        target_type_constraints: bad,
+        to_type_constraints: bad,
       });
       expect(result.success).toBe(false);
       if (result.success) continue;
-      expect(result.errors[0]?.field).toBe("target_type_constraints");
+      expect(result.errors[0]?.field).toBe("to_type_constraints");
     }
   });
 
@@ -199,11 +199,11 @@ describe("role constraints", () => {
       id: "shelved-in",
       label: "Test label",
       cardinality: "many-to-many",
-      target_type_constraints: ["role:container"],
+      to_type_constraints: ["role:container"],
     });
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.target_type_constraints).toEqual(["role:container"]);
+    expect(result.data.to_type_constraints).toEqual(["role:container"]);
   });
 
   it("rejects a role nobody defines, on the side that declared it", () => {
@@ -211,8 +211,8 @@ describe("role constraints", () => {
     // endpoint while reading as though it admitted a family of them. Caught
     // at authoring time rather than as a puzzling refusal on someone's write.
     for (const side of [
-      "source_type_constraints",
-      "target_type_constraints",
+      "from_type_constraints",
+      "to_type_constraints",
     ] as const) {
       const result = validateEdgeTypeSchema({
         id: "shelved-in",
@@ -231,7 +231,7 @@ describe("role constraints", () => {
       id: "shelved-in",
       label: "Test label",
       cardinality: "many-to-many",
-      target_type_constraints: ["core.note", "role:container"],
+      to_type_constraints: ["core.note", "role:container"],
     });
     expect(result.success).toBe(true);
   });
@@ -272,42 +272,42 @@ describe("role constraints", () => {
     expect(names.length).toBeGreaterThan(ALL_EDGE_TYPES.length);
   });
 
-  it("writes an edge at its source unless told, and refuses the target without a reverse name", () => {
+  it("writes an edge from its from end unless told, and refuses the to end without a reverse name", () => {
     const plain = validateEdgeTypeSchema({
       id: "cites",
       label: "Test label",
       cardinality: "many-to-many",
     });
-    expect(plain.success && plain.data.written_at).toBe("source");
+    expect(plain.success && plain.data.written_from).toBe("from");
 
-    const atTarget = validateEdgeTypeSchema({
+    const atTo = validateEdgeTypeSchema({
       id: "mentors",
       label: "Test label",
       cardinality: "one-to-many",
       reverse_name: "mentored-by",
-      written_at: "target",
+      written_from: "to",
     });
-    expect(atTarget.success && atTarget.data.written_at).toBe("target");
+    expect(atTo.success && atTo.data.written_from).toBe("to");
 
     // An edge no file writes names no end and needs no name to write it under.
     const unwritten = validateEdgeTypeSchema({
       id: "placed-in",
       label: "Test label",
       cardinality: "many-to-many",
-      written_at: "none",
+      written_from: "none",
     });
-    expect(unwritten.success && unwritten.data.written_at).toBe("none");
+    expect(unwritten.success && unwritten.data.written_from).toBe("none");
 
-    for (const written_at of ["target", "middle"]) {
+    for (const written_from of ["to", "middle", "source", "target"]) {
       const refused = validateEdgeTypeSchema({
         id: "mentors",
         label: "Test label",
         cardinality: "one-to-many",
-        written_at,
+        written_from,
       });
-      expect(refused.success, written_at).toBe(false);
+      expect(refused.success, written_from).toBe(false);
       if (!refused.success) {
-        expect(refused.errors.map((e) => e.field)).toContain("written_at");
+        expect(refused.errors.map((e) => e.field)).toContain("written_from");
       }
     }
   });

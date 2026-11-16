@@ -343,8 +343,8 @@ describe("a filtered stream carries the graph", () => {
         trackItem(ctx, unrelated.data.item.id);
 
         const edge = await client.createEdge({
-          source_id: source.data.item.id,
-          target_id: target.data.item.id,
+          from_id: source.data.item.id,
+          to_id: target.data.item.id,
           edge_type: "about",
         });
         expect(edge.ok).toBe(true);
@@ -412,8 +412,8 @@ describe("a filtered stream carries the graph", () => {
         const source = await makeNote("unfiltered-edge-source");
         const target = await makeNote("unfiltered-edge-target");
         const edge = await client.createEdge({
-          source_id: source,
-          target_id: target,
+          from_id: source,
+          to_id: target,
           edge_type: "about",
         });
         expect(edge.ok, JSON.stringify(edge.error)).toBe(true);

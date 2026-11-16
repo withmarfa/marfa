@@ -537,7 +537,7 @@ function withOwnEdges(
   if (item.edges !== undefined) return item;
   const drawn: Record<string, unknown> = {};
   for (const [type, all] of Object.entries(edges)) {
-    const own = all.filter((edge) => edge.source_id === item.id);
+    const own = all.filter((edge) => edge.from_id === item.id);
     if (own.length > 0)
       drawn[type] = {
         data: own.map((edge) => wireEdge({ ...edge, edge_type: type })),
@@ -559,8 +559,8 @@ function beneathOf(
   while (grown) {
     grown = false;
     for (const edge of edges["parent-of"] ?? []) {
-      if (reached.has(edge.source_id) && !reached.has(edge.target_id)) {
-        reached.add(edge.target_id);
+      if (reached.has(edge.from_id) && !reached.has(edge.to_id)) {
+        reached.add(edge.to_id);
         grown = true;
       }
     }

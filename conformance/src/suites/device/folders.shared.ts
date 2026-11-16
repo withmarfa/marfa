@@ -370,27 +370,26 @@ export class EdgeDoor {
     if (repeated !== undefined) return writeAnswers.edgeRepeated(repeated);
     const held = [...this.edges.values()].some(
       (edge) =>
-        edge.source_id === body.source_id &&
-        edge.target_id === body.target_id &&
+        edge.from_id === body.from_id &&
+        edge.to_id === body.to_id &&
         edge.edge_type === body.edge_type,
     );
     if (held) {
       return answers.edgeDuplicate({
-        source_id: body.source_id,
-        target_id: body.target_id,
+        from_id: body.from_id,
+        to_id: body.to_id,
         edge_type: body.edge_type ?? "references",
       });
     }
-    // One parent a child, as the server refuses a second (`edges/card-target-held`).
+    // One parent a child, as the server refuses a second (`edges/card-to-held`).
     if (
       body.edge_type === "parent-of" &&
       [...this.edges.values()].some(
-        (edge) =>
-          edge.edge_type === "parent-of" && edge.target_id === body.target_id,
+        (edge) => edge.edge_type === "parent-of" && edge.to_id === body.to_id,
       )
     ) {
       return answers.edgeCardinality({
-        target_id: body.target_id,
+        to_id: body.to_id,
         edge_type: "parent-of",
       });
     }
@@ -415,8 +414,8 @@ export class EdgeDoor {
       const held = this.edges.get(request.pathname.split("/").at(-1) ?? "");
       const body = JSON.parse(request.body) as {
         properties?: Record<string, unknown>;
-        source_id?: string;
-        target_id?: string;
+        from_id?: string;
+        to_id?: string;
         version: number;
       };
       if (held === undefined) {
@@ -427,14 +426,13 @@ export class EdgeDoor {
         return answers.edgeVersionConflict(wireEdge(held));
       }
       const ends = {
-        source_id: body.source_id ?? held.source_id,
-        target_id: body.target_id ?? held.target_id,
+        from_id: body.from_id ?? held.from_id,
+        to_id: body.to_id ?? held.to_id,
       };
       const refused = moveRefusal(held, ends);
       if (refused !== undefined) return refused;
-      const moves =
-        ends.source_id !== held.source_id || ends.target_id !== held.target_id;
-      for (const end of ["source", "target"] as const) {
+      const moves = ends.from_id !== held.from_id || ends.to_id !== held.to_id;
+      for (const end of ["from", "to"] as const) {
         const id = ends[`${end}_id`];
         if (moves && !this.holds(id)) return answers.edgeEndNotFound(end, id);
       }
@@ -484,7 +482,7 @@ export class EdgeDoor {
         [...this.edges.values()]
           .filter(
             (edge) =>
-              edge.source_id === source &&
+              edge.from_id === source &&
               (type === null || edge.edge_type === type),
           )
           .map((edge) => {
@@ -513,8 +511,8 @@ export class EdgeDoor {
     const held = [...this.edges.values()].find(
       (edge) =>
         edge.edge_type === "in-folder" &&
-        edge.source_id === source &&
-        edge.target_id === folderId,
+        edge.from_id === source &&
+        edge.to_id === folderId,
     );
     if (held === undefined) throw new Error(`${source} has no placement`);
     const edge = {
@@ -532,10 +530,9 @@ export class EdgeDoor {
     return new Map(
       [...this.edges.values()]
         .filter(
-          (edge) =>
-            edge.edge_type === "in-folder" && edge.target_id === folderId,
+          (edge) => edge.edge_type === "in-folder" && edge.to_id === folderId,
         )
-        .map((edge) => [edge.source_id, edge.properties?.path]),
+        .map((edge) => [edge.from_id, edge.properties?.path]),
     );
   }
 
@@ -589,15 +586,15 @@ export class EdgeDoor {
  */
 export function moveRefusal(
   held: WireEdgeOptions,
-  ends: { source_id: string; target_id: string },
+  ends: { from_id: string; to_id: string },
 ): Answer | undefined {
-  const movesSource = ends.source_id !== held.source_id;
-  const movesTarget = ends.target_id !== held.target_id;
+  const movesSource = ends.from_id !== held.from_id;
+  const movesTarget = ends.to_id !== held.to_id;
   if (!movesSource && !movesTarget) return undefined;
   const edgeType = held.edge_type ?? "references";
   if (movesSource && movesTarget) {
     return answers.edgeMoveRefused(
-      "source_id",
+      "from_id",
       "An update moves one end of an edge at a time; delete it and create the edge wanted",
     );
   }
@@ -609,7 +606,7 @@ export function moveRefusal(
     : cardinality === "one-to-one" || cardinality === "many-to-one";
   if (keptHoldsOne) return undefined;
   return answers.edgeMoveRefused(
-    movesSource ? "source_id" : "target_id",
+    movesSource ? "from_id" : "to_id",
     `Edge "${edgeType}" is ${cardinality}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one`,
   );
 }
@@ -659,8 +656,7 @@ export function withoutPlacements(
   rows: QueuedWrite[],
 ): QueuedWrite[] {
   return rows.filter(
-    (row) =>
-      !(row.kind.endsWith("_edge") && row.target_id === harness.settings.id),
+    (row) => !(row.kind.endsWith("_edge") && row.to_id === harness.settings.id),
   );
 }
 
@@ -686,7 +682,7 @@ export function heldEdges(door: EdgeDoor): string[] {
     .filter((edge) => edge.edge_type !== "in-folder")
     .map(
       (edge) =>
-        `${edge.source_id} ${edge.edge_type ?? "references"} ${edge.target_id}`,
+        `${edge.from_id} ${edge.edge_type ?? "references"} ${edge.to_id}`,
     )
     .sort();
 }
@@ -705,8 +701,7 @@ export function sentEdgeWrites(harness: FolderHarness): string[] {
       return edges
         .filter((edge) => edge.edge_type !== "in-folder")
         .map(
-          (edge) =>
-            `create ${edge.source_id} ${edge.edge_type} ${edge.target_id}`,
+          (edge) => `create ${edge.from_id} ${edge.edge_type} ${edge.to_id}`,
         );
     }
     if (request.method === "DELETE" && request.pathname.startsWith("/edges/")) {
@@ -715,14 +710,14 @@ export function sentEdgeWrites(harness: FolderHarness): string[] {
     if (request.method === "PATCH" && request.pathname.startsWith("/edges/")) {
       const id = request.pathname.split("/").at(-1) ?? "";
       const body = JSON.parse(request.body) as {
-        source_id?: string;
-        target_id?: string;
+        from_id?: string;
+        to_id?: string;
       };
-      if (body.source_id !== undefined) {
-        return [`move ${id} source ${body.source_id}`];
+      if (body.from_id !== undefined) {
+        return [`move ${id} source ${body.from_id}`];
       }
-      if (body.target_id !== undefined) {
-        return [`move ${id} target ${body.target_id}`];
+      if (body.to_id !== undefined) {
+        return [`move ${id} target ${body.to_id}`];
       }
     }
     return [];

@@ -62,8 +62,8 @@ export type EdgeCascadeBehavior = "cascade" | "orphan" | "block" | "with-hosts";
 /** A typed, first-class relationship between two items. */
 export interface MarfaEdge {
   id: string;
-  source_id: string;
-  target_id: string;
+  from_id: string;
+  to_id: string;
   edge_type: string;
   properties: Record<string, unknown>;
   created_at: string;
@@ -78,12 +78,12 @@ export interface EdgeTypeRegistration {
   reverse_label?: string;
   description?: string;
   cardinality: EdgeCardinality;
-  source_type_constraints?: string[];
-  target_type_constraints?: string[];
+  from_type_constraints?: string[];
+  to_type_constraints?: string[];
   cascade_on_delete?: EdgeCascadeBehavior;
   property_schema?: Record<string, unknown>;
   reverse_name?: string;
-  written_at?: "source" | "target" | "none";
+  written_from?: "from" | "to" | "none";
 }
 
 /** Full edge-type definition as returned by the server (core or custom). */
@@ -655,8 +655,8 @@ export interface BulkInput {
 
 export interface BulkEdgeInputItem {
   id?: string;
-  source_id: string;
-  target_id: string;
+  from_id: string;
+  to_id: string;
   edge_type: string;
   properties?: Record<string, unknown>;
   /** The version of the held edge the entry is based on. */

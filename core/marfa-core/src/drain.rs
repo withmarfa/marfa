@@ -3178,7 +3178,7 @@ fn queue_owed_time_clear(
 /// Given to an edit or delete of an edge a create was shown with that the
 /// server did not make.
 const UNMADE: &str =
-    "the server made no edge to this target when it answered the create the edge was drawn with";
+    "the server made no edge to this item when it answered the create the edge was drawn with";
 
 /// The edges a created item was drawn with while its write waited carry
 /// device-own ids. Each leaves where `answered`, the item the server answered
@@ -3204,7 +3204,7 @@ fn drop_projected_edges(
                 .and_then(|edges| edges.get(&edge_type))
                 .is_some_and(|block| {
                     block.next_cursor.is_none()
-                        || block.data.iter().any(|edge| edge.target_id == target)
+                        || block.data.iter().any(|edge| edge.to_id == target)
                 })
         });
         if !kept {
@@ -3489,7 +3489,7 @@ fn land(
     let owed = store::Owed {
         subject: Subject::Item,
         id: id.into(),
-        source_id: None,
+        from_id: None,
         edge_type: None,
         moved: false,
     };
@@ -3844,14 +3844,14 @@ impl ReachChange {
 }
 
 /// Whether a write is one the server answers by changing the reach: a move
-/// of an edge's source (`reach/moves-edge-source`) or a retype
+/// of an edge's from end (`reach/moves-edge-from`) or a retype
 /// (`reach/moves-retype`). A write queued with an unchanged type carries no
 /// `retype`, so only a real type change counts (`reach/keeps-same-type`).
 /// Only one answered in the pass at hand is known to have changed it; a
 /// receipt a pass finds from an earlier one is not.
 fn changes_reach(row: &QueuedWrite) -> bool {
     match row.kind {
-        WriteKind::UpdateEdge => row.body.get("source_id").is_some(),
+        WriteKind::UpdateEdge => row.body.get("from_id").is_some(),
         WriteKind::UpdateItem => row.body.get("retype") == Some(&serde_json::Value::Bool(true)),
         _ => false,
     }
@@ -3861,7 +3861,7 @@ fn changes_reach(row: &QueuedWrite) -> bool {
 /// changed reach and `reach_write` says the write was a move of an edge's
 /// source or a retype, the pass notes it and goes on, and every read after it is left
 /// unmade, since the server would refuse each the same way
-/// (`queue-and-verdicts/edge-source-move-carries-on`); any other change ends
+/// (`queue-and-verdicts/edge-from-move-carries-on`); any other change ends
 /// the pass here, with the copy expired.
 fn read_owed(
     core: &Core,
@@ -4069,7 +4069,7 @@ mod tests {
         store::NewWrite {
             kind,
             item_id: Some(item_id),
-            target_id: None,
+            to_id: None,
             edge_id,
             namespace: None,
             tag: None,
@@ -5043,8 +5043,8 @@ mod tests {
             for sent in [false, true] {
                 let id = format!("edge-{:?}-{sent}", verdict);
                 let mut queued = write(WriteKind::CreateEdge, "local", Some(&id), Some(3), &[]);
-                queued.target_id = Some("local");
-                queued.payload = r#"{"source_id":"local","target_id":"local","edge_type":"references","properties":{"note":"unsent content"}}"#;
+                queued.to_id = Some("local");
+                queued.payload = r#"{"from_id":"local","to_id":"local","edge_type":"references","properties":{"note":"unsent content"}}"#;
                 let row = store::enqueue(&conn, &queued).unwrap();
                 if let Some(verdict) = verdict {
                     store::record_verdict(
@@ -5072,9 +5072,9 @@ mod tests {
             let sent = original.edge_id.as_ref().unwrap().ends_with("true");
             let expected = if sent { "local" } else { "server" };
             assert_eq!(row.item_id.as_deref(), Some(expected));
-            assert_eq!(row.target_id.as_deref(), Some(expected));
-            assert_eq!(row.body["source_id"], expected);
-            assert_eq!(row.body["target_id"], expected);
+            assert_eq!(row.to_id.as_deref(), Some(expected));
+            assert_eq!(row.body["from_id"], expected);
+            assert_eq!(row.body["to_id"], expected);
             assert_eq!(row.body["properties"], original.body["properties"]);
             assert_eq!(row.idempotency_key, original.idempotency_key);
             assert_eq!(row.base_version, original.base_version);
@@ -5119,8 +5119,8 @@ mod tests {
             &json!({
                 "edge": {
                     "id": id,
-                    "source_id": source,
-                    "target_id": format!("c-{id}"),
+                    "from_id": source,
+                    "to_id": format!("c-{id}"),
                     "edge_type": "parent-of",
                     "properties": {},
                     "version": version,
@@ -5138,7 +5138,7 @@ mod tests {
             edge,
             &crate::model::EdgeEdit {
                 base_version: Some(1),
-                source_id: Some("p2".into()),
+                from_id: Some("p2".into()),
                 ..Default::default()
             },
         )
@@ -5496,7 +5496,7 @@ mod tests {
         assert!(store::owed_read_backs(&conn).unwrap().is_empty());
         for name in names {
             assert_eq!(
-                store::edge_by_id(&conn, name).unwrap().unwrap().source_id,
+                store::edge_by_id(&conn, name).unwrap().unwrap().from_id,
                 "p2"
             );
         }
@@ -5529,7 +5529,7 @@ mod tests {
             .map(|seen| serde_json::from_slice(&seen.body).unwrap())
             .collect();
         assert_eq!(sent.len(), 2);
-        assert_eq!(sent[0]["source_id"], "p2");
+        assert_eq!(sent[0]["from_id"], "p2");
         assert_eq!(
             sent[1]["version"], 2,
             "the edit went on the version it was based on"
@@ -5633,7 +5633,7 @@ mod tests {
                 &store::NewWrite {
                     kind: WriteKind::UpdateEdge,
                     item_id: Some("p1"),
-                    target_id: Some("c-e2"),
+                    to_id: Some("c-e2"),
                     edge_id: Some("e2"),
                     namespace: None,
                     tag: None,
@@ -5773,7 +5773,7 @@ mod tests {
         let owed = store::Owed {
             subject: Subject::Edge,
             id: "edge".into(),
-            source_id: Some("source".into()),
+            from_id: Some("source".into()),
             edge_type: Some("references".into()),
             moved: false,
         };
@@ -5822,15 +5822,15 @@ mod tests {
             let mut ids: Vec<String> = store::edges_from(conn, "made")
                 .unwrap()
                 .into_iter()
-                .map(|edge| edge.target_id)
+                .map(|edge| edge.to_id)
                 .collect();
             ids.sort();
             ids
         };
         let server_edge = |target: &str| crate::wire::WireEdge {
             id: format!("0190a000-0000-7000-8000-00000000000{}", target.len()),
-            source_id: "made".into(),
-            target_id: target.into(),
+            from_id: "made".into(),
+            to_id: target.into(),
             edge_type: "references".into(),
             properties: Default::default(),
             version: 1,
@@ -5906,7 +5906,7 @@ mod tests {
             store::edges_from(conn, id)
                 .unwrap()
                 .into_iter()
-                .map(|edge| (edge.id, edge.target_id))
+                .map(|edge| (edge.id, edge.to_id))
                 .collect()
         };
         let projected = crate::model::projected_edge_id;
@@ -5998,8 +5998,8 @@ mod tests {
         .unwrap()["item"]
             .clone();
         item["edges"] = serde_json::json!({"references": {"data": [{
-            "id": "0190a000-0000-7000-8000-000000000001", "source_id": "drawn",
-            "target_id": "server", "edge_type": "references", "properties": {},
+            "id": "0190a000-0000-7000-8000-000000000001", "from_id": "drawn",
+            "to_id": "server", "edge_type": "references", "properties": {},
             "version": 1, "created_at": "2026-01-02T00:00:00Z",
             "updated_at": "2026-01-02T00:00:00Z"
         }], "next_cursor": null}});
@@ -7731,7 +7731,7 @@ mod tests {
 
     fn served_edge(index: usize) -> serde_json::Value {
         json!({
-            "id": served_id(index), "source_id": "made", "target_id": format!("t{index:02}"),
+            "id": served_id(index), "from_id": "made", "to_id": format!("t{index:02}"),
             "edge_type": "references", "properties": {}, "version": 1,
             "created_at": "2026-01-02T00:00:00Z", "updated_at": "2026-01-02T00:00:00Z",
         })

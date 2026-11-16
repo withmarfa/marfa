@@ -252,8 +252,8 @@ it("keeps a dead edge edit over a newer edge event", async () => {
   const { device, server } = harness;
   const edge = wireEdge({
     id: "link",
-    source_id: id,
-    target_id: "target",
+    from_id: id,
+    to_id: "target",
     properties: { weight: 1 },
   });
   scriptHydration(server, {
@@ -323,8 +323,8 @@ it("keeps a dead edge create over an existing server edge", async () => {
         "edge.updated",
         wireEdge({
           id: edgeId,
-          source_id: id,
-          target_id: "target",
+          from_id: id,
+          to_id: "target",
           version: 2,
           properties: { weight: 1, note: "new elsewhere" },
         }),
@@ -420,7 +420,7 @@ it("keeps showing a created item's edge while the read of its edges fails, until
   expect(listingReads(server, created.made)).toBe(1);
   const kept = await device.edgesFrom(created.made);
   expect(
-    kept.ok && kept.value.map((edge) => [edge.id, edge.target_id]),
+    kept.ok && kept.value.map((edge) => [edge.id, edge.to_id]),
     "the edge went before a read brought the server's",
   ).toEqual([[created.drawn, drawnTarget]]);
 
@@ -432,8 +432,8 @@ it("keeps showing a created item's edge while the read of its edges fails, until
       data: [
         wireEdge({
           id: servedEdge,
-          source_id: created.made,
-          target_id: drawnTarget,
+          from_id: created.made,
+          to_id: drawnTarget,
         }),
       ],
       next_cursor: null,
@@ -478,9 +478,9 @@ it("keeps a created item's edge and refuses its waiting delete unsent when the r
   expect(write?.verdict).toBe("refused");
   expect(write?.answer, JSON.stringify(write)).toBeNull();
   const kept = await device.edgesFrom(created.made);
-  expect(
-    kept.ok && kept.value.map((edge) => [edge.id, edge.target_id]),
-  ).toEqual([[created.drawn, drawnTarget]]);
+  expect(kept.ok && kept.value.map((edge) => [edge.id, edge.to_id])).toEqual([
+    [created.drawn, drawnTarget],
+  ]);
 
   // The read is not asked again.
   expect((await device.drain()).ok).toBe(true);

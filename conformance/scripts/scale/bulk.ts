@@ -205,8 +205,8 @@ export async function bulk(): Promise<void> {
   const created = newIds(best.written.text);
   const pool = ids.slice(0, Math.min(ids.length, 1_000));
   const edges = created.slice(0, EDGE_PAGE).map((source, i) => ({
-    source_id: source,
-    target_id: pool[i % pool.length] as string,
+    from_id: source,
+    to_id: pool[i % pool.length] as string,
     edge_type: "about",
   }));
   if (edges.length < EDGE_PAGE) {

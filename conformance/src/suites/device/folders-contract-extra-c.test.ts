@@ -87,15 +87,15 @@ async function seed(
   for (const [item, path] of Object.entries(paths))
     edges.push({
       id: id(800 + edges.length),
-      source_id: item,
-      target_id: folder.settings.id,
+      from_id: item,
+      to_id: folder.settings.id,
       edge_type: "in-folder",
       properties: { path },
     });
   const refresh = () => {
     for (const item of items) {
       const drawn: Record<string, { data: unknown[]; next_cursor: null }> = {};
-      for (const edge of edges.filter((edge) => edge.source_id === item.id))
+      for (const edge of edges.filter((edge) => edge.from_id === item.id))
         (drawn[edge.edge_type ?? "references"] ??= {
           data: [],
           next_cursor: null,
@@ -113,7 +113,7 @@ async function seed(
   folder.server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, (request) =>
     edgesPage(
       edges
-        .filter((edge) => edge.source_id === request.pathname.split("/")[2])
+        .filter((edge) => edge.from_id === request.pathname.split("/")[2])
         .map(wireEdge),
     ),
   );
@@ -146,21 +146,21 @@ async function pull() {
 }
 
 describe("folder contract edge and identity boundaries", () => {
-  it("keeps a shared edge target pinned until the last owning file releases it", async () => {
+  it("keeps a shared edge's to item pinned until the last owning file releases it", async () => {
     const target = { ...note(3, "Target"), type: "core.bookmark" };
     await seed(
       [note(1, "One"), note(2, "Two"), target],
       [
         {
           id: id(101),
-          source_id: id(1),
-          target_id: id(3),
+          from_id: id(1),
+          to_id: id(3),
           edge_type: "references",
         },
         {
           id: id(102),
-          source_id: id(2),
-          target_id: id(3),
+          from_id: id(2),
+          to_id: id(3),
           edge_type: "references",
         },
       ],
@@ -207,14 +207,14 @@ describe("folder contract edge and identity boundaries", () => {
       [
         {
           id: id(101),
-          source_id: id(3),
-          target_id: id(1),
+          from_id: id(3),
+          to_id: id(1),
           edge_type: "references",
         },
         {
           id: id(102),
-          source_id: id(2),
-          target_id: id(1),
+          from_id: id(2),
+          to_id: id(1),
           edge_type: "references",
         },
       ],
@@ -255,7 +255,7 @@ describe("folder contract edge and identity boundaries", () => {
     if (!pushed.ok) return;
     expect(pushed.value.scan.flagged).toEqual([]);
     const references = (await queue()).filter(
-      (write) => write.kind === "create_edge" && write.target_id === id(1),
+      (write) => write.kind === "create_edge" && write.to_id === id(1),
     );
     expect(references).toHaveLength(4);
     expect(read("Title.md")).toContain('"[[Café#Part]]"');
@@ -275,12 +275,12 @@ describe("folder contract edge and identity boundaries", () => {
     expect(read("Bare.md")).toBe(before);
     expect(
       (await queue()).filter(
-        (write) => write.kind === "create_edge" && write.target_id === id(1),
+        (write) => write.kind === "create_edge" && write.to_id === id(1),
       ),
     ).toHaveLength(1);
   });
 
-  it("resolves a held line when its trashed target is restored", async () => {
+  it("resolves a held line when its trashed to item is restored", async () => {
     const target = { ...note(1, "Target"), state: "trashed" };
     const { frames } = await seed([target]);
     put("Host.md", `---\nreferences: "[[${id(1)}]]"\n---\nbody\n`);
@@ -290,7 +290,7 @@ describe("folder contract edge and identity boundaries", () => {
     );
     expect(
       (await queue()).filter(
-        (write) => write.kind === "create_edge" && write.target_id === id(1),
+        (write) => write.kind === "create_edge" && write.to_id === id(1),
       ),
     ).toEqual([]);
     target.state = "active";
@@ -300,7 +300,7 @@ describe("folder contract edge and identity boundaries", () => {
     expect((await scan()).flagged).toEqual([]);
     expect(
       (await queue()).filter(
-        (write) => write.kind === "create_edge" && write.target_id === id(1),
+        (write) => write.kind === "create_edge" && write.to_id === id(1),
       ),
     ).toHaveLength(1);
     expect(read("Host.md")).toBe(before);
@@ -318,7 +318,7 @@ describe("folder contract edge and identity boundaries", () => {
     const links = (await queue()).filter(
       (write) => write.kind === "create_edge" && write.item_id === id(1),
     );
-    expect(links.map((write) => write.target_id)).toEqual([
+    expect(links.map((write) => write.to_id)).toEqual([
       folder!.settings.id,
       id(2),
     ]);
@@ -430,7 +430,7 @@ describe("folder placement and file publication boundaries", () => {
     await scan();
     const placements = (await queue()).filter(
       (write) =>
-        write.kind === "create_edge" && write.target_id === folder!.settings.id,
+        write.kind === "create_edge" && write.to_id === folder!.settings.id,
     );
     expect(placements).toHaveLength(1);
     expect((await folder!.folder.device().withdraw(placements[0].id)).ok).toBe(
@@ -605,9 +605,9 @@ describe("body links and attachment presentation", () => {
       (write) =>
         write.kind === "create_edge" &&
         write.item_id === id(1) &&
-        files.includes(String(write.target_id)),
+        files.includes(String(write.to_id)),
     );
-    expect(referenced.map((write) => write.target_id)).toEqual([id(2)]);
+    expect(referenced.map((write) => write.to_id)).toEqual([id(2)]);
   });
 
   it("keeps an attachment line for a file the query holds when the host body also embeds it", async () => {
@@ -623,14 +623,14 @@ describe("body links and attachment presentation", () => {
       [
         {
           id: id(101),
-          source_id: id(2),
-          target_id: id(1),
+          from_id: id(2),
+          to_id: id(1),
           edge_type: "attached-to",
         },
         {
           id: id(102),
-          source_id: id(1),
-          target_id: id(2),
+          from_id: id(1),
+          to_id: id(2),
           edge_type: "references",
         },
       ],

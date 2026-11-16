@@ -64,8 +64,8 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     edgeType = "parent-of",
   ): Promise<string> {
     const r = await client.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: edgeType,
     });
     expect(r.status).toBe(201);
@@ -75,8 +75,8 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
 
   async function give(parent: string, child: string, edgeType = "parent-of") {
     const r = await writer.createEdge({
-      source_id: parent,
-      target_id: child,
+      from_id: parent,
+      to_id: child,
       edge_type: edgeType,
     });
     if (r.ok) trackEdge(ctx, r.data.edge.id);
@@ -110,10 +110,10 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect(refused.error?.error).toEqual({
       code: "edge_constraint_violation",
       message:
-        'Edge "parent-of" is one-to-many on the target side; target already has an inbound edge of this type',
+        'Edge "parent-of" is one-to-many on the to side; the to item already has an inbound edge of this type',
       details: {
         edge_type: "parent-of",
-        target_id: child,
+        to_id: child,
         constraint: "cardinality",
       },
     });
@@ -141,7 +141,7 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect(refused.error?.error).toEqual({
       code: "edge_cycle",
       message: 'Edge "parent-of" would close a cycle',
-      details: { edge_type: "parent-of", source_id: a, target_id: b },
+      details: { edge_type: "parent-of", from_id: a, to_id: b },
     });
     expect(JSON.stringify(refused.error)).not.toContain(secret);
     expect(JSON.stringify(refused.error)).not.toContain("core.bookmark");
@@ -153,7 +153,7 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect((await give(c, d)).status).toBe(201);
   });
 
-  it("refuses a successor the key cannot see on a one-to-one type, naming only the target", async () => {
+  it("refuses a successor the key cannot see on a one-to-one type, naming only the to item", async () => {
     const older = await note();
     const secret = await hidden();
     await parentOf(secret, older, "supersedes");
@@ -166,10 +166,10 @@ describe("a graph refusal owed to an edge the key cannot see", () => {
     expect(refused.error?.error).toEqual({
       code: "edge_constraint_violation",
       message:
-        'Edge "supersedes" is one-to-one; target already has one inbound edge of this type',
+        'Edge "supersedes" is one-to-one; the to item already has one inbound edge of this type',
       details: {
         edge_type: "supersedes",
-        target_id: older,
+        to_id: older,
         constraint: "cardinality",
       },
     });
@@ -211,8 +211,8 @@ describe("what a key is told of an item it cannot read through a readable one", 
     expect(b.status).toBe(201);
     trackItem(ctx, b.data.item.id);
     const e = await client.createEdge({
-      source_id: n.data.item.id,
-      target_id: b.data.item.id,
+      from_id: n.data.item.id,
+      to_id: b.data.item.id,
       edge_type: edgeType,
     });
     expect(e.status).toBe(201);
@@ -229,14 +229,14 @@ describe("what a key is told of an item it cannot read through a readable one", 
     };
   }
 
-  it("names a hidden target's id on an edge the key may read", async () => {
+  it("names a hidden to item's id on an edge the key may read", async () => {
     const { note, secret, edge } = await pair("about");
     const listed = await writer.listItemEdges(note);
     expect(listed.status).toBe(200);
-    expect(listed.data.data.map((e) => e.target_id)).toEqual([secret]);
+    expect(listed.data.data.map((e) => e.to_id)).toEqual([secret]);
     const byId = await writer.getEdge(edge);
     expect(byId.status).toBe(200);
-    expect(byId.data.edge.target_id).toBe(secret);
+    expect(byId.data.edge.to_id).toBe(secret);
   });
 
   /** A note and a bookmark joined by an edge of a type of its own, a key
@@ -283,8 +283,8 @@ describe("what a key is told of an item it cannot read through a readable one", 
     const note = n.data.item.id;
     const secret = b.data.item.id;
     const e = await client.createEdge({
-      source_id: note,
-      target_id: secret,
+      from_id: note,
+      to_id: secret,
       edge_type: edgeType,
     });
     expect(e.status).toBe(201);
@@ -297,7 +297,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
     return { edgeType, blind, sighted, eventId, note, secret, edge };
   }
 
-  it("names a hidden target's id on every read of an edge the key may read", async ({
+  it("names a hidden to item's id on every read of an edge the key may read", async ({
     signal,
   }) => {
     const { edgeType, blind, eventId, note, secret, edge } =
@@ -305,15 +305,15 @@ describe("what a key is told of an item it cannot read through a readable one", 
 
     const listed = await blind.client.listEdges({ edge_type: edgeType });
     expect(listed.status).toBe(200);
-    expect(listed.data.data.map((x) => [x.id, x.target_id])).toEqual([
+    expect(listed.data.data.map((x) => [x.id, x.to_id])).toEqual([
       [edge, secret],
     ]);
 
     const read = await blind.client.getItem(note);
     expect(read.status).toBe(200);
-    expect(
-      read.data.item.edges?.[edgeType]?.data.map((x) => x.target_id),
-    ).toEqual([secret]);
+    expect(read.data.item.edges?.[edgeType]?.data.map((x) => x.to_id)).toEqual([
+      secret,
+    ]);
 
     const page = await blind.client.listItems({
       source: ctx.source,
@@ -325,7 +325,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
     expect(
       page.data.data
         .find((i) => i.id === note)
-        ?.edges?.[edgeType]?.data.map((x) => x.target_id),
+        ?.edges?.[edgeType]?.data.map((x) => x.to_id),
     ).toEqual([secret]);
 
     const edgeIdsOf = (events: SseEvent[]): string[] =>
@@ -344,13 +344,13 @@ describe("what a key is told of an item it cannot read through a readable one", 
           x.event === "edge.created" &&
           (x.data as { edge: { id: string } }).edge.id === edge,
       );
-      expect(
-        (created?.data as { edge: { target_id: string } }).edge.target_id,
-      ).toBe(secret);
+      expect((created?.data as { edge: { to_id: string } }).edge.to_id).toBe(
+        secret,
+      );
     });
   });
 
-  it("leaves an edge out of an export when the key cannot read its target", async ({
+  it("leaves an edge out of an export when the key cannot read its to item", async ({
     signal,
   }) => {
     const { blind, sighted, edge } = await hiddenTargetEdge("export", signal);
@@ -404,8 +404,8 @@ describe("what a key is told of an item it cannot read through a readable one", 
     expect(secret.status).toBe(201);
     trackItem(ctx, secret.data.item.id);
     const hiddenEdge = await client.createEdge({
-      source_id: secret.data.item.id,
-      target_id: held.data.item.id,
+      from_id: secret.data.item.id,
+      to_id: held.data.item.id,
       edge_type: edgeType,
     });
     expect(hiddenEdge.status).toBe(201);
@@ -417,8 +417,8 @@ describe("what a key is told of an item it cannot read through a readable one", 
     expect(beyond.status).toBe(201);
     trackItem(ctx, beyond.data.item.id);
     const outward = await client.createEdge({
-      source_id: held.data.item.id,
-      target_id: beyond.data.item.id,
+      from_id: held.data.item.id,
+      to_id: beyond.data.item.id,
       edge_type: edgeType,
     });
     expect(outward.status).toBe(201);
@@ -445,8 +445,8 @@ describe("what a key is told of an item it cannot read through a readable one", 
     expect(own.status).toBe(201);
     trackItem(ctx, own.data.item.id);
     const seen = await writer.createEdge({
-      source_id: own.data.item.id,
-      target_id: held.data.item.id,
+      from_id: own.data.item.id,
+      to_id: held.data.item.id,
       edge_type: edgeType,
     });
     expect(seen.status).toBe(201);
@@ -503,16 +503,16 @@ describe("a delete refused by a blocking edge whose type the key cannot read", (
     const held = await note();
     const holder = await note();
     const inbound = await client.createEdge({
-      source_id: holder,
-      target_id: held,
+      from_id: holder,
+      to_id: held,
       edge_type: edgeType,
     });
     expect(inbound.status).toBe(201);
     trackEdge(ctx, inbound.data.edge.id);
     const heldOutward = await note();
     const outbound = await client.createEdge({
-      source_id: held,
-      target_id: heldOutward,
+      from_id: held,
+      to_id: heldOutward,
       edge_type: edgeType,
     });
     expect(outbound.status).toBe(201);
@@ -598,8 +598,8 @@ describe("a delete refused for a live grant it would take with it", () => {
           })
         ).json()) as { item: { id: string } };
         const placed = await as(server.workingKey, "POST", "/edges", {
-          source_id: note.item.id,
-          target_id: grant!.id,
+          from_id: note.item.id,
+          to_id: grant!.id,
           edge_type: "parent-of",
         });
         expect(placed.status).toBe(201);
@@ -678,8 +678,8 @@ describe("parts and hosts a key cannot read", () => {
 
   async function attach(part: string, host: string): Promise<void> {
     const r = await client.createEdge({
-      source_id: part,
-      target_id: host,
+      from_id: part,
+      to_id: host,
       edge_type: "attached-to",
     });
     expect(r.status, JSON.stringify(r.error)).toBe(201);

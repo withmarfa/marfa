@@ -64,8 +64,8 @@ describe("the table of shipped edge types", () => {
     reverseName: "child-of",
     cardinality: "one-to-many",
     cascadeOnDelete: "cascade",
-    sourceTypes: ["*"],
-    targetTypes: ["*"],
+    fromTypes: ["*"],
+    toTypes: ["*"],
   };
   const CONTAINED: EdgeTypeRow = {
     id: "in-collection",
@@ -73,8 +73,8 @@ describe("the table of shipped edge types", () => {
     reverseLabel: "Contents",
     cardinality: "many-to-many",
     cascadeOnDelete: "orphan",
-    sourceTypes: ["core.note", "core.task"],
-    targetTypes: ["role:container"],
+    fromTypes: ["core.note", "core.task"],
+    toTypes: ["role:container"],
   };
 
   it("says what each end may be and what a delete does", () => {

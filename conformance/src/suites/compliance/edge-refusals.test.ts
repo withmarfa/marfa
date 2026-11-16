@@ -45,8 +45,8 @@ async function makeEdge(
   properties?: Record<string, unknown>,
 ) {
   const r = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
     ...(properties === undefined ? {} : { properties }),
   });
@@ -87,8 +87,8 @@ describe("POST /edges refusals", () => {
     const refused = await client.rawRequest<unknown>("/edges", {
       method: "POST",
       body: {
-        source_id: a,
-        target_id: b,
+        from_id: a,
+        to_id: b,
         edge_type: "about",
         weight: 5,
         data: {},
@@ -115,14 +115,129 @@ describe("POST /edges refusals", () => {
     expect(one.data.data.map((e) => e.id)).toEqual([edge.id]);
   });
 
+  it("refuses an edge's ends named source_id and target_id, and source_version, as keys the operations do not declare", async () => {
+    const a = await makeItem("old-ends-a");
+    const b = await makeItem("old-ends-b");
+    const c = await makeItem("old-ends-c");
+    const created = await client.rawRequest<unknown>("/edges", {
+      method: "POST",
+      body: {
+        from_id: a,
+        to_id: b,
+        source_id: a,
+        target_id: b,
+        edge_type: "about",
+      },
+    });
+    expect(created.status).toBe(400);
+    expect(created.error?.error.code).toBe("validation_error");
+    expect(named(created.error?.error.details).sort()).toEqual([
+      "source_id",
+      "target_id",
+    ]);
+    const versioned = await client.rawRequest<unknown>(
+      "/edges?source_version=1",
+      {
+        method: "POST",
+        body: { from_id: a, to_id: b, edge_type: "about" },
+      },
+    );
+    expect(versioned.status).toBe(400);
+    expect(versioned.error?.error.details).toEqual({
+      unknown_parameters: ["source_version"],
+    });
+    const none = await client.listItemEdges(a, { edge_type: "about" });
+    expect(none.data.data, "a refused create stored an edge").toEqual([]);
+
+    // The witness: the same create under the new names is written.
+    const taken = await client.rawRequest<{ edge: { id: string } }>(
+      "/edges?from_version=1",
+      {
+        method: "POST",
+        body: { from_id: a, to_id: b, edge_type: "parent-of" },
+      },
+    );
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    trackEdge(ctx, taken.data.edge.id);
+    const id = taken.data.edge.id;
+
+    const moved = await client.rawRequest<unknown>(`/edges/${id}`, {
+      method: "PATCH",
+      body: { version: 1, source_id: c },
+    });
+    expect(moved.status).toBe(400);
+    expect(named(moved.error?.error.details)).toEqual(["source_id"]);
+    const deleted = await client.rawRequest<unknown>(
+      `/edges/${id}?source_version=1`,
+      { method: "DELETE" },
+    );
+    expect(deleted.status).toBe(400);
+    expect(deleted.error?.error.details).toEqual({
+      unknown_parameters: ["source_version"],
+    });
+    const held = await client.getEdge(id);
+    expect(
+      [held.data.edge.from_id, held.data.edge.version],
+      "a refused move or delete changed the edge",
+    ).toEqual([a, 1]);
+
+    // The witness: the move under the new name is taken.
+    const taken2 = await client.rawRequest<{ edge: { from_id: string } }>(
+      `/edges/${id}`,
+      { method: "PATCH", body: { version: 1, from_id: c } },
+    );
+    expect(taken2.status, JSON.stringify(taken2.error)).toBe(200);
+    expect(taken2.data.edge.from_id).toBe(c);
+  });
+
+  it("refuses an edge type registration naming its ends source and target, or written_at", async () => {
+    for (const key of [
+      "source_type_constraints",
+      "target_type_constraints",
+      "written_at",
+    ]) {
+      const id = `mock.old-names-${key.replaceAll("_", "-")}.${ctx.runId}`;
+      const refused = await client.registerEdgeType({
+        id,
+        label: "Test edge type",
+        cardinality: "many-to-many",
+        ...({ [key]: key === "written_at" ? "source" : ["*"] } as Record<
+          string,
+          unknown
+        >),
+      });
+      expect(refused.status, key).toBe(400);
+      expect(refused.error?.error.code, key).toBe("invalid_schema");
+      expect(
+        (
+          refused.error?.error.details as
+            { errors?: Array<{ field: string }> } | undefined
+        )?.errors?.map((error) => error.field),
+        key,
+      ).toEqual([key]);
+    }
+    // The witness: the same registration under the new names is taken.
+    const id = `mock.new-names.${ctx.runId}`;
+    const taken = await client.registerEdgeType({
+      id,
+      label: "Test edge type",
+      cardinality: "many-to-many",
+      from_type_constraints: ["*"],
+      to_type_constraints: ["*"],
+      written_from: "from",
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    trackEdgeType(ctx, id);
+  });
+
   it("refuses a second edge naming a triple one already holds as a duplicate", async () => {
     const a = await makeItem("dup-a");
     const b = await makeItem("dup-b");
     const first = await makeEdge(a, b);
 
     const repeat = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(repeat.status).toBe(400);
@@ -130,15 +245,15 @@ describe("POST /edges refusals", () => {
     expect(repeat.error?.error.details).toMatchObject({
       constraint: "duplicate",
       edge_type: "about",
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
     });
 
     // A fresh id names no held edge, so it is not a repeat of the first.
     const otherId = await client.createEdge({
       id: uuidv7(),
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: "about",
     });
     expect(otherId.status).toBe(400);
@@ -170,8 +285,8 @@ describe("POST /edges refusals", () => {
     await makeEdge(a, b, registered);
 
     const refused = await client.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: unregistered,
     });
     expect(refused.status).toBe(404);
@@ -187,22 +302,22 @@ describe("POST /edges refusals", () => {
       edge_permissions: { about: "write" },
     });
     const unreached = await narrow.createEdge({
-      source_id: a,
-      target_id: b,
+      from_id: a,
+      to_id: b,
       edge_type: unregistered,
     });
     expect(unreached.status).toBe(403);
     expect(unreached.error?.error.code).toBe("edge_permission_denied");
   });
 
-  it("refuses a malformed source_id, target_id or edge id with invalid_id", async () => {
+  it("refuses a malformed from_id, to_id or edge id with invalid_id", async () => {
     const a = await makeItem("bad-id-a");
     const b = await makeItem("bad-id-b");
 
     const bodies = [
-      { source_id: "not-an-id", target_id: b },
-      { source_id: a, target_id: "not-an-id" },
-      { id: "not-an-id", source_id: a, target_id: b },
+      { from_id: "not-an-id", to_id: b },
+      { from_id: a, to_id: "not-an-id" },
+      { id: "not-an-id", from_id: a, to_id: b },
     ];
     for (const body of bodies) {
       const r = await client.createEdge({ ...body, edge_type: "about" });
@@ -213,7 +328,7 @@ describe("POST /edges refusals", () => {
     // The same bodies with well-formed ids are accepted, so the refusals
     // above are the ids.
     const ok = await makeEdge(a, b);
-    expect(ok.source_id).toBe(a);
+    expect(ok.from_id).toBe(a);
     const held = await client.listItemEdges(a);
     expect(held.data.data.map((e) => e.id)).toEqual([ok.id]);
   });

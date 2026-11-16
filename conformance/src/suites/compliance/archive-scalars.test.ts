@@ -41,8 +41,8 @@ function fixture() {
   }));
   const edge: Record<string, unknown> = {
     id: edgeId,
-    source_id: first,
-    target_id: last,
+    from_id: first,
+    to_id: last,
     edge_type: "references",
     version: 9,
   };
@@ -129,7 +129,7 @@ describe("archived item and edge scalars", () => {
 
   it("refuses an invalid edge version even when its endpoint is missing", async () => {
     const f = fixture();
-    f.edge.target_id = uuidv7();
+    f.edge.to_id = uuidv7();
     f.edge.version = 0;
     const refused = await owner.restoreArchive(f.archive());
     expect(refused.status).toBe(400);

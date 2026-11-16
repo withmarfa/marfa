@@ -94,7 +94,7 @@ it("resolves body links through real server lookup and keeps their removal after
         edge_type: "references",
       });
       expect(result.ok, JSON.stringify(result.error)).toBe(true);
-      return result.data.data.map((edge) => edge.target_id).sort();
+      return result.data.data.map((edge) => edge.to_id).sort();
     };
     expect(await targets()).toEqual([target.id, remote.data.item.id].sort());
     value(await folder.pull());

@@ -199,7 +199,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 ));
             }
             let built = edge_type_from_request(&body, &taken).map_err(refusal_of)?;
-            require_stored_targets(unit, &id, &built)?;
+            require_stored_to_items(unit, &id, &built)?;
             unit.tx().execute(
                 "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
@@ -221,21 +221,19 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
     Ok((outcome.0, presented(outcome.1)))
 }
 
-/// A type that cascades asks of each stored target what writing such an edge asks. The
-/// refusal names no type, since the target can be one the caller cannot read.
-fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
+/// A type that cascades asks of each stored to item what writing such an edge asks. The
+/// refusal names no type, since the to item can be one the caller cannot read.
+fn require_stored_to_items(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
     if text_of(built, "cascade_on_delete") != Some("cascade") {
         return Ok(());
     }
-    for target_type in edges::target_types(unit.tx(), id)? {
-        unit.caller
-            .require_cascade_target(&target_type)
-            .map_err(|_| {
-                Refusal::new(
-                    Code::TypeNotPermitted,
-                    "This edge type cannot cascade onto the targets its stored edges hold.",
-                )
-            })?;
+    for to_type in edges::to_types(unit.tx(), id)? {
+        unit.caller.require_cascade_to(&to_type).map_err(|_| {
+            Refusal::new(
+                Code::TypeNotPermitted,
+                "This edge type cannot cascade onto the to items its stored edges hold.",
+            )
+        })?;
     }
     Ok(())
 }

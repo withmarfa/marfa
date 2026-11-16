@@ -265,8 +265,8 @@ pub struct Shown {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Edge {
     pub id: String,
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     pub properties: Map<String, Value>,
     pub version: i64,
@@ -278,8 +278,8 @@ impl Edge {
     pub(crate) fn as_wire(&self) -> crate::wire::WireEdge {
         crate::wire::WireEdge {
             id: self.id.clone(),
-            source_id: self.source_id.clone(),
-            target_id: self.target_id.clone(),
+            from_id: self.from_id.clone(),
+            to_id: self.to_id.clone(),
             edge_type: self.edge_type.clone(),
             properties: self.properties.clone(),
             version: self.version,
@@ -821,8 +821,8 @@ impl Draft {
             .into_iter()
             .map(|(edge_type, target)| crate::wire::WireEdge {
                 id: projected_edge_id(id, &edge_type, &target),
-                source_id: id.to_string(),
-                target_id: target,
+                from_id: id.to_string(),
+                to_id: target,
                 edge_type,
                 properties: Map::new(),
                 version: 0,
@@ -948,7 +948,7 @@ impl WriteKind {
         matches!(self, WriteKind::WriteRows | WriteKind::UndoRows)
     }
 
-    /// An edge write names its endpoints in `item_id` and `target_id` too,
+    /// An edge write names its endpoints in `item_id` and `to_id` too,
     /// but is a write to neither.
     pub fn subject(self) -> Option<Subject> {
         match self {
@@ -1449,7 +1449,7 @@ pub struct QueuedWrite {
     pub id: String,
     pub kind: WriteKind,
     pub item_id: Option<String>,
-    pub target_id: Option<String>,
+    pub to_id: Option<String>,
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
@@ -1684,8 +1684,8 @@ pub struct Status {
 
 #[derive(Debug, Clone, Default)]
 pub struct EdgeDraft {
-    pub source_id: String,
-    pub target_id: String,
+    pub from_id: String,
+    pub to_id: String,
     pub edge_type: String,
     pub properties: Map<String, Value>,
     pub id: Option<String>,
@@ -1695,8 +1695,8 @@ impl EdgeDraft {
     pub(crate) fn payload(&self, id: &str) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
         body.insert("id".into(), Value::String(id.to_string()));
-        body.insert("source_id".into(), Value::String(self.source_id.clone()));
-        body.insert("target_id".into(), Value::String(self.target_id.clone()));
+        body.insert("from_id".into(), Value::String(self.from_id.clone()));
+        body.insert("to_id".into(), Value::String(self.to_id.clone()));
         body.insert("edge_type".into(), Value::String(self.edge_type.clone()));
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         Ok(serde_json::to_string(&Value::Object(body))?)
@@ -1717,8 +1717,8 @@ impl EdgeDraft {
             ));
         }
         let draft = EdgeDraft {
-            source_id: text("source_id"),
-            target_id: text("target_id"),
+            from_id: text("from_id"),
+            to_id: text("to_id"),
             edge_type: text("edge_type"),
             properties: body
                 .get("properties")
@@ -1735,8 +1735,8 @@ impl EdgeDraft {
         let at = crate::store::now_iso();
         crate::wire::WireEdge {
             id: id.to_string(),
-            source_id: self.source_id.clone(),
-            target_id: self.target_id.clone(),
+            from_id: self.from_id.clone(),
+            to_id: self.to_id.clone(),
             edge_type: self.edge_type.clone(),
             properties: self.properties.clone(),
             version: 0,
@@ -1787,24 +1787,21 @@ pub enum EdgeOp {
 pub struct EdgeEdit {
     pub properties: Map<String, Value>,
     pub base_version: Option<i64>,
-    pub source_id: Option<String>,
-    pub target_id: Option<String>,
+    pub from_id: Option<String>,
+    pub to_id: Option<String>,
 }
 
 impl EdgeEdit {
     /// Whether the edit names no property and no end to move to.
     pub(crate) fn is_empty(&self) -> bool {
-        self.properties.is_empty() && self.source_id.is_none() && self.target_id.is_none()
+        self.properties.is_empty() && self.from_id.is_none() && self.to_id.is_none()
     }
 
     pub(crate) fn payload(&self, base_version: i64) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         body.insert("version".into(), Value::from(base_version));
-        for (key, end) in [
-            ("source_id", &self.source_id),
-            ("target_id", &self.target_id),
-        ] {
+        for (key, end) in [("from_id", &self.from_id), ("to_id", &self.to_id)] {
             if let Some(end) = end {
                 body.insert(key.into(), Value::String(end.clone()));
             }
@@ -1874,7 +1871,7 @@ mod tests {
             id: "q".into(),
             kind: WriteKind::UpdateItem,
             item_id: Some("i".into()),
-            target_id: None,
+            to_id: None,
             edge_id: None,
             namespace: None,
             tag: None,

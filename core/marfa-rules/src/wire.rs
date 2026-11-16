@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::catalog::WrittenAt;
+use crate::catalog::WrittenFrom;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WireDisplayHints {
@@ -41,9 +41,9 @@ pub struct WireEdgeType {
     pub cardinality: String,
     #[serde(default)]
     pub reverse_name: Option<String>,
-    pub written_at: WrittenAt,
-    pub source_type_constraints: Vec<String>,
-    pub target_type_constraints: Vec<String>,
+    pub written_from: WrittenFrom,
+    pub from_type_constraints: Vec<String>,
+    pub to_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
     pub property_schema: Map<String, Value>,
     pub shipped: bool,
@@ -175,7 +175,7 @@ mod tests {
     fn an_edge_type_row_without_labels_reads_with_the_ones_the_server_makes() {
         let bare = |extra: &str| -> WireEdgeType {
             serde_json::from_str(&format!(
-                r#"{{"id":"acme.list-member","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"written_at":"source","shipped":false{extra}}}"#
+                r#"{{"id":"acme.list-member","cardinality":"many-to-many","from_type_constraints":["*"],"to_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"written_from":"from","shipped":false{extra}}}"#
             ))
             .unwrap()
         };

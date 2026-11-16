@@ -9,10 +9,10 @@ const about: EdgeTypeSchema = {
   reverse_label: "Subject of",
   description: "Says that an item is about another item, such as a note about a book.",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {},
 };
 
@@ -22,11 +22,11 @@ const attachedTo: EdgeTypeSchema = {
   reverse_label: "Attachments",
   description: "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "with-hosts",
   reverse_name: "has-attachment",
-  written_at: "source",
+  written_from: "from",
   property_schema: {
     position: { type: "number", description: "Where the attachment comes among the item's attachments, such as the page number of a scan." },
   },
@@ -38,10 +38,10 @@ const commentsOn: EdgeTypeSchema = {
   reverse_label: "Comments",
   description: "Says that an item is a comment on another item, including a reply to another comment.",
   cardinality: "many-to-one",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "with-hosts",
-  written_at: "source",
+  written_from: "from",
   property_schema: {},
 };
 
@@ -51,10 +51,10 @@ const derivedFrom: EdgeTypeSchema = {
   reverse_label: "Basis for",
   description: "Says that an item was made from another item, such as an imported copy or a summary generated from a note.",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {},
 };
 
@@ -64,10 +64,10 @@ const excerptOf: EdgeTypeSchema = {
   reverse_label: "Excerpts",
   description: "Says that an item is a highlight, quote or clip taken from another item, such as a quote from a book.",
   cardinality: "many-to-one",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {},
 };
 
@@ -77,10 +77,10 @@ const inCollection: EdgeTypeSchema = {
   reverse_label: "Contents",
   description: "Says that an item is a member of a container, such as a collection, a series or an album.",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["role:container"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["role:container"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {
     position: { type: "number", description: "Where the item comes among the container's members." },
   },
@@ -92,10 +92,10 @@ const inFolder: EdgeTypeSchema = {
   reverse_label: "Folder contents",
   description: "Says where an item's file sits in a synced folder.",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["system.folder"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["system.folder"],
   cascade_on_delete: "orphan",
-  written_at: "none",
+  written_from: "none",
   property_schema: {
     path: { type: "string", description: "The file's path from the folder's root." },
   },
@@ -107,10 +107,10 @@ const inThread: EdgeTypeSchema = {
   reverse_label: "Messages",
   description: "Says that an item is a message in a thread, such as a reply in a conversation.",
   cardinality: "many-to-one",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {
     position: { type: "number", description: "Where the message comes in the thread." },
   },
@@ -122,11 +122,11 @@ const parentOf: EdgeTypeSchema = {
   reverse_label: "Parent",
   description: "Says that an item is the parent of another item, so that items form a hierarchy.",
   cardinality: "one-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "cascade",
   reverse_name: "child-of",
-  written_at: "target",
+  written_from: "to",
   property_schema: {},
 };
 
@@ -136,10 +136,10 @@ const references: EdgeTypeSchema = {
   reverse_label: "Referenced by",
   description: "Says that an item mentions another item, such as a note that links to another note.",
   cardinality: "many-to-many",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {},
 };
 
@@ -149,10 +149,10 @@ const supersedes: EdgeTypeSchema = {
   reverse_label: "Superseded by",
   description: "Says that an item replaces another item as the current version, such as a revised document that replaces its earlier draft.",
   cardinality: "one-to-one",
-  source_type_constraints: ["*"],
-  target_type_constraints: ["*"],
+  from_type_constraints: ["*"],
+  to_type_constraints: ["*"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_from: "from",
   property_schema: {},
 };
 
@@ -174,152 +174,152 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "about": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "attached-to": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "with-hosts",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "position": {
         "type": "number"
       }
     },
     "reverse_name": "has-attachment",
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "comments-on": {
     "cardinality": "many-to-one",
     "cascade_on_delete": "with-hosts",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "derived-from": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "excerpt-of": {
     "cardinality": "many-to-one",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "in-collection": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "position": {
         "type": "number"
       }
     },
-    "source_type_constraints": [
-      "*"
-    ],
-    "target_type_constraints": [
+    "to_type_constraints": [
       "role:container"
     ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "in-folder": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "path": {
         "type": "string"
       }
     },
-    "source_type_constraints": [
-      "*"
-    ],
-    "target_type_constraints": [
+    "to_type_constraints": [
       "system.folder"
     ],
-    "written_at": "none"
+    "written_from": "none"
   },
   "in-thread": {
     "cardinality": "many-to-one",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "position": {
         "type": "number"
       }
     },
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "parent-of": {
     "cardinality": "one-to-many",
     "cascade_on_delete": "cascade",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
     "reverse_name": "child-of",
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "target"
+    "written_from": "to"
   },
   "references": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   },
   "supersedes": {
     "cardinality": "one-to-one",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {},
-    "source_type_constraints": [
+    "to_type_constraints": [
       "*"
     ],
-    "target_type_constraints": [
-      "*"
-    ],
-    "written_at": "source"
+    "written_from": "from"
   }
 } as const;
 

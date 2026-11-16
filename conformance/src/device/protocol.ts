@@ -365,9 +365,9 @@ export interface EdgeType {
   description: string | null;
   cardinality: string;
   reverse_name: string | null;
-  written_at: "source" | "target" | "none";
-  source_type_constraints: string[];
-  target_type_constraints: string[];
+  written_from: "from" | "to" | "none";
+  from_type_constraints: string[];
+  to_type_constraints: string[];
   cascade_on_delete: string;
   properties: TypeField[];
   shipped: boolean;
@@ -426,7 +426,7 @@ export interface QueuedWrite {
   id: string;
   kind: string;
   item_id: string | null;
-  target_id: string | null;
+  to_id: string | null;
   edge_id: string | null;
   namespace: string | null;
   tag: string | null;
@@ -503,8 +503,8 @@ export interface WriteRefusal {
 /** An edge as the working copy holds it. */
 export interface Edge {
   id: string;
-  source_id: string;
-  target_id: string;
+  from_id: string;
+  to_id: string;
   edge_type: string;
   properties: Record<string, unknown>;
   version: number;
@@ -842,7 +842,7 @@ export interface DeviceUnderTest {
    */
   checkEdgeMove(
     id: string,
-    to: { source_id: string } | { target_id: string },
+    to: { from_id: string } | { to_id: string },
   ): Promise<Outcome<{ refused: false }>>;
   /**
    * Change an edge's properties, or move one of its ends, in one write. An
@@ -854,8 +854,8 @@ export interface DeviceUnderTest {
     edit: {
       properties: Record<string, unknown>;
       version?: number;
-      source_id?: string;
-      target_id?: string;
+      from_id?: string;
+      to_id?: string;
     },
   ): Promise<Outcome<QueuedWrite | null>>;
   deleteEdge(id: string): Promise<Outcome<QueuedWrite>>;

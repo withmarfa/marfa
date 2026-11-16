@@ -144,7 +144,7 @@ describe("the names of the audit log's actions", () => {
       id: edgeType,
       label: "Audit actions",
       cardinality: "many-to-many",
-      source_type_constraints: ["core.note"],
+      from_type_constraints: ["core.note"],
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     trackEdgeType(ctx, edgeType);
@@ -156,8 +156,8 @@ describe("the names of the audit log's actions", () => {
       items.push(made.data.item.id);
     }
     const edge = await client.createEdge({
-      source_id: items[0]!,
-      target_id: items[1]!,
+      from_id: items[0]!,
+      to_id: items[1]!,
       edge_type: edgeType,
     });
     expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -169,9 +169,7 @@ describe("the names of the audit log's actions", () => {
     expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
     const bulking = new Date(Date.now() - 1000).toISOString();
     const bulk = await client.bulkEdges({
-      edges: [
-        { source_id: items[1]!, target_id: items[2]!, edge_type: edgeType },
-      ],
+      edges: [{ from_id: items[1]!, to_id: items[2]!, edge_type: edgeType }],
     });
     expect(bulk.ok, JSON.stringify(bulk.error)).toBe(true);
     const bulked = bulk.data.results[0]!.id!;
@@ -191,7 +189,7 @@ describe("the names of the audit log's actions", () => {
       id: edgeType,
       label: "Audit actions",
       cardinality: "many-to-many",
-      source_type_constraints: ["core.note", "core.task"],
+      from_type_constraints: ["core.note", "core.task"],
       evolve_constraints: true,
     } as Parameters<MarfaClient["registerEdgeType"]>[0]);
     expect(evolved.status, JSON.stringify(evolved.error)).toBe(200);

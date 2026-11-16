@@ -162,14 +162,14 @@ impl Folder {
             .edges_to(host)?
             .into_iter()
             .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
-            .map(|edge| edge.source_id)
+            .map(|edge| edge.from_id)
             .collect();
         let referenced: Vec<String> = self
             .core
             .edges_from(host)?
             .into_iter()
-            .filter(|edge| edge.edge_type == LINK_EDGE && !attached.contains(&edge.target_id))
-            .map(|edge| edge.target_id)
+            .filter(|edge| edge.edge_type == LINK_EDGE && !attached.contains(&edge.to_id))
+            .map(|edge| edge.to_id)
             .collect();
         Ok((
             self.candidates(attached, catalog)?,
@@ -408,13 +408,13 @@ impl Folder {
             .collect();
         let mut attached: BTreeMap<String, Vec<&str>> = BTreeMap::new();
         for edge in self.core.edges_of_type(ATTACHMENT_EDGE)? {
-            let Some(host) = host_paths.get(edge.target_id.as_str()) else {
+            let Some(host) = host_paths.get(edge.to_id.as_str()) else {
                 continue;
             };
-            if links.contains_key(&edge.source_id) || members.contains(&edge.source_id) {
+            if links.contains_key(&edge.from_id) || members.contains(&edge.from_id) {
                 continue;
             }
-            attached.entry(edge.source_id).or_default().push(host);
+            attached.entry(edge.from_id).or_default().push(host);
         }
         for (id, mut found) in attached {
             let Some(item) = self.core.get(&id)? else {

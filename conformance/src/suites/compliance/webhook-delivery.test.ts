@@ -395,8 +395,8 @@ async function link(
   edgeType: string,
 ): Promise<string> {
   const edge = await client.createEdge({
-    source_id: source,
-    target_id: target,
+    from_id: source,
+    to_id: target,
     edge_type: edgeType,
   });
   expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
@@ -563,7 +563,7 @@ describe("outbound webhook delivery", () => {
     expect(delivered.headers["x-marfa-event-type"]).toBe("edge.deleted");
     expect(JSON.parse(delivered.body)).toMatchObject({
       event_type: "edge.deleted",
-      source_type: "core.note",
+      from_type: "core.note",
       purged_with: note,
     });
     await receiver.waitFor(
@@ -1658,7 +1658,7 @@ describe("outbound webhook delivery", () => {
     });
   });
 
-  it("delivers an edge event only where the key may read the type its source had when the event was published", async () => {
+  it("delivers an edge event only where the key may read the type its from item had when the event was published", async () => {
     const edgeType = await registerEdgeType("published-source");
     const owner = await keyWith("published-source-owner", {
       type_permissions: { "core.note": "read" },
@@ -1741,7 +1741,7 @@ describe("outbound webhook delivery", () => {
       // The witness: the event was sent while its source was a note.
       expect(JSON.parse(first.body)).toMatchObject({
         event_type: "edge.created",
-        source_type: "core.note",
+        from_type: "core.note",
         edge: { id: retypedEdge },
       });
 
@@ -1761,7 +1761,7 @@ describe("outbound webhook delivery", () => {
       );
       const [, retry] = hook.attempts("retyped") as [Attempt, Attempt];
       expect(JSON.parse(retry.body)).toMatchObject({
-        source_type: "core.note",
+        from_type: "core.note",
         edge: { id: retypedEdge },
       });
       const settled = await deliveryOf(
@@ -1805,8 +1805,8 @@ describe("outbound webhook delivery", () => {
       edgeType: string,
     ): Promise<string> => {
       const r = await by.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: edgeType,
       });
       expect(r.ok, JSON.stringify(r.error)).toBe(true);

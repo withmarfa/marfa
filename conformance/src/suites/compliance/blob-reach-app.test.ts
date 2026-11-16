@@ -133,8 +133,8 @@ describe("a signed-in app and an extension namespace", () => {
     const source = await noteBy(owner, "an edge's source");
     const target = await noteBy(owner, "an edge's target");
     const edge = await owner.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
       properties: { cover: hash },
     });
@@ -348,20 +348,20 @@ describe("a signed-in app's scopes and a blob it reads", () => {
 
     const edges = [
       await owner.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: "about",
         properties: { cover: viaAbout },
       }),
       await owner.createEdge({
-        source_id: source,
-        target_id: target,
+        from_id: source,
+        to_id: target,
         edge_type: "references",
         properties: { cover: viaReferences },
       }),
       await owner.createEdge({
-        source_id: file.data.item.id,
-        target_id: target,
+        from_id: file.data.item.id,
+        to_id: target,
         edge_type: "about",
         properties: { cover: viaFileSource },
       }),
@@ -391,8 +391,8 @@ describe("a signed-in app's scopes and a blob it reads", () => {
     const target = await noteBy(owner, "a planted edge's target");
 
     const edge = await app.createEdge({
-      source_id: source,
-      target_id: target,
+      from_id: source,
+      to_id: target,
       edge_type: "about",
       properties: { cover: sent, alt: notSent },
     });

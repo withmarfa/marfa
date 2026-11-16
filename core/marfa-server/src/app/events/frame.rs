@@ -135,7 +135,7 @@ impl Judge<'_> {
 
     fn edge(&self, entry: &Head<'_>, body: &Map<String, Value>) -> Option<bool> {
         let edge_type = body.get("edge")?.get("edge_type")?.as_str()?;
-        body.get("source_type")?.as_str()?;
+        body.get("from_type")?.as_str()?;
         Some(self.caller.may_read_edge(edge_type, entry.type_id))
     }
 

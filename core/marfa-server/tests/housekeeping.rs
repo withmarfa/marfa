@@ -876,7 +876,7 @@ async fn feed_expiry_moves_every_expired_item_of_a_type_in_one_run() {
 }
 
 async fn edge(instance: &Instance, edge_type: &str, source: &str, target: &str) {
-    let body = json!({ "source_id": source, "target_id": target, "edge_type": edge_type });
+    let body = json!({ "from_id": source, "to_id": target, "edge_type": edge_type });
     instance.ok(Method::POST, "/edges", body).await;
 }
 

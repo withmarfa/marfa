@@ -60,7 +60,7 @@ fn edges_of(folder: &Folder, from: &str, edge_type: &str) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter(|edge| edge.edge_type == edge_type)
-        .map(|edge| edge.target_id)
+        .map(|edge| edge.to_id)
         .collect()
 }
 

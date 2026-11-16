@@ -85,8 +85,8 @@ async function parentedView(): Promise<{ parentId: string; id: string }> {
   trackItem(ctx, parentId);
   const { id } = await view();
   const edge = await client.createEdge({
-    source_id: parentId,
-    target_id: id,
+    from_id: parentId,
+    to_id: id,
     edge_type: "parent-of",
   });
   expect(edge.status).toBe(201);

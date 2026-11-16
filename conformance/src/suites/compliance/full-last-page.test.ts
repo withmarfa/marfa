@@ -132,8 +132,8 @@ async function edgesFrom(
   const made = answered(
     await client.bulkEdges({
       edges: sources.map((source, i) => ({
-        source_id: source,
-        target_id: targets[i]!,
+        from_id: source,
+        to_id: targets[i]!,
         edge_type: edgeType,
       })),
     }),

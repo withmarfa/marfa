@@ -1354,14 +1354,14 @@ describe("a folder round trip", () => {
       (
         await c.cli.json<{
           data: Array<{
-            target_id: string;
+            to_id: string;
             edge_type: string;
             properties: Record<string, unknown>;
           }>;
         }>(["items", "edges", landed.id])
       ).data.filter((edge) => edge.edge_type === "in-folder");
     expect(await placement()).toMatchObject([
-      { target_id: settings.item.id, properties: { path: "dropped.md" } },
+      { to_id: settings.item.id, properties: { path: "dropped.md" } },
     ]);
 
     // An agent with its own key changes it from anywhere.
@@ -1511,7 +1511,7 @@ describe("a folder round trip", () => {
   async function placedIn(item: string): Promise<Record<string, string>> {
     const page = await c.cli.json<{
       data: Array<{
-        target_id: string;
+        to_id: string;
         edge_type: string;
         properties: { path?: string };
       }>;
@@ -1519,7 +1519,7 @@ describe("a folder round trip", () => {
     return Object.fromEntries(
       page.data
         .filter((edge) => edge.edge_type === "in-folder")
-        .map((edge) => [edge.target_id, String(edge.properties.path)]),
+        .map((edge) => [edge.to_id, String(edge.properties.path)]),
     );
   }
 

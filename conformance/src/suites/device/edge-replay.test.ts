@@ -41,8 +41,8 @@ it.each([
     const { device, server } = harness;
     const edge = (version: number, weight: number) => ({
       id: EDGE,
-      source_id: SOURCE,
-      target_id: TARGET,
+      from_id: SOURCE,
+      to_id: TARGET,
       edge_type: "references",
       version,
       properties: { weight },

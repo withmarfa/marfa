@@ -65,7 +65,7 @@ async function defaultsHarness(
       body: {
         data: [
           ...SCRIPTED_EDGE_TYPES,
-          edgeType("shelved-in", { target_type_constraints: constraint() }),
+          edgeType("shelved-in", { to_type_constraints: constraint() }),
         ],
         next_cursor: null,
       },
@@ -350,8 +350,7 @@ describe("folders: a refused default edge", () => {
             "shelved-in",
       )
       .map(
-        (request) =>
-          (JSON.parse(request.body) as { source_id: string }).source_id,
+        (request) => (JSON.parse(request.body) as { from_id: string }).from_id,
       );
     expect(sources).toHaveLength(2);
 
@@ -359,8 +358,8 @@ describe("folders: a refused default edge", () => {
     for (const [index, source] of sources.entries()) {
       const made = edges.create({
         id: `01a00000-0000-7000-8000-00000000e0${String(index)}0`,
-        source_id: source,
-        target_id: beta,
+        from_id: source,
+        to_id: beta,
         edge_type: "shelved-in",
       });
       expect(made.kind === "json" && made.status, JSON.stringify(made)).toBe(
