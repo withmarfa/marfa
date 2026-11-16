@@ -2902,9 +2902,51 @@ If a write moves the sign-in address of a claimed instance, the first sign-in ad
 
 ### `instance/sign-in-address-confirmed`
 
-When a caller that `keys-and-oauth/step-up-recent` or `keys-and-oauth/step-up-socket` admits sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
+When a caller that `keys-and-oauth/step-up-recent` or `keys-and-oauth/step-up-socket` admits sends `confirm_sign_in_address_change` set to `true` with a new sign-in address that passes the check `instance/sign-in-address-check-passed` states, or that `instance/sign-in-address-check-skip` lets through, the server MUST store the address.
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
+
+### `instance/sign-in-address-check-refused`
+
+If a write moves the sign-in address of a claimed instance with `confirm_sign_in_address_change` set to `true` and without the skip `instance/sign-in-address-check-skip` states, and the new address does not answer `GET /` within 5 seconds with `200` and this instance's `instance_id`, then the server MUST answer `409 sign_in_address_check_failed` and store none of the write.
+
+**Reason:** a mistyped or unready address would end every sign-in, and only the machine the server runs on could put it back. The server asks at a fixed path and follows no redirect, so a redirect answers as another server.
+
+**Tests:** `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`, `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
+### `instance/sign-in-address-check-reason`
+
+When the server names why a new sign-in address failed its check, the server MUST name `unreachable` when nothing answered, `timed_out` when nothing answered within 5 seconds of being asked, and `not_this_instance` when an answer came that was not `200` with this instance's `instance_id`.
+
+**Tests:** `compliance/step-up.test.ts › names why an address failed the check while private addresses are allowed: unreachable, timed_out or not_this_instance`.
+
+### `instance/sign-in-address-check-private`
+
+Where `allow_private_addresses` is `false`, if a new sign-in address leads to an address that is not public and fails its check, then the server MUST name `not_this_instance` as the reason, whatever happened.
+
+**Reason:** the instance's own address is often on the loopback or a private network, so the check reaches such an address whatever `allow_private_addresses` says, and tells no more about it than whether this instance answers there.
+
+**Tests:** `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`.
+
+### `instance/sign-in-address-check-passed`
+
+When a write moves the sign-in address with `confirm_sign_in_address_change` set to `true`, and the new address answers `GET /` with `200` and this instance's `instance_id`, the server MUST store the address, whether or not the address is on the loopback or a private network.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
+### `instance/sign-in-address-check-skip`
+
+When the private local command sends `skip_sign_in_address_check` set to `true` with a move of the sign-in address that `confirm_sign_in_address_change` confirms, the server MUST store the address without asking it.
+
+**Reason:** a host can be set up to answer only once the instance answers to its name.
+
+**Tests:** `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
+### `instance/sign-in-address-check-skip-refused`
+
+If a caller other than the private local command sends `skip_sign_in_address_check` set to `true`, then the server MUST answer `403 forbidden` and store none of the write.
+
+**Tests:** `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
 
 ### `instance/sign-in-address-ends-sessions`
 
@@ -2970,11 +3012,19 @@ While no sign-in address is set, if a caller sends `POST /auth/sign-in` over a c
 
 ### `instance/address-check`
 
-When a key holding `config.manage` sends `POST /config/address-check` with `sign_in_address`, `addresses` or both, the server MUST answer `200` with the `sign_in_address` and the `addresses` as they would be after the change, `requires_confirmation`, `consequences`, each of them `code`, `sentence` and `count`, and `next_steps`, empty unless the sign-in address moves.
+When a key holding `config.manage` sends `POST /config/address-check` with `sign_in_address`, `addresses` or both, the server MUST answer `200` with the `sign_in_address` and the `addresses` as they would be after the change, `requires_confirmation`, `consequences`, each of them `code`, `sentence` and `count`, `next_steps`, empty unless the sign-in address moves, and `sign_in_address_check` while `requires_confirmation` is `true`.
 
 **Reason:** an app shows the person what a change does before it asks for the write. `requires_confirmation` is `true` when a write of the same change needs `confirm_sign_in_address_change`, and `next_steps` are what `instance/sign-in-address-next-steps` names.
 
 **Tests:** `compliance/instance-addresses.test.ts › writes nothing, and answers the addresses after the change, whether it needs confirming and what it does`, `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `instance/address-check-instance`
+
+When the server answers `sign_in_address_check` in an address check, the server MUST hold `passed` set to `true` when the new sign-in address passes the check `instance/sign-in-address-check-passed` states, and otherwise `passed` set to `false` with the `reason` that a write of the same change would be refused for.
+
+**Reason:** an app shows the person whether the address reaches this instance before it asks them to confirm a move that ends every sign-in.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`, `compliance/step-up.test.ts › names why an address failed the check while private addresses are allowed: unreachable, timed_out or not_this_instance`.
 
 ### `instance/address-check-writes-nothing`
 

@@ -12,6 +12,7 @@ use super::auth::session;
 use super::consequences::{self, Consequence};
 use super::oauth;
 use super::refusal::{Code, Refusal, Result};
+use super::sign_in_check;
 use super::sources;
 use super::{App, instance, stored};
 use crate::settings::registry::{
@@ -23,6 +24,7 @@ use crate::settings::together::{self, Breach};
 pub const ENFORCEMENT_ROW: &str = "enforcement";
 const MAX_NAME: usize = 200;
 const CONFIRMATION: &str = "confirm_sign_in_address_change";
+const SKIP_CHECK: &str = "skip_sign_in_address_check";
 /// Names the secrets that are set; a body may send it back, and it sets nothing.
 const SECRETS_SET: &str = "secrets_set";
 
@@ -48,6 +50,7 @@ pub fn fields() -> Vec<&'static str> {
         "name",
         "enforcement",
         CONFIRMATION,
+        SKIP_CHECK,
         SECRETS_SET,
     ];
     names.extend(ENTRIES.iter().map(|entry| entry.key));
@@ -63,6 +66,7 @@ pub struct Request {
     mode: Mode,
     instance_id: Option<String>,
     confirmed: bool,
+    skip_check: bool,
     settings: Vec<(&'static Entry, Ask<String>)>,
     name: Option<Ask<String>>,
     enforcement: Option<Ask<Levers>>,
@@ -147,6 +151,7 @@ impl Request {
             mode,
             instance_id: None,
             confirmed: false,
+            skip_check: false,
             settings: Vec::new(),
             name: None,
             enforcement: None,
@@ -174,6 +179,10 @@ impl Request {
                 }
                 CONFIRMATION => match value.as_bool() {
                     Some(flag) => request.confirmed = flag,
+                    None => errors.push((field.to_string(), "must be true or false".into())),
+                },
+                SKIP_CHECK => match value.as_bool() {
+                    Some(flag) => request.skip_check = flag,
                     None => errors.push((field.to_string(), "must be true or false".into())),
                 },
                 "name" => match (value, mode) {
@@ -580,9 +589,49 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
+/// Asks a sign-in address the write would move to whether it answers as this instance, after
+/// the refusals the write would give first. Names the address that answered.
+async fn check_sign_in(
+    app: &Arc<App>,
+    caller: &Caller,
+    request: Request,
+) -> Result<(Request, Option<addresses::Address>)> {
+    if request.skip_check && !caller.is_local() {
+        return Err(Refusal::new(
+            Code::Forbidden,
+            "Only the private local command can move the sign-in address without checking it.",
+        ));
+    }
+    let reading = app.clone();
+    let (request, moved) = app
+        .db
+        .read(move |tx| {
+            let plan = Plan::of(&request, rows_of(stored::rows(tx)?));
+            plan.judge(&reading)?;
+            let moved = plan.addresses_at(&reading, tx)?;
+            Ok((request, moved))
+        })
+        .await?;
+    if !moved.confirm {
+        return Ok((request, None));
+    }
+    caller.require_step_up(Permission::ConfigManage, &app.clock.stamp())?;
+    if !request.confirmed {
+        return Err(confirmation_needed(&moved));
+    }
+    if request.skip_check {
+        return Ok((request, None));
+    }
+    sign_in_check::check(app, &moved.sign_in)
+        .await
+        .map_err(sign_in_check::Failed::refusal)?;
+    Ok((request, Some(moved.sign_in)))
+}
+
 pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
     request.check_identity(app)?;
     check_backup_path(app, &request).await?;
+    let (request, answered) = check_sign_in(app, caller, request).await?;
     let writing = app.clone();
     let working = app.clone();
     let caller = caller.clone();
@@ -605,6 +654,13 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 }
                 if moved.confirm && !request.confirmed {
                     return Err(confirmation_needed(&moved));
+                }
+                if moved.confirm && !request.skip_check && answered.as_ref() != Some(&moved.sign_in)
+                {
+                    return Err(Refusal::new(
+                        Code::Conflict,
+                        "The configuration changed while the new sign-in address was checked. Try again.",
+                    ));
                 }
                 stored::write_rows(tx, &plan.ops)?;
                 if moved.sign_in_moves {
@@ -684,26 +740,32 @@ pub async fn adopt_sign_in_address(
 /// What a change of address would do, written to nowhere.
 pub async fn check(app: &Arc<App>, request: Request) -> Result<Value> {
     let checking = app.clone();
-    app.db
+    let moved = app
+        .db
         .read(move |tx| {
             let before = rows_of(stored::rows(tx)?);
             let plan = Plan::of(&request, before);
             plan.judge(&checking)?;
-            let moved = plan.addresses_at(&checking, tx)?;
-            let next_steps = if moved.sign_in_moves {
-                consequences::next_steps(&moved.sign_in)
-            } else {
-                Vec::new()
-            };
-            Ok(json!({
-                "sign_in_address": moved.sign_in.origin(),
-                "addresses": moved.all.iter().map(addresses::Address::origin).collect::<Vec<_>>(),
-                "requires_confirmation": moved.confirm,
-                "consequences": moved.consequences_json(),
-                "next_steps": next_steps,
-            }))
+            plan.addresses_at(&checking, tx)
         })
-        .await
+        .await?;
+    let next_steps = if moved.sign_in_moves {
+        consequences::next_steps(&moved.sign_in)
+    } else {
+        Vec::new()
+    };
+    let mut answer = json!({
+        "sign_in_address": moved.sign_in.origin(),
+        "addresses": moved.all.iter().map(addresses::Address::origin).collect::<Vec<_>>(),
+        "requires_confirmation": moved.confirm,
+        "consequences": moved.consequences_json(),
+        "next_steps": next_steps,
+    });
+    if moved.confirm {
+        let checked = sign_in_check::check(app, &moved.sign_in).await;
+        answer["sign_in_address_check"] = sign_in_check::to_json(checked);
+    }
+    Ok(answer)
 }
 
 pub async fn listing(app: &Arc<App>) -> Result<Value> {

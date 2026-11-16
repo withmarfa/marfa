@@ -788,6 +788,7 @@ CREATE TABLE IF NOT EXISTS oauth_device_codes (
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'spent')),
     owner_id TEXT REFERENCES owner (id) ON DELETE CASCADE,
     authenticated_at TEXT,
+    signed_in_after TEXT,
     interval_seconds INTEGER NOT NULL,
     last_polled_at TEXT,
     expires_at TEXT NOT NULL

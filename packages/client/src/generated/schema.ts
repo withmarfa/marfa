@@ -2195,7 +2195,7 @@ export interface paths {
         put?: never;
         /**
          * Check an address change
-         * @description Returns what changing the addresses would do and whether a write needs confirmation, and writes nothing. Requires `config.manage`.
+         * @description Returns what changing the addresses would do, whether a write needs confirmation and whether a new sign-in address answers as this instance, and writes nothing. Requires `config.manage`.
          */
         post: operations["checkAddressChange"];
         delete?: never;
@@ -7414,14 +7414,14 @@ export interface components {
             size_bytes: number;
         };
         /** @description An error response. */
-        InstanceChangedOrSignInAddressChangeUnconfirmedRefusal: {
+        ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "instance_changed" | "sign_in_address_change_unconfirmed";
+                code: "conflict" | "instance_changed" | "sign_in_address_change_unconfirmed" | "sign_in_address_check_failed";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -7454,6 +7454,16 @@ export interface components {
             consequences: components["schemas"]["AddressConsequence"][];
             /** @description What the owner would do after the change, in order. Empty unless the sign-in address moves. */
             next_steps: components["schemas"]["AddressNextStep"][];
+            /** @description Whether the new sign-in address answers as this instance, as a write of the change checks it. Present when `requires_confirmation` is `true`. */
+            sign_in_address_check?: {
+                /** @description `true` if the new sign-in address answered `GET /` as this instance. */
+                passed: boolean;
+                /**
+                 * @description Why the address failed: `unreachable`, nothing answered; `timed_out`, nothing answered within 5 seconds; `not_this_instance`, something else answered. Present when `passed` is `false`.
+                 * @enum {string}
+                 */
+                reason?: "unreachable" | "timed_out" | "not_this_instance";
+            };
         };
         /** @description The address change to check, written as `PATCH /config` writes it. */
         AddressCheckRequest: {
@@ -31327,6 +31337,11 @@ export interface operations {
                     client_id: string;
                     /** @description Space-separated scopes to ask for. Defaults to the scopes the app registered for. */
                     scope?: string;
+                    /**
+                     * @description Seconds since the owner last signed in that the approval accepts. An older browser session is asked to sign in again before it approves. `0` asks for a sign-in after this request.
+                     * @example 0
+                     */
+                    max_age?: string;
                 };
             };
         };
@@ -34221,6 +34236,8 @@ export interface operations {
                     sign_in_address?: string;
                     /** @description `true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing. */
                     confirm_sign_in_address_change?: boolean;
+                    /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
+                    skip_sign_in_address_check?: boolean;
                     /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
                     backup_path?: string;
                     /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
@@ -34310,7 +34327,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
+             * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
              *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
@@ -34337,8 +34354,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             * @description - `conflict`: the configuration changed while the new sign-in address was checked. Nothing is written; send the change again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
              *     - `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.
+             *     - `sign_in_address_check_failed`: the new sign-in address did not answer `GET /` as this instance. `details.reason` says why. Nothing is written.
              */
             409: {
                 headers: {
@@ -34348,7 +34367,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedOrSignInAddressChangeUnconfirmedRefusal"];
+                    "application/json": components["schemas"]["ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -34489,6 +34508,8 @@ export interface operations {
                     sign_in_address?: string | null;
                     /** @description `true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing. */
                     confirm_sign_in_address_change?: boolean;
+                    /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
+                    skip_sign_in_address_check?: boolean;
                     /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. `null` removes it, so the server's default applies. */
                     backup_path?: string | null;
                     /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies. */
@@ -34578,7 +34599,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
+             * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
              *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
@@ -34605,8 +34626,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             * @description - `conflict`: the configuration changed while the new sign-in address was checked. Nothing is written; send the change again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
              *     - `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.
+             *     - `sign_in_address_check_failed`: the new sign-in address did not answer `GET /` as this instance. `details.reason` says why. Nothing is written.
              */
             409: {
                 headers: {
@@ -34616,7 +34639,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedOrSignInAddressChangeUnconfirmedRefusal"];
+                    "application/json": components["schemas"]["ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -34925,7 +34948,10 @@ export interface operations {
                      *           "sentence": "Add a passkey at the new address. Passkeys made for the old address work again only if the sign-in address moves back.",
                      *           "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "sign_in_address_check": {
+                     *         "passed": true
+                     *       }
                      *     }
                      */
                     "application/json": components["schemas"]["AddressCheck"];

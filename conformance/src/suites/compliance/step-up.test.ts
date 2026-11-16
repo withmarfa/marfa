@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -717,6 +717,12 @@ describe("max_age at the authorization endpoint", () => {
 });
 
 describe("max_age at the device authorization endpoint", () => {
+  // Each test opens the device page up to eight times, and the owner may look
+  // up ten codes in fifteen minutes.
+  beforeEach(async () => {
+    await server.advanceClock(16 * MINUTE);
+  });
+
   it("sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check", async () => {
     const clientId = await deviceClient();
     // A grant that holds the scope already, so an older browser may approve
@@ -941,6 +947,19 @@ describe("the check that the new sign-in address answers as this instance", () =
           checked.body,
         );
       }
+      // A move is refused for the same reason the check names.
+      const app = await registerApp(server, SCOPE);
+      const { access } = await connect(app, await signIn());
+      const moved = await call(access, "PATCH", "/config", {
+        sign_in_address: away.closed,
+        confirm_sign_in_address_change: true,
+      });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(409);
+      expect(moved.body.error).toMatchObject({
+        code: "sign_in_address_check_failed",
+        details: { reason: "unreachable" },
+      });
+      expect(await issuerOrigin(server)).toBe(origin);
     } finally {
       expect(
         (await local("PATCH", "/config", { [SWITCH]: false })).status,

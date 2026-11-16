@@ -4,6 +4,7 @@ use super::signed_link;
 use super::{CODE_SECONDS, MS_PER_SECOND};
 use crate::app::App;
 use crate::app::auth::session::Session;
+use crate::app::clock::Stamp;
 use crate::app::refusal::Result;
 
 const LOGIN: &str = "login";
@@ -48,6 +49,11 @@ pub(super) fn signed_in_too_long_ago(
     let now = app.clock.now_ms();
     session
         .is_none_or(|session| !(0..=limit).contains(&now.saturating_sub(session.created_at.ms())))
+}
+
+/// A session dated after now is not recent.
+pub(super) fn began_since(session: &Session, after: Option<Stamp>, now: Stamp) -> bool {
+    after.is_none_or(|after| (after.ms()..=now.ms()).contains(&session.created_at.ms()))
 }
 
 pub(super) fn without_login(prompt: Option<&str>) -> Option<String> {

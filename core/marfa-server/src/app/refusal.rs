@@ -108,6 +108,7 @@ codes! {
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;
+    SignInAddressCheckFailed = "sign_in_address_check_failed", 409;
     SourceIdConflict = "source_id_conflict", 409;
     TrashPlanChanged = "trash_plan_changed", 409;
     TypeExists = "type_exists", 409;

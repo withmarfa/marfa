@@ -592,6 +592,8 @@ pub struct DeviceCode {
     pub status: DeviceStatus,
     pub owner_id: Option<String>,
     pub authenticated_at: Option<Stamp>,
+    /// From `max_age`: the approving browser's session must have begun at or after it.
+    pub signed_in_after: Option<Stamp>,
     pub interval_seconds: i64,
     pub last_polled_at: Option<Stamp>,
     pub expires_at: Stamp,
@@ -607,6 +609,7 @@ fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
         status: DeviceStatus::from_word(&row.get::<_, String>("status")?),
         owner_id: row.get("owner_id")?,
         authenticated_at: row.get("authenticated_at")?,
+        signed_in_after: row.get("signed_in_after")?,
         interval_seconds: row.get("interval_seconds")?,
         last_polled_at: row.get("last_polled_at")?,
         expires_at: row.get("expires_at")?,
@@ -616,8 +619,8 @@ fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
 pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
     tx.execute(
         "INSERT INTO oauth_device_codes (device_code, user_code, client_id, scopes, \
-         destinations, status, interval_seconds, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         destinations, status, signed_in_after, interval_seconds, expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             code.digest,
             code.user_code_digest,
@@ -625,6 +628,7 @@ pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
             scopes_text(&code.scopes),
             code.destinations,
             code.status.word(),
+            code.signed_in_after,
             code.interval_seconds,
             code.expires_at,
         ],

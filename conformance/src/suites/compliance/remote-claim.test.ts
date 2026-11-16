@@ -351,6 +351,7 @@ describe("the claim address", () => {
         body: {
           sign_in_address: "https://owner.example",
           confirm_sign_in_address_change: true,
+          skip_sign_in_address_check: true,
         },
       });
       expect(moved.status, JSON.stringify(moved.body)).toBe(200);
