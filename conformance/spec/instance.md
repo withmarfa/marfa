@@ -156,9 +156,9 @@ When every attention check completes without finding a concern, the server MUST 
 
 ### `instance/background-request-authority`
 
-When a request starts or wakes background work, the server MUST evaluate that work's authorization independently of the request's authority.
+When the key that started a housekeeping run, or that made a write that woke a webhook delivery, is revoked while the work is waiting or running, the server MUST finish the work as though the key stood.
 
-**Reason:** housekeeping runs as server-owned work, even if the requesting key is revoked after the run is admitted; a bulk-action job rechecks its stored credential under `items/job-credential-lost` and can still record its failure.
+**Reason:** housekeeping and webhook deliveries are the server's own work, not the requester's. A bulk-action job is the exception: it rechecks its stored credential under `items/job-credential-lost` and can still record its failure.
 
 **Tests:** `compliance/background-authority.test.ts › background jobs after the requesting key is revoked`, `compliance/background-authority-webhooks.test.ts › sends the delivery a write woke after the key that made the write is revoked`.
 
@@ -1140,7 +1140,7 @@ When the server starts on an image of its data directory taken at any one instan
 
 ### `instance/stop-writes-into-file`
 
-When the server is stopped on `SIGTERM` or `SIGINT` while no other process holds a read transaction on the database, the server MUST leave every write it acknowledged in the database file itself, so that the file holds them without the log beside it.
+When the server is stopped on `SIGTERM` or `SIGINT` while no other process is reading the database file, the server MUST leave the database file holding every write it acknowledged, with none of them left in a file beside it.
 
 **Reason:** an owner who stops the instance and copies the data directory must not lose the writes the log still held.
 
@@ -1148,9 +1148,9 @@ When the server is stopped on `SIGTERM` or `SIGINT` while no other process holds
 
 ### `instance/stop-reader-keeps-writes`
 
-While another process holds a read transaction on the database, when the server is stopped on `SIGTERM` or `SIGINT`, the server MUST keep every write it acknowledged, in the file or in the log beside it, so that the next start answers it.
+While another process is reading the database file, when the server is stopped on `SIGTERM` or `SIGINT`, the server MUST keep every write it acknowledged in the database files, so that the next start answers it.
 
-**Reason:** a process that holds a read transaction, such as a replicator, can keep the log from being moved into the file, and the next start applies the log as it always does.
+**Reason:** a process that reads the database file, such as a replicator, can keep the stop from moving every write into the file itself, and the next start finds the rest beside it.
 
 **Tests:** `compliance/database-file.test.ts › leaves the writes in the log while another connection holds a snapshot, and the next start answers every one of them`.
 
@@ -1189,14 +1189,6 @@ When the server starts on a claimed database, under a `MARFA_KEY_SALT` other tha
 When the server starts on a claimed database, under a `MARFA_KEY_SALT` other than the one its keys were minted under, and a request that carries no credential sends `POST /keys`, the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another MARFA_KEY_SALT`.
-
-### `instance/claim-survives-missing-credentials`
-
-When owner account rows or ordinary key rows disappear from a claimed database, the server MUST retain the completed claim after restart.
-
-**Reason:** Missing credentials do not establish authority to replace the owner.
-
-**Tests:** `compliance/database-file.test.ts › does not reopen setup after deleting %s rows`.
 
 ### `instance/claim-missing-owner-recovery`
 
@@ -1244,7 +1236,7 @@ When no component is `down`, the server MUST answer `GET /health` with `200`, wh
 
 ### `instance/health-database-down`
 
-If the database refuses a read of the table of keys, then the server MUST answer the `database` component of `GET /health` as `down`.
+If the database refuses a read, then the server MUST answer the `database` component of `GET /health` as `down`.
 
 **Tests:** `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`.
 
@@ -1322,13 +1314,7 @@ When `GET /health` is called while an attempt of the `database_write` probe's wr
 
 **Reason:** the operation takes no credential, so what a caller can make the server do through it stays small.
 
-**Tests:** `compliance/health.test.ts › answers the calls within ten seconds of its last write with that write's outcome, and writes again after`.
-
-### `instance/health-write-once`
-
-The server MUST commit the write of the `database_write` probe at most once in ten seconds, however many callers ask.
-
-**Tests:** `compliance/health.test.ts › commits its write once in ten seconds however many callers ask`.
+**Tests:** `compliance/health.test.ts › answers the calls within ten seconds of its last write with that write's outcome, and writes again after`, `› commits its write once in ten seconds however many callers ask`.
 
 ### `instance/health-write-again`
 
@@ -1352,9 +1338,9 @@ When a request without local authority or `instance.read` sends `GET /health`, t
 
 ### `instance/health-error-key-table`
 
-While the database cannot read the table of keys, the server MUST NOT answer an `error` on any component of `GET /health` to a request bearing an ordinary key that cannot be verified.
+While the database refuses reads, the server MUST NOT answer an `error` on any component of `GET /health` to a request that bears a bearer credential.
 
-**Reason:** a bearer credential that the server cannot verify is not given the text.
+**Reason:** the server cannot verify a bearer credential while the database refuses reads, and an unverified credential is not given the text.
 
 **Tests:** `compliance/health.test.ts › is withheld from bearer credentials while the database cannot look keys up`.
 
@@ -1392,31 +1378,31 @@ If the server starts on a database that records a schema version later than its 
 
 ### `instance/upgrade-refuses-schema`
 
-If the server starts on a database in which a table, an index or a trigger the server declares differs from the server's definition of it, in which a table the server declares carries an index or a trigger the server does not declare, or in which a table the server declares is missing while another of its own tables holds a row, then the server MUST refuse to start.
+If the server starts on a database file whose structure is not the one the schema version it records declares, because something the server declares differs, something the server does not declare is added, or something is missing while the database already holds data, then the server MUST refuse to start.
 
-**Reason:** an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. A database that lacks tables and holds no row is completed under `instance/unfinished-completed`.
+**Reason:** a database of another structure fails with a driver error after the file has been changed, or fails nowhere until a request meets the difference, so the refusal is made before either. A database that lacks parts of what a first start makes and holds no data is completed under `instance/unfinished-completed`.
 
 **Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`.
 
 ### `instance/upgrade-migrates-older`
 
-When the server starts on a database at an earlier schema version of its own, whose schema is the one that version declares, the server MUST apply every later migration in one transaction before it takes a request.
+When the server starts on a database an earlier schema version of its own wrote, whose structure is the one that version declares, the server MUST upgrade it before it takes a request, and answer it from then on as at the version it now has.
 
 **Tests:** waiting on #2802.
 
 ### `instance/upgrade-keeps-references`
 
-If the migrations the server applies to a database would leave a row that refers to a row that does not exist, then the server MUST refuse to start and leave the database at the schema version and with the rows it found.
+If upgrading a database would leave something it holds referring to something it does not hold, then the server MUST refuse to start and leave the database file byte for byte as it found it.
 
-**Reason:** a migration that rebuilds a table turns off SQLite's checks of the references between rows while it runs, so the references are checked once, before the upgrade commits.
+**Reason:** the references between what a database holds are checked once, before the upgrade is kept, because an upgrade can rebuild what holds them.
 
 **Tests:** waiting on #2802.
 
 ### `instance/upgrade-keeps-rows`
 
-When the server upgrades a database, the server MUST keep every row of every table a migration rebuilds, and every row that refers to one.
+When the server upgrades a database, the server MUST answer every read a client could make before the upgrade with the same data after it.
 
-**Reason:** a rebuilt table is dropped and made again, and dropping it while SQLite checks references deletes every row that refers to it with a cascading delete.
+**Reason:** an upgrade that rebuilds what holds the data can lose what refers to it along the way.
 
 **Tests:** waiting on #2802.
 
@@ -1842,19 +1828,19 @@ When the server answers with an HTML page, the server MUST carry in the page the
 
 ## An unfinished database
 
-A database can hold some of the server's tables and no rows, such as one a start stopped partway through making its tables leaves.
+A database file can be left unfinished when a first start stops partway: it holds part of what a first start makes, differs from the server's structure in nothing else, and holds no data.
 
 ### `instance/unfinished-completed`
 
-When the server starts on a database that holds some of its own tables, lacks the rest, differs from its schema in nothing else, and none of the tables it creates holds a row, the server MUST create the tables it lacks and start.
+When the server starts on an unfinished database file, the server MUST finish it and start.
 
-**Reason:** nothing is written to the server's own tables before the last is made, so none holds a row, and refusing the database would send an owner looking for another build when no other build wrote it.
+**Reason:** nothing is written before a first start has finished, so an unfinished file holds no data, and refusing it would send an owner looking for another build when no other build wrote it.
 
 **Tests:** `compliance/database-file.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
 
 ### `instance/unfinished-ends-fresh`
 
-When the server completes an unfinished database, the server MUST leave it holding what a new database holds, unclaimed, with no key, no item and an `instance_id` of its own.
+When the server finishes an unfinished database file, the server MUST then answer as a new instance: unclaimed, with no key, no item and an `instance_id` of its own.
 
 **Tests:** `compliance/database-file.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
 
@@ -2240,7 +2226,7 @@ Where `MARFA_TEST_CLOCK_OFFSET_MS` is set, the server MUST read the time as that
 
 ### `instance/test-clock-sign-in`
 
-While `MARFA_TEST_HOOKS` is true, the server MUST stamp the stored sign-in and credential times with the time the server reads.
+While `MARFA_TEST_HOOKS` is true, the server MUST answer a sign-in's `created_at` as the time the server reads.
 
 **Reason:** A session, a sign-in token and an authorization link carry a time the server later compares with its clock. If one kept the system's time, moving the clock would put the two out of step.
 

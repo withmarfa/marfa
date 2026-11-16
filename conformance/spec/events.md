@@ -1720,7 +1720,7 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 ### `events/schedule-fails-visibly`
 
-If the log's position for scheduling webhooks is ahead of the log, missing, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST report an unhandled fault and queue no delivery for any event past the position.
+If the server cannot account for which events it has already queued webhook deliveries for, because that point is ahead of the event log, missing, behind the oldest event the log retains, or crosses an event the log lacks, then the server MUST report an unhandled fault and queue no delivery for any event written after that point.
 
 **Reason:** a gap the server cannot account for would otherwise skip events that fan out without saying so. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking, as `errors/client-closed-request` describes for a request. Once the position can be accounted for, the server queues what lies past it.
 

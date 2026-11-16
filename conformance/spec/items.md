@@ -1428,7 +1428,7 @@ When the server answers `POST /items/trash-preview`, the server MUST answer unde
 
 ### `items/trash-several`
 
-When `POST /items/trash` names items, the server MUST move every named item, and every item trashing them together would take (`items/trash-cascade` and `edges/parts-trash-together`), to the bin in one transaction.
+When `POST /items/trash` names items, the server MUST move every named item, and every item trashing them together would take (`items/trash-cascade` and `edges/parts-trash-together`), to the bin.
 
 **Reason:** two named items can share an item beneath them, and trashing them one at a time would change what the second takes once the first has gone.
 

@@ -1134,7 +1134,7 @@ If the key sending `POST /types/{id}/move` lacks write on the type or on `to` in
 
 ### `types/move-settings`
 
-When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
+When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
 
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 

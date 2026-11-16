@@ -1674,7 +1674,7 @@ When an endpoint constraint evolution succeeds, the server MUST preserve every s
 
 ### `edges/types-evolve-atomic`
 
-When the server admits an endpoint constraint evolution, the server MUST check the current definition and the caller's registration reach in the same writer transaction that updates the definition.
+When two `POST /edge-types` requests with `evolve_constraints: true` each add a different endpoint constraint to the same stored definition at once, the server MUST answer one `200` and the other `409 conflict`, and hold the additions of the one answered `200`.
 
 **Reason:** a request prepared from an earlier definition cannot remove another admitted request's additions.
 

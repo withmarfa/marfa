@@ -234,7 +234,7 @@ When `marfa_delete` is called without `confirm`, the server MUST NOT move any it
 
 ### `mcp/delete-confirmed`
 
-When `marfa_delete` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the items the key can read that it would trash and their versions are unchanged, the server MUST move the named items, and what their trash takes, to the trash in one transaction.
+When `marfa_delete` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the items the key can read that it would trash and their versions are unchanged, the server MUST move the named items, and what their trash takes, to the trash.
 
 **Tests:** `compliance/mcp.test.ts › trashes the items with the confirmation the preview gave`.
 
