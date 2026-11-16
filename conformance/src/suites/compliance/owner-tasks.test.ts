@@ -471,11 +471,20 @@ describe("owner tasks", () => {
             last_backup?: string;
           }
         ).last_backup;
+      const listed = async () => {
+        const answer = await local("GET", "/backups");
+        expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+        return (answer.body.data as { name: string }[]).map(
+          (backup) => backup.name,
+        );
+      };
       const witness = await mint({ permissions: ["backups.manage"] });
       const put = await call(witness.key, "POST", "/backups");
       expect(put.status).toBe(200);
-      const recorded = await lastBackup();
-      expect(recorded).toBe((put.body.backup as { name: string }).name);
+      const first = (put.body.backup as { name: string }).name;
+      expect(await lastBackup()).toBe(first);
+      const before = await listed();
+      expect(before).toContain(first);
 
       const revoked = await mint({ permissions: ["backups.manage"] });
       await server.setFault("hold:backup:put");
@@ -485,7 +494,14 @@ describe("owner tasks", () => {
       await server.clearFault("hold:backup:put");
       const answer = await pending;
       expect(answer.status, JSON.stringify(answer.body)).toBe(401);
-      expect(await lastBackup()).toBe(recorded);
+      expect(await lastBackup()).toBe(first);
+      expect(await listed()).toEqual(before);
+
+      const next = await call(witness.key, "POST", "/backups");
+      expect(next.status, JSON.stringify(next.body)).toBe(200);
+      const second = (next.body.backup as { name: string }).name;
+      expect(await lastBackup()).toBe(second);
+      expect(await listed()).toEqual([second, ...before]);
     },
   );
 
