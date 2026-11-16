@@ -144,7 +144,7 @@ async function replicateToZero(owner: MarfaClient): Promise<number> {
       outcome: string;
       result: { copied?: number; remaining?: number };
     };
-    if (data.outcome !== "ok") {
+    if (data.outcome !== "succeeded") {
       throw new Error(`blob-replicate ended ${JSON.stringify(data)}`);
     }
     copied += data.result.copied ?? 0;
