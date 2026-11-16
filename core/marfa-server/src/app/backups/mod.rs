@@ -206,6 +206,28 @@ fn files_waiting(tx: &Transaction<'_>, store: &str, name: &str) -> Result<Option
     Ok(Some(waiting.max(0) as u64))
 }
 
+/// Marks backup `name` refused, so no listing confirms it and the next run deletes its manifest.
+fn refuse(tx: &Transaction<'_>, store: &str, name: &str) -> Result<()> {
+    tx.prepare_cached("UPDATE backups SET refused = 1 WHERE store_id = ?1 AND name = ?2")?
+        .execute(params![store, name])?;
+    Ok(())
+}
+
+/// The backups of `store` refused after they were put.
+fn refused(tx: &Transaction<'_>, store: &str) -> Result<HashSet<String>> {
+    Ok(tx
+        .prepare_cached("SELECT name FROM backups WHERE store_id = ?1 AND refused = 1")?
+        .query_map([store], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Forgets refused backup `name` once its manifest is deleted, with the holds only it covered.
+fn forget_refused(tx: &Transaction<'_>, store: &str, name: &str) -> Result<()> {
+    tx.prepare_cached("DELETE FROM backups WHERE store_id = ?1 AND name = ?2 AND refused = 1")?
+        .execute(params![store, name])?;
+    drop_uncovered(tx, store)
+}
+
 /// The files the newest backup of `store` named; only one backup run at a time changes them.
 fn open_files(tx: &Transaction<'_>, store: &str) -> Result<HashSet<String>> {
     Ok(tx
@@ -343,6 +365,7 @@ struct Recorded {
     seq: i64,
     name: String,
     confirmed: bool,
+    refused: bool,
     omissions: i64,
 }
 
@@ -350,7 +373,10 @@ struct Recorded {
 /// is earlier: no thinning yet to come forgets less than one judging by the instant answered.
 fn last_thinned(tx: &Transaction<'_>, store: &str, now: Stamp) -> Result<Option<Stamp>> {
     let newest: Option<String> = tx
-        .prepare_cached("SELECT name FROM backups WHERE store_id = ?1 ORDER BY seq DESC LIMIT 1")?
+        .prepare_cached(
+            "SELECT name FROM backups WHERE store_id = ?1 AND refused = 0 \
+             ORDER BY seq DESC LIMIT 1",
+        )?
         .query_row([store], |row| row.get(0))
         .optional()?;
     Ok(newest
@@ -368,17 +394,24 @@ fn reconcile(
     at: Option<Stamp>,
 ) -> Result<()> {
     let recorded: Vec<Recorded> = tx
-        .prepare_cached("SELECT seq, name, confirmed, omissions FROM backups WHERE store_id = ?1")?
+        .prepare_cached(
+            "SELECT seq, name, confirmed, refused, omissions FROM backups WHERE store_id = ?1",
+        )?
         .query_map([store], |row| {
             Ok(Recorded {
                 seq: row.get(0)?,
                 name: row.get(1)?,
                 confirmed: row.get(2)?,
-                omissions: row.get(3)?,
+                refused: row.get(3)?,
+                omissions: row.get(4)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
-    let newest = recorded.iter().map(|backup| backup.seq).max();
+    let newest = recorded
+        .iter()
+        .filter(|backup| !backup.refused)
+        .map(|backup| backup.seq)
+        .max();
     let mut shown =
         tx.prepare_cached("UPDATE backups SET confirmed = 1, omissions = 0 WHERE seq = ?1")?;
     let mut omitted = tx.prepare_cached("UPDATE backups SET omissions = ?2 WHERE seq = ?1")?;
@@ -388,6 +421,8 @@ fn reconcile(
         let seq = backup.seq;
         if deleted.contains(&backup.name) {
             forget.execute([seq])?;
+        } else if backup.refused {
+            continue;
         } else if listed.contains(&backup.name) {
             if !backup.confirmed || backup.omissions > 0 {
                 shown.execute([seq])?;
@@ -712,16 +747,20 @@ async fn blocking<T: Send + 'static>(
 async fn settle_attempts(app: &Arc<App>, destination: &Destination) -> Result<()> {
     let store = destination.id().to_string();
     let looked = store.clone();
-    let pending = app
+    let (pending, withdrawn) = app
         .db
         .read(move |tx| {
-            Ok(tx
+            let pending = tx
                 .prepare_cached("SELECT 1 FROM backups WHERE store_id = ?1 AND confirmed = 0")?
-                .exists([&looked])?)
+                .exists([&looked])?;
+            Ok((pending, refused(tx, &looked)?))
         })
         .await?;
     if !pending {
         return Ok(());
+    }
+    for name in withdrawn {
+        withdraw(app, destination, &name).await;
     }
     let listed: HashSet<String> = destination
         .list_in(Area::Backups, &app.instance_id)
@@ -1579,12 +1618,63 @@ fn counted(count: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Whether the caller who asked for a backup still holds `backups.manage`, as committed now.
-async fn stands(app: &App, asker: &Caller) -> Result<()> {
+/// Why the caller who asked for a backup no longer holds `backups.manage` in `tx`, if they do not.
+fn gone(tx: &Transaction<'_>, asker: &Caller, at: &str) -> Result<Option<Refusal>> {
+    match asker
+        .current(tx, at)
+        .and_then(|now| now.require(Permission::BackupsManage))
+    {
+        Ok(()) => Ok(None),
+        Err(refusal) if matches!(refusal.code, Code::Unauthorized | Code::Forbidden) => {
+            Ok(Some(refusal))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// As `gone`, on the state committed now.
+async fn gone_now(app: &App, asker: &Caller) -> Result<Option<Refusal>> {
     let (asker, at) = (asker.clone(), app.clock.stamp());
-    app.db
-        .read(move |tx| asker.current(tx, &at)?.require(Permission::BackupsManage))
+    app.db.read(move |tx| gone(tx, &asker, &at)).await
+}
+
+/// Deletes the manifest of refused backup `name`, then forgets it; a failure leaves both to the
+/// next run.
+async fn withdraw(app: &Arc<App>, destination: &Destination, name: &str) {
+    if let Err(error) = destination
+        .delete(Area::Backups, &app.instance_id, name)
         .await
+    {
+        tracing::error!(%error, backup = %name, "A refused backup's manifest was not deleted");
+        return;
+    }
+    let (store, forgotten) = (destination.id(), name.to_string());
+    if let Err(error) = app
+        .db
+        .write(Write::own(), move |tx| {
+            forget_refused(tx, &store, &forgotten)
+        })
+        .await
+    {
+        tracing::error!(error = %error.message, backup = %name, "A refused backup was not forgotten");
+    }
+}
+
+/// Marks backup `name`, whose manifest may yet land, refused if its asker no longer stands.
+async fn refuse_if_gone(app: &App, store: String, name: String, asker: Caller) {
+    let at = app.clock.stamp();
+    let marked = app
+        .db
+        .write(Write::own(), move |tx| {
+            if gone(tx, &asker, &at)?.is_some() {
+                refuse(tx, &store, &name)?;
+            }
+            Ok(())
+        })
+        .await;
+    if let Err(error) = marked {
+        tracing::error!(error = %error.message, "A refused backup was not marked refused");
+    }
 }
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
@@ -1619,19 +1709,26 @@ async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<
             let store = destination.id();
             let (recorded, without) = (name.clone(), lost_message(&name, &lost));
             let (standing, now) = (asker.clone(), app.clock.stamp());
-            let waiting = app
+            let kept = app
                 .db
                 .write(Write::own(), move |tx| {
-                    if let Some(asker) = standing {
-                        asker
-                            .current(tx, &now)?
-                            .require(Permission::BackupsManage)?;
+                    if let Some(asker) = &standing
+                        && let Some(refusal) = gone(tx, asker, &now)?
+                    {
+                        refuse(tx, &store, &recorded)?;
+                        return Ok(Err(refusal));
                     }
                     record_put(tx, &store, changes, &recorded, at, without.as_deref())?;
-                    files_waiting(tx, &store, &recorded)
+                    Ok(Ok(files_waiting(tx, &store, &recorded)?))
                 })
-                .await?
-                .unwrap_or(0);
+                .await?;
+            let waiting = match kept {
+                Ok(waiting) => waiting.unwrap_or(0),
+                Err(refusal) => {
+                    withdraw(app, &destination, &name).await;
+                    return Err(refusal);
+                }
+            };
             let (removed, unremoved) = thin(app, &destination, at).await;
             let parts_removed = prune(app, &destination, &manifest, &mut stock).await;
             stock.rehash_due(app, &destination).await;
@@ -1649,23 +1746,27 @@ async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<
             })
         }
         Err(refused) => {
-            if let Some(asker) = &asker
-                && let Err(gone) = stands(app, asker).await
-            {
-                return Err(gone);
+            let gone = match &asker {
+                Some(asker) => gone_now(app, asker).await.ok().flatten(),
+                None => None,
+            };
+            // The asker's own refusal is not a failed run; any other failure is, even for them.
+            let theirs =
+                gone.is_some() && matches!(refused.code, Code::Unauthorized | Code::Forbidden);
+            if !theirs {
+                let (message, at) = (refused.message.to_string(), app.clock.instant());
+                let in_store = refused.code == Code::BlobStoreUnavailable;
+                if let Err(error) = app
+                    .db
+                    .write(Write::own(), move |tx| {
+                        record_failure(tx, &message, at, in_store)
+                    })
+                    .await
+                {
+                    tracing::error!(%error, "A failed backup was not recorded");
+                }
             }
-            let (message, at) = (refused.message.to_string(), app.clock.instant());
-            let in_store = refused.code == Code::BlobStoreUnavailable;
-            if let Err(error) = app
-                .db
-                .write(Write::own(), move |tx| {
-                    record_failure(tx, &message, at, in_store)
-                })
-                .await
-            {
-                tracing::error!(%error, "A failed backup was not recorded");
-            }
-            Err(refused)
+            Err(gone.unwrap_or(refused))
         }
     }
 }
@@ -1722,8 +1823,10 @@ async fn put(app: &Arc<App>, destination: &Destination, asker: Option<&Caller>) 
     let mut taken = app.backup_archive(&destination.id(), reuse).await?;
     app.faults.hold(HOLD_BACKUP_READ, None).await;
     let read_ms = began.elapsed().as_millis() as u64;
-    if let Some(asker) = asker {
-        stands(app, asker).await?;
+    if let Some(asker) = asker
+        && let Some(refusal) = gone_now(app, asker).await?
+    {
+        return Err(refusal);
     }
     let (at, changes) = (taken.created_at, taken.changes);
     let name = name_of(at);
@@ -1838,13 +1941,16 @@ async fn put(app: &Arc<App>, destination: &Destination, asker: Option<&Caller>) 
     }
     let length = written.len() as u64;
     let body = stream::once(async move { Ok(Bytes::from(written)) }).boxed();
-    destination
+    if let Err(error) = destination
         .put(app, Area::Backups, &name, length, body)
         .await
-        .map_err(|error| {
-            app.backups.unsettled().insert(name.clone());
-            destination.unreachable("writing the backup's manifest", &error)
-        })?;
+    {
+        app.backups.unsettled().insert(name.clone());
+        if let Some(asker) = asker {
+            refuse_if_gone(app, destination.id(), name, asker.clone()).await;
+        }
+        return Err(destination.unreachable("writing the backup's manifest", &error));
+    }
     let size = manifest.size(length);
     tracing::info!(
         backup = %name,
@@ -2157,27 +2263,33 @@ async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize
             return (0, 0);
         }
     };
-    let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
-    if let Err(error) = found::survey(app, destination, &names, Some(taken)).await {
-        tracing::warn!(%error, "The backups this instance did not record were not read");
-    }
     let looked = destination.id().to_string();
-    let put: HashSet<String> = match app
+    let (put, withdrawn): (HashSet<String>, HashSet<String>) = match app
         .db
         .read(move |tx| {
-            Ok(tx
+            let put = tx
                 .prepare_cached("SELECT name FROM backups WHERE store_id = ?1")?
                 .query_map([&looked], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?)
+                .collect::<rusqlite::Result<_>>()?;
+            Ok((put, refused(tx, &looked)?))
         })
         .await
     {
-        Ok(put) => put,
+        Ok(read) => read,
         Err(error) => {
             tracing::warn!(%error, "The recorded backups were not read for thinning");
             return (0, 0);
         }
     };
+    // A refused backup's manifest is not a backup thinning keeps or judges by.
+    let names: Vec<String> = listed
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| !withdrawn.contains(name))
+        .collect();
+    if let Err(error) = found::survey(app, destination, &names, Some(taken)).await {
+        tracing::warn!(%error, "The backups this instance did not record were not read");
+    }
     let mut deleted = HashSet::new();
     let (mut removed, mut unremoved) = (0, 0);
     for name in doomed(&names, taken)
@@ -2463,6 +2575,36 @@ mod tests {
             0
         );
         assert_eq!(held_of(&tx, &[&a]), ['a']);
+    }
+
+    #[test]
+    fn a_refused_backup_no_listing_confirms_holds_its_files_until_it_is_forgotten() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a, &b]);
+        let (kept, late) = (named(0), named(1));
+
+        hold(&tx, BUCKET, &kept, &files(&[&a])).unwrap();
+        record_put(&tx, BUCKET, 0, &kept, at(0), None).unwrap();
+        hold(&tx, BUCKET, &late, &files(&[&b])).unwrap();
+        refuse(&tx, BUCKET, &late).unwrap();
+        for hour in 1..=OMISSIONS {
+            settled(&tx, &[&kept, &late], &[], at(hour + 100 * 24));
+        }
+        assert_eq!(
+            count(&tx, "SELECT COUNT(*) FROM backups WHERE confirmed = 1"),
+            1,
+            "a listing confirmed a refused backup"
+        );
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a', 'b']);
+        assert_eq!(refused(&tx, BUCKET).unwrap(), names(&[&late]));
+        assert_eq!(last_thinned(&tx, BUCKET, at(5)).unwrap(), Some(at(0)));
+
+        forget_refused(&tx, BUCKET, &kept).unwrap();
+        forget_refused(&tx, BUCKET, &late).unwrap();
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
     }
 
     #[test]

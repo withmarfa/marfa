@@ -506,6 +506,51 @@ describe("owner tasks", () => {
   );
 
   it(
+    "counts the failed run when the backup folder fails a backup whose key was revoked while it uploads",
+    { retry: 0 },
+    async () => {
+      // retry: 0 because a failed try leaves the hold set.
+      const backups = async () =>
+        (await local("GET", "/health")).body.backups as {
+          failures: number;
+          last_error: string | null;
+        };
+      const listed = async () =>
+        ((await local("GET", "/backups")).body.data as { name: string }[]).map(
+          (backup) => backup.name,
+        );
+      const witness = await mint({ permissions: ["backups.manage"] });
+      expect((await call(witness.key, "POST", "/backups")).status).toBe(200);
+      expect(await backups()).toMatchObject({ failures: 0, last_error: null });
+      const before = await listed();
+
+      const revoked = await mint({ permissions: ["backups.manage"] });
+      await server.setFault("hold:backup:put");
+      const pending = call(revoked.key, "POST", "/backups");
+      try {
+        await server.waitForHold("hold:backup:put");
+        expect((await local("DELETE", `/keys/${revoked.id}`)).status).toBe(200);
+        await server.setFault("fail:backup-folder-write");
+      } finally {
+        await server.clearFault("hold:backup:put");
+      }
+      const answer = await pending;
+      await server.clearFault("fail:backup-folder-write");
+      expect(answer.status, JSON.stringify(answer.body)).toBe(401);
+      const failed = await backups();
+      expect(failed.failures).toBe(1);
+      expect(failed.last_error).toContain("backup folder");
+      expect(await listed()).toEqual(before);
+
+      const next = await call(witness.key, "POST", "/backups");
+      expect(next.status, JSON.stringify(next.body)).toBe(200);
+      const name = (next.body.backup as { name: string }).name;
+      expect(await listed()).toEqual([name, ...before]);
+      expect(await backups()).toMatchObject({ failures: 0 });
+    },
+  );
+
+  it(
     "starts no housekeeping run for a key revoked before the run is claimed",
     { retry: 0 },
     async () => {

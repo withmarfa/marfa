@@ -1227,7 +1227,7 @@ CREATE TABLE IF NOT EXISTS backups (
     store_id TEXT NOT NULL,
     name TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
-    -- Put for a caller whose access ended before it was recorded; never confirmed.
+    -- Its asker's access ended before it was recorded: never confirmed, its manifest deleted.
     refused INTEGER NOT NULL DEFAULT 0 CHECK (refused IN (0, 1)),
     -- How many listings in a row have omitted it while a later backup was recorded.
     omissions INTEGER NOT NULL DEFAULT 0 CHECK (omissions >= 0),

@@ -966,9 +966,29 @@ If the key that sent `POST /backups` is revoked before the backup sends its firs
 
 ### `instance/backup-asker-gone-late`
 
-If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST answer `401 unauthorized` and leave `backups.last_backup` of `GET /health` as it was.
+If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/owner-tasks.test.ts › records no backup for a key revoked while its backup uploads`.
+
+### `instance/backup-asker-gone-late-unlisted`
+
+If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST NOT list that backup in `GET /backups`, either when it answers or after a later backup run.
+
+**Reason:** a backup put for a caller whose access ended is not one the owner can count on or restore from, so the server deletes what it wrote of it rather than keep it.
+
+**Tests:** `compliance/owner-tasks.test.ts › records no backup for a key revoked while its backup uploads`.
+
+### `instance/backup-asker-gone-late-unrecorded`
+
+If the key that sent `POST /backups` is revoked while the backup is put, then the server MUST leave `backups.last_backup` of `GET /health` as it was.
+
+**Tests:** `compliance/owner-tasks.test.ts › records no backup for a key revoked while its backup uploads`.
+
+### `instance/backup-asker-gone-store-failed`
+
+If the key that sent `POST /backups` is revoked while the backup is put and the object store or the backup folder does not take the backup, then the server MUST count the failed run in `backups.failures` of `GET /health`.
+
+**Tests:** `compliance/owner-tasks.test.ts › counts the failed run when the backup folder fails a backup whose key was revoked while it uploads`.
 
 ### `instance/backup-one-at-a-time`
 
