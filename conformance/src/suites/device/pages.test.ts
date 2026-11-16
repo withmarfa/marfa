@@ -86,6 +86,9 @@ class Door {
   readonly items = new Map<string, Record<string, unknown>>();
   readonly edges = new Map<string, WireEdgeOptions>();
   readonly tags = new Map<string, string[]>();
+  /** The items a delete of an item takes into the bin with it, through a
+   *  cascading edge (`items/trash-cascade`). */
+  readonly cascades = new Map<string, string[]>();
   /** An answer standing in for a whole page's, where it gives one. */
   page?: (request: RecordedRequest) => Answer | undefined;
   /** A result standing in for one page entry's, where it gives one. */
@@ -157,7 +160,9 @@ class Door {
       return writeAnswers.metadata(id, this.tags.get(id));
     });
     server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
-      this.items.delete(request.pathname.split("/").at(-1) ?? "");
+      const id = request.pathname.split("/").at(-1) ?? "";
+      for (const gone of [id, ...(this.cascades.get(id) ?? [])])
+        this.items.delete(gone);
       return writeAnswers.ok();
     });
     server.answer("POST", "/edges", (request) => {
@@ -1025,6 +1030,42 @@ describe("creates in pages", () => {
     // The witness: a link sent after the delete is refused, so a link
     // created at all was sent before it.
     const deletes = door.requests("DELETE", `/items/${HELD}`);
+    expect(deletes).toHaveLength(1);
+    const edgeRequests = [
+      ...door.requests("POST", "/edges"),
+      ...door.requests("POST", "/edges/bulk"),
+    ];
+    expect(edgeRequests.length).toBeGreaterThan(0);
+    for (const request of edgeRequests) {
+      expect(request.seq).toBeLessThan(deletes[0]?.seq ?? 0);
+    }
+    expect(door.edges.size).toBe(110);
+    const verdicts = new Map(
+      drained.verdicts.map((entry) => [entry.id, entry.verdict]),
+    );
+    expect(edges.every((edge) => verdicts.get(edge.id) === "accepted")).toBe(
+      true,
+    );
+    expect(verdicts.get(removal.id)).toBe("accepted");
+  });
+
+  it("sends the delete of an item no link names after every link, as the delete takes an end into the bin with it", async () => {
+    const parent = "01a00000-0000-7000-8000-0000000000bb";
+    const made = await start("pages-edges-before-a-cascading-delete", [parent]);
+    harness = made.harness;
+    const { door } = made;
+    door.cascades.set(parent, [HELD]);
+    const { edges } = await queue(harness, 110, {
+      edges: true,
+      alone: (at) => at % 2 === 1,
+    });
+    const removal = value(await harness.device.deleteItem(parent));
+    const drained = await drain(harness);
+
+    expect(drained.undelivered, JSON.stringify(drained)).toBe(0);
+    // The witness: a link sent after the delete is refused, as the end is
+    // in the bin by then, so a link created at all was sent before it.
+    const deletes = door.requests("DELETE", `/items/${parent}`);
     expect(deletes).toHaveLength(1);
     const edgeRequests = [
       ...door.requests("POST", "/edges"),

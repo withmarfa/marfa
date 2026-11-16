@@ -27,7 +27,7 @@ use super::{
 };
 use crate::error::CoreError;
 use crate::http::{Answer, BULK_GET_LIMIT, Http, INSTANCE_CHANGED, REQUEST_LIMIT};
-use crate::model::{QueuedWrite, Subject, Verdict, WriteKind};
+use crate::model::{ItemState, QueuedWrite, Subject, Verdict, WriteKind};
 use crate::wire::{WireEdge, WireItemWithMetadata};
 use crate::{Core, Result};
 use crate::{reach, store, telemetry};
@@ -306,12 +306,16 @@ struct Found<'a> {
 /// The writes an unanswered write behind them acts on, so that none of them
 /// goes later than that write: those it follows or depends on, and a create
 /// of an edge that a later write names (the edge, or either end), other than
-/// another edge's create between other ends.
+/// another edge's create between other ends. A later delete, or move into the
+/// bin, of any item leads every create of an edge queued before it: the server
+/// takes into the bin each item a cascading edge reaches from that item, and
+/// refuses an edge to one there.
 fn led<'a>(standing: &Standing<'a, '_>) -> HashSet<&'a str> {
     let mut led = HashSet::new();
     let mut items: HashSet<&str> = HashSet::new();
     let mut edges: HashSet<&str> = HashSet::new();
     let mut links: HashSet<(&str, &str, &str)> = HashSet::new();
+    let mut bins = false;
     for row in standing.all.iter().rev() {
         let unanswered = standing
             .answers
@@ -332,10 +336,11 @@ fn led<'a>(standing: &Standing<'a, '_>) -> HashSet<&'a str> {
             .get("edge_type")
             .and_then(serde_json::Value::as_str);
         if row.kind == WriteKind::CreateEdge {
-            let named = [from, to]
-                .into_iter()
-                .flatten()
-                .any(|id| items.contains(id))
+            let named = bins
+                || [from, to]
+                    .into_iter()
+                    .flatten()
+                    .any(|id| items.contains(id))
                 || row.edge_id.as_deref().is_some_and(|id| edges.contains(id))
                 || matches!((from, to, edge_type), (Some(from), Some(to), Some(kind))
                     if links.contains(&(from, to, kind)));
@@ -346,6 +351,10 @@ fn led<'a>(standing: &Standing<'a, '_>) -> HashSet<&'a str> {
                 links.insert((from, to, kind));
             }
         } else {
+            bins |= row.kind == WriteKind::DeleteItem
+                || (row.kind == WriteKind::TransitionItem
+                    && row.body.get("state").and_then(serde_json::Value::as_str)
+                        == Some(ItemState::Trashed.as_str()));
             let body_end = |key: &str| row.body.get(key).and_then(serde_json::Value::as_str);
             // An edge write holds its edge's ends, which every sibling link
             // shares: it names them only where it moves one.
@@ -1726,6 +1735,78 @@ mod tests {
         assert!(answered.deferrable.is_empty());
     }
 
+    /// The edges deferred for the pass after, and the edges the later writes lead,
+    /// where a note that is no end of any edge is then removed by `remove`.
+    fn deferred_after(remove: impl FnOnce(&Core, &str)) -> (usize, usize) {
+        let server = Scripted::start();
+        let (_dir, core, edges) = linking(&server, FLOOR + 5);
+        core.create_item(&Draft {
+            r#type: "core.note".into(),
+            properties: serde_json::json!({ "title": "Parent", "body": "text" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ..Default::default()
+        })
+        .unwrap();
+        let parent = core
+            .queue()
+            .unwrap()
+            .last()
+            .and_then(|row| row.item_id.clone())
+            .unwrap();
+        remove(&core, &parent);
+        let all = store::queued_writes(&core.conn().unwrap()).unwrap();
+        let mut answers = all
+            .iter()
+            .map(|row| (row.id.clone(), row.verdict))
+            .collect();
+        let rows = all.iter().map(|row| (row.id.as_str(), row)).collect();
+        let landing = store::pending_landings(&core.conn().unwrap()).unwrap();
+        let standing = Standing {
+            all: &all,
+            rows: &rows,
+            answers: &mut answers,
+            landing: &landing,
+        };
+        let led = led(&standing);
+        let found = candidates(&core, Lane::Edges, &standing, Some(&led)).unwrap();
+        let leading = edges
+            .iter()
+            .filter(|row| led.contains(row.id.as_str()))
+            .count();
+        (found.deferrable.len(), leading)
+    }
+
+    /// A delete, or a transition into the bin, of an item that no edge names
+    /// can still take an end of an edge into the bin, through a cascading
+    /// edge, so that an edge create queued ahead of it must reach the server
+    /// before it: none of them is deferred.
+    #[test]
+    fn a_later_delete_or_trash_of_any_item_leads_every_edge_create_before_it() {
+        // The witness: a later write that neither deletes nor trashes leads none.
+        let edges = FLOOR + 5;
+        assert_eq!(deferred_after(|_, _| {}), (edges, 0));
+        assert_eq!(
+            deferred_after(|core, parent| {
+                core.transition_item(parent, ItemState::Archived).unwrap();
+            }),
+            (edges, 0)
+        );
+        assert_eq!(
+            deferred_after(|core, parent| {
+                core.delete_item(parent).unwrap();
+            }),
+            (0, edges)
+        );
+        assert_eq!(
+            deferred_after(|core, parent| {
+                core.transition_item(parent, ItemState::Trashed).unwrap();
+            }),
+            (0, edges)
+        );
+    }
+
     /// What `hold_back` does with `total` edges from one host, `ready` of
     /// them with both ends answered and an edit queued behind each of those
     /// in `edited`: how many it holds for the pass after, and how many it
@@ -1841,8 +1922,9 @@ mod tests {
         core.update_item(&ends[1], &edit).unwrap();
         assert_eq!(led_after(&core), vec![false, true, false]);
 
+        // A delete leads every edge queued before it, whichever item it names.
         core.delete_item(&ends[2]).unwrap();
-        assert_eq!(led_after(&core), vec![false, true, true]);
+        assert_eq!(led_after(&core), vec![true, true, true]);
     }
 
     /// A read of the three edges from one host, whose first page of edges
