@@ -3128,9 +3128,7 @@ describe("embedded files", () => {
         db.prepare(
           "UPDATE folder_files SET links = '[]', embeds = NULL, edge_lines = ? WHERE path = 'Note.md'",
         ).run(
-          JSON.stringify([
-            { edge_type: "attached-to", end: "to", other: pic },
-          ]),
+          JSON.stringify([{ edge_type: "attached-to", end: "to", other: pic }]),
         );
         db.prepare(
           "DELETE FROM meta WHERE key = 'folder_embeds_references'",
