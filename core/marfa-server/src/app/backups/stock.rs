@@ -113,8 +113,8 @@ pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<()> {
 }
 
 /// Records that the part `sha256` in the destination, listed or read with `tag`, does not hold
-/// the bytes its name gives. A failure to record it is logged: the restore or backup that found
-/// it says so either way.
+/// the bytes its name gives or cannot be read. A failure to record it is logged: the restore or
+/// backup that found it says so either way.
 pub(super) async fn found_damaged(
     app: &App,
     destination: &Destination,

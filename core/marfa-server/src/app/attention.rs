@@ -131,10 +131,13 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
             _ => "object store",
         };
         let parts = match damaged {
-            1 => format!("1 part in the {place} does not hold the bytes its name gives"),
-            count => {
-                format!("{count} parts in the {place} do not hold the bytes their names give")
-            }
+            1 => format!(
+                "1 part in the {place} does not hold the bytes its name gives or cannot be read"
+            ),
+            count => format!(
+                "{count} parts in the {place} do not hold the bytes their names give or cannot \
+                 be read"
+            ),
         };
         found.push(concern(
             "parts_damaged",

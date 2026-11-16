@@ -1632,7 +1632,7 @@
                   "null"
                 ],
                 "minimum": 0,
-                "description": "How many parts a check found not holding the bytes their names give and the server has not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set."
+                "description": "How many parts a check found not holding the bytes their names give, or in a backup folder could not read, and the server has not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set."
               }
             },
             "required": [
