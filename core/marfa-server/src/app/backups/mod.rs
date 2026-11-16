@@ -764,23 +764,39 @@ async fn settle_attempts(app: &Arc<App>, destination: &Destination) -> Result<()
     if !pending {
         return Ok(());
     }
-    for name in withdrawn {
-        withdraw(app, destination, &name).await;
+    for name in &withdrawn {
+        withdraw(app, destination, name).await;
     }
-    let listed: HashSet<String> = destination
+    let listed = destination
         .list_in(Area::Backups, &app.instance_id)
         .await
-        .map_err(|error| destination.unreachable("checking the last backup", &error))?
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
+        .map_err(|error| destination.unreachable("checking the last backup", &error))?;
     let now = app.clock.instant();
     app.db
         .write(Write::own(), move |tx| {
-            let at = last_thinned(tx, &store, now)?;
-            reconcile(tx, &store, &listed, &HashSet::new(), at)
+            settle(
+                tx,
+                &store,
+                listed.into_iter().map(|(name, _)| name),
+                &withdrawn,
+                now,
+            )
         })
         .await
+}
+
+/// Settles the backups of `store` by its listing at `now`, as if no manifest in `withdrawn` were
+/// there.
+fn settle(
+    tx: &Transaction<'_>,
+    store: &str,
+    listed: impl Iterator<Item = String>,
+    withdrawn: &HashSet<String>,
+    now: Stamp,
+) -> Result<()> {
+    let listed: HashSet<String> = listed.filter(|name| !withdrawn.contains(name)).collect();
+    let at = last_thinned(tx, store, now)?;
+    reconcile(tx, store, &listed, &HashSet::new(), at)
 }
 
 /// Of `hashes`, those a backup of `store` that this instance keeps or found may name.
@@ -988,9 +1004,13 @@ impl App {
             .list_all()
             .await
             .map_err(|error| destination.unreachable("listing the backups", &error))?;
+        let withdrawn = self.refused_in(&destination).await?;
         let mut backups: Vec<(Stamp, String, String, u64)> = found
             .into_iter()
             .filter_map(|(parts, size)| match parts.as_slice() {
+                [instance, name] if instance == &self.instance_id && withdrawn.contains(name) => {
+                    None
+                }
                 [instance, name] if instance_of(instance) => {
                     Some((parse(name)?, instance.clone(), name.clone(), size))
                 }
@@ -1010,6 +1030,13 @@ impl App {
             .buffered(MANIFEST_READS)
             .collect()
             .await)
+    }
+
+    /// The names of this instance's backups in `destination` that were refused after they were
+    /// put, whose manifests may still be there.
+    async fn refused_in(&self, destination: &Destination) -> Result<HashSet<String>> {
+        let store = destination.id();
+        self.db.read(move |tx| refused(tx, &store)).await
     }
 
     /// Puts a backup now, whether or not anything has changed since the last.
@@ -1043,6 +1070,9 @@ impl App {
         }
         // No backup prunes parts while they are read.
         let reading = self.backups.running.lock().await;
+        if instance == self.instance_id && self.refused_in(&destination).await?.contains(name) {
+            return Err(destination.not_found(instance, name));
+        }
         let restoring = Restoring::begin(&self.backups.restoring);
         let mut received = self.receive_backup(&destination, instance, name).await?;
         drop(restoring);
@@ -1712,15 +1742,18 @@ async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<
         return Err(refusal);
     }
     let store = destination.id();
-    let (held, newest) = app
+    let (held, newest, withdrawn) = app
         .db
-        .read(move |tx| Ok((state(tx)?, newest_backup(tx, &store)?)))
+        .read(move |tx| Ok((state(tx)?, newest_backup(tx, &store)?, refused(tx, &store)?)))
         .await?;
     let current = held.backed_up == Some(held.changes)
         && held.backed_up_version == Some(archive::VERSION as i64)
         && newest.is_some()
         && newest == held.last_backup;
     if !forced && held.failures == 0 && current {
+        for name in &withdrawn {
+            withdraw(app, &destination, name).await;
+        }
         return Ok(Outcome::Unchanged);
     }
     bring_replication_forward(app).await;
@@ -3098,6 +3131,237 @@ mod tests {
 
         put(app.clone()).await;
         assert_eq!(omissions().await.unwrap(), None);
+    }
+
+    #[test]
+    fn a_refused_manifest_still_listed_does_not_count_toward_forgetting_a_backup() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a, &b]);
+        let (kept, late, newest) = (named(0), named(1), named(48));
+        hold(&tx, BUCKET, &kept, &files(&[&a])).unwrap();
+        record_put(&tx, BUCKET, 0, &kept, at(0), None).unwrap();
+        hold(&tx, BUCKET, &late, &files(&[&a])).unwrap();
+        refuse(&tx, BUCKET, &late).unwrap();
+        hold(&tx, BUCKET, &newest, &files(&[&b])).unwrap();
+        record_put(&tx, BUCKET, 0, &newest, at(48), None).unwrap();
+        settled(&tx, &[&kept, &late, &newest], &[], at(48));
+        let listing = || [late.clone(), newest.clone()].into_iter();
+        let withdrawn = names(&[&late]);
+
+        for _ in 0..OMISSIONS {
+            settle(&tx, BUCKET, listing(), &withdrawn, at(72)).unwrap();
+        }
+        let recorded = |tx: &Transaction<'_>| {
+            count(
+                tx,
+                &format!("SELECT COUNT(*) FROM backups WHERE name = '{kept}'"),
+            )
+        };
+        assert_eq!(recorded(&tx), 1, "the refused manifest counted");
+
+        settle(&tx, BUCKET, listing(), &HashSet::new(), at(72)).unwrap();
+        assert_eq!(recorded(&tx), 0, "a later backup that day does not thin it");
+    }
+
+    /// A server whose backups go to a folder, on a paused clock.
+    #[cfg(feature = "test-hooks")]
+    async fn backing_up_to_a_folder() -> (tempfile::TempDir, tempfile::TempDir, Arc<App>) {
+        let (dir, folder) = (
+            tempfile::TempDir::new().unwrap(),
+            tempfile::TempDir::new().unwrap(),
+        );
+        let (database, blobs, socket) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("blobs"),
+            dir.path().join("s.sock"),
+        );
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_BACKUP_PATH", folder.path().to_str().unwrap()),
+            ("MARFA_BACKUP_INTERVAL_SECONDS", "31536000"),
+        ];
+        let settings =
+            crate::settings::Settings::read(crate::settings::Environment::from_pairs(&pairs))
+                .unwrap();
+        let app = App::start(settings).await.unwrap();
+        app.clock.pause(true);
+        (dir, folder, app)
+    }
+
+    /// Puts a backup, then leaves a later one refused with its manifest in the folder, as a
+    /// refused backup whose delete failed is left. Answers the kept name and the refused one.
+    #[cfg(feature = "test-hooks")]
+    async fn refused_but_not_deleted(app: &Arc<App>, folder: &std::path::Path) -> (String, String) {
+        let kept = match back_up(app, true, None).await.unwrap() {
+            Outcome::Put { name, .. } => name,
+            _ => panic!("no backup was put"),
+        };
+        app.clock.advance(HOUR_MS as u64).unwrap();
+        let late = name_of(app.clock.instant());
+        let own = folder.join(Area::Backups.name()).join(&app.instance_id);
+        std::fs::copy(own.join(&kept), own.join(&late)).unwrap();
+        let (store, refused_name) = (app.destination().unwrap().id(), late.clone());
+        app.db
+            .write(Write::own(), move |tx| {
+                begin(tx, &store, &refused_name)?;
+                refuse(tx, &store, &refused_name)
+            })
+            .await
+            .unwrap();
+        let read = app
+            .destination()
+            .unwrap()
+            .manifest(&app.instance_id, &late, app.blob_read_idle())
+            .await
+            .unwrap();
+        assert!(
+            matches!(read, Some((_, Ok(_)))),
+            "the refused manifest does not read"
+        );
+        (kept, late)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[tokio::test]
+    async fn a_refused_backup_whose_delete_failed_is_not_listed() {
+        let (_dir, folder, app) = backing_up_to_a_folder().await;
+        let (kept, late) = refused_but_not_deleted(&app, folder.path()).await;
+
+        let listed: Vec<String> = app
+            .list_backups(&Caller::local())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|backup| backup["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(listed, [kept], "{late} was listed");
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[tokio::test]
+    async fn a_refused_backup_whose_delete_failed_cannot_be_restored() {
+        let (_dir, folder, app) = backing_up_to_a_folder().await;
+        let (_, late) = refused_but_not_deleted(&app, folder.path()).await;
+
+        let refused = app
+            .restore_backup(
+                &Caller::local(),
+                app.clock.stamp(),
+                &app.instance_id.clone(),
+                &late,
+                false,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code, Code::BackupNotFound, "{}", refused.message);
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[tokio::test]
+    async fn a_refused_backup_whose_delete_failed_is_gone_after_a_scheduled_run_with_no_changes() {
+        let (_dir, folder, app) = backing_up_to_a_folder().await;
+        let (kept, late) = refused_but_not_deleted(&app, folder.path()).await;
+
+        let outcome = back_up(&app, false, None).await.unwrap();
+        assert!(
+            matches!(outcome, Outcome::Unchanged),
+            "{}",
+            outcome.to_json()
+        );
+        let destination = app.destination().unwrap();
+        let listed: Vec<String> = destination
+            .list_in(Area::Backups, &app.instance_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(listed, [kept], "{late} is still in the folder");
+        let store = destination.id();
+        let refused_now = app.db.read(move |tx| refused(tx, &store)).await.unwrap();
+        assert!(refused_now.is_empty(), "{refused_now:?}");
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[tokio::test]
+    async fn a_refused_manifest_still_listed_does_not_count_toward_forgetting_a_found_backup() {
+        let (_dir, folder, app) = backing_up_to_a_folder().await;
+        let put = |app: Arc<App>| async move {
+            match back_up(&app, true, None).await.unwrap() {
+                Outcome::Put { name, taken, .. } => (name, taken),
+                _ => panic!("no backup was put"),
+            }
+        };
+        let (kept, first) = put(app.clone()).await;
+        app.clock.advance(48 * HOUR_MS as u64).unwrap();
+        let (newest, second) = put(app.clone()).await;
+        let (found, late) = (
+            name_of(first.plus_ms(1).unwrap()),
+            name_of(first.plus_ms(2).unwrap()),
+        );
+        let own = folder
+            .path()
+            .join(Area::Backups.name())
+            .join(&app.instance_id);
+        std::fs::copy(own.join(&kept), own.join(&late)).unwrap();
+        let store = app.destination().unwrap().id();
+        let (looked, named, refused_name) = (store.clone(), found.clone(), late.clone());
+        app.db
+            .write(Write::own(), move |tx| {
+                tx.execute(
+                    "INSERT INTO found_backups (store_id, name, files_read, omissions) \
+                     VALUES (?1, ?2, 1, ?3)",
+                    params![looked, named, OMISSIONS - 1],
+                )?;
+                begin(tx, &looked, &refused_name)?;
+                refuse(tx, &looked, &refused_name)
+            })
+            .await
+            .unwrap();
+        let omissions = || {
+            let (store, found) = (store.clone(), found.clone());
+            app.db.read(move |tx| {
+                Ok(tx
+                    .prepare_cached(
+                        "SELECT omissions FROM found_backups WHERE store_id = ?1 AND name = ?2",
+                    )?
+                    .query_row(params![store, found], |row| row.get::<_, i64>(0))
+                    .optional()?)
+            })
+        };
+
+        found::survey_folder(&app).await.unwrap();
+        assert_eq!(
+            omissions().await.unwrap(),
+            Some(OMISSIONS),
+            "the refused manifest counted"
+        );
+
+        let (looked, named) = (store.clone(), late.clone());
+        app.db
+            .write(Write::own(), move |tx| {
+                tx.execute(
+                    "UPDATE backups SET refused = 0 WHERE store_id = ?1 AND name = ?2",
+                    params![looked, named],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let listing = [newest, late.clone(), kept.clone()];
+        found::survey(&app, &app.destination().unwrap(), &listing, Some(second))
+            .await
+            .unwrap();
+        assert_eq!(
+            omissions().await.unwrap(),
+            None,
+            "a later backup that day does not thin it"
+        );
     }
 
     #[test]
