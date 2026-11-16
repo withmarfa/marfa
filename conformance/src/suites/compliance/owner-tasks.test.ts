@@ -26,7 +26,7 @@ let minted = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("owner-tasks", {
-    S3_BUCKET: "",
+    MARFA_OBJECT_STORE_BUCKET: "",
     MARFA_BACKUP_PATH: backups,
     MARFA_BACKUP_INTERVAL_SECONDS: "0",
   });

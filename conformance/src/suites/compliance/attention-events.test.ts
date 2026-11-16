@@ -27,7 +27,7 @@ const backups = mkdtempSync(join(tmpdir(), "marfa-attention-events-"));
 
 beforeAll(async () => {
   server = await bootFreshServer("attention-events", {
-    S3_BUCKET: "",
+    MARFA_OBJECT_STORE_BUCKET: "",
     MARFA_BACKUP_PATH: backups,
   });
   writer = (await mint({ type_permissions: { "core.note": "write" } })).key;
