@@ -198,15 +198,15 @@ test("reads every edge of one type the copy holds in one call", async (t) => {
   const core = await opened(t);
   await core.hydrateWith(["core.note"], SliceTier.Library, ["parent-of"]);
   core.createEdge({
-    sourceId: "note",
-    targetId: "outer",
+    fromId: "note",
+    toId: "outer",
     edgeType: "parent-of",
     properties: {},
   });
   assert.deepEqual(
     core
       .edgesOfType("parent-of")
-      .map((edge) => [edge.id === "beneath", edge.sourceId]),
+      .map((edge) => [edge.id === "beneath", edge.fromId]),
     [
       [true, "outer"],
       [false, "note"],

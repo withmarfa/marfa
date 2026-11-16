@@ -505,8 +505,8 @@ pub struct ItemType {
 /// One end of an edge.
 #[napi(string_enum = "snake_case")]
 pub enum EdgeEnd {
-    Source,
-    Target,
+    From,
+    To,
 }
 
 /// Which end of an edge has the file that writes it in a folder, or neither.
@@ -3117,8 +3117,8 @@ impl MarfaCore {
     #[napi]
     pub fn check_edge_move(&self, env: Env, id: String, moves: EdgeMove) -> Result<()> {
         let end = match moves.end {
-            EdgeEnd::Source => marfa_core::End::From,
-            EdgeEnd::Target => marfa_core::End::To,
+            EdgeEnd::From => marfa_core::End::From,
+            EdgeEnd::To => marfa_core::End::To,
         };
         self.inner
             .check_edge_move(&id, end, &moves.to)
@@ -3150,11 +3150,11 @@ impl MarfaCore {
         let (from_id, to_id) = match edit.moves {
             None => (None, None),
             Some(EdgeMove {
-                end: EdgeEnd::Source,
+                end: EdgeEnd::From,
                 to,
             }) => (Some(to), None),
             Some(EdgeMove {
-                end: EdgeEnd::Target,
+                end: EdgeEnd::To,
                 to,
             }) => (None, Some(to)),
         };

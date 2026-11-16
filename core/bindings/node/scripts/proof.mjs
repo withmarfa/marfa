@@ -74,8 +74,8 @@ if (phase === "hydrate") {
   });
   core.addTag(firstId, "favorite");
   core.createEdge({
-    sourceId: firstId,
-    targetId: second.itemId,
+    fromId: firstId,
+    toId: second.itemId,
     edgeType: "references",
   });
   const third = core.createItem({

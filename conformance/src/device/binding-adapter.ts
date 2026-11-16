@@ -81,7 +81,7 @@ export interface BindingQueuedWrite {
   id: string;
   kind: string;
   itemId?: string;
-  targetId?: string;
+  toId?: string;
   edgeId?: string;
   idempotencyKey: string;
   dependsOn: string[];

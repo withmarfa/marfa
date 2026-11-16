@@ -145,7 +145,7 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.equal(mentor.reverseName, "mentored-by");
   assert.equal(mentor.label, "Mentees");
   assert.equal(mentor.reverseLabel, "Mentors");
-  assert.equal(mentor.writtenFrom, EdgeWrittenFrom.Target);
+  assert.equal(mentor.writtenFrom, EdgeWrittenFrom.To);
   assert.deepEqual(
     core.edgeTypes().map((type) => type.id),
     ["mentor-of"],

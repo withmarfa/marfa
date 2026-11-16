@@ -110,7 +110,7 @@ test("answers a conflicted copy's original, and the copies made from an item", a
 
   assert.equal(core.get("original"), null);
   assert.deepEqual(
-    core.edgesTo("original").map((edge) => edge.sourceId),
+    core.edgesTo("original").map((edge) => edge.fromId),
     ["copy", "linked"],
   );
   assert.equal(core.originalOfConflictedCopy("copy"), "original");
