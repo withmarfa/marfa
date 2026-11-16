@@ -80,7 +80,7 @@ An install keeps its runtime. To change it, export the data and restore it into 
 - `marfa server status` shows whether the server runs, its release and address, and whether it has an owner. When it isn't running, it shows its last log.
 - `marfa server start` starts the server, and `marfa server stop` stops it, keeping the service, the data and the settings.
 - `marfa server run` runs the server in the foreground. The service runs this.
-- `marfa server upgrade` moves the server to a newer release. See [Upgrade](#upgrade).
+- `marfa server upgrade` moves the server to another release. Read [Upgrade](#upgrade) first: before Marfa 0.1 a newer release needs a new instance.
 - `marfa server uninstall` removes the service. See [Remove the server](#remove-the-server).
 
 Each takes `--dir` when the install isn't in the default folder, and `marfa server <command> --help` lists its options.
@@ -111,28 +111,12 @@ Recovery changes the owner's password and ends browser sessions. Keys and approv
 
 ## Upgrade
 
-Before you upgrade, note the release you run (`marfa server status` shows it) and keep an export or a backup from it.
+Before Marfa 0.1, a release cannot read the database of another release, or an export or backup that another release wrote. A newer release is therefore a new instance, not an upgrade of the one you run: don't move a running install to another release.
 
-- **Native:** install the newer release of both programs, for example with `scripts/install.sh`, then run `marfa server upgrade`. The command restarts the service on the installed programs, and refuses a release older than the one the install records.
-- **Docker:** run `marfa server upgrade --release <version>`. Without `--release`, it moves to the release of your `marfa`.
+- Pin the release. Keep a Docker install on the release it was made with, and keep a native install on the programs it was made with. Don't use `latest`, and don't let anything update the image.
+- To try a newer release, make a new install in another `--dir` with its own port. Your running instance and its data stay as they are.
 
-When the new release's database schema is newer than the database's, the server updates the database in place at its first start, in one transaction, so a failure or a stop partway leaves it as it was. A release with the same schema changes nothing. Before it changes a database that holds data, the server copies it to `marfa.db.before-upgrade` beside it (in `data/` for a native install, in `/data` in the container), and its log records the copy's path. The copy replaces the one from any earlier upgrade, so it takes you back one upgrade only; delete it once you won't go back.
-
-The copy needs as much free disk as the data in the database, plus the disk reserve (the `disk_reserve_bytes` setting, 128 MiB unless you set another). If less is free, or the copy can't be written, the server changes nothing and exits with status 1, and the service manager or Docker starts it again, to the same refusal, until there's room.
-
-The server also refuses a database that a newer release wrote, and one whose schema matches none it knows. It changes nothing, says in its log why and what to do, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. A refused update leaves the database as the earlier release left it, so to go back:
-
-- **Native:** run `marfa server stop`, install the earlier release again, then run `marfa server start`.
-- **Docker:** set `MARFA_RELEASE` back to the earlier release in the install folder's `.env`, then run `marfa server start`.
-
-To go back after an update that succeeded, use the copy:
-
-1. Run `marfa server stop`.
-1. Delete `marfa.db-wal` and `marfa.db-shm`. SQLite applies a log it finds beside a database file, even one that belongs to a newer state.
-1. Replace `marfa.db` with `marfa.db.before-upgrade`.
-1. Return to the earlier release as for a refused update, above.
-
-Writes made since the update aren't in the copy. In a Docker install the files are in the volume `<name>-data`, and the image has no shell: make the change from another container that mounts the volume, and leave the files owned by user 65532.
+A release that meets another release's database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server start`. [Railway](railway.md#choose-a-release) pins its image the same way.
 
 ## Remove the server
 
