@@ -490,7 +490,27 @@ async fn confirmed(
     .await
 }
 
-/// Ends the owner's other browser sessions too, and answers this browser's new device mark.
+/// What a password change leaves: the owner, and the credentials as the change committed them.
+pub struct Changed {
+    owner_id: String,
+    credentials: i64,
+    known: Option<Known>,
+}
+
+impl Changed {
+    /// This browser's new device mark.
+    pub fn device(&self, app: &App) -> Result<String> {
+        let holder = Holder {
+            owner_id: &self.owner_id,
+            credentials: self.credentials,
+        };
+        app.devices
+            .mark(holder, self.known.as_ref(), app.clock.now_ms())
+    }
+}
+
+/// Ends the owner's browser sessions but the caller's own, if the caller is one, and every device
+/// cookie. `mark` is the device cookie the browser sent, if any.
 pub async fn change_password(
     app: &Arc<App>,
     caller: &Caller,
@@ -498,8 +518,7 @@ pub async fn change_password(
     new_password: String,
     mark: Option<&str>,
     visit: Visit,
-) -> Result<String> {
-    let session = caller.session().ok_or_else(unauthorized)?.clone();
+) -> Result<Changed> {
     password::check_new(&new_password, "new_password")?;
     let current = current(app).await?.ok_or_else(unauthorized)?;
     let known = known(app, Some(&current), mark);
@@ -507,7 +526,6 @@ pub async fn change_password(
     let attempt = replace(
         app,
         caller,
-        session,
         &email,
         current_password,
         new_password,
@@ -516,11 +534,11 @@ pub async fn change_password(
     match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok((owner_id, credentials)) => {
             limits::clear_for_new_password(&app.limiter);
-            let holder = Holder {
-                owner_id: &owner_id,
+            Ok(Changed {
+                owner_id,
                 credentials,
-            };
-            app.devices.mark(holder, known.as_ref(), app.clock.now_ms())
+                known,
+            })
         }
         Err(wait) => {
             let refusal = too_many_passwords(wait);
@@ -536,7 +554,6 @@ fn current_not_right() -> Refusal {
 async fn replace(
     app: &Arc<App>,
     caller: &Caller,
-    session: session::Session,
     email: &str,
     current_password: String,
     new_password: String,
@@ -545,7 +562,7 @@ async fn replace(
     let actor = Some(caller);
     match prove(app, email, current_password, false, Queue::Owner).await {
         Ok(Some(proven)) => {
-            let changed = replaced(app, caller, session, proven, new_password, visit.clone());
+            let changed = replaced(app, caller, proven, new_password, visit.clone());
             let outcome = match changed.await {
                 Ok(Some(changed)) => Ok(changed),
                 Ok(None) => refused(app, actor, email, INVALID, &visit, current_not_right()).await,
@@ -569,13 +586,14 @@ async fn replace(
 async fn replaced(
     app: &App,
     caller: &Caller,
-    session: session::Session,
     proven: Proven,
     new_password: String,
     visit: Visit,
 ) -> Result<Option<(String, i64)>> {
     let hash = app.passwords.hash(new_password).await?;
+    let keeping = caller.session().map(|session| session.id.clone());
     app.write(caller, PASSWORD_CHANGED, move |unit| {
+        unit.caller.require_passkeys()?;
         let tx = unit.tx();
         if !proven.stands(tx, &unit.at)? {
             return Ok(None);
@@ -588,7 +606,7 @@ async fn replaced(
             &unit.caller,
             &visit,
             owner_id,
-            Some(&session.id),
+            keeping.as_deref(),
         )?;
         note(
             tx,
