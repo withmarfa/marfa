@@ -1272,7 +1272,7 @@ mod tests {
                 r#"{"error":{"code":"not_found","message":"Not found"}}"#,
             ),
         ]);
-        let endpoint = format!("{}/auth/oauth2/token", door.url);
+        let endpoint = format!("{}/oauth/token", door.url);
         let origin = door.url.clone();
         let _keychain = credentials::hold(&origin);
         credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
