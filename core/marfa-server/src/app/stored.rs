@@ -211,8 +211,19 @@ pub fn report_unknown(rows: &[(String, String)]) {
     }
 }
 
-/// A line naming either address is a damaged archive; one naming an unknown setting gives no text.
-pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
+/// What an archive line says of one setting.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Archived {
+    /// A setting this server lacks, which the restore leaves out.
+    Unknown,
+    Value(String),
+    /// A secret that was set, which an archive names without its value.
+    Secret,
+}
+
+/// A line naming a setting kept by the machine is a damaged archive, as is one that carries a
+/// secret's value.
+pub fn archived(line: &serde_json::Value) -> Result<(String, Archived)> {
     let key = line
         .get("key")
         .and_then(serde_json::Value::as_str)
@@ -220,14 +231,16 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
     let refused =
         |why: String| Refusal::validation(format!("The archive carries a setting {why}."));
     let Some(entry) = registry::entry(key) else {
-        return Ok((key.to_string(), None));
+        return Ok((key.to_string(), Archived::Unknown));
     };
-    if [
-        registry::ADDRESSES.entry.key,
-        registry::SIGN_IN_ADDRESS.entry.key,
-    ]
-    .contains(&entry.key)
-    {
+    if entry.is_secret() {
+        if line.get("value").is_some() || line.get("secret") != Some(&serde_json::Value::Bool(true))
+        {
+            return Err(refused(format!("{key} that is a secret, with its value")));
+        }
+        return Ok((key.to_string(), Archived::Secret));
+    }
+    if !entry.carried() {
         return Err(refused(format!("this instance does not take: {key}")));
     }
     let value = line
@@ -237,8 +250,12 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
         .row_text_of_json(value)
         .and_then(|text| entry.row_text(&text))
         .map_err(|rule| refused(format!("{key} whose value {rule}")))?;
-    Ok((key.to_string(), Some(text)))
+    Ok((key.to_string(), Archived::Value(text)))
 }
+
+/// The text a secret's row holds when an archive said it was set and this instance had none: it
+/// never opens, so the secret is listed as one to set again.
+const SET_AGAIN: &str = "set-again";
 
 /// What a restore did with the archive's settings.
 #[derive(Debug, Default)]
@@ -247,12 +264,41 @@ pub struct Restored {
     pub skipped: usize,
     /// Reporting switches stored on that send nothing, because this server names no receiver.
     pub without_receiver: Vec<&'static str>,
+    /// Secrets the archive's instance had set that this instance cannot read.
+    pub secrets_to_set: Vec<String>,
+}
+
+impl Restored {
+    /// Whether the restore changed the settings table.
+    pub fn changed(&self) -> bool {
+        self.added > 0 || !self.secrets_to_set.is_empty()
+    }
 }
 
 /// Stores each archived setting the instance has none stored for, judged together with the
 /// instance's own as `/config` judges them, and counts how many it stored and how many it left.
-pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -> Result<Restored> {
+/// Each archived secret this instance holds no readable value for is listed to be set again.
+pub fn restore(
+    tx: &Transaction<'_>,
+    app: &App,
+    archived: &[(String, String)],
+    secrets: &[String],
+) -> Result<Restored> {
     let before = rows(tx)?;
+    let readable = app.settings.candidate(&before);
+    let mut secrets_to_set = Vec::new();
+    for key in secrets {
+        let Some(entry) = registry::entry(key) else {
+            continue;
+        };
+        if readable.secret_set(entry) {
+            continue;
+        }
+        if !before.iter().any(|(held, _)| held == key) {
+            write_row(tx, key, SET_AGAIN)?;
+        }
+        secrets_to_set.push(key.clone());
+    }
     let added: Vec<&(String, String)> = archived
         .iter()
         .filter(|(key, _)| !before.iter().any(|(held, _)| held == key))
@@ -281,6 +327,7 @@ pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -
         added: added.len(),
         skipped: archived.len() - added.len(),
         without_receiver,
+        secrets_to_set,
     })
 }
 
@@ -406,20 +453,34 @@ mod tests {
     }
 
     #[test]
-    fn an_archived_line_for_a_setting_the_server_lacks_gives_no_text_and_one_for_an_address_is_refused()
+    fn an_archived_line_for_a_setting_the_server_lacks_gives_no_text_and_one_kept_by_the_machine_is_refused()
      {
         let line = |key: &str| serde_json::json!({ "key": key, "value": 3_600_000 });
         assert_eq!(
             archived(&line("audit_cleanup_interval_ms")).unwrap(),
-            ("audit_cleanup_interval_ms".to_string(), None)
+            ("audit_cleanup_interval_ms".to_string(), Archived::Unknown)
         );
         assert_eq!(
             archived(&serde_json::json!({ "key": "trash_retention_days", "value": 7 })).unwrap(),
-            ("trash_retention_days".to_string(), Some("7".to_string()))
+            ("trash_retention_days".to_string(), Archived::Value("7".to_string()))
         );
-        for address in ["addresses", "sign_in_address"] {
-            assert!(archived(&line(address)).is_err(), "{address}");
+        for machine in [
+            "addresses",
+            "sign_in_address",
+            "backup_path",
+            "object_store_bucket",
+            "webhook_allow_private_addresses",
+        ] {
+            assert!(archived(&line(machine)).is_err(), "{machine}");
         }
+        assert_eq!(
+            archived(&serde_json::json!({ "key": "heartbeat_url", "secret": true })).unwrap(),
+            ("heartbeat_url".to_string(), Archived::Secret)
+        );
+        assert!(
+            archived(&serde_json::json!({ "key": "heartbeat_url", "value": "https://a.example" }))
+                .is_err()
+        );
         assert!(archived(&serde_json::json!({ "key": "trash_retention_days" })).is_err());
     }
 

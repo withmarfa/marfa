@@ -12,10 +12,10 @@ import { uploadReferenced } from "../../utils/blobs.js";
 let client: MarfaClient;
 let ctx: TestContext;
 
-/** One of the `S3_*` values the run booted the object store with. A run
+/** One of the `MARFA_OBJECT_STORE_*` values the run booted the object store with. A run
  *  without them is a run booted without `pnpm garage:up`, which is a
  *  failure here rather than a skip. */
-function objectStoreEnv(name: "S3_BUCKET"): string {
+function objectStoreEnv(name: "MARFA_OBJECT_STORE_BUCKET"): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(
@@ -56,10 +56,10 @@ describe("the stores an instance keeps bytes in", () => {
     }
     // The locator is the bucket and the prefix the referee booted the store
     // with, and nothing else: an exact match is what leaves no room for a
-    // credential in it. The run's own `S3_*` values name them.
+    // credential in it. The run's own `MARFA_OBJECT_STORE_*` values name them.
     const s3 = stores.data.data.find((store) => store.kind === "s3");
-    const prefix = process.env.S3_PREFIX ?? "marfa";
-    expect(s3?.locator).toBe(`s3://${objectStoreEnv("S3_BUCKET")}/${prefix}`);
+    const prefix = process.env.MARFA_OBJECT_STORE_PREFIX ?? "marfa";
+    expect(s3?.locator).toBe(`s3://${objectStoreEnv("MARFA_OBJECT_STORE_BUCKET")}/${prefix}`);
   });
 
   it("lists each store with the time it was first attached", async () => {

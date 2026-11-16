@@ -153,12 +153,7 @@ describe("marfa server status", () => {
     const got = await status();
     expect(got.code).toBe(0);
     expect(got.text).toContain("No backups are kept");
-    for (const part of [
-      "MARFA_BACKUP_PATH",
-      "S3_BUCKET",
-      join(dir, "install", "marfa.env"),
-      "marfa server restart",
-    ]) {
+    for (const part of ["backup_path", "object_store_bucket", "config update"]) {
       expect(got.text, part).toContain(part);
     }
     expect(got.report.backups).toMatchObject({
@@ -180,7 +175,7 @@ describe("marfa server status", () => {
     const got = await status();
     expect(got.text).toContain("Scheduled backups are turned off");
     expect(got.text).not.toContain("No backups are kept");
-    expect(got.text).not.toContain("MARFA_BACKUP_PATH");
+    expect(got.text).not.toContain("backup_path");
     expect(got.report.backups).toMatchObject({
       status: "off",
       reason: "turned_off",

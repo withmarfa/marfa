@@ -648,17 +648,12 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     };
     let login = autostart_word(&state, at_boot, exists);
     let service_name = service.as_ref().map(|service| service.describe());
-    let settings = folder.path(files::SETTINGS);
     let private = PrivateCommand::of(&state, &folder);
     let backups_say = answered
         .as_ref()
         .and_then(|health| health.backups.as_ref())
         .and_then(|backups| {
-            backups.words(
-                &settings,
-                state.runtime == Runtime::Docker,
-                private.as_ref(),
-            )
+            backups.words(state.runtime == Runtime::Docker, private.as_ref())
         });
     let report = json!({
         "dir": folder.dir,

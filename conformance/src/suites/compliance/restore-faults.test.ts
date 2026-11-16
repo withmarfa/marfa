@@ -841,7 +841,7 @@ describe("a backup asked for while a restore runs", () => {
     // The interval is a year, so once the first scheduled run has ended no
     // other comes during the test.
     backingUp = await bootFreshServer("restore-faults-backup", {
-      S3_BUCKET: "",
+      MARFA_OBJECT_STORE_BUCKET: "",
       MARFA_BACKUP_PATH: folder,
       MARFA_BACKUP_INTERVAL_SECONDS: "31536000",
     });

@@ -44,7 +44,7 @@ When `GET /attention` completes its checks, the server MUST include degraded or 
 
 ### `instance/attention-no-backup`
 
-Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `no_backup_destination`, the title `No backups are kept`, and a description that names `MARFA_BACKUP_PATH`, `S3_BUCKET` and `marfa server restart`.
+Where neither `object_store_bucket` nor `backup_path` is set, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `no_backup_destination`, the title `No backups are kept`, and a description that names `backup_path`, `object_store_bucket` and `PATCH /config`.
 
 **Reason:** an instance with no destination keeps no backup, and an owner who never reads the install output can run for months without knowing it.
 
@@ -60,7 +60,7 @@ Where a destination is set and `backup_interval_seconds` is 0, when `GET /attent
 
 ### `instance/attention-backup-destination-set`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, the server MUST NOT include an entry with the reference `no_backup_destination` in `GET /attention`.
+Where `object_store_bucket` or `backup_path` is set, the server MUST NOT include an entry with the reference `no_backup_destination` in `GET /attention`.
 
 **Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`.
 
@@ -112,7 +112,7 @@ While an entry of kind `backup` with the reference `run` or `store` is listed, t
 
 ### `instance/attention-backup-unlocked`
 
-Where `MARFA_BACKUP_PATH` is set and the file system that holds `<MARFA_BACKUP_PATH>/files/<instance id>/` takes no file locks, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `folder_unlocked`, whose description names that folder.
+Where `backup_path` is set and the file system that holds `<backup_path>/files/<instance id>/` takes no file locks, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `folder_unlocked`, whose description names that folder.
 
 **Reason:** a copy of this instance started on the same backup folder could remove the files this one is still copying there.
 
@@ -590,11 +590,11 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store, and where `MARFA_BACKUP_PATH` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is a manifest and the parts it names, which together make an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. Each part is named for its bytes, so a part that a later backup holds unchanged is stored once. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so after a backup is restored, sign-in, keys, apps, webhooks, inbound endpoints and connector keys are set up again, the instance's addresses and name are set again, and the audit log and the event log are not restored.
+An owner has two backups of an instance. Where `object_store_bucket` is set, the server backs itself up to that object store, and where `backup_path` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is a manifest and the parts it names, which together make an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. Each part is named for its bytes, so a part that a later backup holds unchanged is stored once. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so after a backup is restored, sign-in, keys, apps, webhooks, inbound endpoints and connector keys are set up again, the instance's addresses and name are set again, and the audit log and the event log are not restored.
 
 ### `instance/backup-object`
 
-Where `S3_BUCKET` is set, when the server takes a backup, the server MUST put its manifest in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created>.json`, where `<instance id>` is the instance's id and `<created>` is its manifest's `created_at` in ISO 8601 basic format, such as `20261109T101530.250Z`.
+Where `object_store_bucket` is set, when the server takes a backup, the server MUST put its manifest in the object store as one object named `<object_store_prefix>/backups/<instance id>/<created>.json`, where `<instance id>` is the instance's id and `<created>` is its manifest's `created_at` in ISO 8601 basic format, such as `20261109T101530.250Z`.
 
 **Reason:** a server that replaces another can start on the same prefix, and the folder keeps each instance's backups apart. The basic format holds no colon, so a copy of the backup lands whole on a FAT or exFAT disk and on Windows, and the names still sort by time.
 
@@ -602,7 +602,7 @@ Where `S3_BUCKET` is set, when the server takes a backup, the server MUST put it
 
 ### `instance/backup-folder-file`
 
-Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST write its manifest as one file named `<MARFA_BACKUP_PATH>/backups/<instance id>/<created>.json`, where `<instance id>` is the instance's id and `<created>` is its manifest's `created_at` in ISO 8601 basic format, such as `20261109T101530.250Z`.
+Where `backup_path` is set, when the server takes a backup, the server MUST write its manifest as one file named `<backup_path>/backups/<instance id>/<created>.json`, where `<instance id>` is the instance's id and `<created>` is its manifest's `created_at` in ISO 8601 basic format, such as `20261109T101530.250Z`.
 
 **Reason:** a server that replaces another, given the same folder, restores its backups, and the folder keeps each instance's backups apart. The basic format holds no colon, which a FAT or exFAT disk refuses in a file's name, and the names still sort by time.
 
@@ -610,7 +610,7 @@ Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUS
 
 ### `instance/backup-part-named`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST store each part its manifest names as `<root>/backup-parts/<instance id>/<sha256>.ndjson.gz`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>` and `<sha256>` is the SHA-256 of the part's bytes in lowercase hex.
+Where `object_store_bucket` or `backup_path` is set, when the server takes a backup, the server MUST store each part its manifest names as `<root>/backup-parts/<instance id>/<sha256>.ndjson.gz`, where `<root>` is `<object_store_prefix>` or `<backup_path>` and `<sha256>` is the SHA-256 of the part's bytes in lowercase hex.
 
 **Reason:** a part is named for what it holds, so a part that two backups share is stored once, and a restore tells a part that was altered from the one its manifest names.
 
@@ -632,7 +632,7 @@ When the server takes a backup, the server MUST name in its manifest, for each e
 
 ### `instance/backup-folder-copies`
 
-Where `MARFA_BACKUP_PATH` is set, the server MUST NOT write a backup's manifest in the folder before `<MARFA_BACKUP_PATH>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names but those its `files.ndjson.gz` names as `lost`, where `<hex>` is the file's SHA-256 in hex.
+Where `backup_path` is set, the server MUST NOT write a backup's manifest in the folder before `<backup_path>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names but those its `files.ndjson.gz` names as `lost`, where `<hex>` is the file's SHA-256 in hex.
 
 **Reason:** a backup carries no file's bytes, so the folder alone restores a backup only while it holds a copy of each file. Each file is copied once and kept while a backup names it, so a backup costs what changed since the last.
 
@@ -640,7 +640,7 @@ Where `MARFA_BACKUP_PATH` is set, the server MUST NOT write a backup's manifest 
 
 ### `instance/backup-folder-reserve`
 
-Where `MARFA_BACKUP_PATH` names a folder on a volume that also holds the database or the disk store's folder, if a copy of a file there, or a backup, would leave less free on that volume than `disk_reserve_bytes`, then the server MUST leave the file uncopied there, or the backup unwritten.
+Where `backup_path` names a folder on a volume that also holds the database or the disk store's folder, if a copy of a file there, or a backup, would leave less free on that volume than `disk_reserve_bytes`, then the server MUST leave the file uncopied there, or the backup unwritten.
 
 **Reason:** the reserve keeps room for every other write on the volume the server lives on. A folder on a disk of its own holds back none of it: the copy needs only room for the file.
 
@@ -648,13 +648,13 @@ Where `MARFA_BACKUP_PATH` names a folder on a volume that also holds the databas
 
 ### `instance/backup-folder-reserve-said`
 
-Where `MARFA_BACKUP_PATH` names a folder on a volume that also holds the database or the disk store's folder, while a file waits because a copy of it there would leave less free on that volume than `disk_reserve_bytes`, the server MUST name `disk_reserve_bytes` in `backups.store_error`.
+Where `backup_path` names a folder on a volume that also holds the database or the disk store's folder, while a file waits because a copy of it there would leave less free on that volume than `disk_reserve_bytes`, the server MUST name `disk_reserve_bytes` in `backups.store_error`.
 
 **Tests:** `compliance/backup-folder.test.ts › leaves a file uncopied that would take the server's own volume below its reserve, says so in health by the setting's name, and copies it once there is room`.
 
 ### `instance/backup-folder-whole`
 
-Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the backup's manifest whole, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as that backup.
+Where `backup_path` is set, if a backup run fails, or the process ends, before the server has written the backup's manifest whole, then the server MUST NOT leave a file directly under `<backup_path>/backups/<instance id>/` whose name reads as that backup.
 
 **Reason:** the server writes the manifest last, under a name that begins with `.`, which no listing reads, and gives it its name only once it is whole and synced to the disk.
 
@@ -662,7 +662,7 @@ Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, be
 
 ### `instance/backup-part-whole`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, while the server stores a part, then the server MUST NOT leave under `<root>/backup-parts/<instance id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, a file or object named as a part that does not hold the bytes whose SHA-256 its name gives.
+Where `object_store_bucket` or `backup_path` is set, if a backup run fails, or the process ends, while the server stores a part, then the server MUST NOT leave under `<root>/backup-parts/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, a file or object named as a part that does not hold the bytes whose SHA-256 its name gives.
 
 **Reason:** a part goes to the folder under a name that begins with `.` and takes its name once it is whole and synced to the disk, and to the object store in one put, or a multipart upload that no listing or read sees until it completes.
 
@@ -670,7 +670,7 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup run fails, or the p
 
 ### `instance/backup-manifest-last`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, the server MUST NOT write a backup's manifest before the destination lists every part the manifest names at the size the manifest gives.
+Where `object_store_bucket` or `backup_path` is set, the server MUST NOT write a backup's manifest before the destination lists every part the manifest names at the size the manifest gives.
 
 **Reason:** a listed backup is one whose parts are all there. A backup that fails before its manifest is written is never listed, and the next run stores only the parts the destination still lacks.
 
@@ -678,21 +678,21 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, the server MUST NOT write a bac
 
 ### `instance/backup-folder-leftovers`
 
-Where `MARFA_BACKUP_PATH` is set, when the server runs a backup, the server MUST first remove what a process that ended left half written under `<MARFA_BACKUP_PATH>/backups/<instance id>/`, `<MARFA_BACKUP_PATH>/backup-parts/<instance id>/` and `<MARFA_BACKUP_PATH>/files/<instance id>/`.
+Where `backup_path` is set, when the server runs a backup, the server MUST first remove what a process that ended left half written under `<backup_path>/backups/<instance id>/`, `<backup_path>/backup-parts/<instance id>/` and `<backup_path>/files/<instance id>/`.
 
 **Tests:** `compliance/backup-folder.test.ts › leaves no file a listing reads as a backup when a run fails partway or its process ends, and clears what it left at the next run`.
 
 ### `instance/backup-folder-not-made`
 
-Where `MARFA_BACKUP_PATH` is set, the server MUST NOT create the folder it names.
+Where `backup_path` is set, the server MUST NOT create the folder it names.
 
 **Reason:** a folder on a disk that is not mounted is missing, and one made in its place would be on another disk. The server makes only the folders inside it, and only once it holds the instance's store marker, so an empty mount point fails a backup too.
 
-**Tests:** `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`, `› refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`, `› refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
+**Tests:** `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`, `› reports a backup folder that does not exist as unusable, keeps serving files, makes none, and takes it once it exists`, `› refuses a backup folder inside its data directory or its blob folder, judged where links lead, and makes none`, `› refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
 ### `instance/backup-folder-unmarked`
 
-Where `MARFA_BACKUP_PATH` is set, while `<MARFA_BACKUP_PATH>/files/<instance id>/` does not hold the marker of the store the server recorded there, the server MUST NOT write into `<MARFA_BACKUP_PATH>`.
+Where `backup_path` is set, while `<backup_path>/files/<instance id>/` does not hold the marker of the store the server recorded there, the server MUST NOT write into `<backup_path>`.
 
 **Reason:** the folder may be a mount point whose disk is not mounted. A server that first started on an empty mount point on Linux wrote its marker into that mount point, so once the real disk mounts over it the marker is out of sight and each backup fails loudly; `POST /backups/folder/adopt` then starts afresh on the disk, as it does for a disk that replaced the old one.
 
@@ -700,7 +700,7 @@ Where `MARFA_BACKUP_PATH` is set, while `<MARFA_BACKUP_PATH>/files/<instance id>
 
 ### `instance/backup-folder-unmarked-error`
 
-Where `MARFA_BACKUP_PATH` is set, if a backup run fails because `<MARFA_BACKUP_PATH>/files/<instance id>/` does not hold the marker of the store the server recorded there, then the server MUST name the command `marfa backups folder adopt` in the run's error message.
+Where `backup_path` is set, if a backup run fails because `<backup_path>/files/<instance id>/` does not hold the marker of the store the server recorded there, then the server MUST name the command `marfa backups folder adopt` in the run's error message.
 
 **Reason:** the message reaches the owner in the answer to `POST /backups` and in `backups.last_error` of `GET /health`, so the owner learns how to go on with a disk that replaced the old one.
 
@@ -708,7 +708,7 @@ Where `MARFA_BACKUP_PATH` is set, if a backup run fails because `<MARFA_BACKUP_P
 
 ### `instance/backup-folder-adopt`
 
-Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /backups/folder/adopt` while the folder `MARFA_BACKUP_PATH` names exists and `<MARFA_BACKUP_PATH>/files/<instance id>/` holds no store marker, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
+Where `backup_path` is set, when the private local command sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
@@ -736,19 +736,19 @@ When the server adopts a backup folder under `instance/backup-folder-adopt`, the
 
 ### `instance/backup-folder-adopt-held`
 
-If the private local command sends `POST /backups/folder/adopt` while `<MARFA_BACKUP_PATH>/files/<instance id>/` holds the marker of the store the server recorded there, then the server MUST answer `409 conflict`.
+If the private local command sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds the marker of the store the server recorded there, then the server MUST answer `409 conflict`.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
 ### `instance/backup-folder-adopt-missing`
 
-If the private local command sends `POST /backups/folder/adopt` while the folder `MARFA_BACKUP_PATH` names does not exist, then the server MUST answer `503 blob_store_unavailable`.
+If the private local command sends `POST /backups/folder/adopt` while the folder `backup_path` names does not exist, then the server MUST answer `503 blob_store_unavailable`.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
 ### `instance/backup-folder-adopt-object-store`
 
-Where `S3_BUCKET` is set, if the private local command sends `POST /backups/folder/adopt`, then the server MUST answer `409 conflict`.
+Where `object_store_bucket` is set, if the private local command sends `POST /backups/folder/adopt`, then the server MUST answer `409 conflict`.
 
 **Reason:** an instance that backs up to an object store has no backup folder to adopt.
 
@@ -756,43 +756,59 @@ Where `S3_BUCKET` is set, if the private local command sends `POST /backups/fold
 
 ### `instance/backup-folder-adopt-foreign`
 
-If the private local command sends `POST /backups/folder/adopt` while `<MARFA_BACKUP_PATH>/files/<instance id>/` holds the marker of a store other than the one the server recorded there, then the server MUST answer `409 conflict`.
+If the private local command sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds the marker of a store other than the one the server recorded there, then the server MUST answer `409 conflict`.
 
 **Reason:** the marker may be another instance's or another server's store, and adopting over it would take that store's files as this instance's own. The refusal leaves the marker as it is, and the error message says to remove it to adopt the folder afresh.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to adopt a files folder that holds another store's marker, and leaves the marker as it is`.
 
-### `instance/backup-folder-missing-start`
+### `instance/backup-folder-missing-unusable`
 
-Where `MARFA_BACKUP_PATH` names a folder that does not exist, and the server has not attached a backup folder at that path before, the server MUST refuse to start.
+If `backup_path` names a folder that does not exist, and the server has not attached a backup folder at that path before, then the server MUST answer `GET /health` with `backups.status` `failing`, `backups.reason` `destination_unusable` and a `backups.store_error` that says the folder does not exist.
 
-**Reason:** the owner learns at once that the folder is wrong. A folder the server has attached before may be on a disk that is not mounted yet, so the server starts and each backup fails until it is back.
+**Reason:** the owner learns at once that the folder is wrong, from any app. A folder the server has attached before may be on a disk that is not mounted yet, so each backup fails until it is back, as `instance/backup-folder-unmarked` says.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`.
+**Tests:** `compliance/backup-folder.test.ts › reports a backup folder that does not exist as unusable, keeps serving files, makes none, and takes it once it exists`.
 
-### `instance/backup-folder-inside`
+### `instance/backup-destination-unusable-serves`
 
-Where `MARFA_BACKUP_PATH` names a folder inside the data directory or the blob folder, the server MUST refuse to start.
+If the backup folder or the object store the settings name cannot be used, then the server MUST keep serving each file from its disk store.
+
+**Reason:** a wrong setting stops the second copy and the backups, never the files the owner already has.
+
+**Tests:** `compliance/backup-folder.test.ts › reports a backup folder that does not exist as unusable, keeps serving files, makes none, and takes it once it exists`, `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`.
+
+### `instance/backup-destination-retried`
+
+While the backup folder or the object store the settings name cannot be used, when a backup runs, the server MUST first try again to take that destination into use.
+
+**Reason:** a disk mounted late or a secret mended outside the server is taken without another write to `/config`.
+
+**Tests:** `compliance/backup-folder.test.ts › reports a backup folder that does not exist as unusable, keeps serving files, makes none, and takes it once it exists`.
+
+### `instance/backup-folder-inside-refused`
+
+If a write to `/config` sets `backup_path` to a folder inside the data directory or the blob folder, judged where symbolic links lead, then the server MUST answer `400 validation_error` naming `backup_path`.
 
 **Reason:** a backup there is lost with what it backs up.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`.
+**Tests:** `compliance/backup-folder.test.ts › refuses a backup folder inside its data directory or its blob folder, judged where links lead, and makes none`.
 
 ### `instance/backup-folder-unlocked-start`
 
-Where `MARFA_BACKUP_PATH` is set and the file system that holds `<MARFA_BACKUP_PATH>/files/<instance id>/` takes no file locks, the server MUST NOT refuse to start because it cannot keep another server from that folder.
+Where `backup_path` is set and the file system that holds `<backup_path>/files/<instance id>/` takes no file locks, the server MUST NOT refuse to start because it cannot keep another server from that folder.
 
 **Reason:** the server serves without its backup folder, so it starts and tells the owner under `instance/attention-backup-unlocked`. A lock file there that belongs to another account, or has a second link, still refuses the start, since a copy of the instance may be using the folder.
 
 **Tests:** waiting on #3116.
 
-### `instance/backup-one-destination`
+### `instance/backup-one-destination-refused`
 
-Where both `S3_BUCKET` and `MARFA_BACKUP_PATH` are set, the server MUST refuse to start.
+If a write to `/config` would leave both `object_store_bucket` and `backup_path` set, then the server MUST answer `400 validation_error` naming the one the write sets.
 
 **Reason:** backups go to one place, so a restore knows where to read them.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses to start with both S3_BUCKET and MARFA_BACKUP_PATH set`.
+**Tests:** `compliance/backup-folder.test.ts › refuses a write to /config that would set both object_store_bucket and backup_path, and keeps what was stored`.
 
 ### `instance/backup-holds-export`
 
@@ -812,7 +828,7 @@ When the server takes a backup, the server MUST name every file its items name i
 
 When the server takes a backup, the server MUST name as `lost` in its `files.ndjson.gz` each file the backup names of which no attached store gives the bytes whole.
 
-**Reason:** a restore then tells a file that was gone before the backup from one taken out of the backup folder after it. Where `MARFA_BACKUP_PATH` is set the server learns it as it copies each file to the folder; for the object store, from each store's answer for the copies the copy record names.
+**Reason:** a restore then tells a file that was gone before the backup from one taken out of the backup folder after it. Where `backup_path` is set the server learns it as it copies each file to the folder; for the object store, from each store's answer for the copies the copy record names.
 
 **Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
@@ -848,7 +864,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 ### `instance/backup-part-stored-once`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST NOT store a part that the destination already holds under its name with the bytes whose SHA-256 that name gives.
+Where `object_store_bucket` or `backup_path` is set, when the server takes a backup, the server MUST NOT store a part that the destination already holds under its name with the bytes whose SHA-256 that name gives.
 
 **Reason:** a backup then costs what changed since the last one, not the whole instance. The server takes a part as held while the destination lists it as it was when the server stored or last hashed it: an object store by its ETag, and a backup folder by the file's size, modified time, inode and, where the file system records one, birth time. It reads and hashes any other part, so a part written since is checked byte for byte.
 
@@ -878,7 +894,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 ### `instance/backup-part-stored-again`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, then the server MUST store that part there again.
+Where `object_store_bucket` or `backup_path` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, where `<root>` is `<object_store_prefix>` or `<backup_path>`, then the server MUST store that part there again.
 
 **Reason:** each backup restores whole, not only the first one that named a part. A write through the store gives an object another ETag, and a write through the file system gives a file another modified time. An object store that changes an object's bytes and keeps its ETag breaks its own promise of durability, and the server finds that change only when a restore reads the part (`instance/backup-restore-parts-checked`). A disk can change a file's bytes and keep all four, which `instance/backup-folder-part-rehashed` bounds. A part whose read fails on a bad sector or a permission does not fail the backup: the server counts it as damaged and stores it again where the backup names it.
 
@@ -886,7 +902,7 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup the server takes na
 
 ### `instance/backup-folder-part-rehashed`
 
-Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST read and hash the parts in `<MARFA_BACKUP_PATH>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until their listed sizes reach 536870912 bytes, and always the oldest one, but for a part that backup's clean-up finds no backup names.
+Where `backup_path` is set, when the server takes a backup, the server MUST read and hash the parts in `<backup_path>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until their listed sizes reach 536870912 bytes, and always the oldest one, but for a part that backup's clean-up finds no backup names.
 
 **Reason:** a disk can change a file's bytes and keep its size, modified time, inode and birth time, by decay or by a write in place that sets the time back, and `instance/backup-part-stored-again` does not see that change. The server finds such a change at the first backup 7 days or more after the part's last hash, or once it has read the parts due before it, whichever backups name the part and whether or not every backup's manifest reads. A backup runs only when something changed or the owner asks for one. An object store checks its own objects, and reading them again would be billed.
 
@@ -910,7 +926,7 @@ When the server takes a backup, the server MUST NOT put in it a key, an app's to
 
 ### `instance/backup-whole`
 
-Where `S3_BUCKET` is set, if a backup run fails, or the process ends, before the object store has taken the backup's manifest, then the server MUST NOT leave an object under `<S3_PREFIX>/backups/` that names that backup.
+Where `object_store_bucket` is set, if a backup run fails, or the process ends, before the object store has taken the backup's manifest, then the server MUST NOT leave an object under `<object_store_prefix>/backups/` that names that backup.
 
 **Reason:** the manifest is the last object a backup puts. A part larger than one upload part goes up as a multipart upload, which no listing or read sees until it completes; an upload the process left unfinished still holds its pieces in the bucket until a lifecycle rule or the store's own clean-up removes them.
 
@@ -932,7 +948,7 @@ When the server starts after a process that ended during a backup, the server MU
 
 ### `instance/backup-interval`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set and `backup_interval_seconds` is above 0, the server MUST run a backup once that interval has passed since the last run ended.
+Where `object_store_bucket` or `backup_path` is set and `backup_interval_seconds` is above 0, the server MUST run a backup once that interval has passed since the last run ended.
 
 **Tests:** `compliance/backups.test.ts › backs up on its interval with no request`.
 
@@ -1006,7 +1022,7 @@ Where `backup_interval_seconds` is above 0, while the copy record holds no copy 
 
 ### `instance/backup-health-parts-damaged`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
+Where `object_store_bucket` or `backup_path` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
 
 **Reason:** a restore of a backup that names such a part is refused. The server finds a part damaged when a restore of one of its own backups reads it, and when a backup checks each part a backup it keeps names, as `instance/backup-part-stored-again` and `instance/backup-folder-part-rehashed` say.
 
@@ -1014,13 +1030,13 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, while a part under `<root>/back
 
 ### `instance/backup-health-damaged-count`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.damaged_parts` with how many parts `instance/backup-health-parts-damaged` holds for, or `null` when the count could not be read.
+Where `object_store_bucket` or `backup_path` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.damaged_parts` with how many parts `instance/backup-health-parts-damaged` holds for, or `null` when the count could not be read.
 
 **Tests:** `compliance/backup-parts.test.ts › says in health and attention that a part is damaged once a restore of its own backup finds it altered, until a backup stores the part again`.
 
 ### `instance/backup-health-files-waiting`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.last_backup_files_waiting` with how many files the last backup put names of which the copy record holds no copy in the destination, or `null` when no backup was put or the count could not be read.
+Where `object_store_bucket` or `backup_path` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.last_backup_files_waiting` with how many files the last backup put names of which the copy record holds no copy in the destination, or `null` when no backup was put or the count could not be read.
 
 **Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 
@@ -1032,13 +1048,13 @@ When a request authorized by `instance.read` or local authority sends `GET /heal
 
 ### `instance/backup-health-destination`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.destination` as `bucket` or `folder`, for the one that is set.
+Where `object_store_bucket` or `backup_path` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.destination` as `bucket` or `folder`, for the one that is set.
 
 **Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `compliance/backup-folder.test.ts › says in health that backups go to a folder`.
 
 ### `instance/backup-health-off`
 
-Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_backup_destination`.
+Where neither `object_store_bucket` nor `backup_path` is set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_backup_destination`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
@@ -1072,7 +1088,7 @@ While the object store or the backup folder does not take the copies that wait f
 
 ### `instance/backup-health-copies-waiting`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.copies_waiting` with the number of files that waited for their copy in the destination when `blob-replicate` last ran.
+Where `object_store_bucket` or `backup_path` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.copies_waiting` with the number of files that waited for their copy in the destination when `blob-replicate` last ran.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`.
 
@@ -1116,7 +1132,7 @@ Where a destination is set and `backup_interval_seconds` is above 0, while it ta
 
 ### `instance/backup-no-bucket`
 
-Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when the private local command sends `GET /backups`, `POST /backups`, `POST /backups/folder/adopt` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_backup_destination`.
+Where neither `object_store_bucket` nor `backup_path` is set, when the private local command sends `GET /backups`, `POST /backups`, `POST /backups/folder/adopt` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_backup_destination`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
@@ -1130,7 +1146,7 @@ When a key or an app's token sends `GET /backups`, `POST /backups`, `POST /backu
 
 ### `instance/backups-list`
 
-When the private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<S3_PREFIX>/backups/` or `<MARFA_BACKUP_PATH>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.
+When the private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<object_store_prefix>/backups/` or `<backup_path>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.
 
 **Reason:** a fresh server started on the prefix of an instance it replaces restores that instance's backup.
 
@@ -1146,7 +1162,7 @@ When the private local command sends `POST /backups/{instance_id}/{name}/restore
 
 ### `instance/backup-bucket-restore-lacking`
 
-Where `S3_BUCKET` is set, if a file the backup names, which the instance that took it held and the manifest does not name in `lost_blobs`, is held whole neither in the object store nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
+Where `object_store_bucket` is set, if a file the backup names, which the instance that took it held and the manifest does not name in `lost_blobs`, is held whole neither in the object store nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
 
 **Reason:** a restore that left a file out would lose it without a word, as `instance/backup-folder-restore-lacking` says for the folder. The refusal restores nothing; a restore asked to leave the files out restores the rest (`instance/backup-restore-allow-missing`).
 
@@ -1154,13 +1170,13 @@ Where `S3_BUCKET` is set, if a file the backup names, which the instance that to
 
 ### `instance/backup-folder-restore-files`
 
-Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST read each file the backup names that the instance does not hold from `<MARFA_BACKUP_PATH>/files/<instance_id>/`.
+Where `backup_path` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST read each file the backup names that the instance does not hold from `<backup_path>/files/<instance_id>/`.
 
 **Tests:** `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
 
 ### `instance/backup-folder-restore-lacking`
 
-Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance that took it held and the backup does not name as `lost`, is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
+Where `backup_path` is set, if a file the backup names, which the instance that took it held and the backup does not name as `lost`, is held whole neither in `<backup_path>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
 
 **Reason:** a restore that left a file out would lose it without a word. The refusal restores nothing; a restore asked to leave the files out restores the rest (`instance/backup-restore-allow-missing`).
 
@@ -1168,7 +1184,7 @@ Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance
 
 ### `instance/backup-folder-restore-first`
 
-Where `MARFA_BACKUP_PATH` is set, if the server answers `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing`, then the server MUST NOT hold in its blob folder a file it read from the backup folder for that restore.
+Where `backup_path` is set, if the server answers `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing`, then the server MUST NOT hold in its blob folder a file it read from the backup folder for that restore.
 
 **Reason:** the server works out which files it lacks before it reads any, so a refused restore costs neither the reading nor the room. A copy that proves altered or gone only when it is read refuses the restore before any file is placed.
 
@@ -1176,7 +1192,7 @@ Where `MARFA_BACKUP_PATH` is set, if the server answers `POST /backups/{instance
 
 ### `instance/backup-folder-restore-held`
 
-Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST NOT read from the backup folder a file of which an attached store of the restoring instance holds a copy whole.
+Where `backup_path` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST NOT read from the backup folder a file of which an attached store of the restoring instance holds a copy whole.
 
 **Reason:** a restore over the instance that took the backup then needs room only for the files it lacks.
 
@@ -1184,7 +1200,7 @@ Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /ba
 
 ### `instance/backup-folder-restore-lost`
 
-Where `MARFA_BACKUP_PATH` is set, if a file the backup names as `lost` is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST NOT refuse `POST /backups/{instance_id}/{name}/restore` for that file.
+Where `backup_path` is set, if a file the backup names as `lost` is held whole neither in `<backup_path>/files/<instance_id>/` nor by the restoring instance, then the server MUST NOT refuse `POST /backups/{instance_id}/{name}/restore` for that file.
 
 **Reason:** the file was gone before the backup was taken, so no folder could restore it. The restore names it in `blobs_missing`, as a restore of the same archive through `POST /restore` does.
 
@@ -1192,7 +1208,7 @@ Where `MARFA_BACKUP_PATH` is set, if a file the backup names as `lost` is held w
 
 ### `instance/backup-restore-unknown`
 
-If `POST /backups/{instance_id}/{name}/restore` names no backup the object store holds directly under `<S3_PREFIX>/backups/<instance_id>/`, or the backup folder holds directly under `<MARFA_BACKUP_PATH>/backups/<instance_id>/`, then the server MUST answer `404 backup_not_found`.
+If `POST /backups/{instance_id}/{name}/restore` names no backup the object store holds directly under `<object_store_prefix>/backups/<instance_id>/`, or the backup folder holds directly under `<backup_path>/backups/<instance_id>/`, then the server MUST answer `404 backup_not_found`.
 
 **Tests:** `compliance/backups.test.ts › answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's`.
 
@@ -1214,7 +1230,7 @@ If `POST /backups/{instance_id}/{name}/restore` gives `allow_missing_files` a va
 
 ### `instance/backup-restore-parts-checked`
 
-If a part the manifest of the named backup names is missing from `<root>/backup-parts/<instance_id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, or holds bytes whose size or SHA-256 differs from what the manifest gives, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_parts_missing` and that part's name in `details.missing_parts`.
+If a part the manifest of the named backup names is missing from `<root>/backup-parts/<instance_id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, or holds bytes whose size or SHA-256 differs from what the manifest gives, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_parts_missing` and that part's name in `details.missing_parts`.
 
 **Reason:** a restore that read a part another backup or another instance holds, or a part altered on the disk, would restore lines the backup never held.
 
@@ -1260,7 +1276,7 @@ When the server has put a backup, the server MUST keep the newest of its own bac
 
 ### `instance/backup-thinning-only-backups`
 
-When the server thins its backups, the server MUST NOT delete an object or file other than the manifest of a backup it recorded putting, listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, where `<instance id>` is its own.
+When the server thins its backups, the server MUST NOT delete an object or file other than the manifest of a backup it recorded putting, listed directly under `<object_store_prefix>/backups/<instance id>/` or `<backup_path>/backups/<instance id>/`, where `<instance id>` is its own.
 
 **Reason:** the prefix also holds the instance's files, another instance on the same prefix keeps its own backups, and the bucket may hold objects the instance did not write. A backup in its own folder that its database never recorded, such as one put after the image of the data directory the server started on, is kept (`instance/backup-found-keeps-files`). The parts a thinned backup alone named are deleted after thinning, under `instance/backup-parts-removed`.
 
@@ -1268,7 +1284,7 @@ When the server thins its backups, the server MUST NOT delete an object or file 
 
 ### `instance/backup-found-keeps-files`
 
-While a backup that the server did not record putting is listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, where `<instance id>` is its own, the server MUST NOT purge a file that backup's manifest names.
+While a backup that the server did not record putting is listed directly under `<object_store_prefix>/backups/<instance id>/` or `<backup_path>/backups/<instance id>/`, where `<instance id>` is its own, the server MUST NOT purge a file that backup's manifest names.
 
 **Reason:** a server started on an image of its data directory does not record the backups put after the image, and those backups restore their files from the bucket. Such a backup stops holding its files as `instance/backup-keeps-files` lets a recorded one go: once three or more consecutive listings have left it out and thinning the backups the last of them lists together with that backup would delete it. Where the server cannot list or read that folder, a file the object store holds a copy of is not purged.
 
@@ -1276,7 +1292,7 @@ While a backup that the server did not record putting is listed directly under `
 
 ### `instance/backup-parts-removed`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when the server has put a backup and has read the manifest of each backup listed directly under `<root>/backups/<instance id>/` and of each backup it records putting there, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>` and `<instance id>` is its own, the server MUST delete each part under `<root>/backup-parts/<instance id>/` that none of those manifests names and `instance/backup-parts-found-kept` does not keep.
+Where `object_store_bucket` or `backup_path` is set, when the server has put a backup and has read the manifest of each backup listed directly under `<root>/backups/<instance id>/` and of each backup it records putting there, where `<root>` is `<object_store_prefix>` or `<backup_path>` and `<instance id>` is its own, the server MUST delete each part under `<root>/backup-parts/<instance id>/` that none of those manifests names and `instance/backup-parts-found-kept` does not keep.
 
 **Reason:** a part that no backup names restores nothing, and thinning leaves such parts behind.
 
@@ -1284,7 +1300,7 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when the server has put a backu
 
 ### `instance/backup-parts-kept`
 
-The server MUST NOT delete a part that the manifest of a backup listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/` names.
+The server MUST NOT delete a part that the manifest of a backup listed directly under `<object_store_prefix>/backups/<instance id>/` or `<backup_path>/backups/<instance id>/` names.
 
 **Reason:** the server deletes parts only in a backup run, once that run has written its manifest, and runs one backup at a time (`instance/backup-one-at-a-time`), so no run deletes a part that another run is about to name.
 
@@ -1292,7 +1308,7 @@ The server MUST NOT delete a part that the manifest of a backup listed directly 
 
 ### `instance/backup-parts-found-kept`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, while a backup that the server read under `<root>/backups/<instance id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>` and `<instance id>` is its own, and did not record putting has not been left out of three or more consecutive listings of that folder, the last of which lists backups of its own such that thinning them together with that backup would delete it, the server MUST NOT delete a part that backup's manifest named when the server read it.
+Where `object_store_bucket` or `backup_path` is set, while a backup that the server read under `<root>/backups/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>` and `<instance id>` is its own, and did not record putting has not been left out of three or more consecutive listings of that folder, the last of which lists backups of its own such that thinning them together with that backup would delete it, the server MUST NOT delete a part that backup's manifest named when the server read it.
 
 **Reason:** a backup the folder leaves out of one listing may be there still, and a part deleted under it cannot be stored again from this instance. The server lets the parts go as it lets that backup's files go.
 
@@ -1300,7 +1316,7 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, while a backup that the server 
 
 ### `instance/backup-parts-unread`
 
-If the manifest of a backup listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, or of a backup the server records putting there, does not read, or the destination does not answer, then the server MUST NOT delete a part in that run.
+If the manifest of a backup listed directly under `<object_store_prefix>/backups/<instance id>/` or `<backup_path>/backups/<instance id>/`, or of a backup the server records putting there, does not read, or the destination does not answer, then the server MUST NOT delete a part in that run.
 
 **Reason:** the parts such a manifest names are not known, so any part may be one it needs.
 
@@ -1308,7 +1324,7 @@ If the manifest of a backup listed directly under `<S3_PREFIX>/backups/<instance
 
 ### `instance/backup-parts-manifest-failed`
 
-While the process that failed to write a backup's manifest runs, and until a listing of `<root>/backups/<instance id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, shows that backup or the server stops holding the files it names under `instance/backup-keeps-files`, the server MUST NOT delete a part.
+While the process that failed to write a backup's manifest runs, and until a listing of `<root>/backups/<instance id>/`, where `<root>` is `<object_store_prefix>` or `<backup_path>`, shows that backup or the server stops holding the files it names under `instance/backup-keeps-files`, the server MUST NOT delete a part.
 
 **Reason:** a write the destination refused may still land, and its manifest then names parts that only it names.
 
@@ -2528,7 +2544,7 @@ If `OTEL_SDK_DISABLED` holds a value other than `true` in any case, then the ser
 
 ### `instance/telemetry-disabled-webhook`
 
-While `OTEL_SDK_DISABLED` is `true` in any case and `MARFA_ERROR_WEBHOOK_URL` is set, the server MUST still post an error notification for a request that fails with a 500 error.
+While `OTEL_SDK_DISABLED` is `true` in any case and `error_webhook_url` is set, the server MUST still post an error notification for a request that fails with a 500 error.
 
 **Reason:** the notice is how an owner hears of a fault, and it is not telemetry.
 
@@ -2588,7 +2604,7 @@ Where anything is exported and `OTEL_SERVICE_NAME` is set, the server MUST carry
 
 ### `instance/telemetry-error-environment`
 
-Where `MARFA_ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
+Where `error_webhook_url` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
 
 **Reason:** a notification from a test instance that said `production` would send the person reading it to the wrong place.
 
@@ -2650,7 +2666,7 @@ If a setting that does not hold a secret is outside its rule, then the server MU
 
 If a setting that holds a secret is outside its rule, then the server MUST NOT print its value anywhere in its refusal.
 
-**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `MARFA_KEY_SALT`, `MARFA_AUTH_SECRET`, `S3_ENDPOINT` and `S3_SECRET_ACCESS_KEY`, since an address can carry a credential.
+**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `MARFA_KEY_SALT`, `MARFA_AUTH_SECRET` and the `OTEL_EXPORTER_OTLP_*` endpoints and headers, since an address can carry a credential.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s and no other setting, when it is %s`, `› refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
 
@@ -2699,6 +2715,17 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `blob_cleanup_enabled`           | `true`             | `true` or `false`                                         | Whether the `blob-orphans` job sweeps for unreferenced blobs. When off, no blob is reported or purged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `blob_cleanup_grace_seconds`     | `86400` seconds    | Whole number of seconds, 0 to 31536000                    | How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `backup_interval_seconds`        | `3600` seconds     | Whole number of seconds, 0 to 31536000                    | How often the `backup` job puts a backup in the backup folder or the object store when anything it holds has changed. At 0 scheduled backups are off.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `backup_path` | None | An absolute path with no `..` in it, or empty | The folder the server backs itself up to: each backup under `backups/<instance id>/` and a copy of each file under `files/<instance id>/`. The folder must exist, outside the data directory and the blob folder, and the server never creates it. It cannot be set while `object_store_bucket` is. When neither is set, the server keeps no backup. |
+| `object_store_bucket` | None | Text of 1 to 255 characters, or empty | The bucket of an S3-compatible object store, which keeps a second copy of each file and the backups. The store is in use while this is set. |
+| `object_store_region` | `us-east-1` | Text of 1 to 100 characters, or empty | The region of the object store. |
+| `object_store_endpoint` | None | An absolute `http` or `https` URL with no user name or password, or empty | The endpoint of the object store. A `/` that is the whole path is dropped. When empty, the store's provider chooses it. |
+| `object_store_path_style` | `true` | `true` or `false` | Whether the object store is addressed by path rather than by virtual host. Read only while `object_store_endpoint` is set. |
+| `object_store_prefix` | `marfa` | `/`-joined segments of letters, digits, `.`, `_` and `-` | The key prefix the instance keeps everything under in the bucket: its files under `blobs/` and its backups under `backups/`. Each running instance on a bucket needs its own; a server that replaces an instance starts on its prefix. A `/` at either end is dropped; a `.` or `..` segment is refused. |
+| `object_store_access_key_id` | None | Text of 1 to 256 characters, or empty | The access key ID for the object store. |
+| `object_store_secret_access_key` | None | A secret: text of 1 to 4096 characters with no whitespace around it, or empty | The secret access key for the object store. |
+| `error_webhook_url` | None | A secret: an absolute `http` or `https` URL, or empty | The URL the server posts a notice to when a request fails with a 500 error, while `error_reporting_enabled` is true. When empty, no notice is sent. |
+| `heartbeat_url` | None | A secret: an absolute `http` or `https` URL, or empty | The URL the server requests on a schedule while `heartbeat_enabled` is true, so that something else can notice when the requests stop. When empty, there is no heartbeat. |
+| `webhook_allow_private_addresses` | `false` | `true` or `false` | Whether outbound webhooks may reach loopback, private and other non-public addresses. |
 | `enrichment_enabled`             | `true`             | `true` or `false`                                         | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `enrichment_ocr_enabled`         | `true`             | `true` or `false`                                         | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `enrichment_max_blob_bytes`      | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -2736,13 +2763,13 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `mcp_fetch_enabled`              | `true`             | `true` or `false`                                         | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `mcp_fetch_max_bytes`            | `52428800` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `mcp_fetch_timeout_seconds`      | `60` seconds       | Whole number of seconds, 1 to 3600                        | How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `error_reporting_enabled`        | `true`             | `true` or `false`                                         | Send error alerts and exception reports to the receivers the environment names.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `heartbeat_enabled`              | `true`             | `true` or `false`                                         | Send scheduled requests to the heartbeat receiver the environment names.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `error_reporting_enabled`        | `true`             | `true` or `false`                                         | Send error alerts to `error_webhook_url` and exception reports to the receiver the environment names.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `heartbeat_enabled`              | `true`             | `true` or `false`                                         | Send scheduled requests to `heartbeat_url`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `addresses`                      | None               | List of origins, each `scheme://host[:port]` with no path | The addresses people reach this instance at, such as `https://marfa.example`. Each is an origin: a scheme, a host and an optional port, with no path. Links the server builds and browser origins it accepts for sign-in come from this list and the sign-in address.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ### `instance/settings-listed`
 
-When a caller holding `config.manage` or `instance.read`, or the private local process, sends `GET /config/settings`, the server MUST answer `200` with `data`, an entry for each stored setting holding its `key`, `description`, `value`, `default`, `stored`, `rule` and `together`; `rules`, an entry for each rule across settings holding its `name`, `description` and `keys`; and `start_only`, an entry for each start-only setting holding its `name`, `description`, `secret` and `set`.
+When a caller holding `config.manage` or `instance.read`, or the private local process, sends `GET /config/settings`, the server MUST answer `200` with `data`, an entry for each stored setting holding its `key`, `description`, `value`, `default`, `stored`, `rule`, `secret` and `together`, and `set` for a secret; `rules`, an entry for each rule across settings holding its `name`, `description` and `keys`; and `start_only`, an entry for each start-only setting holding its `name`, `description`, `secret` and `set`.
 
 **Reason:** an app or the command line lists the settings from this one answer, so it keeps no copy of the tables. `value` is the one in force, `stored` the value held in the database or `null`, and `together` the keys of the other settings a rule across settings ties to this one.
 
@@ -2948,9 +2975,175 @@ When a stored setting changes, the server MUST use the effective choice for futu
 
 **Tests:** `compliance/live-settings.test.ts › starts disabled work after a live choice and stops it again without restarting`.
 
+## Secret settings
+
+A stored setting the table gives as a secret holds a credential: `object_store_secret_access_key`, `heartbeat_url` and `error_webhook_url`, whose address is itself the credential. It is written through `PUT /config` and `PATCH /config` like any stored setting, and never read back.
+
+### `instance/secret-sealed`
+
+The server MUST NOT write the value of a secret setting into its database file other than sealed with the settings key it keeps in `marfa.settings.key` beside the database.
+
+**Reason:** a copy of the database, which a backup or a careless copy can make, then holds no secret anyone can read without the machine's key.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/secret-not-answered`
+
+The server MUST NOT include the value of a secret setting in an answer to any request.
+
+**Reason:** an app that reads the configuration is not trusted with every credential the owner set.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/secrets-set-named`
+
+When the server answers `GET /config`, `PUT /config` or `PATCH /config` with the configuration, the server MUST answer `secrets_set` with the key of each secret setting stored with a value the server can read.
+
+**Reason:** an app shows whether a secret is set without being given it. A body may send `secrets_set` back, and it sets nothing.
+
+**Tests:** `compliance/secret-settings.test.ts › is named in secrets_set and listed as set with no value, kept by a PUT that leaves it out, and removed by null or an empty string`.
+
+### `instance/secret-listed`
+
+When the server answers `GET /config/settings`, the server MUST answer each secret setting's entry with `secret` `true`, `set` saying whether a value is in force, and `value`, `default` and `stored` all `null`.
+
+**Tests:** `compliance/secret-settings.test.ts › is named in secrets_set and listed as set with no value, kept by a PUT that leaves it out, and removed by null or an empty string`.
+
+### `instance/secret-put-keeps`
+
+When `PUT /config` leaves out a secret setting, the server MUST keep the value stored for it.
+
+**Reason:** no answer gives a secret back, so a body read from `GET /config` and sent back whole could not name it. `PATCH /config` with `null` removes it.
+
+**Tests:** `compliance/secret-settings.test.ts › is named in secrets_set and listed as set with no value, kept by a PUT that leaves it out, and removed by null or an empty string`.
+
+### `instance/settings-empty-clears`
+
+When a write to `/config` gives a setting whose allowed values the stored table ends with "or empty" the empty string, the server MUST remove the value stored for it.
+
+**Tests:** `compliance/secret-settings.test.ts › is named in secrets_set and listed as set with no value, kept by a PUT that leaves it out, and removed by null or an empty string`.
+
+### `instance/secret-refusal-hidden`
+
+If a write to `/config` gives a secret setting a value outside its rule, then the server MUST NOT include that value in the refusal.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/config-audit-names-secret`
+
+When the server records a write to `/config` in the audit log, the server MUST name the secret settings it wrote by key.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/secret-audit-no-value`
+
+The server MUST NOT include the value of a secret setting in an audit entry.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/secret-not-logged`
+
+The server MUST NOT write the value of a secret setting to its log or its standard error.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/backup-no-secret`
+
+When the server takes a backup, the server MUST NOT put the value of a secret setting in it.
+
+**Reason:** a backup leaves the machine, and the key that would open a sealed value never does, so a backup names each secret that was set (`archive/archive-secret-named`) and holds none.
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `instance/secret-unreadable-unset`
+
+If the server cannot open the value stored for a secret setting with its settings key, then the server MUST work as if the setting were not set and answer its entry in `GET /config/settings` with `set` `false` and `unreadable` `true`.
+
+**Reason:** the value came from another machine's key, or the key was lost, and a secret the server cannot read is never reported as set. The row stays, so a key put back opens it again.
+
+**Tests:** `compliance/secret-settings.test.ts › is reported on a restore, and on the attention list, when the archive's instance had it set and this one holds no value it can read`, `compliance/secret-settings.test.ts › survives a lost or damaged settings key: the server starts, serves, and lists each stored secret to set again`.
+
+### `instance/attention-secret-to-set`
+
+While a secret setting holds a stored value the server cannot open, when `GET /attention` completes its checks, the server MUST include one entry of kind `setting` whose reference is the setting's key.
+
+**Tests:** `compliance/secret-settings.test.ts › is reported on a restore, and on the attention list, when the archive's instance had it set and this one holds no value it can read`, `compliance/secret-settings.test.ts › survives a lost or damaged settings key: the server starts, serves, and lists each stored secret to set again`.
+
+### `instance/settings-key-lost-starts`
+
+If `marfa.settings.key` is missing or does not read when the server starts, then the server MUST start, make a new settings key, and refuse no request because of it.
+
+**Reason:** the key protects secrets the owner can set again from any app, so losing it costs those secrets and nothing else.
+
+**Tests:** `compliance/secret-settings.test.ts › survives a lost or damaged settings key: the server starts, serves, and lists each stored secret to set again`.
+
+### `instance/settings-key-damaged-kept`
+
+If `marfa.settings.key` does not read when the server starts, then the server MUST keep that file beside the database under a name that begins `marfa.settings.key.damaged-`.
+
+**Reason:** whoever can mend the file can put it back and open the secrets sealed with it.
+
+**Tests:** `compliance/secret-settings.test.ts › survives a lost or damaged settings key: the server starts, serves, and lists each stored secret to set again`.
+
+## Destination and notice settings
+
+The backup destination and the object store, its secret and the backup schedule, the error webhook and the heartbeat are stored settings. A write to `/config` that changes them takes effect without a restart.
+
+### `instance/backup-destination-follows`
+
+When a write to `/config` changes `backup_path` or an `object_store_` setting, the server MUST take the destination they name into use for the copies and backups that begin after the write, without a restart.
+
+**Tests:** `compliance/destination-settings.test.ts › takes a backup folder set through /config without a restart, and finishes a backup that was running in the folder it began in`, `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`.
+
+### `instance/backup-running-keeps-destination`
+
+If the destination settings change while a backup runs, then the server MUST finish that backup in the destination it began in.
+
+**Reason:** a backup is whole in one place or not written, never half in each.
+
+**Tests:** `compliance/destination-settings.test.ts › takes a backup folder set through /config without a restart, and finishes a backup that was running in the folder it began in`.
+
+### `instance/backup-health-unusable`
+
+While the backup folder or the object store the settings name cannot be used, the server MUST answer `GET /health` with `backups.status` `failing`, `backups.reason` `destination_unusable` and `backups.store_error` saying why.
+
+**Tests:** `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`.
+
+### `instance/attention-backup-unusable`
+
+While the backup folder or the object store the settings name cannot be used, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `store` and the title `The backup destination cannot be used`.
+
+**Tests:** `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`.
+
+### `instance/object-store-endpoint-bare`
+
+If a write to `/config` sets `object_store_endpoint` to a URL that carries a user name or a password, then the server MUST answer `400 validation_error` naming `object_store_endpoint`, with no part of the URL in the refusal.
+
+**Reason:** the object store's errors, which the server logs, carry the whole endpoint, so a credential belongs in `object_store_access_key_id` and `object_store_secret_access_key`.
+
+**Tests:** `compliance/destination-settings.test.ts › takes an untidy object store setting in its plain spelling, and refuses an endpoint that carries a credential without repeating it`.
+
+### `instance/object-store-plain-spelling`
+
+When a write to `/config` sets an `object_store_` setting, the server MUST store it in its plain spelling: an endpoint whose whole path is `/` without it, a prefix without a `/` at either end, and text without spaces at either end.
+
+**Tests:** `compliance/destination-settings.test.ts › takes an untidy object store setting in its plain spelling, and refuses an endpoint that carries a credential without repeating it`.
+
+### `instance/heartbeat-url-live`
+
+When a write to `/config` sets `heartbeat_url`, the server MUST list the `heartbeat` job and send its next heartbeat to that URL, without a restart.
+
+**Tests:** `compliance/destination-settings.test.ts › lists and sends the heartbeat to a heartbeat_url set through /config, without a restart`.
+
+### `instance/error-webhook-url-live`
+
+When a write to `/config` sets `error_webhook_url`, the server MUST post its notice of each later request that fails with a 500 error to that URL, without a restart.
+
+**Tests:** `compliance/destination-settings.test.ts › posts a notice of a 500 to an error_webhook_url set through /config, without a restart`.
+
 ## Start-only settings
 
-The environment variables below are read once, when the server starts. Each is named `MARFA_` and what it sets, except the `OTEL_*` settings, which keep OpenTelemetry's standard names because operators' tools already set them, and the `S3_*` settings, which name the object store as its own tools do.
+The environment variables below are read once, when the server starts. Each is named `MARFA_` and what it sets, except the `OTEL_*` settings, which keep OpenTelemetry's standard names because operators' tools already set them.
 
 | Setting                                 | Default                                              | Allowed values                                                     | What it sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | --------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2968,22 +3161,11 @@ The environment variables below are read once, when the server starts. Each is n
 | `MARFA_MAX_CONNECTIONS`                 | `1024`                                               | Whole number, 1 to 1000000                                         | The most connections the public listener holds open at once. The server lowers it at start where the open-file limit leaves too little room ("Open connections").                                                                                                                                                                                                                                                                                                                                                                   |
 | `MARFA_MAX_CONNECTIONS_PER_ADDRESS`     | `256`                                                | Whole number, 1 to 1000000                                         | The most connections the public listener holds open for one caller address, where the listener does not believe a forwarded address. An IPv6 address counts with the rest of its /64. A value above `MARFA_MAX_CONNECTIONS` has no effect.                                                                                                                                                                                                                                                                                          |
 | `MARFA_BLOB_PATH`                       | `./data/blobs`                                       | Any text                                                           | The folder of the disk store, where every upload lands.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `MARFA_BACKUP_PATH`                     | None                                                 | An absolute path with no `..` in it                                | The folder the server backs itself up to: each backup under `backups/<instance id>/` and a copy of each file under `files/<instance id>/`. The folder must exist, outside the data directory and the blob folder, and the server never creates it. Set it or `S3_BUCKET`, not both. When neither is set, the server keeps no backup.                                                                                                                                                                                                |
-| `S3_BUCKET`                             | None                                                 | Any text                                                           | The bucket of an S3-compatible object store. The store is attached when this is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `S3_REGION`                             | `us-east-1`                                          | Any text                                                           | The region of the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `S3_ENDPOINT`                           | None                                                 | Absolute `http` or `https` URL                                     | The endpoint of the object store. When blank, the store's provider chooses it.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `S3_ACCESS_KEY_ID`                      | None                                                 | Any text                                                           | The access key ID for the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `S3_SECRET_ACCESS_KEY`                  | None                                                 | Text with no whitespace around it                                  | The secret access key for the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `S3_FORCE_PATH_STYLE`                   | `true`                                               | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `S3_PREFIX`                             | `marfa`                                              | `/`-joined segments of letters, digits, `.`, `_` and `-`           | The key prefix the instance keeps everything under in the bucket: its files under `blobs/` and its backups under `backups/`. Each running instance on a bucket needs its own; a server that replaces an instance starts on its prefix. A `/` at either end is dropped; a `.` or `..` segment is refused.                                                                                                                                                                                                                            |
 | `MARFA_ENRICHMENT_TESSDATA_DIR`         | None                                                 | Any text                                                           | A folder of OCR language models.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `MARFA_TRUSTED_PROXY_CIDRS`             | None                                                 | Comma-separated CIDR ranges, IPv4 or IPv6                          | The address ranges of the proxies whose `X-Forwarded-For` header, or the header `MARFA_TRUSTED_PROXY_HEADER` names, the server believes. When empty, `X-Forwarded-For` is ignored.                                                                                                                                                                                                                                                                                                                                                  |
 | `MARFA_TRUSTED_PROXY_HEADER`            | None                                                 | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address, believed only from a peer inside `MARFA_TRUSTED_PROXY_CIDRS`, which it needs. While it is set, `X-Forwarded-For` is ignored.                                                                                                                                                                                                                                                                                                                      |
 | `MARFA_KEY_SALT`                        | None. Generated on first start into `marfa.secrets`. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Unset, the server uses the salt in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                                                          |
 | `MARFA_AUTH_SECRET`                     | None. Generated on first start into `marfa.secrets`. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Unset, the server uses the secret in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                  |
-| `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether outbound webhooks may reach loopback, private and other non-public addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `MARFA_ERROR_WEBHOOK_URL`               | None                                                 | Absolute `http` or `https` URL                                     | The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `MARFA_HEARTBEAT_URL`                   | None                                                 | Absolute `http` or `https` URL                                     | The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.                                                                                                                                                                                                                                                                                                                                                                                             |
 | `MARFA_OTEL_SAMPLE_RATIO`               | `0.05`                                               | Decimal number, 0 to 1                                             | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.                                                                                                                                                                                                                                                                                                                                              |
 | `OTEL_SDK_DISABLED`                     | `false`                                              | `true` in any case, or any other value                             | `true` in any case turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value, including `1`, leaves them as they are. The error webhook stays on.                                                                                                                                                                                                                                                                                                                           |
 | `OTEL_SERVICE_NAME`                     | `marfa-server`                                       | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -3103,11 +3285,11 @@ If the folder that holds the server's database, or the folder the server would m
 
 ### `instance/unknown-setting-warned`
 
-When the server starts and the environment holds a variable whose name begins with `MARFA_` or `S3_` and names no setting of the server and none that the `marfa` command reads from a shell, the server MUST log one warning for each such variable, naming the variable and the closest setting when one is near, and containing no part of the variable's value.
+When the server starts and the environment holds a variable whose name begins with `MARFA_` and names no setting of the server and none that the `marfa` command reads from a shell, the server MUST log one warning for each such variable, naming the variable and the closest setting when one is near, and containing no part of the variable's value.
 
 **Reason:** a setting that was renamed or removed, or one spelled wrongly, would otherwise leave the owner on the default with no word of it. The server still starts, because the same variable can be a leftover that does no harm, and the warning is where the owner looks for it. A value is never logged, since a misnamed variable can hold a secret.
 
-**Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts`.
+**Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ variable it does not read, names the setting it is near, and starts`.
 
 ### `instance/unknown-setting-no-ignored-name`
 
@@ -3115,7 +3297,7 @@ When the setting closest to an unknown variable is one that the server ignores b
 
 **Reason:** a variable that seeds a stored setting, or that runs a test hook, does nothing on a server without hooks, so the correction would lead the owner to another variable the server ignores. The warning names the stored setting instead, and the way to set it.
 
-**Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts`.
+**Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ variable it does not read, names the setting it is near, and starts`.
 
 ### `instance/unknown-secret-name-refused`
 

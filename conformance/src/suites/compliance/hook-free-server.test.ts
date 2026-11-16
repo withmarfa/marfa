@@ -293,11 +293,11 @@ describe("the environment names a server does not read", () => {
       .split("\n")
       .filter((line) => line.includes('"level":"warn"') && line.includes(name));
 
-  it("warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts", async () => {
+  it("warns once of each MARFA_ variable it does not read, names the setting it is near, and starts", async () => {
     const value = "leftover-value-never-logged";
     const free = start(folder("marfa-hf-data-"), {
       MARFA_BLOB_CLEANUP_GRACE_MS: value,
-      S3_BUCKT: value,
+      MARFA_BLOB_PATHH: value,
       MARFA_NOT_ANY_SETTING_AT_ALL: value,
       MARFA_API_KEY: value,
       MARFA_PORT: "0",
@@ -313,9 +313,9 @@ describe("the environment names a server does not read", () => {
     expect(grace).toContain("PATCH /config");
     // A server that ignores seed names never offers one as the correction.
     expect(grace).not.toContain("MARFA_BLOB_CLEANUP_GRACE_SECONDS");
-    const [bucket] = warned(output, "S3_BUCKT");
-    expect(warned(output, "S3_BUCKT")).toHaveLength(1);
-    expect(bucket).toContain("S3_BUCKET");
+    const [blobs] = warned(output, "MARFA_BLOB_PATHH");
+    expect(warned(output, "MARFA_BLOB_PATHH")).toHaveLength(1);
+    expect(blobs).toContain("did you mean MARFA_BLOB_PATH?");
     const [stray] = warned(output, "MARFA_NOT_ANY_SETTING_AT_ALL");
     expect(warned(output, "MARFA_NOT_ANY_SETTING_AT_ALL")).toHaveLength(1);
     expect(stray).not.toContain("did you mean");

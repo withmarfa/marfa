@@ -13,7 +13,7 @@ The server registers the following jobs, each run at the interval in the table. 
 | `event-log-cleanup`        | hour                      | Removes expired event log entries and idempotency records.                                                                                                                                                                                                                           | yes                           |
 | `audit-cleanup`            | day                       | Removes expired audit entries and outbound webhook delivery history.                                                                                                                                                                                                                 | yes                           |
 | `inbound-delivery-cleanup` | minute                    | Removes inbound deliveries after their handled or pending retention window.                                                                                                                                                                                                          | yes                           |
-| `heartbeat`                | minute                    | Pings the liveness receiver `MARFA_HEARTBEAT_URL` names.                                                                                                                                                                                                                             | no                            |
+| `heartbeat`                | minute                    | Pings the liveness receiver `heartbeat_url` names.                                                                                                                                                                                                                             | no                            |
 | `version-thinning`         | hour                      | Thins item versions according to the configured retention policy.                                                                                                                                                                                                                    | yes                           |
 | `feed-expiry`              | hour                      | Moves expired feed items to the trash.                                                                                                                                                                                                                                               | yes                           |
 | `trash-purge`              | day                       | Permanently removes items whose trash retention has elapsed.                                                                                                                                                                                                                         | yes                           |
@@ -54,7 +54,7 @@ The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-lo
 
 ### `housekeeping/switched-heartbeat`
 
-The server MUST list `heartbeat` where `MARFA_HEARTBEAT_URL` is set.
+The server MUST list `heartbeat` where `heartbeat_url` is set.
 
 **Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
@@ -696,7 +696,7 @@ If a run that outlived its deadline later finishes, then the server MUST NOT rec
 
 ### `housekeeping/restore-heartbeat`
 
-Where `MARFA_HEARTBEAT_URL` is set, while a restore runs, the server MUST send the heartbeat at its interval.
+Where `heartbeat_url` is set, while a restore runs, the server MUST send the heartbeat at its interval.
 
 **Reason:** a receiver that hears nothing reports the instance down, and a restore of a large archive can hold every write for minutes. The heartbeat writes nothing, so the restore gives it no reason to stop.
 

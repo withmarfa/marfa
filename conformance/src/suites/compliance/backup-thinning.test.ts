@@ -25,8 +25,8 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const OTHER_INSTANCE = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const store = ownObjectStore();
-const bucket = bucketAt(store.S3_PREFIX);
-const folder = `${store.S3_PREFIX}/backups`;
+const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
+const folder = `${store.MARFA_OBJECT_STORE_PREFIX}/backups`;
 let server: FreshServer;
 let own: string;
 
@@ -83,13 +83,13 @@ describe("thinning the backups", () => {
         `${folder}/${OTHER_INSTANCE}/${backupName(new Date(before(400)))}`,
       ];
       const strays = [
-        `${store.S3_PREFIX}/blobs/${"ab".repeat(32)}/0190a1b2c3d4`,
+        `${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${"ab".repeat(32)}/0190a1b2c3d4`,
         `${folder}/notes.txt`,
         `${folder}/${backupName(new Date(before(45)))}`,
         `${own}/${backupName(new Date(before(35)))}`,
         `${own}/${backupName(new Date(before(50)))}.partial`,
         `${own}/deeper/${backupName(new Date(before(60)))}`,
-        `${store.S3_PREFIX}/${backupName(new Date(before(70)))}`,
+        `${store.MARFA_OBJECT_STORE_PREFIX}/${backupName(new Date(before(70)))}`,
       ];
       for (const key of others) {
         await bucket.put(key, "another instance's backup");
@@ -119,7 +119,7 @@ describe("thinning the backups", () => {
       for (const key of [...others, ...strays]) {
         expect(left).toContain(key);
       }
-      expect(left).toContain(`${store.S3_PREFIX}/blobs/.marfa-store`);
+      expect(left).toContain(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`);
     } finally {
       await server.pauseClock(false);
     }
@@ -160,7 +160,7 @@ describe("thinning the backups", () => {
 
   it("keeps every backup when one is put 40 days after the last, and when the next comes six weeks later", async () => {
     const own = ownObjectStore();
-    const ownBucket = bucketAt(own.S3_PREFIX);
+    const ownBucket = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const alone = await bootFreshServer("backup-thinning-clock", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: "0",
@@ -175,7 +175,7 @@ describe("thinning the backups", () => {
         expect(run.data.removed).toBe(0);
         names.push(run.data.backup.name);
       }
-      const prefix = `${own.S3_PREFIX}/backups/${await instanceIdOf(alone)}`;
+      const prefix = `${own.MARFA_OBJECT_STORE_PREFIX}/backups/${await instanceIdOf(alone)}`;
       expect((await ownBucket.backupKeys()).sort()).toEqual(
         names.map((name) => `${prefix}/${name}`).sort(),
       );

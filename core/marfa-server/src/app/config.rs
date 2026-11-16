@@ -13,12 +13,17 @@ use super::consequences::{self, Consequence};
 use super::refusal::{Code, Refusal, Result};
 use super::sources;
 use super::{App, instance, stored};
-use crate::settings::registry::{ADDRESSES, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS};
+use crate::settings::registry::{
+    ADDRESSES, BACKUP_PATH, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS,
+};
+use crate::settings::sealed::Sealer;
 use crate::settings::together::{self, Breach};
 
 pub const ENFORCEMENT_ROW: &str = "enforcement";
 const MAX_NAME: usize = 200;
 const CONFIRMATION: &str = "confirm_sign_in_address_change";
+/// Names the secrets that are set; a body may send it back, and it sets nothing.
+const SECRETS_SET: &str = "secrets_set";
 
 /// How a write treats what its body leaves out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +42,7 @@ enum Ask<T> {
 
 /// The fields a `/config` body may name.
 pub fn fields() -> Vec<&'static str> {
-    let mut names = vec!["instance_id", "name", "enforcement", CONFIRMATION];
+    let mut names = vec!["instance_id", "name", "enforcement", CONFIRMATION, SECRETS_SET];
     names.extend(ENTRIES.iter().map(|entry| entry.key));
     names
 }
@@ -45,7 +50,7 @@ pub fn fields() -> Vec<&'static str> {
 /// The fields an address check may name.
 pub const CHECK_FIELDS: [&str; 2] = ["sign_in_address", "addresses"];
 
-/// What a body asks for, once its shape has been judged.
+/// What a body asks for, once its shape has been judged. A secret it sets is sealed already.
 #[derive(Debug)]
 pub struct Request {
     mode: Mode,
@@ -121,8 +126,14 @@ fn lever_errors(refusal: Refusal) -> Result<Vec<(String, String)>> {
 }
 
 impl Request {
-    /// Names every field it cannot accept: unknown names first, then each field's shape.
-    pub fn from_body(mode: Mode, body: &Map<String, Value>, allowed: &[&str]) -> Result<Request> {
+    /// Names every field it cannot accept: unknown names first, then each field's shape. A
+    /// refusal never repeats a secret's value.
+    pub fn from_body(
+        mode: Mode,
+        body: &Map<String, Value>,
+        allowed: &[&str],
+        sealer: &Sealer,
+    ) -> Result<Request> {
         unknown_fields(body, allowed)?;
         let mut errors = Vec::new();
         let mut request = Request {
@@ -146,6 +157,12 @@ impl Request {
                     Some(id) => request.instance_id = Some(id.to_string()),
                     None => errors.push((field.to_string(), "must be the instance's id".into())),
                 },
+                SECRETS_SET => {
+                    let names = value.as_array().filter(|names| names.iter().all(Value::is_string));
+                    if names.is_none() {
+                        errors.push((field.to_string(), "must be a list of setting keys".into()));
+                    }
+                }
                 CONFIRMATION => match value.as_bool() {
                     Some(flag) => request.confirmed = flag,
                     None => errors.push((field.to_string(), "must be true or false".into())),
@@ -177,6 +194,14 @@ impl Request {
                     match (value, mode) {
                         (Value::Null, Mode::Patch) => request.settings.push((entry, Ask::Clear)),
                         (Value::Null, Mode::Put) => errors.push(null_in_put(key)),
+                        _ if entry.is_secret() => match entry.secret_text(value) {
+                            Ok(None) => request.settings.push((entry, Ask::Clear)),
+                            Ok(Some(secret)) => match sealer.seal(entry.key, &secret) {
+                                Some(sealed) => request.settings.push((entry, Ask::Set(sealed))),
+                                None => return Err(Refusal::internal("a secret did not seal")),
+                            },
+                            Err(rule) => errors.push((key.to_string(), rule)),
+                        },
                         _ => match entry.row_text_of_json(value) {
                             Ok(text) if text.is_empty() => {
                                 request.settings.push((entry, Ask::Clear));
@@ -210,6 +235,14 @@ impl Request {
 
     fn names(&self, key: &str) -> bool {
         self.settings.iter().any(|(entry, _)| entry.key == key)
+    }
+
+    /// The backup folder the body sets.
+    fn backup_path(&self) -> Option<&str> {
+        self.settings.iter().find_map(|(entry, ask)| match ask {
+            Ask::Set(text) if entry.key == BACKUP_PATH.entry.key => Some(text.as_str()),
+            _ => None,
+        })
     }
 
     fn field_names(&self) -> Vec<&'static str> {
@@ -252,7 +285,8 @@ impl Plan {
         let mut ops: BTreeMap<String, Option<String>> = BTreeMap::new();
         let mut touched: Vec<&'static str> = Vec::new();
         if request.mode == Mode::Put {
-            for entry in ENTRIES {
+            // A secret is never read back, so a body cannot name one it leaves as it is.
+            for entry in ENTRIES.iter().filter(|entry| !entry.is_secret()) {
                 ops.insert(entry.key.to_string(), None);
                 touched.push(entry.key);
             }
@@ -476,12 +510,42 @@ fn document(app: &App, rows: &Rows, name: Option<String>) -> Value {
     if let Some(levers) = levers_of(rows) {
         body.insert("enforcement".into(), levers.to_json());
     }
+    let mut secrets = Vec::new();
     for entry in ENTRIES {
-        if let Some(value) = snapshot.stored(entry) {
-            body.insert(entry.key.into(), value.to_json());
+        match snapshot.stored(entry) {
+            Some(_) if entry.is_secret() => secrets.push(entry.key),
+            Some(value) => {
+                body.insert(entry.key.into(), value.to_json());
+            }
+            None => {}
         }
     }
+    body.insert(SECRETS_SET.into(), secrets.into());
     Value::Object(body)
+}
+
+/// Refuses a backup folder inside the data directory or the blob folder, judged where links lead.
+async fn check_backup_path(app: &App, request: &Request) -> Result<()> {
+    let Some(text) = request.backup_path() else {
+        return Ok(());
+    };
+    let (folder, kept) = (
+        std::path::PathBuf::from(text),
+        together::kept_folders(&app.settings.start),
+    );
+    let looked = tokio::task::spawn_blocking(move || {
+        let kept: Vec<(&str, &std::path::Path)> =
+            kept.iter().map(|(what, path)| (*what, path.as_path())).collect();
+        super::blobs::folder::outside(&folder, &kept)
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), looked).await {
+        Ok(Ok(Ok(()))) | Err(_) => Ok(()),
+        Ok(Ok(Err(failure))) => Err(invalid(vec![(
+            BACKUP_PATH.entry.key.to_string(),
+            failure.message,
+        )])),
+        Ok(Err(_)) => Err(Refusal::internal("the backup folder could not be judged")),
+    }
 }
 
 pub async fn read(app: &Arc<App>) -> Result<Value> {
@@ -502,6 +566,7 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
 
 pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
     request.check_identity(app)?;
+    check_backup_path(app, &request).await?;
     let writing = app.clone();
     let working = app.clone();
     let caller = caller.clone();
@@ -554,7 +619,7 @@ pub async fn adopt_sign_in_address(
     let key = SIGN_IN_ADDRESS.entry.key;
     let mut body = Map::new();
     body.insert(key.into(), address.origin().into());
-    let request = Request::from_body(Mode::Patch, &body, &fields())?;
+    let request = Request::from_body(Mode::Patch, &body, &fields(), app.settings.sealer())?;
     let row = SIGN_IN_ADDRESS
         .entry
         .row_text(address.origin())
@@ -630,7 +695,9 @@ pub async fn listing(app: &Arc<App>) -> Result<Value> {
             let unreadable = live.unreadable().contains(&entry.key);
             let stored = match (live.stored(entry), rows.get(entry.key)) {
                 (Some(value), _) => value.to_json(),
-                (None, Some(text)) if unreadable => Value::from(text.as_str()),
+                (None, Some(text)) if unreadable && !entry.is_secret() => {
+                    Value::from(text.as_str())
+                }
                 _ => Value::Null,
             };
             let mut line = Map::new();
@@ -640,6 +707,10 @@ pub async fn listing(app: &Arc<App>) -> Result<Value> {
             line.insert("default".into(), default);
             line.insert("stored".into(), stored);
             line.insert("rule".into(), entry.words().into());
+            line.insert("secret".into(), entry.is_secret().into());
+            if entry.is_secret() {
+                line.insert("set".into(), live.secret_set(entry).into());
+            }
             if unreadable {
                 line.insert("unreadable".into(), true.into());
             }

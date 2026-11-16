@@ -116,6 +116,12 @@ impl Entry {
         self.keep == Keep::Secret
     }
 
+    /// Whether a refusal must not repeat the value given: a secret, or an address that could
+    /// carry a credential.
+    pub fn hides_value(&self) -> bool {
+        self.is_secret() || matches!(self.rule, Rule::Endpoint | Rule::Url)
+    }
+
     /// Whether an archive carries this setting's value.
     pub fn carried(&self) -> bool {
         self.keep == Keep::Instance
@@ -578,7 +584,7 @@ pub fn seeds(environment: &Environment, problems: &mut Vec<String>) -> Seeds {
             Ok(value) => {
                 seeds.insert(entry.key, value);
             }
-            Err(broken) if entry.is_secret() => problems.push(format!("{name} {broken}")),
+            Err(broken) if entry.hides_value() => problems.push(format!("{name} {broken}")),
             Err(broken) => problems.push(rule::line(&name, &broken, text)),
         }
     }

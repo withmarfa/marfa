@@ -141,6 +141,8 @@ pub struct Registrations {
     pub icons: Vec<(String, Option<String>)>,
     pub sources: Vec<sources::Archived>,
     pub settings: Vec<(String, String)>,
+    /// The secrets the archive's instance had set, by name.
+    pub secrets: Vec<String>,
     /// The instance's enforcement levers, each setting by name.
     pub enforcement: Option<Map<String, Value>>,
     /// Names of settings this instance does not have, which the restore leaves out.
@@ -570,8 +572,9 @@ impl Rows {
                     .with_detail("key", key.as_str()));
                 }
                 match text {
-                    Some(text) => registrations.settings.push((key, text)),
-                    None => registrations.dropped_settings.push(key),
+                    stored::Archived::Value(text) => registrations.settings.push((key, text)),
+                    stored::Archived::Secret => registrations.secrets.push(key),
+                    stored::Archived::Unknown => registrations.dropped_settings.push(key),
                 }
             }
             "enforcement" => {

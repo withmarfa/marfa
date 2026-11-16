@@ -14,7 +14,7 @@ let working: MarfaClient;
 beforeAll(async () => {
   server = await bootFreshServer("management-grants", {
     ...QUIET_SCHEDULE,
-    S3_BUCKET: "",
+    MARFA_OBJECT_STORE_BUCKET: "",
   });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,

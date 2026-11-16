@@ -31,7 +31,7 @@ use super::refusal::{Code, Refusal, Result};
 use super::tables::archive::{ArchivedRow, CarriedTable, Rows};
 use super::{backups, connectors, edges, provenance, sources, stored, tables};
 use crate::db::io_refusal;
-use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
+use crate::settings::registry;
 pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
@@ -822,7 +822,14 @@ fn select<W: RowSink>(
             let Some(entry) = registry::entry(&key) else {
                 continue;
             };
-            if [ADDRESSES.entry.key, SIGN_IN_ADDRESS.entry.key].contains(&entry.key) {
+            if entry.is_secret() {
+                settings.push((
+                    print(&json!({ "setting": { "key": key, "secret": true } }))?,
+                    needing(Some(Permission::ConfigManage)),
+                ));
+                continue;
+            }
+            if !entry.carried() {
                 continue;
             }
             let value = entry.row_json(&text).map_err(|error| {

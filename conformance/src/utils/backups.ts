@@ -36,14 +36,14 @@ export interface Bucket {
 }
 
 export function bucketAt(prefix: string): Bucket {
-  const bucket = process.env.S3_BUCKET!;
+  const bucket = process.env.MARFA_OBJECT_STORE_BUCKET!;
   const client = new S3Client({
-    region: process.env.S3_REGION!,
-    endpoint: process.env.S3_ENDPOINT!,
+    region: process.env.MARFA_OBJECT_STORE_REGION!,
+    endpoint: process.env.MARFA_OBJECT_STORE_ENDPOINT!,
     forcePathStyle: true,
     credentials: {
-      accessKeyId: process.env.S3_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+      accessKeyId: process.env.MARFA_OBJECT_STORE_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.MARFA_OBJECT_STORE_SECRET_ACCESS_KEY!,
     },
   });
   const listed = async (under: string) => {

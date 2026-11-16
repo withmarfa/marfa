@@ -29,7 +29,7 @@ let backups: string;
 
 beforeAll(async () => {
   server = await bootFreshServer("archive-line-cap", {
-    S3_BUCKET: "",
+    MARFA_OBJECT_STORE_BUCKET: "",
     MARFA_BACKUP_PATH: folder,
     MARFA_BACKUP_INTERVAL_SECONDS: "31536000",
   });

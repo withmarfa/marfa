@@ -14,7 +14,7 @@ import {
 
 const DAY = 24 * 3_600_000;
 const store = ownObjectStore();
-const bucket = bucketAt(store.S3_PREFIX);
+const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
 let origin: FreshServer;
 let originId: string;
 let fresh: FreshServer | undefined;
@@ -64,7 +64,7 @@ async function unname(server: FreshServer, id: string) {
 async function objectsOf(hash: string): Promise<string[]> {
   const hex = hash.replace(/^sha256:/, "");
   return (await bucket.keys()).filter((key) =>
-    key.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`),
+    key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${hex}/`),
   );
 }
 
@@ -174,7 +174,7 @@ describe("the files a backup names", () => {
         expect(run.status, JSON.stringify(run.error)).toBe(200);
         expect(run.data.removed).toBe(day === 32 ? 1 : 0);
         later.push(
-          `${store.S3_PREFIX}/backups/${originId}/${run.data.backup.name}`,
+          `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${originId}/${run.data.backup.name}`,
         );
       }
       expect((await bucket.backupKeys()).sort()).toEqual(later.sort());

@@ -113,6 +113,10 @@ stays because that thing is what it checks.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
+- `compliance/secret-settings.test.ts` searches the database file and the log
+  beside it for a secret setting's value, because the contract is about the
+  bytes at rest, and removes or damages `marfa.settings.key` while the server is
+  stopped, because only a lost or broken disk loses the key.
 - `compliance/type-conflicts.test.ts` writes a stored type definition. Only a
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,

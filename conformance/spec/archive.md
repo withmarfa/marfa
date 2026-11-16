@@ -282,11 +282,27 @@ If a `source` line of an archive is not an object, holds a `source` code that `k
 
 ### `archive/archive-settings`
 
-When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from `sign_in_address` and `addresses`.
+When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from a secret and those that describe this machine: `sign_in_address`, `addresses`, `backup_path`, the `object_store_` settings and `webhook_allow_private_addresses`.
 
-**Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The two addresses name where this instance answers, which a move changes, and the instance's name is its own to set again, so no `setting` line carries it. No setting holds a secret.
+**Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The addresses name where this instance answers and the destination where it keeps copies and backups, which a move changes, and whether webhooks may reach private addresses depends on the network around the machine. The instance's name is its own to set again, so no `setting` line carries it.
 
 **Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`, `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`.
+
+### `archive/archive-secret-named`
+
+When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line holding the `key` and `secret` `true`, and no `value`, for each secret setting stored on the instance.
+
+**Reason:** an archive leaves the machine, and the key that seals a secret never does, so the line says only that the secret was set, for a restore to report (`archive/restore-secrets-to-set`).
+
+**Tests:** `compliance/secret-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds its value, where a setting that is no secret is shown`.
+
+### `archive/restore-secrets-to-set`
+
+When `POST /restore` reads a `setting` line naming a secret setting for which the instance holds no value it can open, the server MUST name the setting's key in `secrets_to_set`.
+
+**Reason:** the owner learns from the restore's answer which secrets to set again on this machine, and the attention list keeps saying so until they are (`instance/attention-secret-to-set`). A restore never fails for them.
+
+**Tests:** `compliance/secret-settings.test.ts › is reported on a restore, and on the attention list, when the archive's instance had it set and this one holds no value it can read`.
 
 ### `archive/archive-enforcement`
 
@@ -600,7 +616,7 @@ When local authority sends `POST /restore` with an archive that `GET /export?for
 
 ### `archive/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -630,7 +646,7 @@ When `POST /restore` succeeds with an archive whose manifest names an `instance_
 
 ### `archive/restore-previous-folder`
 
-Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>`, `backup-parts/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
+Where `backup_path` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>`, `backup-parts/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
 
 **Reason:** the backup folder keeps each instance's backups, their parts and its copy of each file in folders of that instance's own (`instance/backup-folder-file`, `instance/backup-part-named`).
 
@@ -638,15 +654,15 @@ Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instanc
 
 ### `archive/restore-previous-bucket`
 
-Where `S3_BUCKET` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<S3_PREFIX>/backups/<instance id>` and `<S3_PREFIX>/backup-parts/<instance id>` in `kept_by_previous_instance`.
+Where `object_store_bucket` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<object_store_prefix>/backups/<instance id>` and `<object_store_prefix>/backup-parts/<instance id>` in `kept_by_previous_instance`.
 
-**Reason:** the object store keeps every instance's file copies under `<S3_PREFIX>/blobs/`, shared with this instance, so no file copy belongs to the old instance alone.
+**Reason:** the object store keeps every instance's file copies under `<object_store_prefix>/blobs/`, shared with this instance, so no file copy belongs to the old instance alone.
 
 **Tests:** `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`.
 
 ### `archive/restore-previous-nowhere`
 
-Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `null` in its `destination` and no path in `kept_by_previous_instance`.
+Where neither `object_store_bucket` nor `backup_path` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `null` in its `destination` and no path in `kept_by_previous_instance`.
 
 **Reason:** an instance with no backup destination does not know where the old instance kept its backups.
 

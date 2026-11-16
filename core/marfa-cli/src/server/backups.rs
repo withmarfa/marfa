@@ -1,13 +1,19 @@
 //! What a server's `/health` says of backups, in words for the person who installed it.
 
-use std::path::Path;
-
 use serde_json::{Value, json};
 
 use super::PrivateCommand;
 
 const TURNED_OFF: &str = "Scheduled backups are turned off, because backup_interval_seconds is 0. \
                           A backup is taken only when you ask for one.";
+
+/// The command that changes a stored setting on this server.
+fn config_update(private: Option<&PrivateCommand>) -> String {
+    match private {
+        Some(private) => private.run_text("config update"),
+        None => "`marfa config update`".to_string(),
+    }
+}
 
 /// The `backups` object of a public `/health` answer.
 #[derive(Debug, PartialEq, Eq)]
@@ -36,25 +42,19 @@ impl Said {
 
     /// What a person should be told, or `None` when backups are running well. `docker` is
     /// whether the server runs in a container, where a folder must be mounted into it first.
-    pub fn words(
-        &self,
-        settings: &Path,
-        docker: bool,
-        private: Option<&PrivateCommand>,
-    ) -> Option<String> {
+    pub fn words(&self, docker: bool, private: Option<&PrivateCommand>) -> Option<String> {
         match (self.status.as_str(), self.reason.as_deref()) {
             ("off", Some("no_backup_destination")) => {
                 let folder = if docker {
-                    "MARFA_BACKUP_PATH to a folder on another disk that is mounted into the \
-                     container"
+                    "backup_path to a folder on another disk that is mounted into the container"
                 } else {
-                    "MARFA_BACKUP_PATH to a folder on another disk"
+                    "backup_path to a folder on another disk"
                 };
                 Some(format!(
                     "No backups are kept: this server has nowhere to put them. Set {folder}, or \
-                     S3_BUCKET to an object store, in {}, then run `marfa server \
-                     restart`.",
-                    settings.display()
+                     object_store_bucket with its access key and secret to an object store, \
+                     with {}.",
+                    config_update(private)
                 ))
             }
             ("off", Some("turned_off")) => Some(TURNED_OFF.to_string()),
@@ -84,8 +84,6 @@ impl Said {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
     fn said(backups: Value) -> Said {
@@ -93,22 +91,20 @@ mod tests {
     }
 
     #[test]
-    fn no_destination_names_both_settings_the_file_and_how_to_restart() {
+    fn no_destination_names_both_settings_and_the_command_that_sets_them() {
         let off = said(json!({ "status": "off", "reason": "no_backup_destination" }));
-        let settings = PathBuf::from("/srv/marfa/marfa.env");
-        let words = off.words(&settings, false, None).unwrap();
+        let words = off.words(false, None).unwrap();
         for part in [
             "No backups are kept",
-            "MARFA_BACKUP_PATH",
-            "S3_BUCKET",
-            "/srv/marfa/marfa.env",
-            "marfa server restart",
+            "backup_path",
+            "object_store_bucket",
+            "marfa config update",
         ] {
             assert!(words.contains(part), "{part}: {words}");
         }
         assert!(!words.contains("mounted"));
         assert!(
-            off.words(&settings, true, None)
+            off.words(true, None)
                 .unwrap()
                 .contains("mounted into the container")
         );
@@ -117,33 +113,23 @@ mod tests {
     #[test]
     fn turned_off_is_told_apart_from_no_destination() {
         let off = said(json!({ "status": "off", "reason": "turned_off" }));
-        let words = off.words(Path::new("/x/marfa.env"), false, None).unwrap();
+        let words = off.words(false, None).unwrap();
         assert!(words.contains("turned off"), "{words}");
         assert!(!words.contains("No backups are kept"), "{words}");
-        assert!(!words.contains("MARFA_BACKUP_PATH"), "{words}");
+        assert!(!words.contains("backup_path"), "{words}");
     }
 
     #[test]
     fn working_backups_say_nothing_and_a_failing_one_points_at_attention() {
-        let settings = Path::new("/x/marfa.env");
-        assert_eq!(
-            said(json!({ "status": "ok" })).words(settings, false, None),
-            None
-        );
+        assert_eq!(said(json!({ "status": "ok" })).words(false, None), None);
         let failing = said(json!({ "status": "failing" }));
-        assert!(
-            failing
-                .words(settings, false, None)
-                .unwrap()
-                .contains("attention")
-        );
+        assert!(failing.words(false, None).unwrap().contains("attention"));
     }
 
     #[test]
     fn failing_backups_that_are_turned_off_say_both() {
-        let settings = Path::new("/x/marfa.env");
         let failing = said(json!({ "status": "failing", "reason": "turned_off" }));
-        let words = failing.words(settings, false, None).unwrap();
+        let words = failing.words(false, None).unwrap();
         assert!(words.contains("Backups are failing"), "{words}");
         assert!(words.contains("turned off"), "{words}");
         assert!(!words.contains("No backups are kept"), "{words}");

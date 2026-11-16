@@ -377,7 +377,12 @@ impl App {
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
                         let restored_settings =
-                            stored::restore(tx, &settings, &registrations.settings)?;
+                            stored::restore(
+                                tx,
+                                &settings,
+                                &registrations.settings,
+                                &registrations.secrets,
+                            )?;
                         let (settings_added, settings_skipped) =
                             (restored_settings.added, restored_settings.skipped);
                         let levers = match &registrations.enforcement {
@@ -484,6 +489,7 @@ impl App {
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,
                             "settings_without_receiver": restored_settings.without_receiver,
+                            "secrets_to_set": restored_settings.secrets_to_set,
                             "enforcement_added": levers.added,
                             "enforcement_skipped": levers.skipped,
                             "connector_states_added": states.added,
@@ -496,7 +502,8 @@ impl App {
                             "line_kinds_skipped": unknown_kinds,
                         });
                         unit.audit_set("restore_archive", Some(answer.clone()))?;
-                        let staged = (settings_added > 0)
+                        let staged = restored_settings
+                            .changed()
                             .then(|| stored::stage(tx, &settings))
                             .transpose()?;
                         faults.hold_writing(HOLD_RESTORE_COMMIT);

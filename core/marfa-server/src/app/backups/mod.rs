@@ -2862,6 +2862,7 @@ mod tests {
             ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
             ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
             ("MARFA_BACKUP_PATH", folder.path().to_str().unwrap()),
             ("MARFA_BACKUP_INTERVAL_SECONDS", "31536000"),
         ];

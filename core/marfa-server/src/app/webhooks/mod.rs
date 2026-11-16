@@ -118,7 +118,11 @@ fn not_found() -> Refusal {
 
 /// An inconclusive registration lookup leaves the decision to the send attempt.
 pub async fn check_address(app: &App, maker: &Maker, address: &request::Address) -> Result<()> {
-    if app.settings.live().get(crate::settings::registry::WEBHOOK_ALLOW_PRIVATE_ADDRESSES) {
+    if app
+        .settings
+        .live()
+        .get(crate::settings::registry::WEBHOOK_ALLOW_PRIVATE_ADDRESSES)
+    {
         return Ok(());
     }
     match outbound::reach(
@@ -132,7 +136,7 @@ pub async fn check_address(app: &App, maker: &Maker, address: &request::Address)
         Reach::NotPublic => Err(invalid(
             "url",
             "url names a host that is not a public address. An instance whose receivers are on a \
-             private network allows them with MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true.",
+             private network allows them by setting webhook_allow_private_addresses to true.",
         )),
         Reach::Targets(_) | Reach::Unresolved | Reach::NoSlot => Ok(()),
     }

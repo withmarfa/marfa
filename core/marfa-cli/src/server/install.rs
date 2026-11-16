@@ -654,7 +654,13 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let backups = backups::Said::ask(&http_agent(port), port);
     let backups_say = backups
         .as_ref()
-        .and_then(|said| said.words(&settings_path, runtime == Runtime::Docker, None));
+        .and_then(|said| {
+            let private = match runtime {
+                Runtime::Native => super::PrivateCommand::Socket(layout.socket()),
+                Runtime::Docker => super::PrivateCommand::Container(name.to_string()),
+            };
+            said.words(runtime == Runtime::Docker, Some(&private))
+        });
     let host = crate::auth::machine_name();
     let report = json!({
         "installed": true,

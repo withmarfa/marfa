@@ -1,7 +1,7 @@
 /**
  * Memory at rest on a server with an object store attached.
  *
- * Boots a server of its own on an empty instance with the `S3_*` settings in
+ * Boots a server of its own on an empty instance with the `MARFA_OBJECT_STORE_*` settings in
  * the environment (`pnpm garage:up` writes them), checks that the instance
  * lists the store, lets it settle and reads its memory. It stops only the
  * server it started.
@@ -20,8 +20,8 @@ const SETTLE_MS = Number(process.env.MARFA_SCALE_SETTLE_MS ?? "30000");
 
 export async function store(): Promise<void> {
   const recorder = new Recorder("store");
-  if (!process.env.S3_ENDPOINT) {
-    throw new Error("S3_ENDPOINT is not set; run `pnpm garage:up` first");
+  if (!process.env.MARFA_OBJECT_STORE_ENDPOINT) {
+    throw new Error("MARFA_OBJECT_STORE_ENDPOINT is not set; run `pnpm garage:up` first");
   }
   const work = mkdtempSync(join(tmpdir(), "marfa-scale-store-"));
   const state = join(work, "a");
