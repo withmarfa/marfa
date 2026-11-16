@@ -1,5 +1,4 @@
-//! Fetches a release, checks it against the release's checksums, asks the new program whether it
-//! opens this database, and only then swaps the programs, keeping the old ones to put back.
+//! Fetches a release, checks it, and swaps its programs in, keeping the old ones.
 
 use std::fs::{self, File};
 use std::io::Read;
@@ -21,7 +20,7 @@ const MAX_CHECKSUMS_BYTES: u64 = 64 << 10;
 const MAX_PROGRAM_BYTES: u64 = 512 << 20;
 const DOWNLOAD_TIME: Duration = Duration::from_secs(20 * 60);
 const RUN_TIME: Duration = Duration::from_secs(20);
-/// What unpacking needs beyond the archive's own size: the programs and the swap's copies.
+/// The room unpacking needs, as a multiple of the archive's size and a margin.
 const ROOM_FACTOR: u64 = 4;
 const ROOM_MARGIN: u64 = 64 << 20;
 
@@ -36,7 +35,6 @@ pub struct Job {
     pub record: Folder,
 }
 
-/// The stages the owner can watch, in order.
 pub const FETCHING: &str = "fetching";
 pub const CHECKING: &str = "checking";
 pub const SWAPPING: &str = "swapping";
@@ -46,7 +44,7 @@ fn address(asset: &Asset) -> Result<Url, String> {
         .map_err(|_| "The release names a download address that does not read.".to_string())
 }
 
-/// The checksum the release's file gives `name`, which it must give exactly once.
+/// The checksum the release's file gives `name`, exactly once.
 fn expected(sums: &str, name: &str) -> Result<String, String> {
     let mut found = sums.lines().filter_map(|line| {
         let mut words = line.split_whitespace();
@@ -111,7 +109,6 @@ struct Ran {
     stderr: String,
 }
 
-/// Runs a program of the release and gives it `RUN_TIME`.
 fn run_within(program: &Path, arguments: &[&std::ffi::OsStr]) -> Result<Ran, std::io::Error> {
     let mut child = Command::new(program)
         .args(arguments)
@@ -155,8 +152,7 @@ struct Said {
     schema: Option<u32>,
 }
 
-/// Each program says which release it is, and the new server says whether it opens the database.
-/// Returns the schema version the database holds.
+/// Proves each program and asks the new server about the database; gives its schema version.
 fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
     for name in PROGRAMS {
         let reported = run_within(&staging.join(name), &["--version".as_ref()])
@@ -203,8 +199,7 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
     }
 }
 
-/// Renames each program aside and the new one into its place, undoing what was done when any
-/// step fails. The record of the swap is kept first, so a stop part-way leaves it findable.
+/// Swaps each program in, undoing the steps done when one fails.
 fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     let pending = Pending {
         from: job.from.clone(),
@@ -249,8 +244,7 @@ fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     Ok(())
 }
 
-/// Blocks. On `Ok` the new programs are in place and the server should end for its service to
-/// start them; on `Err` the running release is as it was.
+/// Blocks. On `Ok` the new programs are in place; on `Err` the running release is as it was.
 pub fn run(feed: &Feed, job: &Job, stage: &dyn Fn(&'static str)) -> Result<(), String> {
     let staging = job.programs.join(format!(".marfa-update-{}", job.version));
     let _ = fs::remove_dir_all(&staging);

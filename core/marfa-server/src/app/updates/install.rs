@@ -10,17 +10,14 @@ pub const IMAGE: &str = "ghcr.io/withmarfa/marfa-server";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Install {
-    /// A service `marfa server install` made, which restarts the server when it exits with a
-    /// failure, and whose programs this server may replace.
+    /// A service that restarts the server on failure, with programs it may replace.
     Service {
         programs: PathBuf,
     },
     Container,
-    /// Anything else, including a service whose programs the server cannot write.
     Other,
 }
 
-/// What `detect` reads from the machine, so a test can give it another.
 pub struct Facts<'a> {
     pub service: Option<&'a str>,
     pub exe: &'a Path,

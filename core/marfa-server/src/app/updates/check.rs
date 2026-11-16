@@ -1,5 +1,4 @@
-//! The `release-check` housekeeping job: asks GitHub for the newest published release and keeps
-//! the answer as the job's result. A check that fails keeps the last release it found.
+//! The `release-check` housekeeping job.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,10 +26,9 @@ pub fn enabled(app: &App) -> bool {
     app.settings.live().get(UPDATE_CHECK_ENABLED)
 }
 
-/// What the job keeps between runs, as the flat values a housekeeping result holds.
+/// What the job keeps between runs, as flat values.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Kept {
-    /// When a check last found the newest release.
     pub checked_at: Option<String>,
     pub version: Option<String>,
     pub published_at: Option<String>,
@@ -38,7 +36,6 @@ pub struct Kept {
     pub archive_bytes: Option<u64>,
     pub checksums_url: Option<String>,
     pub checksums_bytes: Option<u64>,
-    /// When the latest check failed, and why; both `None` once one succeeds.
     pub failed_at: Option<String>,
     pub error: Option<String>,
 }
@@ -97,8 +94,7 @@ fn result(kept: &Kept) -> Value {
     json!(kept)
 }
 
-/// The request runs on a thread of its own: it blocks, and a stop must be able to leave it
-/// behind, which the runtime's blocking pool would wait for.
+/// Runs on a thread of its own, which a stop can leave behind.
 pub async fn job(app: Arc<App>, run: Run) -> Result<Report> {
     let before = kept(&app).await?;
     let address = match app.faults.release_feed() {

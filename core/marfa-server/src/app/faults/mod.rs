@@ -84,7 +84,7 @@ pub struct Resolved {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReleaseFeed {
     Public,
-    /// A build with test hooks asks nobody until a `release-feed` fault names an address.
+    /// A build with test hooks asks nobody until a fault names an address.
     Nowhere,
     /// The address a fault names, which may be on this machine.
     At(String),

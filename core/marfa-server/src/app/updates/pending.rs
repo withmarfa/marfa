@@ -1,7 +1,4 @@
-//! What survives the restart of an update: the record that the programs were swapped, which the
-//! new release settles once it has stayed up, and the outcome the owner reads afterwards. A new
-//! release that does not stay up through a second start is put back, as long as it left the
-//! database as it found it.
+//! The record of a swap across the restart, and the outcome the owner reads.
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -23,9 +20,7 @@ const LAST: &str = "last.json";
 pub struct Pending {
     pub from: String,
     pub to: String,
-    /// The database's schema version when the programs were swapped.
     pub schema: Option<u32>,
-    /// How many times the new release has started without settling.
     pub starts: u32,
     pub programs: PathBuf,
 }
@@ -47,7 +42,6 @@ impl Outcome {
     }
 }
 
-/// The last update's end, as the owner reads it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Last {
     pub outcome: String,
@@ -60,7 +54,6 @@ pub fn previous_of(programs: &Path, name: &str) -> PathBuf {
     programs.join(format!(".{name}.previous"))
 }
 
-/// The folder the records are in, beside the database.
 #[derive(Clone, Debug)]
 pub struct Folder(PathBuf);
 
@@ -121,11 +114,9 @@ impl Folder {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Start {
     Proceed,
-    /// The old programs are back; the service starts them.
     Restart,
 }
 
-/// Puts the kept programs back, newest swap first.
 pub fn put_back(programs: &Path) -> std::io::Result<()> {
     for name in PROGRAMS.iter().rev() {
         let kept = previous_of(programs, name);
@@ -136,8 +127,7 @@ pub fn put_back(programs: &Path) -> std::io::Result<()> {
     File::open(programs)?.sync_all()
 }
 
-/// Run before the server touches its files. A swap the new release has not settled counts its
-/// starts: the second is the release that did not stay up.
+/// Counts the starts of an unsettled release; the second puts the old one back.
 pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<u32>) -> Start {
     let Some(mut pending) = record.pending() else {
         return Start::Proceed;
@@ -198,7 +188,6 @@ pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<
     }
 }
 
-/// The new release has stayed up: the swap stands.
 pub fn settle(record: &Folder, running: &str) {
     if record
         .pending()

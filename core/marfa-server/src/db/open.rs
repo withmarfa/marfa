@@ -402,13 +402,11 @@ fn move_schema_into_file(conn: &Connection) {
 /// What a build makes of a database file it has only read.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Inspection {
-    /// The schema version the file holds; `None` where there is no file.
     pub schema: Option<u32>,
     pub standing: Standing,
 }
 
-/// Judges the file as `open` would, with a connection that cannot write, so it is safe beside a
-/// server that has the file open.
+/// Judges the file as `open` does, with a read-only connection.
 pub fn inspect(path: &Path, migrations: &[Migration]) -> Result<Inspection, Failure> {
     let label = path.display().to_string();
     match std::fs::metadata(path) {

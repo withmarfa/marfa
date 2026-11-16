@@ -1,5 +1,4 @@
-//! Whether a newer release is out, and the update a server installed as a service makes of its
-//! own programs. A server installed any other way names the step the owner takes on the host.
+//! Release checks, and the update of a server installed as a service.
 
 mod apply;
 mod check;
@@ -33,7 +32,7 @@ use release::{Latest, Version};
 /// The exit status that asks a service manager to start the server again.
 pub const RESTART_STATUS: u8 = 75;
 
-/// How long a new release stays up before the swap stands.
+/// How long a new release stays up before its swap stands.
 const SETTLE_AFTER: Duration = Duration::from_secs(20);
 const SETTLE_LOOKS_AGAIN: Duration = Duration::from_secs(10);
 
@@ -84,7 +83,7 @@ impl Updates {
         *self.state.lock().unwrap_or_else(PoisonError::into_inner) = state;
     }
 
-    /// Whether this call started the update: one that finds another running joins it.
+    /// Whether this call started the update; another joins it.
     fn begin(&self, version: &str) -> bool {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if *state != State::Idle {
@@ -107,13 +106,12 @@ impl Updates {
         }
     }
 
-    /// Resolves once an update has put its programs in place and the server should end.
     pub async fn restart_wanted(&self) {
         self.restart.notified().await;
     }
 }
 
-/// What `marfa-server --can-open` prints for a database file, or why it will not open.
+/// What `--can-open` prints for a database file.
 pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
     let looked = db::inspect(file, MIGRATIONS)?;
     let standing = match looked.standing {
@@ -124,9 +122,7 @@ pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
     Ok(json!({ "schema": looked.schema, "standing": standing }).to_string())
 }
 
-/// Called before the server touches its files: puts the old programs back when a new release
-/// has twice failed to stay up, and says whether the server should end for the service to start
-/// them.
+/// Before the files are touched: puts the old programs back after a release that did not stay up.
 pub fn before_start(database: &DatabasePath) -> Start {
     let Some(record) = Folder::of(database) else {
         return Start::Proceed;
@@ -139,7 +135,6 @@ pub fn before_start(database: &DatabasePath) -> Start {
     })
 }
 
-/// Lets a new release that stays up settle its swap.
 pub fn settle_when_up(app: &Arc<App>) {
     let Some(record) = app.updates.record.clone() else {
         return;
@@ -175,7 +170,6 @@ fn latest_newer(latest: Option<Latest>) -> Option<Latest> {
     })
 }
 
-/// What the owner reads: the running release, the newest found, and how to move to it.
 pub async fn status(app: &App) -> Result<Value> {
     let enabled = check::enabled(app);
     let kept = if enabled {
@@ -245,7 +239,6 @@ pub async fn status(app: &App) -> Result<Value> {
     }))
 }
 
-/// Starts the update, or joins the one that runs.
 pub async fn start(app: &Arc<App>) -> Result<Value> {
     let kept = if check::enabled(app) {
         check::kept(app).await?

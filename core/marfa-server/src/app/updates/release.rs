@@ -6,7 +6,6 @@ use chrono::{DateTime, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The three numbers of a release such as `0.0.75`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version([u64; 3]);
 
@@ -27,7 +26,6 @@ impl Version {
         parts.next().is_none().then_some(Version(numbers))
     }
 
-    /// The release this build is.
     pub fn running() -> Version {
         Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Version([0; 3]))
     }
@@ -64,12 +62,10 @@ pub struct Asset {
     pub bytes: u64,
 }
 
-/// The newest published release a check found.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Latest {
     pub version: String,
     pub published_at: String,
-    /// The archive for this machine; `None` where the release carries none.
     pub archive: Option<Asset>,
     pub checksums: Option<Asset>,
 }
@@ -90,8 +86,7 @@ fn asset_named(assets: &[Value], name: &str) -> Option<Asset> {
     })
 }
 
-/// Reads GitHub's answer for the latest release. A draft, a prerelease and anything that does
-/// not read is refused, so the last known release stays.
+/// Reads GitHub's latest release, refusing a draft, a prerelease and anything untidy.
 pub fn read_latest(body: &[u8], platform: Option<&str>) -> Result<Latest, &'static str> {
     let untidy = "GitHub's answer was not a release this server can read";
     let release: Value = serde_json::from_slice(body).map_err(|_| untidy)?;

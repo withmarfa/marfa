@@ -1,5 +1,4 @@
-//! Requests to GitHub for the release check and an update's downloads: through public, pinned
-//! addresses, with the redirects GitHub's downloads need judged hop by hop.
+//! Requests to GitHub through public, pinned addresses, judging each redirect.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -57,12 +56,12 @@ impl Failed {
 pub struct Feed {
     faults: Arc<Faults>,
     handle: Handle,
-    /// A fault named an address, which may be on this machine and need not be https.
+    /// A fault named an address, which may be local and plain http.
     local: bool,
 }
 
 impl Feed {
-    /// Built inside the runtime; its methods block, so they run on a thread that may.
+    /// Built in the runtime; its methods block.
     pub fn new(faults: Arc<Faults>) -> Feed {
         Feed {
             local: matches!(faults.release_feed(), ReleaseFeed::At(_)),
@@ -167,7 +166,6 @@ impl Feed {
             .and_then(|value| value.parse().ok())
     }
 
-    /// A small document, read whole.
     pub fn document(&self, url: &Url, limit: u64, time: Duration) -> Result<Vec<u8>, Failed> {
         let mut response = self.open(url, "application/vnd.github+json", time)?;
         if Feed::declared(&response).is_some_and(|length| length > limit) {
@@ -186,8 +184,7 @@ impl Feed {
         Ok(body)
     }
 
-    /// A file written to `to`, which is removed again when the download does not finish.
-    /// Gives the file's SHA-256 as hex.
+    /// Writes to `to`, removing it if the download fails; gives the SHA-256 as hex.
     pub fn file(&self, url: &Url, to: &Path, limit: u64, time: Duration) -> Result<String, Failed> {
         let mut response = self.open(url, "application/octet-stream", time)?;
         if Feed::declared(&response).is_some_and(|length| length > limit) {
