@@ -382,7 +382,7 @@ async function main(): Promise<void> {
   const folder = join(args.state, "folder");
   say(
     args.folder
-      ? `${new Date().toISOString()}. Backup folder \`MARFA_BACKUP_PATH\`, no object store.`
+      ? `${new Date().toISOString()}. Backup folder set by \`backup_path\`, no object store.`
       : `${new Date().toISOString()}. Bucket named by \`MARFA_OBJECT_STORE_BUCKET\`, prefix \`${prefix}/\`, ${process.env.MARFA_OBJECT_STORE_ENDPOINT ? "an endpoint set" : "no endpoint set"}.`,
   );
   say("");

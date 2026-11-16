@@ -138,7 +138,7 @@ docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data \
 - **Publish the port on `127.0.0.1`.** A bare `-p 8600:8600` is open to every network the machine is on. Put a proxy or tunnel on the machine in front of it.
 - **Publish another host port, and leave `MARFA_PORT` alone.** The image's health check runs `marfa status` against port 8600 inside the container. For port 9000 on the host, use `-p 127.0.0.1:9000:8600`.
 - **A folder mounted at `/data` must be writable by user 65532 and readable by no other account** (`chown 65532 <folder>` and `chmod 700 <folder>`), or run the container as the folder's owner with `--user`. A named volume works as it is.
-- **Secrets:** on a first start without `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`, the server makes them and keeps them in `/data/marfa.secrets`, readable by its user alone. Keep that file with the data. A database without its salt is refused.
+- **Secrets:** on a first start without `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`, the server makes them and keeps them in `/data/marfa.secrets`, readable by its user alone. It also makes `/data/marfa.settings.key`, the key that seals secret settings such as `object_store_secret_access_key`. Keep both files with the data. A database without its salt is refused, and a database without its settings key starts and lists each secret setting to set again.
 
 Each image has a build attestation, stored in the registry beside it, for the version's image index and for the image of each platform. Verify the image before you run it, signed in to `ghcr.io` if the package asks for it:
 
