@@ -1063,7 +1063,7 @@ impl App {
         name: &str,
         whole: bool,
     ) -> Result<Value> {
-        caller.require_local()?;
+        caller.require_step_up(Permission::BackupsManage, &started_at)?;
         let destination = self.destination()?;
         if !instance_of(instance) || parse(name).is_none() {
             return Err(destination.not_found(instance, name));

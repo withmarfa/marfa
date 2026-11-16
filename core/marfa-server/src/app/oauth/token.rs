@@ -18,6 +18,7 @@ use crate::app::access::Caller;
 use crate::app::audit::{self, Entry};
 use crate::app::auth::Visit;
 use crate::app::auth::session;
+use crate::app::clock::Stamp;
 use crate::app::keys::digest_of;
 use crate::app::refusal::Result;
 use crate::app::unit::Unit;
@@ -161,6 +162,7 @@ struct Issue<'i> {
     client: &'i Client,
     owner_id: &'i str,
     chain_id: &'i str,
+    authenticated_at: Stamp,
     scopes: &'i ScopeSet,
     /// A narrower access token leaves it whole.
     keeps: &'i ScopeSet,
@@ -182,6 +184,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
             client_id: issue.client.id.clone(),
             owner_id: issue.owner_id.to_string(),
             chain_id: issue.chain_id.to_string(),
+            authenticated_at: issue.authenticated_at,
             scopes: issue.scopes.clone(),
             audience: issue.audience.map(str::to_string),
             created_at: now,
@@ -203,6 +206,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
                 client_id: issue.client.id.clone(),
                 owner_id: issue.owner_id.to_string(),
                 chain_id: issue.chain_id.to_string(),
+                authenticated_at: issue.authenticated_at,
                 scopes: issue.keeps.clone(),
                 audience: issue.audience.map(str::to_string),
                 created_at: now,
@@ -315,6 +319,7 @@ async fn by_code(
                 client: &client,
                 owner_id: &code.owner_id,
                 chain_id: &chain_id,
+                authenticated_at: code.authenticated_at,
                 scopes: &code.scopes,
                 keeps: &code.scopes,
                 audience: audience.as_deref(),
@@ -389,6 +394,7 @@ async fn by_refresh(
                 client: &client,
                 owner_id: &old.owner_id,
                 chain_id: &old.chain_id,
+                authenticated_at: old.authenticated_at,
                 scopes: asked.as_ref().unwrap_or(&old.scopes),
                 keeps: &old.scopes,
                 audience: audience.as_deref(),
@@ -451,7 +457,9 @@ async fn by_device_code(
             ))),
             DeviceStatus::Spent => Ok(Err(spent())),
             DeviceStatus::Approved => {
-                let Some(owner_id) = code.owner_id.clone() else {
+                let (Some(owner_id), Some(authenticated_at)) =
+                    (code.owner_id.clone(), code.authenticated_at)
+                else {
                     return Ok(Err(spent()));
                 };
                 match store::consent(tx, &client.id, &owner_id)? {
@@ -466,6 +474,7 @@ async fn by_device_code(
                         client: &client,
                         owner_id: &owner_id,
                         chain_id: &Uuid::now_v7().to_string(),
+                        authenticated_at,
                         scopes: &code.scopes,
                         keeps: &code.scopes,
                         audience: audience.as_deref(),

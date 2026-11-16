@@ -3,7 +3,7 @@
   "info": {
     "title": "Marfa API",
     "version": "0",
-    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Local command\n\nAn operation marked `x-marfa-local-command` also answers the private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential, and no security scheme here describes it. The `marfa` command line reaches it with `--socket`. A marked operation with no `security` answers only there.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`. A list that can't page answers `{ \"data\": [...] }` alone.\n\n## Answers\n\nAn operation that returns one object returns it bare, and wraps it only where the answer holds more than the object. A delete answers `200` with `{ \"ok\": true }` once the thing is gone, and `200` with the object where the object stays in a new state. No operation answers `204`.\n\n## Query parameters\n\nEvery operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. A boolean parameter is `true` or `false`, and anything else, `1` and `yes` included, is a `400 validation_error`. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster. The OAuth operations `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke` and `POST /oauth/device-authorization` ignore a parameter they don't recognize, as RFC 6749 requires.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\nThe OAuth operations under `/oauth/` answer their own errors in the shape their RFCs define, `{ \"error\": \"...\", \"error_description\": \"...\" }`, with no `X-Error-Code`. A refusal every operation shares, such as `412` or `429`, keeps the shape above.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`. Repeating a request after Marfa moves to another contract version returns `422 idempotency_contract_changed`, with the first response's status in `details.original_status`, and doesn't write again.\n\n## Request bodies\n\nA body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /oauth/token`, `POST /oauth/revoke` and `POST /oauth/device-authorization` take a form (`application/x-www-form-urlencoded`), as their RFCs define. `POST /oauth/register` takes JSON, and answers a request that isn't JSON with `400 invalid_client_metadata`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Event stream\n\n`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.\n\n## Web pages\n\nA web page can connect from a browser with no setup. `POST /oauth/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response also carries `X-Request-ID`, which identifies the request if you report a problem. Send `X-Marfa-Contract` on every request but a read of `/` and of `/health`, naming the contract version your client was built for. A request that names another version, or a value that is not a whole number, returns `412 contract_mismatch` and changes nothing. A request that names none is served."
+    "description": "Marfa stores typed records, called items, and the edges between them. This reference describes its HTTP API.\n\n## Authentication\n\nSend a credential in the `Authorization` header as `Bearer <token>`: an API key (`marfa_k1_…`) or the access token of an app someone signed in to (`marfa_at_…`). In this reference, *you* means the credential that sends the request.\n\n## Recent sign-in\n\nRestoring an archive or a backup, moving the sign-in address and changing `allow_private_addresses` also need the owner to have signed in within the last five minutes. An app's access token whose owner signed in longer ago is answered `401 insufficient_user_authentication` with `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\", max_age=\"300\"`, as RFC 9470 describes. Send the owner through `GET /oauth/authorize` with `max_age=300`: Marfa asks them to sign in again, and the tokens the code leads to carry the new sign-in. A refreshed token keeps the time of the sign-in it came from. An API key has no sign-in to renew, so it is refused these acts with `403 app_sign_in_required`, and the private local command makes them without one.\n\n## Local command\n\nAn operation marked `x-marfa-local-command` also answers the private local listener: a Unix socket that only the account running the instance can open. The connection is the proof, so the request carries no credential, and no security scheme here describes it. The `marfa` command line reaches it with `--socket`.\n\n## Permissions\n\nYour credential reads and writes only the types its permissions reach. If you ask by ID for an item whose type you can't read, Marfa answers as if the item doesn't exist. An edge appears in a response only if you can read both its edge type and the type of the item it starts from.\n\n## Pagination\n\nA list returns one page at a time, as `{ \"data\": [...], \"next_cursor\": \"...\" }`. To get the next page, send `next_cursor` back as `cursor`. The last page has `next_cursor: null`. A page can be short or empty and still have more after it, so stop only when `next_cursor` is `null`. A list that can't page answers `{ \"data\": [...] }` alone.\n\n## Answers\n\nAn operation that returns one object returns it bare, and wraps it only where the answer holds more than the object. A delete answers `200` with `{ \"ok\": true }` once the thing is gone, and `200` with the object where the object stays in a new state. No operation answers `204`.\n\n## Query parameters\n\nEvery operation refuses a query parameter it doesn't recognize with `400 validation_error`, so a misspelled filter can't silently return everything. A boolean parameter is `true` or `false`, and anything else, `1` and `yes` included, is a `400 validation_error`. The `edge[<type>]` and `backref[<type>]` filters on `GET /items` and `GET /items/stats` are recognized for any type. Marfa ignores any parameter that starts with `_`, so use that prefix for a parameter of your own, such as a cache buster. The OAuth operations `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke` and `POST /oauth/device-authorization` ignore a parameter they don't recognize, as RFC 6749 requires.\n\n## Errors\n\nAn error answers `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": {} } }`. Use `code` in your logic: each operation lists the codes it can return, and the `X-Error-Code` header repeats it. `message` is for people and can change. A version conflict also carries the item or edge as it stands now, in `current`, so you can merge and try again.\n\nThe OAuth operations under `/oauth/` answer their own errors in the shape their RFCs define, `{ \"error\": \"...\", \"error_description\": \"...\" }`, with no `X-Error-Code`. A refusal every operation shares, such as `412` or `429`, keeps the shape above.\n\n## Idempotency\n\nA write that takes an `Idempotency-Key` header is safe to retry. Send the same request with the same key, and Marfa returns the first response, with `Idempotency-Replayed: true`, and doesn't write again. A key belongs to the credential that sends it. While the first request with a key is still running, a repeat returns `409 idempotency_key_in_flight` and writes nothing, so retry it. Reusing a key for a different request returns `422 idempotency_key_reused`. Repeating a request after Marfa moves to another contract version returns `422 idempotency_contract_changed`, with the first response's status in `details.original_status`, and doesn't write again.\n\n## Request bodies\n\nA body is JSON, sent with `Content-Type: application/json`. A request that doesn't send its body as JSON returns `400 validation_error` and changes nothing, even if it has no body at all. The exceptions are `POST /blobs`, which takes the bytes of a blob, and `POST /restore`, which takes an archive. `POST /oauth/token`, `POST /oauth/revoke` and `POST /oauth/device-authorization` take a form (`application/x-www-form-urlencoded`), as their RFCs define. `POST /oauth/register` takes JSON, and answers a request that isn't JSON with `400 invalid_client_metadata`.\n\n## Time\n\nEvery time is UTC, written as `2026-10-03T09:30:00.000Z`. A time field is named for what happened, such as `created_at`. A filter on a time field pairs `_after` and `_before`, and both leave out the time you give, except `updated_after`, which includes it so that nothing changed at the same moment is skipped. `GET /occurrences` takes a window, `from` and `to`, instead.\n\n## Event stream\n\n`GET /events` sends each change as a frame whose `id:` is its event ID, in the order Marfa made the changes. To resume, reconnect with the last ID you received as `Last-Event-ID`, under any `type` or `edges` filter: Marfa replays what you missed, then sends `stream_live`. Marfa reads your credential again before each batch of frames and every 30 seconds: you receive only what it can read now, and a credential that's revoked or expired ends the stream, so reconnect with a current one. Ignore lines that start with `:`.\n\n## Web pages\n\nA web page can connect from a browser with no setup. `POST /oauth/register` and the discovery documents answer any origin, so the page registers itself, then opens the authorization endpoint in a window for the owner to approve. Once the owner approves it, the origin of each redirect URI it registered may call every operation from a browser. Send the access token in `Authorization`: no response allows a browser's credentials.\n\n## Every response\n\nEvery response carries `X-Marfa-Contract`, the version of this contract, which is also this document's version. Every response also carries `X-Request-ID`, which identifies the request if you report a problem. Send `X-Marfa-Contract` on every request but a read of `/` and of `/health`, naming the contract version your client was built for. A request that names another version, or a value that is not a whole number, returns `412 contract_mismatch` and changes nothing. A request that names none is served."
   },
   "components": {
     "securitySchemes": {
@@ -9090,7 +9090,7 @@
           },
           "allow_private_addresses": {
             "type": "boolean",
-            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`."
+            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`."
           },
           "secrets_set": {
             "type": "array",
@@ -9100,6 +9100,16 @@
             "description": "The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.",
             "example": [
               "object_store_secret_access_key"
+            ]
+          },
+          "sign_in_moved": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SignInMove"
+              },
+              {
+                "description": "What the move did and what the owner does next. Present only in the answer to the write that moved the sign-in address."
+              }
             ]
           }
         },
@@ -11394,13 +11404,21 @@
               "$ref": "#/components/schemas/AddressConsequence"
             },
             "description": "Everything the change does, empty if it does nothing."
+          },
+          "next_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddressNextStep"
+            },
+            "description": "What the owner would do after the change, in order. Empty unless the sign-in address moves."
           }
         },
         "required": [
           "sign_in_address",
           "addresses",
           "requires_confirmation",
-          "consequences"
+          "consequences",
+          "next_steps"
         ],
         "description": "What a change of address would do. Nothing is written."
       },
@@ -12858,6 +12876,132 @@
           "error"
         ],
         "description": "An error response."
+      },
+      "InsufficientUserAuthenticationOrUnauthorizedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "insufficient_user_authentication",
+                  "unauthorized"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "AppSignInRequiredOrForbiddenRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "app_sign_in_required",
+                  "forbidden"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "AddressNextStep": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "sign_in",
+              "add_passkey"
+            ],
+            "description": "What the owner does: `sign_in` signs in again at the new address, and `add_passkey` adds a passkey there."
+          },
+          "sentence": {
+            "type": "string",
+            "description": "The step, in a sentence for a person to read."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Where the owner takes the step, at the new sign-in address. It carries no credential."
+          }
+        },
+        "required": [
+          "code",
+          "sentence",
+          "url"
+        ],
+        "additionalProperties": false,
+        "description": "One thing the owner does after the sign-in address moves."
+      },
+      "SignInMove": {
+        "type": "object",
+        "properties": {
+          "consequences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddressConsequence"
+            },
+            "description": "What the move did, as `POST /config/address-check` reported it beforehand."
+          },
+          "next_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddressNextStep"
+            },
+            "description": "What the owner does next, in order."
+          }
+        },
+        "required": [
+          "consequences",
+          "next_steps"
+        ],
+        "additionalProperties": false,
+        "description": "What moving the sign-in address did: every browser session and every app's sign-in ended, and API keys kept working."
       }
     },
     "parameters": {},
@@ -12903,6 +13047,12 @@
           "enum": [
             "true"
           ]
+        }
+      },
+      "WWW-Authenticate": {
+        "description": "The step-up challenge of RFC 9470, sent with `insufficient_user_authentication`: `Bearer error=\"insufficient_user_authentication\", max_age=\"300\"`, where `max_age` is how many seconds old the owner's sign-in may be.",
+        "schema": {
+          "type": "string"
         }
       }
     }
@@ -58755,7 +58905,7 @@
                   },
                   "allow_private_addresses": {
                     "type": "boolean",
-                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`."
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`."
                   },
                   "object_store_secret_access_key": {
                     "type": "string",
@@ -58787,7 +58937,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the configuration as stored.",
+            "description": "Returns the configuration as stored, with `sign_in_moved` when the write moved the sign-in address.",
             "content": {
               "application/json": {
                 "schema": {
@@ -58830,11 +58980,11 @@
             }
           },
           "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "description": "- `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.\n- `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/InsufficientUserAuthenticationOrUnauthorizedRefusal"
                 }
               }
             },
@@ -58847,15 +58997,18 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/WWW-Authenticate"
               }
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or changes `allow_private_addresses`, which only the private local command can do.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/AppSignInRequiredOrForbiddenRefusal"
                 }
               }
             },
@@ -59341,7 +59494,7 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. `null` removes it, so the server's default applies."
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies."
                   },
                   "object_store_secret_access_key": {
                     "type": [
@@ -59382,7 +59535,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the configuration as stored.",
+            "description": "Returns the configuration as stored, with `sign_in_moved` when the write moved the sign-in address.",
             "content": {
               "application/json": {
                 "schema": {
@@ -59425,11 +59578,11 @@
             }
           },
           "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "description": "- `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.\n- `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/InsufficientUserAuthenticationOrUnauthorizedRefusal"
                 }
               }
             },
@@ -59442,15 +59595,18 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/WWW-Authenticate"
               }
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or changes `allow_private_addresses`, which only the private local command can do.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/AppSignInRequiredOrForbiddenRefusal"
                 }
               }
             },
@@ -59963,9 +60119,26 @@
                   "requires_confirmation": true,
                   "consequences": [
                     {
-                      "code": "address_removed",
-                      "sentence": "Links that use https://marfa.example.com stop working.",
-                      "count": null
+                      "code": "browser_sessions_end",
+                      "sentence": "Everyone signed in on a browser is signed out.",
+                      "count": 1
+                    },
+                    {
+                      "code": "apps_sign_in_again",
+                      "sentence": "Apps connected to this instance have to sign in again.",
+                      "count": 2
+                    }
+                  ],
+                  "next_steps": [
+                    {
+                      "code": "sign_in",
+                      "sentence": "Sign in again at the new address.",
+                      "url": "https://marfa.example.com/auth/sign-in"
+                    },
+                    {
+                      "code": "add_passkey",
+                      "sentence": "Add a passkey at the new address. Passkeys made for the old address work only there.",
+                      "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
                     }
                   ]
                 }
@@ -63000,7 +63173,7 @@
           "Export and restore"
         ],
         "summary": "Restore from an archive",
-        "description": "Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away at once and tells them when to try again. Requires the private local command.",
+        "description": "Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away. Requires `backups.manage` and a sign-in from the last five minutes.",
         "requestBody": {
           "required": true,
           "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, in that order. Only the build that wrote an archive is sure to read it.",
@@ -63328,11 +63501,11 @@
             }
           },
           "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "description": "- `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.\n- `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/InsufficientUserAuthenticationOrUnauthorizedRefusal"
                 }
               }
             },
@@ -63345,15 +63518,18 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/WWW-Authenticate"
               }
             }
           },
           "403": {
-            "description": "Requires the private local command. `details.needs` is `local`.",
+            "description": "- `forbidden`: you don't hold `backups.manage`. `details.required_scope` names it.\n- `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/AppSignInRequiredOrForbiddenRefusal"
                 }
               }
             },
@@ -63582,6 +63758,11 @@
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
           }
         ],
         "x-marfa-local-command": true
@@ -64430,7 +64611,7 @@
           "Export and restore"
         ],
         "summary": "Restore a backup",
-        "description": "Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. While it writes, Marfa turns other writes away at once. Requires the private local command.",
+        "description": "Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires `backups.manage` and a sign-in from the last five minutes.",
         "responses": {
           "200": {
             "description": "Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones.",
@@ -64759,11 +64940,11 @@
             }
           },
           "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "description": "- `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.\n- `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/InsufficientUserAuthenticationOrUnauthorizedRefusal"
                 }
               }
             },
@@ -64776,15 +64957,18 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/WWW-Authenticate"
               }
             }
           },
           "403": {
-            "description": "Requires the private local command. `details.needs` is `local`.",
+            "description": "- `forbidden`: you don't hold `backups.manage`. `details.required_scope` names it.\n- `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/AppSignInRequiredOrForbiddenRefusal"
                 }
               }
             },
@@ -65044,6 +65228,11 @@
             "description": "`true` to restore without the files that neither the destination nor this instance holds whole, naming them in `blobs_missing`. Absent or `false`, the restore refuses with `backup_files_missing`. Any other value is a `validation_error`.",
             "name": "allow_missing_files",
             "in": "query"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
           }
         ],
         "x-marfa-local-command": true

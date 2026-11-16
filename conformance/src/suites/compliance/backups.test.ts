@@ -329,10 +329,10 @@ describe("a backup in the object store", () => {
         required_scope: "backups.manage",
       });
     }
-    // A restore over the data waits for the owner, whatever a key holds.
+    // A restore over the data waits for a person, whatever a key holds.
     const restore = await operator.restoreBackup(originId, firstName);
     expect(restore.status, JSON.stringify(restore.data)).toBe(403);
-    expect(restore.error?.error.details).toEqual({ needs: "local" });
+    expect(restore.error?.error.code).toBe("app_sign_in_required");
     expect((await bucket.backupKeys()).length).toBe(2);
   });
 

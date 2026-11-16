@@ -27,7 +27,6 @@ use crate::http::query;
 const REGISTRATION_FIELDS: [&str; 2] = ["name", "response"];
 const AUTHENTICATION_FIELDS: [&str; 1] = ["response"];
 const RENAME_FIELDS: [&str; 1] = ["name"];
-const PAGE: &str = "/auth/owner/passkeys";
 const SIGN_IN_FOR_PAGE: &str = "/auth/sign-in?return_to=%2Fauth%2Fowner%2Fpasskeys";
 
 fn begun(app: &App, begun: Begun) -> Answer {
@@ -154,8 +153,7 @@ pub async fn remove(
 pub async fn add_url(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require(Permission::SignInsManage)?;
     query::only(&uri, &[])?;
-    let origin = app.addresses().sign_in().origin().to_string();
-    let url = format!("{origin}/auth/sign-in?prompt=login&return_to={PAGE}");
+    let url = passkeys::add_url(app.addresses().sign_in().origin());
     Ok(json_answer(StatusCode::OK, &json!({ "url": url })))
 }
 

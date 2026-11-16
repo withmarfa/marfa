@@ -1015,10 +1015,10 @@ describe("restore", () => {
     expect(read.data?.item.properties).toEqual(held.data?.item.properties);
   });
 
-  it("requires local authority", async () => {
-    // A credential holding write on every type. Restoring takes the local
-    // command, which is a different thing from holding every permission:
-    // running the instance is fenced outside the model.
+  it("refuses a key, which has no sign-in to renew", async () => {
+    // A credential holding write on every type. Restoring takes a person who
+    // signed in to an app within minutes, or the local command, which a key
+    // is neither of.
     const keyResp = await client.createKey({
       label: "archive-working",
       source: `${ctx.source}-archive-working`,
@@ -1048,7 +1048,7 @@ describe("restore", () => {
 
     const res = await scoped.restoreArchive(archiveBytes);
     expect(res.status).toBe(403);
-    expect(res.error?.error.code).toBe("forbidden");
+    expect(res.error?.error.code).toBe("app_sign_in_required");
   });
 });
 

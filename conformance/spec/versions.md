@@ -364,7 +364,7 @@ When `GET /export?format=archive` carries an item, the server MUST carry the `wr
 
 When `POST /restore` writes an archived item, the server MUST keep as writers the ones the archive names for each snapshot and for the current version, and `null` where it names none.
 
-**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only the local command restores (`archive/restore-working-key-refused`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
+**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only a person restores, from an app they signed in to within five minutes or with the local command (`keys-and-oauth/step-up-key-refused`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
 
 **Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`.
 

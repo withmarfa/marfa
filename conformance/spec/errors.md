@@ -18,14 +18,6 @@ When the server carries `details` in the `error` object of a refusal, the server
 
 **Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`, `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
 
-### `errors/needs-local`
-
-If a caller other than the private local command sends a request that only the private local command may make, then the server MUST answer `403 forbidden` with `needs` set to `local` in the `error` object's `details`.
-
-**Reason:** a key that holds every permission is still refused these operations, and a client that reads `details.needs` can tell the person to use the private local command instead of showing a refusal that no permission mends.
-
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
-
 ### `errors/status-absent`
 
 The server MUST NOT carry a `status` member in the `error` object of a refusal.
@@ -810,6 +802,8 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `validation_error`                   | 400                 | The request is malformed or breaks a rule that no other code names, such as a bad body, parameter, cursor or limit.                                                                                       |
 | `setup_proof_invalid`                | 401                 | The setup code, handoff link or setup session is wrong, spent, expired or replaced. Ask for a new setup code or link.                                                                                     |
 | `unauthorized`                       | 401                 | The request carries no credential the server accepts: none, an unknown or revoked one, or an expired or altered link.                                                                                     |
+| `insufficient_user_authentication`   | 401                 | An app's owner signed in longer ago than an act allows. `details.max_age` gives the seconds allowed; sign the owner in again with `max_age`.                                                              |
+| `app_sign_in_required`               | 403                 | An API key asks for an act only a person signed in to an app, or the private local command, may make.                                                                                                     |
 | `core_type_immutable`                | 403                 | The type ships with the platform, so it cannot be replaced, deleted or moved out of.                                                                                                                      |
 | `edge_type_not_permitted`            | 403                 | The credential lacks the edge-type permission the operation needs.                                                                                                                                        |
 | `forbidden`                          | 403                 | The credential is valid but lacks a standing permission, reach or origin the operation needs.                                                                                                             |

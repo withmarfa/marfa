@@ -29,10 +29,11 @@ pub enum ConfigCommand {
 pub struct WriteArgs {
     #[command(flatten)]
     body: BodySource,
-    /// Confirm a change to the sign-in address, which signs everyone out and
-    /// can strand passkeys and apps. Only the private local command, `--socket`,
-    /// may change the address. Without this the server answers what the change
-    /// would do and writes nothing.
+    /// Confirm a change to the sign-in address, which signs out every browser
+    /// and app, and leaves passkeys working only at the old address. It needs
+    /// a sign-in from the last five minutes, or the private local command
+    /// (`--socket`). Without this the server answers what the change would do
+    /// and writes nothing.
     #[arg(long)]
     confirm_address_change: bool,
 }

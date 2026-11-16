@@ -2088,7 +2088,7 @@ marfa config replace [OPTIONS]
 | --- | --- |
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
-| `--confirm-address-change` | Confirm a change to the sign-in address, which signs everyone out and can strand passkeys and apps. Only the private local command, `--socket`, may change the address. Without this the server answers what the change would do and writes nothing. |
+| `--confirm-address-change` | Confirm a change to the sign-in address, which signs out every browser and app, and leaves passkeys working only at the old address. It needs a sign-in from the last five minutes, or the private local command (`--socket`). Without this the server answers what the change would do and writes nothing. |
 
 ### marfa config update
 
@@ -2102,7 +2102,7 @@ marfa config update [OPTIONS]
 | --- | --- |
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
-| `--confirm-address-change` | Confirm a change to the sign-in address, which signs everyone out and can strand passkeys and apps. Only the private local command, `--socket`, may change the address. Without this the server answers what the change would do and writes nothing. |
+| `--confirm-address-change` | Confirm a change to the sign-in address, which signs out every browser and app, and leaves passkeys working only at the old address. It needs a sign-in from the last five minutes, or the private local command (`--socket`). Without this the server answers what the change would do and writes nothing. |
 
 ### marfa config settings
 
@@ -2153,7 +2153,7 @@ marfa export [OPTIONS]
 
 ## restore
 
-Restore an archive with local authority.
+Restore an archive. Needs `backups.manage` and a sign-in from the last five minutes, or the private local command (`--socket`).
 
 ### marfa restore
 
@@ -2201,7 +2201,7 @@ marfa backups run [OPTIONS]
 
 ### marfa backups restore
 
-Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps, webhooks or inbound endpoints. Requires private local authority (--socket).
+Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps, webhooks or inbound endpoints. Needs `backups.manage` and a sign-in from the last five minutes, or the private local command (`--socket`).
 
 ```text
 marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>

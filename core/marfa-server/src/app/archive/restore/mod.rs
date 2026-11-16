@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 
 use super::checks;
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
 use crate::app::catalog::{self, Snapshot};
@@ -278,7 +278,7 @@ impl App {
         received: Received,
         whole: bool,
     ) -> Result<Value> {
-        caller.require_local()?;
+        caller.require_step_up(Permission::BackupsManage, &started_at)?;
         let holding = self.db.hold_writes(restore_running::refusal())?;
         let permit = holding.permit();
         let app = self.clone();
@@ -326,8 +326,8 @@ impl App {
             let written = app
                 .write(&caller, "restore_archive", move |unit| {
                     let began = std::time::Instant::now();
-                    unit.caller.require_local()?;
-                    unit.caller.require_recent(&started_at)?;
+                    unit.caller
+                        .require_step_up(Permission::BackupsManage, &started_at)?;
                     unit.fanning(false, |unit| {
                         let tx = unit.tx();
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;

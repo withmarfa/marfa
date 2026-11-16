@@ -14,7 +14,7 @@ use super::answer::{Answer, Stopped, json_answer, refusal_answer};
 use super::body::linger;
 use super::query;
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 use crate::app::refusal::{Code, Refusal};
 use crate::settings::registry::MAX_REQUEST_BYTES;
 
@@ -97,9 +97,8 @@ async fn receive(
     read: &mut Read,
 ) -> Answer {
     let caller = caller?;
-    caller.require_local()?;
     let started_at = app.clock.stamp();
-    caller.require_recent(&started_at)?;
+    caller.require_step_up(Permission::BackupsManage, &started_at)?;
     query::only(&parts.uri, &[])?;
     let declared = parts
         .headers

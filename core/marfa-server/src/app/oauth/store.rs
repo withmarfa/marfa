@@ -479,6 +479,7 @@ pub struct Code {
     pub client_id: String,
     pub owner_id: String,
     pub session_id: String,
+    pub authenticated_at: Stamp,
     pub grant_id: String,
     pub redirect_uri: String,
     pub scopes: ScopeSet,
@@ -491,14 +492,15 @@ pub struct Code {
 
 pub fn insert_code(tx: &Connection, code: &Code) -> Result<()> {
     tx.execute(
-        "INSERT INTO oauth_codes (digest, client_id, owner_id, session_id, grant_id, \
-         redirect_uri, scopes, challenge, resources, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO oauth_codes (digest, client_id, owner_id, session_id, authenticated_at, \
+         grant_id, redirect_uri, scopes, challenge, resources, expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             code.digest,
             code.client_id,
             code.owner_id,
             code.session_id,
+            code.authenticated_at,
             code.grant_id,
             code.redirect_uri,
             scopes_text(&code.scopes),
@@ -521,6 +523,7 @@ pub fn code(tx: &Connection, digest: &str) -> Result<Option<Code>> {
                     client_id: row.get("client_id")?,
                     owner_id: row.get("owner_id")?,
                     session_id: row.get("session_id")?,
+                    authenticated_at: row.get("authenticated_at")?,
                     grant_id: row.get("grant_id")?,
                     redirect_uri: row.get("redirect_uri")?,
                     scopes: scopes_at(row, "scopes")?,
@@ -588,6 +591,7 @@ pub struct DeviceCode {
     pub destinations: String,
     pub status: DeviceStatus,
     pub owner_id: Option<String>,
+    pub authenticated_at: Option<Stamp>,
     pub interval_seconds: i64,
     pub last_polled_at: Option<Stamp>,
     pub expires_at: Stamp,
@@ -602,6 +606,7 @@ fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
         destinations: row.get("destinations")?,
         status: DeviceStatus::from_word(&row.get::<_, String>("status")?),
         owner_id: row.get("owner_id")?,
+        authenticated_at: row.get("authenticated_at")?,
         interval_seconds: row.get("interval_seconds")?,
         last_polled_at: row.get("last_polled_at")?,
         expires_at: row.get("expires_at")?,
@@ -672,12 +677,19 @@ pub fn decide_device_code(
     digest: &str,
     status: DeviceStatus,
     owner_id: &str,
+    authenticated_at: Stamp,
     scopes: &ScopeSet,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE oauth_device_codes SET status = ?2, owner_id = ?3, scopes = ?4, \
-         last_polled_at = NULL WHERE device_code = ?1",
-        params![digest, status.word(), owner_id, scopes_text(scopes)],
+        "UPDATE oauth_device_codes SET status = ?2, owner_id = ?3, authenticated_at = ?4, \
+         scopes = ?5, last_polled_at = NULL WHERE device_code = ?1",
+        params![
+            digest,
+            status.word(),
+            owner_id,
+            authenticated_at,
+            scopes_text(scopes)
+        ],
     )?;
     Ok(())
 }
@@ -713,6 +725,8 @@ pub struct AccessToken {
     pub client_id: String,
     pub owner_id: String,
     pub chain_id: String,
+    /// When the owner last signed in, for every token of the chain.
+    pub authenticated_at: Stamp,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
     pub created_at: Stamp,
@@ -721,14 +735,16 @@ pub struct AccessToken {
 
 pub fn insert_access_token(tx: &Connection, token: &AccessToken) -> Result<()> {
     tx.execute(
-        "INSERT INTO oauth_access_tokens (id, digest, client_id, owner_id, chain_id, scopes, \
-         audience, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO oauth_access_tokens (id, digest, client_id, owner_id, chain_id, \
+         authenticated_at, scopes, audience, created_at, expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             token.id,
             token.digest,
             token.client_id,
             token.owner_id,
             token.chain_id,
+            token.authenticated_at,
             scopes_text(&token.scopes),
             token.audience,
             token.created_at,
@@ -745,6 +761,7 @@ fn access_token_of(row: &Row<'_>) -> rusqlite::Result<AccessToken> {
         client_id: row.get("client_id")?,
         owner_id: row.get("owner_id")?,
         chain_id: row.get("chain_id")?,
+        authenticated_at: row.get("authenticated_at")?,
         scopes: scopes_at(row, "scopes")?,
         audience: row.get("audience")?,
         created_at: row.get("created_at")?,
@@ -784,6 +801,7 @@ pub struct RefreshToken {
     pub client_id: String,
     pub owner_id: String,
     pub chain_id: String,
+    pub authenticated_at: Stamp,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
     pub created_at: Stamp,
@@ -794,14 +812,16 @@ pub struct RefreshToken {
 
 pub fn insert_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
     tx.execute(
-        "INSERT INTO oauth_refresh_tokens (id, digest, client_id, owner_id, chain_id, scopes, \
-         audience, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO oauth_refresh_tokens (id, digest, client_id, owner_id, chain_id, \
+         authenticated_at, scopes, audience, created_at, expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             token.id,
             token.digest,
             token.client_id,
             token.owner_id,
             token.chain_id,
+            token.authenticated_at,
             scopes_text(&token.scopes),
             token.audience,
             token.created_at,
@@ -823,6 +843,7 @@ pub fn refresh_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<R
                     client_id: row.get("client_id")?,
                     owner_id: row.get("owner_id")?,
                     chain_id: row.get("chain_id")?,
+                    authenticated_at: row.get("authenticated_at")?,
                     scopes: scopes_at(row, "scopes")?,
                     audience: row.get("audience")?,
                     created_at: row.get("created_at")?,
@@ -910,4 +931,16 @@ pub fn end_grant_credentials(
         [client_id],
     )?;
     end_outstanding_codes(tx, client_id, owner_id)
+}
+
+/// Ends every app's sign-in, of every grant, and keeps the grants themselves.
+pub fn end_every_sign_in(tx: &Connection, now: Stamp) -> Result<()> {
+    tx.execute("DELETE FROM oauth_access_tokens", [])?;
+    tx.execute(
+        "UPDATE oauth_refresh_tokens SET ended_at = ?1 WHERE ended_at IS NULL",
+        [now],
+    )?;
+    tx.execute("DELETE FROM oauth_codes", [])?;
+    tx.execute("DELETE FROM oauth_device_codes", [])?;
+    Ok(())
 }

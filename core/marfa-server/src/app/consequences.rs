@@ -60,6 +60,23 @@ const SIGN_IN_CHANGED: &[Registered] = &[
 
 pub const ADDRESS_REMOVED: &str = "address_removed";
 
+/// What the owner does once the sign-in address has moved to `sign_in`.
+pub fn next_steps(sign_in: &Address) -> Vec<Value> {
+    let origin = sign_in.origin();
+    vec![
+        json!({
+            "code": "sign_in",
+            "sentence": "Sign in again at the new address.",
+            "url": format!("{origin}/auth/sign-in"),
+        }),
+        json!({
+            "code": "add_passkey",
+            "sentence": "Add a passkey at the new address. Passkeys made for the old address work only there.",
+            "url": passkeys::add_url(origin),
+        }),
+    ]
+}
+
 pub fn of_change(
     tx: &Transaction<'_>,
     before: &Addresses,

@@ -951,6 +951,7 @@ impl Http {
         if response.status().as_u16() == 401
             && header(&response, CONTRACT_HEADER).as_deref()
                 == Some(CONTRACT_VERSION.to_string().as_str())
+            && !asks_new_sign_in(&response)
             && let Some(fresh) = self.renewed(&sent)?
         {
             self.refuse_if_let_go()?;
@@ -2266,6 +2267,12 @@ impl Http {
     }
 }
 
+/// RFC 9470: a renewed token keeps the sign-in it came from, so renewing cannot meet this.
+fn asks_new_sign_in<B>(response: &ureq::http::Response<B>) -> bool {
+    header(response, "www-authenticate")
+        .is_some_and(|challenge| challenge.contains("insufficient_user_authentication"))
+}
+
 fn header<B>(response: &ureq::http::Response<B>, name: &str) -> Option<String> {
     header_value(
         response
@@ -2676,6 +2683,38 @@ mod tests {
                 CoreError::RenewalFailed(Box::new(expected))
             );
         }
+    }
+
+    #[test]
+    fn a_step_up_challenge_is_answered_without_renewing_the_token() {
+        let server = crate::scripted::Scripted::start();
+        let mut challenged = crate::scripted::refusal(401, "insufficient_user_authentication");
+        if let crate::scripted::Answer::Json { headers, .. } = &mut challenged {
+            headers.push((
+                "WWW-Authenticate".into(),
+                "Bearer error=\"insufficient_user_authentication\", max_age=\"300\"".into(),
+            ));
+        }
+        server.on("/items/x", vec![challenged]);
+        let http = Http::new(&server.url(), "k").unwrap();
+        let renewals = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = renewals.clone();
+        http.renew_with(Box::new(move |_| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("renewed".into())
+        }));
+        assert!(matches!(
+            http.item("x"),
+            Err(CoreError::Unauthorized { code, .. }) if code == "insufficient_user_authentication"
+        ));
+        assert_eq!(renewals.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // The witness: a plain 401 is renewed.
+        server.on(
+            "/items/x",
+            vec![crate::scripted::refusal(401, "unauthorized")],
+        );
+        let _ = http.item("x");
+        assert_eq!(renewals.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -3202,7 +3241,7 @@ mod tests {
         let renewals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&renewals);
         http.renew_with(Box::new(move |_| {
-            counted.fetch_add(1, Ordering::SeqCst);
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok("new".into())
         }));
         let upload = || Call {
@@ -3218,7 +3257,7 @@ mod tests {
         assert_eq!(first.status, 401);
         let second = http.fetch(upload(), true).unwrap();
         assert_eq!(second.status, 201);
-        assert_eq!(renewals.load(Ordering::SeqCst), 1);
+        assert_eq!(renewals.load(std::sync::atomic::Ordering::SeqCst), 1);
         let seen = serving.join().unwrap();
         assert_eq!(seen[0].1, "", "the refused send carried no body");
         assert!(seen[0].0.ends_with("Bearer old"), "{seen:?}");

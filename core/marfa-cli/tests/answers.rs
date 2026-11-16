@@ -205,7 +205,7 @@ fn a_refused_connection_to_this_machine_asks_whether_the_server_runs() {
 fn local_only() -> Answer {
     Answer::json(
         "403 Forbidden",
-        r#"{"error":{"code":"forbidden","message":"Only the private local command can do this.","details":{"needs":"local"}}}"#,
+        r#"{"error":{"code":"app_sign_in_required","message":"Only a person signed in to an app, or the private local command, can do this."}}"#,
     )
 }
 
@@ -231,7 +231,7 @@ fn install_in(folder: &Path, port: &str, running: bool) -> std::path::PathBuf {
 }
 
 #[test]
-fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
+fn a_refusal_no_key_can_mend_names_the_local_command_to_run() {
     let home = scratch("local");
     let door = Door::open(vec![local_only()]);
     let ran = run(&home, &door.url, &["items", "bin", "list"]);
@@ -281,7 +281,7 @@ fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
         ran.stderr
     );
 
-    // A 403 that does not say it needs the local command gets no such hint.
+    // A 403 that does not say a person must act gets no such hint.
     let home = scratch("local-other");
     install_serving(&home, &port);
     let door = Door::open(vec![Answer::json(
@@ -294,6 +294,18 @@ fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
     let door = Door::open(vec![local_only()]);
     let ran = run(&home, &door.url, &["--json", "backups", "list"]);
     assert!(!ran.stderr.contains("--socket"), "{}", ran.stderr);
+
+    // An app's sign-in too old for the act is told to sign in again.
+    let door = Door::open(vec![Answer::json(
+        "401 Unauthorized",
+        r#"{"error":{"code":"insufficient_user_authentication","message":"Sign in again.","details":{"max_age":300}}}"#,
+    )]);
+    let ran = run(&home, &door.url, &["backups", "list"]);
+    assert!(
+        ran.stderr.contains("sign-in from the last five minutes"),
+        "{}",
+        ran.stderr
+    );
 }
 
 #[test]

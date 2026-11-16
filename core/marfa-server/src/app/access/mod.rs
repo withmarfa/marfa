@@ -186,6 +186,9 @@ fn requires(permission: Permission) -> Refusal {
     .with_detail("required_scope", permission.word())
 }
 
+/// How long an app's sign-in stands for an act that asks the owner to confirm it is them.
+pub const STEP_UP_SECONDS: i64 = 300;
+
 #[derive(Debug)]
 pub struct Change<'a> {
     pub grants: &'a Grants,
@@ -257,6 +260,29 @@ impl Caller {
                 Err(Refusal::needs_recent_sign_in())
             }
             _ => Ok(()),
+        }
+    }
+
+    /// An act that asks the owner to confirm it is them: an app's token holding `permission`
+    /// whose owner signed in within [`STEP_UP_SECONDS`] of `at`, or the private local command.
+    /// A key has no sign-in to renew, so it is refused outright rather than challenged.
+    pub fn require_step_up(&self, permission: Permission, at: &str) -> Result<()> {
+        match self {
+            Caller::Local(_) => Ok(()),
+            Caller::Owner(_) => self.require(permission),
+            Caller::Key(_) | Caller::Server => Err(Refusal::app_sign_in_required()),
+            Caller::App { grant, .. } => {
+                self.require(permission)?;
+                let now = Stamp::read(at)?;
+                let recent = grant.authenticated_at.is_some_and(|signed_in| {
+                    (0..=STEP_UP_SECONDS * 1_000).contains(&(now.ms() - signed_in.ms()))
+                });
+                if recent {
+                    Ok(())
+                } else {
+                    Err(Refusal::insufficient_user_authentication(STEP_UP_SECONDS))
+                }
+            }
         }
     }
 
@@ -541,6 +567,7 @@ mod tests {
                 client_id: "client".into(),
                 owner_id: "owner".into(),
                 grant_id: "grant".into(),
+                authenticated_at: None,
             }),
         };
         for credential in [Caller::Key(Box::new(wide)), app] {

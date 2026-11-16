@@ -533,7 +533,7 @@ registry! {
     OBJECT_STORE_SECRET_ACCESS_KEY: Option<Secret> = "object_store_secret_access_key", Rule::Text { max: 4096 }, "", "The secret the object store is reached with.", MachineSecret;
     HEARTBEAT_URL: Option<Secret> = "heartbeat_url", Rule::Url, "", "Where the server sends its heartbeat, a GET request on the housekeeping schedule, so that something else can notice when the requests stop.", Secret;
     ERROR_WEBHOOK_URL: Option<Secret> = "error_webhook_url", Rule::Url, "", "Where the server posts a notice of each error it answers with a 500.", Secret;
-    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, error_webhook_url and object_store_endpoint. Only the private local command can change it.", Machine;
+    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, error_webhook_url and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";

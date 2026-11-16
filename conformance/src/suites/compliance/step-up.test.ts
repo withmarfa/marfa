@@ -100,7 +100,7 @@ async function call(
       body === undefined
         ? undefined
         : raw
-          ? (body as Uint8Array)
+          ? new Blob([body as Uint8Array<ArrayBuffer>])
           : JSON.stringify(body),
   });
   const text = await response.text();
@@ -213,7 +213,10 @@ async function switchState(): Promise<unknown> {
 }
 
 /** Each act, as a request that reaches it and changes nothing a later act depends on. */
-function acts(): readonly { name: string; send(credential: string): Promise<Answer> }[] {
+function acts(): readonly {
+  name: string;
+  send(credential: string): Promise<Answer>;
+}[] {
   return [
     {
       name: "POST /restore",
@@ -238,12 +241,14 @@ function acts(): readonly { name: string; send(credential: string): Promise<Answ
     },
     {
       name: "PATCH /config allow_private_addresses",
-      send: (credential) => call(credential, "PATCH", "/config", { [SWITCH]: true }),
+      send: (credential) =>
+        call(credential, "PATCH", "/config", { [SWITCH]: true }),
     },
   ];
 }
 
-const CHALLENGE = 'Bearer error="insufficient_user_authentication", max_age="300"';
+const CHALLENGE =
+  'Bearer error="insufficient_user_authentication", max_age="300"';
 
 function expectChallenged(answer: Answer, name: string): void {
   expect(answer.status, `${name} ${JSON.stringify(answer.body)}`).toBe(401);
@@ -272,10 +277,13 @@ describe("an app's token", () => {
     // A token whose owner signed in just now holds no more than this one, and
     // its sign-in is what the acts ask for.
     const fresh = await connect(app, await signIn());
-    const turned = await call(fresh.access, "PATCH", "/config", { [SWITCH]: true });
+    const turned = await call(fresh.access, "PATCH", "/config", {
+      [SWITCH]: true,
+    });
     expect(turned.status, JSON.stringify(turned.body)).toBe(200);
     expect(
-      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false })).status,
+      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
+        .status,
     ).toBe(200);
   });
 
@@ -304,7 +312,9 @@ describe("an app's token", () => {
     await server.advanceClock(4 * MINUTE);
     const second = await refreshed(app, first.refresh);
     // The witness: within five minutes of the sign-in the refreshed token acts.
-    const on = await call(second.access, "PATCH", "/config", { [SWITCH]: true });
+    const on = await call(second.access, "PATCH", "/config", {
+      [SWITCH]: true,
+    });
     expect(on.status, JSON.stringify(on.body)).toBe(200);
     await server.advanceClock(2 * MINUTE);
     const third = await refreshed(app, second.refresh);
@@ -317,7 +327,8 @@ describe("an app's token", () => {
     expect(await switchState()).toBe(true);
     const fresh = await connect(app, await signIn());
     expect(
-      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false })).status,
+      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
+        .status,
     ).toBe(200);
   });
 
@@ -337,7 +348,8 @@ describe("an app's token", () => {
       "older, after the newer acted",
     );
     expect(
-      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false })).status,
+      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
+        .status,
     ).toBe(200);
   });
 });
@@ -351,7 +363,11 @@ describe("max_age at the authorization endpoint", () => {
     // The witness: without max_age the standing consent answers at once.
     const plain = await sentTo(
       server,
-      await authorize(server, authorizeQuery(app.clientId, SCOPE, pkce()), stale),
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, SCOPE, pkce()),
+        stale,
+      ),
     );
     expect(plain?.href.startsWith(CALLBACK), String(plain)).toBe(true);
 
@@ -383,7 +399,9 @@ describe("max_age at the authorization endpoint", () => {
     const { access } = await exchange(app, code!, proof.verifier);
     const on = await call(access, "PATCH", "/config", { [SWITCH]: true });
     expect(on.status, JSON.stringify(on.body)).toBe(200);
-    expect((await call(access, "PATCH", "/config", { [SWITCH]: false })).status).toBe(200);
+    expect(
+      (await call(access, "PATCH", "/config", { [SWITCH]: false })).status,
+    ).toBe(200);
   });
 
   it("issues a code at once to a browser that signed in within max_age", async () => {
@@ -417,6 +435,37 @@ describe("max_age at the authorization endpoint", () => {
     expect(asked?.pathname, String(asked)).toBe("/auth/sign-in");
   });
 
+  it("answers login_required under prompt=none to a browser that signed in longer ago than max_age", async () => {
+    const app = await registerApp(server, SCOPE);
+    const cookie = await signIn();
+    await connect(app, cookie);
+    await server.advanceClock(6 * MINUTE);
+    // The witness: without max_age, prompt=none answers the standing consent with a code.
+    const silent = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, SCOPE, pkce(), { prompt: "none" }),
+        cookie,
+      ),
+    );
+    expect(silent?.searchParams.get("code"), String(silent)).toBeTruthy();
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, SCOPE, pkce(), {
+          prompt: "none",
+          max_age: "300",
+        }),
+        cookie,
+      ),
+    );
+    expect(landed?.href.startsWith(CALLBACK), String(landed)).toBe(true);
+    expect(landed!.searchParams.get("error")).toBe("login_required");
+    expect(landed!.searchParams.get("code")).toBeNull();
+  });
+
   it("refuses a max_age that is not a whole number of seconds with invalid_request at the redirect URI", async () => {
     const app = await registerApp(server, SCOPE);
     const cookie = await signIn();
@@ -432,7 +481,10 @@ describe("max_age at the authorization endpoint", () => {
           cookie,
         ),
       );
-      expect(landed?.href.startsWith(CALLBACK), `${value}: ${String(landed)}`).toBe(true);
+      expect(
+        landed?.href.startsWith(CALLBACK),
+        `${value}: ${String(landed)}`,
+      ).toBe(true);
       expect(landed!.searchParams.get("error"), value).toBe("invalid_request");
       expect(landed!.searchParams.get("state"), value).toBe("kept");
       expect(landed!.searchParams.get("code"), value).toBeNull();
@@ -444,7 +496,11 @@ describe("max_age at the authorization endpoint", () => {
       `${server.apiUrl}/.well-known/oauth-authorization-server`,
     );
     const metadata = (await response.json()) as Record<string, unknown>;
-    expect(metadata.prompt_values_supported).toEqual(["none", "login", "consent"]);
+    expect(metadata.prompt_values_supported).toEqual([
+      "none",
+      "login",
+      "consent",
+    ]);
   });
 });
 
@@ -455,7 +511,9 @@ describe("a key and the private socket", () => {
     expect((await call(key, "GET", "/backups")).status).toBe(200);
     for (const act of acts()) {
       const answer = await act.send(key);
-      expect(answer.status, `${act.name} ${JSON.stringify(answer.body)}`).toBe(403);
+      expect(answer.status, `${act.name} ${JSON.stringify(answer.body)}`).toBe(
+        403,
+      );
       expect(answer.challenge, act.name).toBeNull();
       expect(answer.body.error.code, act.name).toBe("app_sign_in_required");
     }
@@ -468,16 +526,28 @@ describe("a key and the private socket", () => {
     const cookie = await signIn();
     let landed = await sentTo(
       server,
-      await authorize(server, authorizeQuery(app.clientId, "instance.read", proof), cookie),
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, "instance.read", proof),
+        cookie,
+      ),
     );
     if (landed !== undefined && !landed.href.startsWith(CALLBACK)) {
-      landed = await decide(server, origin, cookie, landed, true, ["instance.read"]);
+      landed = await decide(server, origin, cookie, landed, true, [
+        "instance.read",
+      ]);
     }
-    const { access } = await exchange(app, landed!.searchParams.get("code")!, proof.verifier);
+    const { access } = await exchange(
+      app,
+      landed!.searchParams.get("code")!,
+      proof.verifier,
+    );
     await server.advanceClock(6 * MINUTE);
     const answer = await call(access, "POST", "/backups/x/y/restore");
     expect(answer.status, JSON.stringify(answer.body)).toBe(403);
-    expect(answer.body.error.details).toEqual({ required_scope: "backups.manage" });
+    expect(answer.body.error.details).toEqual({
+      required_scope: "backups.manage",
+    });
     expect(answer.challenge).toBeNull();
   });
 
@@ -493,8 +563,12 @@ describe("a key and the private socket", () => {
       `/backups/${backup.instance_id}/${backup.name}/restore`,
     );
     expect(fromBackup.status, JSON.stringify(fromBackup.body)).toBe(200);
-    expect((await local("PATCH", "/config", { [SWITCH]: true })).status).toBe(200);
-    expect((await local("PATCH", "/config", { [SWITCH]: false })).status).toBe(200);
+    expect((await local("PATCH", "/config", { [SWITCH]: true })).status).toBe(
+      200,
+    );
+    expect((await local("PATCH", "/config", { [SWITCH]: false })).status).toBe(
+      200,
+    );
   });
 });
 
@@ -524,14 +598,23 @@ describe("moving the sign-in address", () => {
       expect.arrayContaining(["browser_sessions_end", "apps_sign_in_again"]),
     );
     expect(checked.body.next_steps).toEqual([
-      { code: "sign_in", sentence: expect.any(String), url: `${to}/auth/sign-in` },
+      {
+        code: "sign_in",
+        sentence: expect.any(String),
+        url: `${to}/auth/sign-in`,
+      },
       {
         code: "add_passkey",
         sentence: expect.any(String),
         url: `${to}/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys`,
       },
     ]);
-    await expectMatchesSchema("POST", "/config/address-check", 200, checked.body);
+    await expectMatchesSchema(
+      "POST",
+      "/config/address-check",
+      200,
+      checked.body,
+    );
 
     const moved = await call(mover.access, "PATCH", "/config", {
       sign_in_address: to,
@@ -561,14 +644,34 @@ describe("moving the sign-in address", () => {
     await opens.body?.cancel();
     expect(opens.status).toBe(401);
     expect((await call(key, "GET", "/config")).status).toBe(200);
-    const link = await call(server.managementKey, "GET", "/owner/passkeys/add-url");
+    const link = await call(
+      server.managementKey,
+      "GET",
+      "/owner/passkeys/add-url",
+    );
     expect(link.body.url).toBe(checked.body.next_steps[1].url);
 
-    // The app reconnects at the new issuer, and its grant still stands.
+    // The app reconnects at the new issuer, and its grant still stands, so
+    // the new sign-in is the only step.
     expect(await issuerOrigin(server)).toBe(to);
-    const again = await connect(app, await signIn(to), to);
-    expect((await call(again.access, "GET", "/config")).status).toBe(200);
+    const proof = pkce();
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, SCOPE, proof),
+        await signIn(to),
+      ),
+    );
+    expect(landed?.href.startsWith(CALLBACK), String(landed)).toBe(true);
+    expect(landed!.searchParams.get("iss")).toBe(to);
+    const again = await exchange(
+      app,
+      landed!.searchParams.get("code")!,
+      proof.verifier,
+    );
     const read = await call(again.access, "GET", "/config");
+    expect(read.status).toBe(200);
     expect(read.body).not.toHaveProperty("sign_in_moved");
   });
 });

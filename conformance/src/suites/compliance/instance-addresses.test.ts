@@ -152,14 +152,13 @@ describe("the sign-in address", () => {
     expect(read.addresses).toContain(SIGN_IN);
   });
 
-  it("is refused to a key, which holds config.manage but not direct authority", async () => {
+  it("is refused to a key, which has no sign-in to renew", async () => {
     const answer = await call("key", "PATCH", "/config", {
       sign_in_address: "https://other.example",
       confirm_sign_in_address_change: true,
     });
     expect(answer.status).toBe(403);
-    expect(answer.body.error.code).toBe("forbidden");
-    expect(answer.body.error.details).toEqual({ needs: "local" });
+    expect(answer.body.error.code).toBe("app_sign_in_required");
     expect((await config()).sign_in_address).toBe(SIGN_IN);
     const unchanged = await call("key", "PATCH", "/config", {
       sign_in_address: SIGN_IN,
@@ -259,6 +258,7 @@ describe("an address check", () => {
         count: null,
       },
     ]);
+    expect(answer.body.next_steps).toEqual([]);
   });
 
   it("does not ask for confirming when the sign-in address is only spelled another way", async () => {

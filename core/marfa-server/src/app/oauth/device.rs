@@ -85,6 +85,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         destinations: destinations_digest(app, &client)?,
         status: DeviceStatus::Pending,
         owner_id: None,
+        authenticated_at: None,
         interval_seconds: DEVICE_INTERVAL_SECONDS,
         last_polled_at: None,
         expires_at: now.plus_ms(DEVICE_CODE_SECONDS * MS_PER_SECOND)?,
@@ -246,13 +247,20 @@ pub async fn answer(
         let (Lookup::Pending, Some(code)) = (lookup, found) else {
             return Ok(Answer::Code(lookup));
         };
-        let owner_id = unit
+        let (owner_id, signed_in) = unit
             .caller
             .session()
-            .map(|session| session.owner_id.clone())
+            .map(|session| (session.owner_id.clone(), session.created_at))
             .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
         let deny = |scopes: &ScopeSet| {
-            store::decide_device_code(tx, &code.digest, DeviceStatus::Denied, &owner_id, scopes)?;
+            store::decide_device_code(
+                tx,
+                &code.digest,
+                DeviceStatus::Denied,
+                &owner_id,
+                signed_in,
+                scopes,
+            )?;
             Ok(Answer::Denied)
         };
         if !approve {
@@ -292,6 +300,7 @@ pub async fn answer(
             &code.digest,
             DeviceStatus::Approved,
             &owner_id,
+            signed_in,
             &approved,
         )?;
         unit.audit_also(

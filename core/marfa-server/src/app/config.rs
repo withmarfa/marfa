@@ -10,6 +10,7 @@ use super::access::{Caller, Levers, Permission, Standing, report_unread};
 use super::addresses;
 use super::auth::session;
 use super::consequences::{self, Consequence};
+use super::oauth;
 use super::refusal::{Code, Refusal, Result};
 use super::sources;
 use super::{App, instance, stored};
@@ -593,12 +594,14 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 let before = rows_of(stored::rows(tx)?);
                 let plan = Plan::of(&request, before);
                 if plan.private_addresses_change(&writing) {
-                    unit.caller.require_local()?;
+                    unit.caller
+                        .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
                 if moved.sign_in_moves {
-                    unit.caller.require_local()?;
+                    unit.caller
+                        .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
                 if moved.confirm && !request.confirmed {
                     return Err(confirmation_needed(&moved));
@@ -606,6 +609,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 stored::write_rows(tx, &plan.ops)?;
                 if moved.sign_in_moves {
                     session::end_every(tx, &unit.at, &unit.caller)?;
+                    oauth::store::end_every_sign_in(tx, unit.instant)?;
                 }
                 if let Some(name) = &plan.name {
                     instance::set_name(tx, name.as_deref())?;
@@ -613,7 +617,14 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
                 let staged = stored::stage(tx, &writing)?;
                 let name = instance::stored_name(tx)?;
-                Ok((document(&writing, &plan.after, name), Some(staged)))
+                let mut answer = document(&writing, &plan.after, name);
+                if moved.sign_in_moves {
+                    answer["sign_in_moved"] = json!({
+                        "consequences": moved.consequences_json(),
+                        "next_steps": consequences::next_steps(&moved.sign_in),
+                    });
+                }
+                Ok((answer, Some(staged)))
             })
             .await
     })
@@ -679,11 +690,17 @@ pub async fn check(app: &Arc<App>, request: Request) -> Result<Value> {
             let plan = Plan::of(&request, before);
             plan.judge(&checking)?;
             let moved = plan.addresses_at(&checking, tx)?;
+            let next_steps = if moved.sign_in_moves {
+                consequences::next_steps(&moved.sign_in)
+            } else {
+                Vec::new()
+            };
             Ok(json!({
                 "sign_in_address": moved.sign_in.origin(),
                 "addresses": moved.all.iter().map(addresses::Address::origin).collect::<Vec<_>>(),
                 "requires_confirmation": moved.confirm,
                 "consequences": moved.consequences_json(),
+                "next_steps": next_steps,
             }))
         })
         .await

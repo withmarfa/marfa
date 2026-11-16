@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { beatReceiver } from "../../utils/beat-receiver.js";
 import {
+  approvedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
@@ -50,20 +51,26 @@ function byName(url: string): string {
 
 describe("where the server may send", () => {
   it(
-    "refuses a key holding config.manage the switch, which the private local process changes",
+    "refuses a key holding config.manage the switch, which an app whose owner signed in just now changes",
     async () => {
       const server = await bootFreshServer("switch-authority", PUBLIC_ONLY);
       try {
         const { operator } = clientsFor(server);
         const refused = await operator.patchConfig({ [SWITCH]: true });
         expect(refused.status).toBe(403);
-        expect(refused.error?.error.code).toBe("forbidden");
-        expect(refused.error?.error.details).toEqual({ needs: "local" });
+        expect(refused.error?.error.code).toBe("app_sign_in_required");
         const put = await operator.updateConfig({ [SWITCH]: true });
         expect(put.status).toBe(403);
         expect((await operator.getConfig()).data).not.toHaveProperty(SWITCH);
 
-        // The witness: the private local process changes the same setting.
+        // The witness: an app whose owner signed in just now changes the same
+        // setting, and so does the private local process.
+        const app = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: await approvedAppToken(server, ["config.manage"]),
+        });
+        expect((await setFrom(app, { [SWITCH]: true }))[SWITCH]).toBe(true);
+        expect((await setFrom(app, { [SWITCH]: false }))[SWITCH]).toBe(false);
         const turned = await setFrom(socketOf(server), { [SWITCH]: true });
         expect(turned[SWITCH]).toBe(true);
         const same = await operator.patchConfig({ [SWITCH]: true });
@@ -75,7 +82,7 @@ describe("where the server may send", () => {
         });
         const off = await operator.patchConfig({ [SWITCH]: false });
         expect(off.status).toBe(403);
-        expect(off.error?.error.details).toEqual({ needs: "local" });
+        expect(off.error?.error.code).toBe("app_sign_in_required");
         expect(
           ((await operator.getConfig()).data as Record<string, unknown>)[
             SWITCH

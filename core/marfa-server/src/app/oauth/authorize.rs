@@ -184,15 +184,24 @@ pub async fn begin(
         let standing = stands_for(app, owner.as_ref(), &asked).await?;
         return Ok(Ok(asked.refused(standing, &problem)));
     }
-    if reprompt::asks_login(asked.prompt.as_deref()) {
-        let session = owner.as_ref().and_then(Caller::session);
+    let session = owner.as_ref().and_then(Caller::session);
+    let too_old = reprompt::signed_in_too_long_ago(app, only(&pairs, "max_age"), session);
+    if too_old && reprompt::asks_none(asked.prompt.as_deref()) {
+        let standing = stands_for(app, owner.as_ref(), &asked).await?;
+        return Ok(Ok(asked.refused(
+            standing,
+            &Problem::new("login_required", "The person must sign in again."),
+        )));
+    }
+    if too_old || reprompt::asks_login(asked.prompt.as_deref()) {
         if !reprompt::signed_in_since(app, query, session) {
             if !grantable(app, &client, &asked) {
                 let standing = stands_for(app, owner.as_ref(), &asked).await?;
                 return Ok(Ok(asked.refused(standing, &nothing_grantable())));
             }
             let params = asked.link_params(&asked.scope);
-            let signed = reprompt::signed_request(app, params, asked.prompt.as_deref(), session)?;
+            let prompt = reprompt::with_login(asked.prompt.as_deref());
+            let signed = reprompt::signed_request(app, params, &prompt, session)?;
             let back = format!("{REQUEST_PATH}?{signed}");
             return Ok(Ok(sign_in_for(app, &signed, &back)));
         }
@@ -279,7 +288,15 @@ fn refused_shape(asked: &Asked, client: &Client, pairs: &[(String, String)]) -> 
     }
     let shaped = pkce::is_challenge(&asked.challenge)
         && pkce::takes_method(only(pairs, "code_challenge_method"));
-    (!shaped).then(|| Problem::new("invalid_request", "A PKCE S256 challenge is required."))
+    if !shaped {
+        return Some(Problem::new(
+            "invalid_request",
+            "A PKCE S256 challenge is required.",
+        ));
+    }
+    only(pairs, "max_age")
+        .filter(|age| reprompt::max_age(age).is_none())
+        .map(|_| Problem::new("invalid_request", "max_age is a whole number of seconds."))
 }
 
 async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Result<String> {
@@ -394,6 +411,7 @@ fn issue_code(app: &App, unit: &Unit<'_, '_>, ticket: Ticket<'_>) -> Result<Stri
             client_id: ticket.client_id.to_string(),
             owner_id: session.owner_id.clone(),
             session_id: session.id.clone(),
+            authenticated_at: session.created_at,
             grant_id: ticket.grant_id.to_string(),
             redirect_uri: ticket.destination.as_str().to_string(),
             scopes: ticket.scopes.clone(),

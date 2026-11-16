@@ -40,6 +40,7 @@ pub fn authorization_server(app: &App) -> Value {
         "revocation_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": published(app).literals(),
         "client_id_metadata_document_supported": true,
+        "prompt_values_supported": ["none", "login", "consent"],
         "authorization_response_iss_parameter_supported": true,
     })
 }
