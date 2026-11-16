@@ -187,7 +187,7 @@ while :; do
     last_sweep="a run was already in progress"
   else
     last_sweep=$(jq -c '{outcome, result, error}' "$reply")
-    [ "$(jq -r .outcome "$reply")" = ok ] || fail "The reading sweep ended badly: $last_sweep"
+    [ "$(jq -r .outcome "$reply")" = succeeded ] || fail "The reading sweep ended badly: $last_sweep"
   fi
   sleep 2
 done
