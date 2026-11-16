@@ -6,7 +6,7 @@ use super::cursor::{Position, Secret};
 use super::listing::{By, page_sql, stats_sql};
 use super::order::{Order, Sort};
 use super::reach::Reach;
-use super::search::{Ranking, corpus_sqls, search_sql};
+use super::search::{Ranking, corpus_sqls, search_sql, snippets_sql};
 use crate::app::catalog::Catalog;
 
 const OPEN: &str = "core.open";
@@ -196,4 +196,42 @@ fn a_cursor_for_a_page_ending_at_an_item_is_short_and_opens_to_the_same_place() 
     // Witness: the hex of the JSON payload is not a cursor.
     let old = hex::encode([&[0u8; 16][..], place.payload().to_string().as_bytes()].concat());
     assert!(secret.open("listing", &old).is_err());
+}
+
+#[test]
+fn a_page_of_snippets_is_one_scan_of_the_index() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE items_fts USING fts5(
+             title, body, description, name, extra, tags, tokenize = 'porter unicode61');",
+    )
+    .unwrap();
+    for seq in 1..=40 {
+        conn.execute(
+            "INSERT INTO items_fts (rowid, title, body) VALUES (?1, ?2, 'a gardening story')",
+            rusqlite::params![seq, format!("Garden number {seq}")],
+        )
+        .unwrap();
+    }
+    let sql = snippets_sql("\"garden\"*", &[31, 5, 17]).unwrap();
+    let plan: String = conn
+        .query_row(
+            &format!("EXPLAIN QUERY PLAN {}", sql.text),
+            rusqlite::params_from_iter(&sql.values),
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(
+        !plan.contains('='),
+        "a scan per entry is asked for, not one scan: {plan}"
+    );
+    let mut statement = conn.prepare(&sql.text).unwrap();
+    let mut found: Vec<i64> = statement
+        .query_map(rusqlite::params_from_iter(&sql.values), |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    found.sort_unstable();
+    assert_eq!(found, [5, 17, 31]);
+    assert!(snippets_sql("\"garden\"*", &[]).is_none());
 }

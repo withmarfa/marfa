@@ -347,10 +347,9 @@ fn relevance(rank: f64, top: Option<f64>) -> f64 {
     }
 }
 
-fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<HashMap<i64, String>> {
-    if seqs.is_empty() {
-        return Ok(HashMap::new());
-    }
+/// A range scan: FTS5 sets a prefix up per scan, so `rowid IN` alone scans once per hit.
+pub(super) fn snippets_sql(expression: &str, seqs: &[i64]) -> Option<Sql> {
+    let (first, last) = (seqs.iter().min()?, seqs.iter().max()?);
     let mut sql = Sql::new("SELECT rowid, snippet(items_fts, -1, ");
     sql.bind(MARK_OPEN.to_string());
     sql.push(", ");
@@ -359,7 +358,11 @@ fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<Has
     sql.bind(SNIPPET_TOKENS);
     sql.push(") FROM items_fts WHERE items_fts MATCH ");
     sql.bind(expression.to_string());
-    sql.push(" AND rowid IN (");
+    sql.push(" AND rowid BETWEEN ");
+    sql.bind(*first);
+    sql.push(" AND ");
+    sql.bind(*last);
+    sql.push(" AND +rowid IN (");
     for (at, seq) in seqs.iter().enumerate() {
         if at > 0 {
             sql.push(", ");
@@ -367,6 +370,13 @@ fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<Has
         sql.bind(*seq);
     }
     sql.push(")");
+    Some(sql)
+}
+
+fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<HashMap<i64, String>> {
+    let Some(sql) = snippets_sql(expression, seqs) else {
+        return Ok(HashMap::new());
+    };
     let mut statement = read.tx.prepare(&sql.text)?;
     let found = statement.query_map(rusqlite::params_from_iter(&sql.values), |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
