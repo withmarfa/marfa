@@ -72,7 +72,7 @@ If `POST /edges` carries a top-level body key the operation does not declare, th
 
 **Reason:** a dropped key is a request half performed and answered as success. Keys inside `properties` are the edge type's, not the operation's.
 
-**Tests:** `compliance/edge-refusals.test.ts › refuses a body key the operation does not declare, naming each one, and creates nothing`.
+**Tests:** `compliance/edge-refusals.test.ts › refuses a body key the operation does not declare, naming each one, and creates nothing`, `› refuses an edge's ends named source_id and target_id, and source_version, as keys the operations do not declare`.
 
 ### `edges/update-undeclared-key`
 
@@ -80,7 +80,7 @@ If `PATCH /edges/{id}` carries a top-level body key the operation does not decla
 
 **Reason:** a dropped key is a request half performed and answered `200`. Keys inside `properties` are the edge type's, not the operation's.
 
-**Tests:** `compliance/edge-refusals.test.ts › refuses an update body key the operation does not declare, naming each one, and writes nothing`.
+**Tests:** `compliance/edge-refusals.test.ts › refuses an update body key the operation does not declare, naming each one, and writes nothing`, `› refuses an edge's ends named source_id and target_id, and source_version, as keys the operations do not declare`.
 
 ### `edges/create-invalid-id`
 
@@ -1724,7 +1724,7 @@ If `POST /edge-types` names a key the edge type does not define, at the top leve
 
 **Reason:** the code a type's field gets for the same fault (`types/unknown-key`). A key the server ignored would let a misspelled rule register as though it held.
 
-**Tests:** `compliance/edge-types.test.ts › refuses a key the edge type or one of its properties does not define, naming each path`.
+**Tests:** `compliance/edge-types.test.ts › refuses a key the edge type or one of its properties does not define, naming each path`, `compliance/edge-refusals.test.ts › refuses an edge type registration naming its ends source and target, or written_at`.
 
 ### `edges/types-register-extends`
 
