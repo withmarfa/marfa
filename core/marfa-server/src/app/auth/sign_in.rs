@@ -509,8 +509,7 @@ impl Changed {
     }
 }
 
-/// Ends the owner's browser sessions but the caller's own, if the caller is one, and every device
-/// cookie. `mark` is the device cookie the browser sent, if any.
+/// Ends every browser session but the caller's own, and every device cookie.
 pub async fn change_password(
     app: &Arc<App>,
     caller: &Caller,
