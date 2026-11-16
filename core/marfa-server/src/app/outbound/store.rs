@@ -21,23 +21,30 @@ pub struct PublicOnly {
 
 impl HttpConnector for PublicOnly {
     fn connect(&self, _options: &ClientOptions) -> object_store::Result<HttpClient> {
-        let client = reqwest::Client::builder()
-            .user_agent(concat!("marfa-server/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(self.connect_timeout)
-            .no_proxy()
-            // A decoded body would not match the `Content-Length` the store reads sizes from.
-            .no_gzip()
-            .no_brotli()
-            .no_zstd()
-            .no_deflate()
-            .dns_resolver(Arc::new(PublicNames))
-            .build()
-            .map_err(|error| object_store::Error::Generic {
+        let client = client(self.connect_timeout, Arc::new(PublicNames)).map_err(|error| {
+            object_store::Error::Generic {
                 store: "S3",
                 source: Box::new(error),
-            })?;
+            }
+        })?;
         Ok(HttpClient::new(LiteralsJudged(client)))
     }
+}
+
+/// A redirect would reach its address unjudged, so a `3xx` is answered to the store as it came.
+fn client(connect_timeout: Duration, names: Arc<dyn Resolve>) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("marfa-server/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(connect_timeout)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        // A decoded body would not match the `Content-Length` the store reads sizes from.
+        .no_gzip()
+        .no_brotli()
+        .no_zstd()
+        .no_deflate()
+        .dns_resolver(names)
+        .build()
 }
 
 fn not_public() -> io::Error {
@@ -85,5 +92,72 @@ impl Resolve for PublicNames {
             }
             Ok(Box::new(found.into_iter()) as Addrs)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    /// Says every name is the loopback address, as a public name an attacker controls could.
+    struct Everywhere(SocketAddr);
+
+    impl Resolve for Everywhere {
+        fn resolve(&self, _: Name) -> Resolving {
+            let at = self.0;
+            Box::pin(async move { Ok(Box::new(std::iter::once(at)) as Addrs) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_redirect_from_the_store_is_never_followed() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        let private_hits = Arc::new(AtomicUsize::new(0));
+        let hits = private_hits.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut asked = vec![0u8; 4096];
+                let read = socket.read(&mut asked).await.unwrap_or(0);
+                let answer = if String::from_utf8_lossy(&asked[..read]).starts_with("GET /secret") {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    "HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\nsecret"
+                        .to_string()
+                } else {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nlocation: http://127.0.0.1:{}/secret\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        at.port()
+                    )
+                };
+                let _ = socket.write_all(answer.as_bytes()).await;
+            }
+        });
+        let client = client(Duration::from_secs(5), Arc::new(Everywhere(at))).unwrap();
+        let direct = client
+            .get(format!("http://store.example.com:{}/secret", at.port()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            direct.status(),
+            200,
+            "the witness: the private answer is reachable"
+        );
+        assert_eq!(private_hits.swap(0, Ordering::SeqCst), 1);
+        let redirected = client
+            .get(format!("http://store.example.com:{}/bucket/key", at.port()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(redirected.status(), 302);
+        assert_eq!(private_hits.load(Ordering::SeqCst), 0);
     }
 }
