@@ -115,7 +115,7 @@ function request(path: string, proof?: string, key = server.workingKey) {
 }
 
 interface BulkRead {
-  items: Array<{ id: string }>;
+  data: Array<{ id: string }>;
   metadata?: Array<{ item_id: string }>;
   listed?: boolean[];
 }
@@ -524,16 +524,16 @@ describe("conditional working-copy reaches", () => {
       proof.reach,
     );
     certified(bulk, proof.reach);
-    const bulkBody = (await bulk.json()) as Omit<BulkRead, "items"> & {
-      items: Array<{
+    const bulkBody = (await bulk.json()) as Omit<BulkRead, "data"> & {
+      data: Array<{
         id: string;
         edges?: Record<string, { data: unknown[] }>;
       }>;
     };
     expect(bulkBody).not.toHaveProperty("reach");
-    expect(bulkBody.items.map((item) => item.id)).toEqual(ids);
+    expect(bulkBody.data.map((item) => item.id)).toEqual(ids);
     expect(bulkBody.listed).toEqual([true, true, true]);
-    const bulkEdges = bulkBody.items.flatMap((item) =>
+    const bulkEdges = bulkBody.data.flatMap((item) =>
       Object.values(item.edges ?? {}).flatMap((block) => block.data),
     );
     expect(bulkEdges).toHaveLength(1);
@@ -743,8 +743,8 @@ describe("conditional working-copy reaches", () => {
       const filtered = await read(proof.reach);
       certified(filtered, proof.reach);
       const body = (await filtered.json()) as BulkRead;
-      expect(Object.keys(body).sort()).toEqual(["items", "listed", "metadata"]);
-      expect(body.items.map((item) => item.id)).toEqual([
+      expect(Object.keys(body).sort()).toEqual(["data", "listed", "metadata"]);
+      expect(body.data.map((item) => item.id)).toEqual([
         excluded.id,
         included.id,
       ]);
@@ -757,7 +757,7 @@ describe("conditional working-copy reaches", () => {
       const lean = await bulkGet({ ids }, proof.reach);
       certified(lean, proof.reach);
       const leanBody = (await lean.json()) as BulkRead;
-      expect(Object.keys(leanBody).sort()).toEqual(["items", "listed"]);
+      expect(Object.keys(leanBody).sort()).toEqual(["data", "listed"]);
       expect(leanBody.listed).toEqual([false, true]);
 
       // The same item, read alone under the same reach, is listed the same.
@@ -770,7 +770,7 @@ describe("conditional working-copy reaches", () => {
       expect(ordinary.headers.get("X-Marfa-Reach")).toBeNull();
       const ordinaryBody = (await ordinary.json()) as BulkRead;
       expect(ordinaryBody).not.toHaveProperty("listed");
-      expect(ordinaryBody.items.map((item) => item.id)).toEqual([
+      expect(ordinaryBody.data.map((item) => item.id)).toEqual([
         excluded.id,
         included.id,
       ]);
@@ -802,7 +802,7 @@ describe("conditional working-copy reaches", () => {
     );
     certified(hidden, proof.reach);
     expect(await hidden.json()).toEqual({
-      items: [],
+      data: [],
       metadata: [],
       listed: [],
     });
@@ -813,7 +813,7 @@ describe("conditional working-copy reaches", () => {
     );
     certified(shown, proof.reach);
     const body = (await shown.json()) as BulkRead;
-    expect(body.items.map((item) => item.id)).toEqual([made.item.id]);
+    expect(body.data.map((item) => item.id)).toEqual([made.item.id]);
     expect(body.listed).toEqual([true]);
     expect(body.metadata?.map((entry) => entry.item_id)).toEqual([
       made.item.id,
@@ -827,7 +827,7 @@ describe("conditional working-copy reaches", () => {
     );
     certified(bare, proof.reach);
     const answered = (await bare.json()) as BulkRead;
-    expect(answered.items.map((item) => item.id)).toEqual([made.item.id]);
+    expect(answered.data.map((item) => item.id)).toEqual([made.item.id]);
     expect(answered.metadata).toBeUndefined();
 
     for (const [include, expected] of [
@@ -841,7 +841,7 @@ describe("conditional working-copy reaches", () => {
       expect(ordinary.status).toBe(200);
       expect(ordinary.headers.get("X-Marfa-Reach")).toBeNull();
       expect(
-        ((await ordinary.json()) as BulkRead).items.map((item) => item.id),
+        ((await ordinary.json()) as BulkRead).data.map((item) => item.id),
       ).toEqual(expected);
     }
   });

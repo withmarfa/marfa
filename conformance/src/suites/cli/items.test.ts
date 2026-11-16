@@ -77,21 +77,21 @@ describe("items from the terminal", () => {
     expect(stale.envelope.error.server?.status).toBe(409);
     expect(stale.envelope.error.server?.code).toBe("version_conflict");
 
-    const tagged = await c.cli.json<{ metadata: { tags: string[] } }>([
+    const tagged = await c.cli.json<{ tags: string[] }>([
       "items",
       "tag",
       created.item.id,
       "alpha",
       "beta",
     ]);
-    expect(tagged.metadata.tags.sort()).toEqual(["alpha", "beta", "cli"]);
-    const untagged = await c.cli.json<{ metadata: { tags: string[] } }>([
+    expect(tagged.tags.sort()).toEqual(["alpha", "beta", "cli"]);
+    const untagged = await c.cli.json<{ tags: string[] }>([
       "items",
       "untag",
       created.item.id,
       "alpha",
     ]);
-    expect(untagged.metadata.tags.sort()).toEqual(["beta", "cli"]);
+    expect(untagged.tags.sort()).toEqual(["beta", "cli"]);
 
     const found = await c.cli.json<{
       data: Array<{ item: { id: string } }>;

@@ -764,7 +764,7 @@ describe("a query key no door declares", () => {
     template: string,
     key: string,
     id: string = UNKNOWN,
-  ): Promise<{ status: number; unknown: unknown }> {
+  ): Promise<{ status: number; unknown: unknown; code?: string }> {
     const path = template.replace(/\{[^}]+\}/g, id);
     if (
       template === "/items/summaries" ||
@@ -801,8 +801,19 @@ describe("a query key no door declares", () => {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: method === "GET" || method === "DELETE" ? undefined : "{}",
+      body:
+        method === "GET" || method === "HEAD" || method === "DELETE"
+          ? undefined
+          : "{}",
     });
+    // A HEAD answer has no body, so its refusal is the code in the header.
+    if (method === "HEAD") {
+      return {
+        status: response.status,
+        unknown: undefined,
+        code: response.headers.get("x-error-code") ?? undefined,
+      };
+    }
     // A door that fails to refuse may answer a stream that never ends, so
     // only a JSON body is read.
     if (!(response.headers.get("content-type") ?? "").includes("json")) {
@@ -861,7 +872,7 @@ describe("a query key no door declares", () => {
       // holds the instance permissions it does not.
       let refused = false;
       for (const key of [apiKey, managementKey ?? ""]) {
-        const { status, unknown } = await stray(
+        const { status, unknown, code } = await stray(
           door.method,
           door.path,
           key,
@@ -872,8 +883,8 @@ describe("a query key no door declares", () => {
         );
         if (
           status === 400 &&
-          Array.isArray(unknown) &&
-          unknown.includes(STRAY)
+          ((Array.isArray(unknown) && unknown.includes(STRAY)) ||
+            (door.method === "HEAD" && code === "validation_error"))
         ) {
           refused = true;
           break;

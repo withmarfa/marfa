@@ -2038,8 +2038,8 @@ describe("the scripted answers match the server's", () => {
     });
     expect(lookup.ok, JSON.stringify(lookup.error)).toBe(true);
     const results = (
-      lookup.data as { results: Array<{ items: Array<{ id: string }> }> }
-    ).results;
+      lookup.data as { data: Array<{ items: Array<{ id: string }> }> }
+    ).data;
     expect(
       results[0]?.items.map((row) => row.id).sort(),
       "the lookup did not answer every item under the name whatever its case and state, so a folder would read one of two as the only one",
@@ -2066,17 +2066,17 @@ describe("the scripted answers match the server's", () => {
       ]),
       {
         same: [
-          "results.0.more",
-          "results.0.items.0.type",
-          "results.0.items.0.has_blob",
-          "results.1.items",
-          "results.1.more",
+          "data.0.more",
+          "data.0.items.0.type",
+          "data.0.items.0.has_blob",
+          "data.1.items",
+          "data.1.more",
         ],
         shape: [
-          "results.0.name",
-          "results.0.items.0.id",
-          "results.0.items.0.title",
-          "results.1.name",
+          "data.0.name",
+          "data.0.items.0.id",
+          "data.0.items.0.title",
+          "data.1.name",
         ],
       },
     );
@@ -3499,8 +3499,8 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
   expect(bulk.status).toBe(200);
   expect(bulk.headers.get("X-Marfa-Reach")).toBe(fence);
   expect(bulk.headers.get("Cache-Control")).toBe("no-store");
-  const bulkBody = (await bulk.json()) as { items: { id: string }[] };
-  expect(bulkBody.items.map((item) => item.id)).toEqual([seeded.id]);
+  const bulkBody = (await bulk.json()) as { data: { id: string }[] };
+  expect(bulkBody.data.map((item) => item.id)).toEqual([seeded.id]);
   expectFidelity(
     "a bulk read by id under a matching reach",
     { status: bulk.status, body: bulkBody },
@@ -3532,7 +3532,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     });
     expect(read.status).toBe(200);
     expect(read.headers.get("X-Marfa-Reach")).toBe(fence);
-    const real = (await read.json()) as { items: { id: string }[] };
+    const real = (await read.json()) as { data: { id: string }[] };
     const scripted = bulkGetOf(
       [
         certifiedRead(
@@ -3544,11 +3544,11 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
       { withReach: true, system },
     );
     expect(
-      (scriptedBody(scripted) as { items: { id: string }[] }).items.map(
+      (scriptedBody(scripted) as { data: { id: string }[] }).data.map(
         (item) => item.id,
       ),
       `the scripted bulk read and the server disagree on a system item ${system ? "with" : "without"} system`,
-    ).toEqual(real.items.map((item) => item.id));
+    ).toEqual(real.data.map((item) => item.id));
     expectFidelity(
       `a bulk read of a system item ${system ? "with" : "without"} system`,
       { status: read.status, body: real },

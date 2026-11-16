@@ -487,7 +487,7 @@ describe("the instance", () => {
       tags: { name: string }[];
       paths: Record<string, Record<string, { tags?: string[] }>>;
     };
-    const methodNames = ["get", "post", "put", "patch", "delete"];
+    const methodNames = ["get", "post", "put", "patch", "delete", "head"];
     const carried = new Set<string>();
     const untagged: string[] = [];
     for (const [path, methods] of Object.entries(doc.paths)) {
@@ -523,7 +523,7 @@ describe("the instance", () => {
         Record<string, { operationId?: string; tags?: string[] }>
       >;
     };
-    const methodNames = ["get", "post", "put", "patch", "delete"];
+    const methodNames = ["get", "post", "put", "patch", "delete", "head"];
     // Each published operation by its operationId, a request Marfa sends
     // included.
     const carried = new Map<string, string[]>();

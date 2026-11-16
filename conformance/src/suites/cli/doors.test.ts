@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { extensionsOf } from "../../client/api.js";
 import {
   cleanup,
   trackEdgeType,
@@ -123,17 +124,15 @@ describe("types and edge types", () => {
       fields: { title: { type: "string", description: "The title." } },
       required: ["title"],
     };
-    const registered = await c.cli.json<{ type: { id: string } }>([
+    const registered = await c.cli.json<{ id: string }>([
       "types",
       "register",
       "--body",
       JSON.stringify(definition),
     ]);
     trackType(c.ctx, id);
-    expect(registered.type.id).toBe(id);
-    const replaced = await c.cli.json<{
-      type: { id: string; description: string };
-    }>([
+    expect(registered.id).toBe(id);
+    const replaced = await c.cli.json<{ id: string; description: string }>([
       "types",
       "replace",
       id,
@@ -143,8 +142,8 @@ describe("types and edge types", () => {
         description: "Changed from the terminal.",
       }),
     ]);
-    expect(replaced.type.id).toBe(id);
-    expect(replaced.type.description).toBe("Changed from the terminal.");
+    expect(replaced.id).toBe(id);
+    expect(replaced.description).toBe("Changed from the terminal.");
     const reread = await c.cli.json<{ description: string }>([
       "types",
       "get",
@@ -173,7 +172,7 @@ describe("types and edge types", () => {
     const listed = await c.cli.json<unknown>(["edge-types", "list"]);
     expect(JSON.stringify(listed)).toContain("references");
     const id = unique("cli-edge-type");
-    const registered = await c.cli.json<{ edge_type: { id: string } }>([
+    const registered = await c.cli.json<{ id: string }>([
       "edge-types",
       "register",
       "--body",
@@ -184,7 +183,7 @@ describe("types and edge types", () => {
       }),
     ]);
     trackEdgeType(c.ctx, id);
-    expect(registered.edge_type.id).toBe(id);
+    expect(registered.id).toBe(id);
     const before = await c.cli.json<unknown>(["edge-types", "list"]);
     expect(JSON.stringify(before)).toContain(id);
     await c.cli.json(["edge-types", "delete", id]);
@@ -206,13 +205,13 @@ describe("metadata and extensions", () => {
       "two",
     ]);
     expect(replaced.tags.sort()).toEqual(["one", "two"]);
-    const added = await c.cli.json<{ metadata: { tags: string[] } }>([
+    const added = await c.cli.json<{ tags: string[] }>([
       "items",
       "tag",
       id,
       "three",
     ]);
-    expect(added.metadata.tags.sort()).toEqual(["one", "three", "two"]);
+    expect(added.tags.sort()).toEqual(["one", "three", "two"]);
     const read = await c.cli.json<{ metadata: { tags: string[] } }>([
       "items",
       "get",
@@ -223,7 +222,7 @@ describe("metadata and extensions", () => {
     expect(JSON.stringify(inUse)).toContain("three");
 
     const written = await c.cli.json<{
-      extensions: Record<string, Record<string, unknown>>;
+      data: Array<{ namespace: string; document: Record<string, unknown> }>;
     }>([
       "extensions",
       "write",
@@ -232,11 +231,11 @@ describe("metadata and extensions", () => {
       "--body",
       JSON.stringify({ at: 3 }),
     ]);
-    expect(written.extensions["app.cursor"]).toEqual({ at: 3 });
+    expect(extensionsOf(written)["app.cursor"]).toEqual({ at: 3 });
     const listed = await c.cli.json<{
-      extensions: Record<string, Record<string, unknown>>;
+      data: Array<{ namespace: string; document: Record<string, unknown> }>;
     }>(["extensions", "list", id]);
-    expect(listed.extensions["app.cursor"]).toEqual({ at: 3 });
+    expect(extensionsOf(listed)["app.cursor"]).toEqual({ at: 3 });
     const got = await c.cli.json<Record<string, unknown>>([
       "extensions",
       "get",
@@ -389,9 +388,7 @@ describe("occurrences and the bulk doors", () => {
 describe("links and tombstones", () => {
   it("finds an item by its link and its natural key, and settles a purge's tombstone later", async () => {
     const type = `user.${unique("clilinked").replace(/-/g, "")}`;
-    const registered = await c.cli.json<{
-      type: { id: string; link_field?: string };
-    }>([
+    const registered = await c.cli.json<{ id: string; link_field?: string }>([
       "types",
       "register",
       "--body",
@@ -402,7 +399,7 @@ describe("links and tombstones", () => {
       }),
     ]);
     trackType(c.ctx, type);
-    expect(registered.type.link_field).toBe("vendor_id");
+    expect(registered.link_field).toBe("vendor_id");
 
     const link = unique("cli-link");
     const key = unique("cli-key");
@@ -451,7 +448,7 @@ describe("links and tombstones", () => {
       Date.parse(tombstone?.purged_at ?? "") + 3_600_000,
     ).toISOString();
     const moved = await c.cli.json<{
-      tombstones: Array<{ settled_at: string }>;
+      data: Array<{ settled_at: string }>;
     }>([
       "items",
       "tombstones",
@@ -462,7 +459,7 @@ describe("links and tombstones", () => {
       "--settled-at",
       later,
     ]);
-    expect(moved.tombstones[0]?.settled_at).toBe(later);
+    expect(moved.data[0]?.settled_at).toBe(later);
   });
 });
 
