@@ -66,7 +66,7 @@ pub fn duplicate<G: Graph>(graph: &G, edge: &Proposed<'_>) -> Result<Option<Stri
     graph.triple(edge.from, edge.to, edge.edge_type, edge.moving)
 }
 
-/// The source is judged first.
+/// The from end is judged first.
 pub fn full_end<G: Graph>(
     graph: &G,
     edge_type: &EdgeType,
@@ -118,7 +118,7 @@ pub struct Closure {
     pub with_hosts: HashSet<String>,
 }
 
-/// Runs until nothing new joins: cascade targets of rows in the set, and `with-hosts` sources once all their hosts are in the set or the bin.
+/// Runs until nothing new joins: the to items of cascading edges from rows in the set, and the from items of `with-hosts` edges once all their hosts are in the set or the bin.
 /// A named part goes beneath its hosts when they all go, else heads its own group. Rows already in the bin are walked and stand in `ordered`; the caller skips moving them.
 pub fn closure<G: Graph>(graph: &G, named: &[String]) -> Result<Closure, G::Error> {
     let mut roots = Vec::new();

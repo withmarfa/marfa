@@ -3844,7 +3844,7 @@ impl ReachChange {
 }
 
 /// Whether a write is one the server answers by changing the reach: a move
-/// of an edge's source (`reach/moves-edge-from`) or a retype
+/// of an edge's from end (`reach/moves-edge-from`) or a retype
 /// (`reach/moves-retype`). A write queued with an unchanged type carries no
 /// `retype`, so only a real type change counts (`reach/keeps-same-type`).
 /// Only one answered in the pass at hand is known to have changed it; a

@@ -221,8 +221,8 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
     Ok((outcome.0, presented(outcome.1)))
 }
 
-/// A type that cascades asks of each stored target what writing such an edge asks. The
-/// refusal names no type, since the target can be one the caller cannot read.
+/// A type that cascades asks of each stored to item what writing such an edge asks. The
+/// refusal names no type, since the to item can be one the caller cannot read.
 fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<()> {
     if text_of(built, "cascade_on_delete") != Some("cascade") {
         return Ok(());
@@ -231,7 +231,7 @@ fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<
         unit.caller.require_cascade_to(&to_type).map_err(|_| {
             Refusal::new(
                 Code::TypeNotPermitted,
-                "This edge type cannot cascade onto the targets its stored edges hold.",
+                "This edge type cannot cascade onto the to items its stored edges hold.",
             )
         })?;
     }

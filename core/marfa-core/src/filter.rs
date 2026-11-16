@@ -14,8 +14,8 @@ pub use marfa_rules::filter::{
     FilterValue, SystemField,
 };
 
-/// The edge type `beneath` walks: an edge's source is the parent and its
-/// target the child.
+/// The edge type `beneath` walks: an edge's from item is the parent and its
+/// to item the child.
 pub(crate) const PARENT_OF: &str = "parent-of";
 
 /// An expression the copy cannot answer as the server would is refused,

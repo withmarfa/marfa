@@ -158,7 +158,7 @@ pub(super) struct Moving {
     pub mark: Option<Mark>,
 }
 
-/// Each edge with its source as it stood, since the source can go in the same purge.
+/// Each edge with its from item as it stood, since the from item can go in the same purge.
 pub(super) struct Purging {
     pub item: Item,
     pub edges: Vec<(Edge, Item)>,

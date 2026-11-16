@@ -126,7 +126,7 @@ impl InstanceNeed {
     }
 }
 
-/// The edge types of one segment's edges, each with its source's type.
+/// The edge types of one segment's edges, each with its from item's type.
 #[derive(Clone, Debug, Default)]
 struct EdgeNeed(BTreeSet<(String, String)>);
 

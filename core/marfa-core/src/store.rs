@@ -5308,7 +5308,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
     attachments_changed(conn, &ends, before)
 }
 
-/// The source of the edge `id` as the copy holds it, which a change to the
+/// The from item of the edge `id` as the copy holds it, which a change to the
 /// edge can make or end an attachment of.
 fn edge_sources(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
     let mut statement = conn.prepare_cached("SELECT from_id FROM edges WHERE id = ?1")?;

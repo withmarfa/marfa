@@ -527,7 +527,7 @@ pub struct EdgeType {
     pub reverse_label: String,
     pub description: Option<String>,
     pub cardinality: String,
-    /// The name the edge goes by read from its target.
+    /// The name the edge goes by read from its to item.
     pub reverse_name: Option<String>,
     pub written_from: EdgeWrittenFrom,
     pub from_type_constraints: Vec<String>,

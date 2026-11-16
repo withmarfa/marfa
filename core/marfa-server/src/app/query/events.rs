@@ -145,7 +145,7 @@ pub(crate) fn events(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The `(source, target)` of every `parent-of` edge into one of `targets`, oldest edge first.
+/// The `(from, to)` of every `parent-of` edge into one of `targets`, oldest edge first.
 pub(crate) fn parents(read: &Reader<'_, '_>, targets: &[&str]) -> Result<Vec<(String, String)>> {
     let mut found: Vec<(i64, String, String)> = Vec::new();
     for batch in targets.chunks(EDGE_BATCH) {
