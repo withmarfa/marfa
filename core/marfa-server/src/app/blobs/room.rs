@@ -6,6 +6,9 @@ use std::sync::Arc;
 use crate::app::faults::{Faults, Volume};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::volume;
+use crate::settings::registry::DISK_RESERVE_BYTES;
+
+use super::App;
 
 const KIB: u64 = 1024;
 const SETTING: &str = "disk_reserve_bytes";
@@ -121,9 +124,7 @@ pub fn shortfall(
     })
 }
 
-/// Why a copy of `incoming` bytes cannot go into the backup folder, where it cannot. The reserve
-/// protects the server's own volumes, so the folder is held to it only where `shared` says the
-/// folder is on one of them; on a disk of its own it needs room for the copy alone.
+/// Why `incoming` bytes do not fit in the backup folder: the reserve holds only on a shared volume.
 pub fn copy_shortfall(
     faults: &Faults,
     root: &Path,
@@ -145,6 +146,34 @@ pub fn copy_shortfall(
             bytes_in_words(incoming)
         )
     })
+}
+
+/// `copy_shortfall` for `app`'s reserve, off the async runtime; `shared` is read once and kept.
+pub async fn folder_shortfall(
+    app: &App,
+    root: &Path,
+    shared: &mut Option<bool>,
+    incoming: u64,
+) -> Option<String> {
+    let reserve = app.settings.live().get(DISK_RESERVE_BYTES);
+    let (faults, root, known) = (app.faults.clone(), root.to_path_buf(), *shared);
+    let start = &app.settings.start;
+    let (blobs, database) = (start.blob_path.clone(), start.database.folder());
+    let judged = tokio::task::spawn_blocking(move || {
+        let shared = known.unwrap_or_else(|| volume::shares_with(&root, &[&blobs, &database]));
+        (
+            shared,
+            copy_shortfall(&faults, &root, reserve, shared, incoming),
+        )
+    })
+    .await;
+    match judged {
+        Ok((found, why)) => {
+            *shared = Some(found);
+            why
+        }
+        Err(_) => Some("the room in the backup folder's disk could not be read".to_string()),
+    }
 }
 
 /// Refuses a body that would leave less free on the blob volume than the reserve.

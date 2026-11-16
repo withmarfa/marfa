@@ -185,6 +185,8 @@ pub struct Backup {
     pub body: Body,
     /// How long the destination has to take it, which also bounds how long its sender waits.
     pub limit: std::time::Duration,
+    /// The most bytes the archive can take.
+    pub size: u64,
 }
 
 impl Taken {
@@ -236,7 +238,7 @@ impl Taken {
                 Err(_) => tracing::warn!("A backup's files were not spooled"),
             }
         });
-        Ok(Backup { body, limit })
+        Ok(Backup { body, limit, size })
     }
 }
 

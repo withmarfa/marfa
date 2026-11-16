@@ -9,14 +9,14 @@ use serde_json::json;
 use super::rows::Held;
 use super::s3::S3;
 use super::store::{self, Answer, Failed, Store};
-use super::{App, Hash, copy_shortfall, rows, shortfall};
+use super::{App, Hash, folder_shortfall, rows, shortfall};
 use crate::app::access::Caller;
 use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie, Volume};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
 use crate::app::stored;
-use crate::db::{Write, volume};
+use crate::db::Write;
 use crate::settings::registry::{
     BLOB_CLEANUP_ENABLED, BLOB_CLEANUP_GRACE_SECONDS, DISK_RESERVE_BYTES,
 };
@@ -103,6 +103,7 @@ async fn copy_to(
     holders: &[Held],
     blob: &super::Blob,
     unreachable: &mut BTreeSet<String>,
+    shared: &mut Option<bool>,
 ) -> Result<Copy> {
     let blobs = &app.blobs;
     let mut unanswered: Option<String> = None;
@@ -139,18 +140,22 @@ async fn copy_to(
         let (hash, size, mime_type) = (blob.hash.clone(), blob.size_bytes, blob.mime_type.clone());
         let (written, object) = match target {
             Store::Disk(disk) | Store::Folder(disk) => {
-                let reserve = app.settings.live().get(DISK_RESERVE_BYTES);
                 let short = match target {
                     Store::Folder(folder) => {
-                        let start = &app.settings.start;
-                        let shared = volume::shares_with(
-                            folder.root(),
-                            &[&start.blob_path, &start.database.folder()],
-                        );
-                        copy_shortfall(&app.faults, folder.root(), reserve, shared, size)
+                        folder_shortfall(app, folder.root(), shared, size).await
                     }
-                    _ => shortfall(&app.faults, Volume::Blobs, disk.root(), reserve, size)
-                        .map(|short| short.reason()),
+                    _ => {
+                        let reserve = app.settings.live().get(DISK_RESERVE_BYTES);
+                        let (faults, root) = (app.faults.clone(), disk.root().to_path_buf());
+                        tokio::task::spawn_blocking(move || {
+                            shortfall(&faults, Volume::Blobs, &root, reserve, size)
+                                .map(|short| short.reason())
+                        })
+                        .await
+                        .unwrap_or_else(|_| {
+                            Some("the room on the blob volume could not be read".to_string())
+                        })
+                    }
                 };
                 if let Some(why) = short {
                     tracing::warn!(
@@ -248,6 +253,7 @@ pub async fn replicate_one(
     target: &Store,
     blob: &super::Blob,
     unreachable: &mut BTreeSet<String>,
+    shared: &mut Option<bool>,
 ) -> Result<Replicated> {
     let hash = blob.hash.clone();
     let target_id = target.id().to_string();
@@ -278,7 +284,7 @@ pub async fn replicate_one(
         }
     };
     let mut made = if cleared {
-        copy_to(app, target, &holders, blob, unreachable).await?
+        copy_to(app, target, &holders, blob, unreachable, shared).await?
     } else {
         Copy::Skipped(Some(
             "an earlier copy there is still being deleted".to_string(),
@@ -414,6 +420,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     }
     let missing = app.db.read(move |tx| rows::missing(tx, batch)).await?;
     let mut unreachable = BTreeSet::new();
+    let mut shared = None;
     let (mut copied, mut bytes) = (0u64, 0u64);
     let mut refused: BTreeMap<String, String> = BTreeMap::new();
     for pair in missing {
@@ -433,7 +440,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             });
             continue;
         }
-        match replicate_one(&app, &target, &pair.blob, &mut unreachable).await? {
+        match replicate_one(&app, &target, &pair.blob, &mut unreachable, &mut shared).await? {
             Replicated::Copied => {
                 copied += 1;
                 bytes = bytes.saturating_add(size);

@@ -24,17 +24,32 @@ pub fn size_bytes(path: &Path) -> Option<u64> {
     stats_of(path).map(|stats| u64::from(stats.f_blocks) * u64::from(stats.f_frsize))
 }
 
-/// Whether `path` is on the same volume as any of `others`. A path that cannot be read counts as
-/// sharing, so that the caller errs toward keeping room.
-pub fn shares_with(path: &Path, others: &[&Path]) -> bool {
-    let Ok(device) = std::fs::metadata(path).map(|found| found.dev()) else {
-        return true;
-    };
-    others.iter().any(|other| {
-        std::fs::metadata(other)
-            .map(|found| found.dev() == device)
-            .unwrap_or(true)
+/// What tells two paths' volumes apart or together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Facts {
+    device: u64,
+    free: u64,
+}
+
+fn facts_of(path: &Path) -> Option<Facts> {
+    Some(Facts {
+        device: std::fs::metadata(path).ok()?.dev(),
+        free: free_bytes(path)?,
     })
+}
+
+/// Whether two volumes are not proven separate: one device, or one pool of free space under two.
+fn shared_by(one: Option<Facts>, other: Option<Facts>) -> bool {
+    match (one, other) {
+        (Some(one), Some(other)) => one.device == other.device || one.free == other.free,
+        _ => true,
+    }
+}
+
+/// Whether `path` may share a volume with any of `others`; a pool read twice while it changes looks separate.
+pub fn shares_with(path: &Path, others: &[&Path]) -> bool {
+    let one = facts_of(path);
+    others.iter().any(|other| shared_by(one, facts_of(other)))
 }
 
 #[cfg(test)]
@@ -58,5 +73,18 @@ mod tests {
         assert!(shares_with(&one, &[&two]));
         assert!(shares_with(&one, &[&dir.path().join("absent")]));
         assert!(shares_with(&dir.path().join("absent"), &[&two]));
+    }
+    #[test]
+    fn volumes_are_separate_only_when_their_devices_and_their_free_space_differ() {
+        let facts = |device, free| Some(Facts { device, free });
+        // The witness for each way of sharing, so that the separate case below is not vacuous.
+        assert!(shared_by(facts(1, 100), facts(1, 900)), "one device");
+        assert!(
+            shared_by(facts(1, 100), facts(2, 100)),
+            "one pool of free space under two devices"
+        );
+        assert!(shared_by(facts(1, 100), None), "a volume that was not read");
+        assert!(shared_by(None, facts(1, 100)));
+        assert!(!shared_by(facts(1, 100), facts(2, 900)));
     }
 }

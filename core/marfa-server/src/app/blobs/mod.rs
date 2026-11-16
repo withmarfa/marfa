@@ -46,7 +46,7 @@ pub use disk::{MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
-pub use room::{Room, bytes_in_words, copy_shortfall, room, shortfall};
+pub use room::{Room, bytes_in_words, copy_shortfall, folder_shortfall, room, shortfall};
 use rows::Held;
 pub use rows::{
     CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,

@@ -860,6 +860,39 @@ async fn a_folder_on_the_servers_volume_that_would_leave_less_than_the_reserve_s
 }
 
 #[tokio::test]
+async fn an_archive_that_would_leave_less_than_the_reserve_on_the_servers_volume_is_not_written() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    instance.note("a note").await;
+    let own = folder.path().join("backups").join(instance.id());
+    instance
+        .app
+        .faults
+        .set("free:backups", Some("2097152"))
+        .unwrap();
+
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let told = body["error"]["message"].as_str().unwrap();
+    assert!(told.contains("has 2 MiB free"), "{told}");
+    assert!(
+        told.contains("disk reserve of 128 MiB (disk_reserve_bytes)"),
+        "{told}"
+    );
+    assert!(names_in(&own).is_empty(), "{:?}", names_in(&own));
+
+    // The witness: the same run with room puts the archive.
+    instance
+        .app
+        .faults
+        .set("free:backups", Some("1073741824"))
+        .unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(names_in(&own).len(), 1);
+}
+
+#[tokio::test]
 async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_afresh() {
     let parent = TempDir::new().unwrap();
     let folder = parent.path().join("disk");
