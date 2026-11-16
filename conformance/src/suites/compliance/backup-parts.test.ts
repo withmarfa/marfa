@@ -779,9 +779,12 @@ function partsSuite(make: () => Place, folder: boolean) {
       new Set(olderParts.map(partName)),
       new Set(newerParts.map(partName)),
     ];
-    const onlyOlders = [...olderNames].filter((name) => !newerNames.has(name));
+    const onlyOlders = olderParts.filter(
+      (part) =>
+        part.entry === "rows.ndjson.gz" && !newerNames.has(partName(part)),
+    );
     expect(onlyOlders).toHaveLength(1);
-    const onlyOlder = onlyOlders[0]!;
+    const onlyOlder = partName(onlyOlders[0]!);
     const shared = newerParts
       .filter((part) => olderNames.has(partName(part)))
       .sort((a, b) => a.size_bytes - b.size_bytes)[0]!;
@@ -789,9 +792,15 @@ function partsSuite(make: () => Place, folder: boolean) {
 
     // A change in place that keeps the part's size, modified time, inode and birth time.
     const path = pathOf(onlyOlder);
+    const at = new Date(
+      Math.floor(statSync(path).mtimeMs / 1000) * 1000 - 60_000,
+    );
+    utimesSync(path, at, at);
+    // The run records the part's stamp at that time once it hashes it whole.
+    expect((await backUp()).sent_bytes).toBe(0);
     const before = statSync(path);
     writeFileSync(path, altered(readFileSync(path)));
-    utimesSync(path, before.atime, before.mtime);
+    utimesSync(path, at, at);
     const after = statSync(path);
     expect([after.ino, after.size, after.mtimeMs, after.birthtimeMs]).toEqual([
       before.ino,
@@ -813,9 +822,9 @@ function partsSuite(make: () => Place, folder: boolean) {
     // altered one was reached by its due hash, not by reading the backups.
     expect(await place.parts(originId)).toContain(loose.name);
     expect(run.sent_bytes).toBe(shared.size_bytes);
-    expect(`${sha256Of(readFileSync(pathOf(partName(shared))))}.ndjson.gz`).toBe(
-      partName(shared),
-    );
+    expect(
+      `${sha256Of(readFileSync(pathOf(partName(shared))))}.ndjson.gz`,
+    ).toBe(partName(shared));
     const damaged = await healthDetail(origin);
     expect(damaged.backups).toMatchObject({
       status: "failing",
