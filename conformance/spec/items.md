@@ -2856,9 +2856,11 @@ If a credential without `items.purge` calls `GET /trash` or `POST /trash/empty`,
 
 ### `items/owner-trash-reach`
 
-When a credential holding `items.purge` calls `GET /trash` or `POST /trash/empty`, the server MUST list or purge only items of the types the credential reads.
+When a credential holding `items.purge` calls `GET /trash` or `POST /trash/empty`, the server MUST list or purge only items of the types the credential writes.
 
-**Tests:** `compliance/owner-tasks.test.ts › lists and empties only the bin's items of the types a credential holding items.purge reads`.
+**Reason:** A purge needs write on the item's type (`items/purge-type-write`), so the bin shows a credential only what it may purge.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists and empties only the bin's items of the types a credential holding items.purge writes, leaving those it only reads`.
 
 ### `items/owner-trash-content-boundary`
 

@@ -21,12 +21,24 @@ impl Caller {
         self.level_on(Axis::Type, name) >= Level::Read
     }
 
+    pub fn may_write_type(&self, name: &str) -> bool {
+        self.level_on(Axis::Type, name) >= Level::Write
+    }
+
     pub fn may_read_every_type(&self) -> bool {
+        self.holds_every_type(Level::Read)
+    }
+
+    pub fn may_write_every_type(&self) -> bool {
+        self.holds_every_type(Level::Write)
+    }
+
+    fn holds_every_type(&self, at: Level) -> bool {
         match self {
             Caller::Local(_) | Caller::Server => true,
             Caller::Owner(_) => false,
             Caller::Key(key) | Caller::App { key, .. } => {
-                key.grants.map(Axis::Type).reads_every_name()
+                key.grants.map(Axis::Type).holds_every_name(at)
                     && key.grants.holds(Permission::GrantsManage)
             }
         }

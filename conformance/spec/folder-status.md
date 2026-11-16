@@ -270,6 +270,12 @@ When a caller that reads `system.folder` asks for `GET /folders`, the server MUS
 
 **Tests:** `compliance/folder-status.test.ts › lists active folder summaries with bounded pages, to the local command and a key that reads system.folder, and refuses a key that does not`, `› lists folders newest first under a trimmed, collapsed or placeholder title, to an app that reads system.folder too`.
 
+### `folder-status/inventory-source-filter`
+
+Where the source filter in force for a credential, its own or the instance's, names `system.folder`, when the credential asks for `GET /folders`, the server MUST list only the folders whose `source` the filter names, as `GET /items?type=system.folder` lists them.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists only the folders a credential's source filter admits, as the item listing does`.
+
 ### `folder-status/inventory-summary`
 
 When `GET /folders` returns a folder summary, the server MUST include only `id`, `title`, and `created_at`.

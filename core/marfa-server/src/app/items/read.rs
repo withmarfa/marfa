@@ -698,9 +698,15 @@ impl<'a, 'c> Reader<'a, 'c> {
             .as_deref()
             .map(|cursor| self.cursors.open_at(&scope, cursor))
             .transpose()?;
+        // The bin lists what the caller may purge, which takes write on the type.
+        let (selects, every): (fn(&Caller, &str) -> bool, bool) = if trashed {
+            (Caller::may_write_type, self.caller.may_write_every_type())
+        } else {
+            (Caller::may_read_type, self.caller.may_read_every_type())
+        };
         let batch_size = batch_size(
             listing.limit,
-            !q.is_empty() || self.caller.levers()?.filters_sources(),
+            !q.is_empty() || self.caller.levers()?.filters_sources() || !every,
         );
         let mut page = Vec::new();
         'filling: loop {
@@ -716,7 +722,7 @@ impl<'a, 'c> Reader<'a, 'c> {
                 .last()
                 .map(|row| (row.created_at.clone(), row.id.clone()));
             for row in batch {
-                if self.caller.may_read_type(&row.type_id)
+                if selects(&self.caller, &row.type_id)
                     && self
                         .caller
                         .levers()?
