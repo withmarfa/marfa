@@ -8,7 +8,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::app::auth::claim;
-use crate::app::{App, blocking, housekeeping, jobs, take_files, webhooks};
+use crate::app::{App, blocking, housekeeping, jobs, take_files, updates, webhooks};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
@@ -131,6 +131,7 @@ fn listen(
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let fixed = accepted.fixed();
     let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
+    let before = database.clone();
     // Before the claim, so a second server on these files is refused for them, not the socket.
     let (kept, held) = blocking(move || {
         crate::private_files::make_data_folder(&database)?;
@@ -138,6 +139,12 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     })
     .await?;
     let mut claim = Claim::take(&fixed.control_socket)?;
+    // After the claim, so a second server the claim refuses is not counted as a start.
+    if blocking(move || Ok(updates::before_start(&before))).await? == updates::Start::Restart {
+        claim.release();
+        drop(held);
+        return Ok(updates::RESTART_STATUS);
+    }
     let app = App::start_kept(accepted, kept, held).await?;
     let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
     let mut signals = Signals::install()?;
@@ -176,7 +183,11 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
         tracing::warn!("Test hooks are on; this instance must hold no real data");
     }
 
-    signals.next().await;
+    updates::settle_when_up(&app);
+    let restarting = tokio::select! {
+        () = signals.next() => false,
+        () = app.updates.restart_wanted() => true,
+    };
     let stopping_at = Instant::now();
     tracing::info!("Stopping");
     app.housekeeping.stop();
@@ -199,5 +210,9 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
         FLUSH_WITHIN.min((STOP_WAIT + FLUSH_AFTER_WAIT).saturating_sub(stopping_at.elapsed())),
     );
     claim.release();
-    Ok(if closed.is_ok() { 0 } else { 1 })
+    Ok(match (closed.is_ok(), restarting) {
+        (true, true) => updates::RESTART_STATUS,
+        (true, false) => 0,
+        (false, _) => 1,
+    })
 }

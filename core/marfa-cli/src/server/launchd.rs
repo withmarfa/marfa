@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use marfa_rules::environment::SERVICE;
+
 use crate::autostart::{ROOT_ENV, text, xml};
 use crate::error::CliError;
 
@@ -84,6 +86,8 @@ impl Agent {
 \t<dict>
 \t\t<key>PATH</key>
 \t\t<string>{PATH}</string>
+\t\t<key>{SERVICE}</key>
+\t\t<string>launchd</string>
 \t</dict>
 \t<key>RunAtLoad</key>
 \t<true/>
@@ -424,6 +428,7 @@ mod tests {
             "<string>/opt/homebrew/bin/marfa</string>\n\t\t<string>server</string>\n\t\t<string>run</string>\n\t\t<string>--dir</string>\n\t\t<string>/Users/x/Services/apis/marfa</string>",
             "<key>RunAtLoad</key>\n\t<true/>",
             "<key>SuccessfulExit</key>\n\t\t<false/>",
+            "<key>MARFA_SERVICE</key>\n\t\t<string>launchd</string>",
             "<string>/Users/x/Library/Logs/Marfa/marfa.launchd.log</string>",
             "/usr/local/bin",
         ] {

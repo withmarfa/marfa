@@ -27,6 +27,7 @@ import type {
   BlobCopyRow,
   HousekeepingJobRow,
   HousekeepingRun,
+  UpdateStatus,
   ConnectorAgreementRow,
   ConnectorAgreementsInput,
   ConnectorAgreementsWritten,
@@ -1107,6 +1108,16 @@ export class MarfaClient {
     return this.request<HousekeepingRun>(`/housekeeping/${name}/run`, {
       method: "POST",
     });
+  }
+
+  /** `GET /update`: the running release, the newest one found and how to move to it. */
+  async getUpdate(): Promise<ApiResponse<UpdateStatus>> {
+    return this.request<UpdateStatus>("/update");
+  }
+
+  /** `POST /update`: starts an update where the server can make one. */
+  async startUpdate(): Promise<ApiResponse<UpdateStatus>> {
+    return this.request<UpdateStatus>("/update", { method: "POST" });
   }
 
   /** `GET /backups`: the backups in the object store, newest first. */

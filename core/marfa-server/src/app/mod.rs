@@ -44,6 +44,7 @@ pub mod stored;
 pub mod tables;
 pub mod types;
 pub mod unit;
+pub mod updates;
 pub mod views;
 pub mod webhooks;
 
@@ -114,6 +115,7 @@ pub struct App {
     pub reindexing: Arc<Notify>,
     pub viewers: events::Viewers,
     pub inbound: inbound::InFlight,
+    pub updates: updates::Updates,
     stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
     read_only: Arc<ArcSwap<connectors::Registry>>,
@@ -240,6 +242,7 @@ impl App {
             reindexing: Arc::new(Notify::new()),
             viewers: events::Viewers::default(),
             inbound: inbound::InFlight::default(),
+            updates: updates::Updates::new(&start.database),
             stop: watch::channel(false).0,
             health: Health::default(),
             usage: Usage::default(),

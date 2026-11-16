@@ -18,6 +18,7 @@ const REGISTRATION_TOTAL: usize = 8;
 const REGISTRATION_PER_MAKER: usize = 2;
 const CLIENT_DOCUMENT_TOTAL: usize = 4;
 const MCP_FETCH_TOTAL: usize = 4;
+const RELEASE_TOTAL: usize = 1;
 
 /// Who asks for a lookup; each kind has slots of its own.
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +29,8 @@ pub enum Asker<'a> {
     Registration(&'a str),
     ClientDocument,
     McpFetch,
+    /// The release check and an update's downloads.
+    Release,
 }
 
 pub(super) struct Lane {
@@ -90,6 +93,7 @@ static REGISTRATION: LazyLock<Lane> =
 static CLIENT_DOCUMENT: LazyLock<Lane> =
     LazyLock::new(|| Lane::new(CLIENT_DOCUMENT_TOTAL, None, false));
 static MCP_FETCH: LazyLock<Lane> = LazyLock::new(|| Lane::new(MCP_FETCH_TOTAL, None, false));
+static RELEASE: LazyLock<Lane> = LazyLock::new(|| Lane::new(RELEASE_TOTAL, None, false));
 
 impl<'a> Asker<'a> {
     pub(super) fn lane(self) -> &'static Lane {
@@ -98,13 +102,14 @@ impl<'a> Asker<'a> {
             Asker::Registration(_) => &REGISTRATION,
             Asker::ClientDocument => &CLIENT_DOCUMENT,
             Asker::McpFetch => &MCP_FETCH,
+            Asker::Release => &RELEASE,
         }
     }
 
     pub(super) fn maker(self) -> Option<&'a str> {
         match self {
             Asker::Delivery(maker) | Asker::Registration(maker) => Some(maker),
-            Asker::ClientDocument | Asker::McpFetch => None,
+            Asker::ClientDocument | Asker::McpFetch | Asker::Release => None,
         }
     }
 }

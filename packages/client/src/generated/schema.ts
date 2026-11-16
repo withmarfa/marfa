@@ -2332,6 +2332,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the update status
+         * @description Returns the release this server runs, the newest published release Marfa found, and how this server moves to it. Requires `instance.read`.
+         */
+        get: operations["getUpdate"];
+        put?: never;
+        /**
+         * Start an update
+         * @description Starts an update to the newest release where Marfa installed this server as a service, and returns the update status. Marfa checks the download, swaps the programs, and restarts the server. Requires `instance.maintain`.
+         */
+        post: operations["startUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/export": {
         parameters: {
             query?: never;
@@ -7862,6 +7886,133 @@ export interface components {
         ItemTags: {
             /** @description The item's tags. */
             tags: string[];
+        };
+        /** @description The newest published release Marfa found. */
+        UpdateLatest: {
+            /**
+             * @description The release, such as `0.0.75`.
+             * @example 0.0.75
+             */
+            release: string;
+            /**
+             * @description When the release was published, in UTC.
+             * @example 2026-11-16T09:30:00.000Z
+             */
+            published_at: string;
+        };
+        /** @description Why the latest check for a release failed. */
+        UpdateCheckError: {
+            /**
+             * @description When the check failed, in UTC.
+             * @example 2026-11-16T15:30:00.000Z
+             */
+            at: string | null;
+            /**
+             * @description Why the check found no release, in words for a person.
+             * @example the host could not be reached
+             */
+            message: string;
+        };
+        /** @description The update under way, if any. */
+        UpdateProgress: {
+            /**
+             * @description Where the update is. `idle`: none under way. `fetching`: downloading. `checking`: checking the download. `swapping`: putting the new programs in place. `restarting`: the server is ending to start it. `settling`: the release is up, not yet settled.
+             * @enum {string}
+             */
+            state: "idle" | "fetching" | "checking" | "swapping" | "restarting" | "settling";
+            /**
+             * @description The release being moved to, or `null` when `state` is `idle`.
+             * @example 0.0.75
+             */
+            release: string | null;
+        };
+        /** @description How the latest update ended. */
+        UpdateLast: {
+            /**
+             * @description How the update ended. `succeeded`: the new release stayed up. `failed`: Marfa did not change the running release, or could not put the old one back. `rolled_back`: the new release did not stay up and Marfa put the old one back.
+             * @enum {string}
+             */
+            outcome: "succeeded" | "failed" | "rolled_back";
+            /**
+             * @description The release the update moved to.
+             * @example 0.0.75
+             */
+            release: string;
+            /**
+             * @description When the update ended, in UTC.
+             * @example 2026-11-16T15:31:00.000Z
+             */
+            finished_at: string;
+            /**
+             * @description Why the update did not succeed, in words for a person, or `null` when it did.
+             * @example null
+             */
+            reason: string | null;
+        };
+        /** @description Which release this server runs, the newest one Marfa found, and how this server moves to it. */
+        Update: {
+            /**
+             * @description The release this server runs.
+             * @example 0.0.74
+             */
+            release: string;
+            /** @description `true` if Marfa checks for new releases. See the stored setting `update_check_enabled`. */
+            check_enabled: boolean;
+            /**
+             * @description When a check last found the newest release, in UTC, or `null` if none has.
+             * @example 2026-11-16T15:00:00.000Z
+             */
+            checked_at: string | null;
+            /** @description Why the latest check failed, or `null` if it did not. A failed check keeps `latest` as it was. */
+            check_error: components["schemas"]["UpdateCheckError"] | null;
+            /** @description The newest published release Marfa found, or `null` if it has found none or the check is off. */
+            latest: components["schemas"]["UpdateLatest"] | null;
+            /** @description `true` if `latest` is newer than `version`. */
+            available: boolean;
+            /**
+             * @description How this server moves to a newer release. `server`: it can update itself when you start an update. `manual`: someone takes the step in `step` on its host.
+             * @enum {string}
+             */
+            method: "server" | "manual";
+            /** @description What to do on the host to move to `latest`, in plain words, when `available` is `true` and `method` is `manual`; otherwise `null`. */
+            step: string | null;
+            progress: components["schemas"]["UpdateProgress"] & unknown;
+            /** @description How the latest update ended, or `null` if none has. */
+            last: components["schemas"]["UpdateLast"] | null;
+        };
+        /** @description An error response. */
+        UpdateNotReadyRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "update_not_ready";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        UpdateUnavailableRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "update_unavailable";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
     };
     responses: never;
@@ -35929,6 +36080,316 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the update status. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "release": "0.0.74",
+                     *       "check_enabled": true,
+                     *       "checked_at": "2026-11-16T15:00:00.000Z",
+                     *       "check_error": null,
+                     *       "latest": {
+                     *         "published_at": "2026-11-16T09:30:00.000Z",
+                     *         "release": "0.0.75"
+                     *       },
+                     *       "available": true,
+                     *       "method": "manual",
+                     *       "step": "Redeploy the image ghcr.io/withmarfa/marfa-server:0.0.75 on this host. For a server made with `marfa server install --docker`, run `marfa server upgrade --release 0.0.75` on that machine.",
+                     *       "progress": {
+                     *         "state": "idle",
+                     *         "release": null
+                     *       },
+                     *       "last": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Update"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Caller lacks the required management permission. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    startUpdate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the update status. An update already under way answers the same, and is not started again. */
+            202: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "release": "0.0.74",
+                     *       "check_enabled": true,
+                     *       "checked_at": "2026-11-16T15:00:00.000Z",
+                     *       "check_error": null,
+                     *       "latest": {
+                     *         "published_at": "2026-11-16T09:30:00.000Z",
+                     *         "release": "0.0.75"
+                     *       },
+                     *       "available": true,
+                     *       "method": "server",
+                     *       "step": null,
+                     *       "progress": {
+                     *         "state": "fetching",
+                     *         "release": "0.0.75"
+                     *       },
+                     *       "last": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Update"];
+                };
+            };
+            /** @description - `validation_error`: a query parameter is unknown. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Caller lacks the required management permission. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `update_not_ready`: no release newer than the running one has been found, or the release check is off.
+             *     - `update_unavailable`: this server can't update itself. `details.step` says what to do on its host, and nothing was changed.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateNotReadyRefusal"] | components["schemas"]["UpdateUnavailableRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use super::super::backups;
 use super::super::blobs::upkeep;
-use super::super::{enrichment, inbound, items, jobs, tables};
+use super::super::{enrichment, inbound, items, jobs, tables, updates};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 const HOUR: Duration = Duration::from_secs(3_600);
 const SIX_HOURS: Duration = Duration::from_secs(6 * 3_600);
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(30);
+const RELEASE_CHECK_DEADLINE: Duration = Duration::from_secs(60);
 
 const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 3_600_000;
@@ -20,6 +21,14 @@ pub(super) const JOBS: &[Job] = &[
     })
     .switched_by(heartbeat::configured)
     .without_statements(),
+    Job::new(
+        "release-check",
+        6 * HOUR_MS,
+        60_000,
+        RELEASE_CHECK_DEADLINE,
+        |app, run| Box::pin(updates::check(app, run)),
+    )
+    .switched_by(updates::checking),
     Job::new("enrichment-sweep", 30_000, 30_000, HOUR, |app, run| {
         Box::pin(enrichment::sweep(app, run))
     }),
