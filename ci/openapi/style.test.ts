@@ -102,6 +102,92 @@ function fieldDescription(field: Json): string | undefined {
 }
 
 /**
+ * Every field named for an ID or a time, wherever it is declared: in a named
+ * schema, or inline in a request, a response or a webhook. A field holds an ID
+ * when its name is `id` or ends `_id`, and a time when its name ends `_at`.
+ */
+function identityFields(doc: Json): { name: string; field: Json }[] {
+  const out: { name: string; field: Json }[] = [];
+  const visit = (value: unknown, where: string) => {
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => {
+        visit(entry, `${where}/${String(index)}`);
+      });
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        if (["example", "examples", "default", "enum", "const"].includes(key)) {
+          continue;
+        }
+        if (key === "properties" && typeof child === "object" && child) {
+          for (const [field, schema] of Object.entries(child as Json)) {
+            if (isIdName(field) || isTimeName(field)) {
+              out.push({ name: `${where}.${field}`, field: schema as Json });
+            }
+            visit(schema, `${where}.${field}`);
+          }
+        } else {
+          visit(child, key === "items" ? `${where}[]` : `${where}/${key}`);
+        }
+      }
+    }
+  };
+  for (const [name, schema] of Object.entries(
+    ((doc.components as Json | undefined)?.schemas ?? {}) as Json,
+  )) {
+    visit(schema, name);
+  }
+  visit(doc.paths, "paths");
+  visit(doc.webhooks, "webhooks");
+  return out;
+}
+
+const isIdName = (name: string) => name === "id" || name.endsWith("_id");
+const isTimeName = (name: string) => name.endsWith("_at");
+
+/**
+ * Whether a field carries an example: its own, one in an inline `allOf`,
+ * `anyOf` or `oneOf` branch beside a reference, or the one on the named schema
+ * it refers to.
+ */
+function fieldHasExample(field: Json, doc: Json): boolean {
+  if (field.example !== undefined) return true;
+  const named = ((doc.components as Json | undefined)?.schemas ?? {}) as Record<
+    string,
+    Json
+  >;
+  if (typeof field.$ref === "string") {
+    const target = named[field.$ref.replace("#/components/schemas/", "")];
+    if (target !== undefined && fieldHasExample(target, doc)) return true;
+  }
+  return (["allOf", "anyOf", "oneOf"] as const).some((key) =>
+    ((field[key] ?? []) as Json[]).some((branch) =>
+      fieldHasExample(branch, doc),
+    ),
+  );
+}
+
+/** A response is a success when its status is `2xx` or the range `2XX`. */
+const isSuccess = (status: string) => /^2(\d\d|XX)$/.test(status);
+
+/**
+ * Whether a body is raw bytes, which no example can show: a schema that is a
+ * string of `format: binary`.
+ */
+const isBytes = (schema: unknown) =>
+  (schema as Json | undefined)?.type === "string" &&
+  (schema as Json).format === "binary";
+
+/**
+ * Whether a media type of a success response carries an example, on the media
+ * type itself: `example`, or `examples` with at least one entry.
+ */
+function mediaTypeHasExample(media: Json): boolean {
+  return (
+    media.example !== undefined || Object.keys(media.examples ?? {}).length > 0
+  );
+}
+
+/**
  * The rules checked against every operation, parameter, response, schema and
  * field, each with the sentence a failure reports. The limits are the ones
  * `API-STYLE.md` sets.
@@ -122,6 +208,10 @@ const RULES = {
     "no schema is named for a list, and every schema named for a page holds a data array",
   booleanSpelling:
     "a boolean query parameter is declared type boolean, never a string enum of true, false, 1 or yes",
+  responseExample:
+    "every body a success response carries, apart from raw bytes, has an example beside its schema",
+  idExample: "every field named `id` or ending `_id` has an example",
+  timeExample: "every field ending `_at` has an example",
 } as const;
 
 const BOOLEAN_WORDS = new Set(["true", "false", "1", "0", "yes", "no"]);
@@ -140,6 +230,9 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
     deleteStatus: [],
     listSchemaName: [],
     booleanSpelling: [],
+    responseExample: [],
+    idExample: [],
+    timeExample: [],
   };
   for (const { key, operation } of operations(doc)) {
     const summary = text(operation.summary) ?? "";
@@ -169,6 +262,15 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
       }
       if (key.startsWith("DELETE ") && status === "204") {
         found.deleteStatus.push(key);
+      }
+      if (isSuccess(status)) {
+        for (const [type, media] of Object.entries(
+          (response.content ?? {}) as Record<string, Json>,
+        )) {
+          if (!isBytes(media.schema) && !mediaTypeHasExample(media)) {
+            found.responseExample.push(`${key} ${status} ${type}`);
+          }
+        }
       }
     }
     for (const parameter of (operation.parameters ?? []) as Json[]) {
@@ -205,6 +307,11 @@ function violations(doc: Json): Record<keyof typeof RULES, string[]> {
     if (description === undefined) found.fieldUndescribed.push(name);
     else if (description.length > 250) found.fieldLength.push(name);
   }
+  for (const { name, field } of identityFields(doc)) {
+    if (fieldHasExample(field, doc)) continue;
+    const property = name.slice(name.lastIndexOf(".") + 1);
+    (isTimeName(property) ? found.timeExample : found.idExample).push(name);
+  }
   return found;
 }
 
@@ -238,7 +345,22 @@ describe("the API description follows API-STYLE.md", () => {
                 schema: { type: "string", enum: ["true", "false"] },
               },
             ],
-            responses: { "200": { description: "x".repeat(401) } },
+            responses: {
+              "200": {
+                description: "x".repeat(401),
+                content: {
+                  "application/json": { schema: { type: "object" } },
+                  "application/octet-stream": {
+                    schema: { type: "string", format: "binary" },
+                  },
+                  "application/x-ndjson": {
+                    schema: { type: "string" },
+                    examples: { one: { value: "{}" } },
+                  },
+                },
+              },
+              "202": { description: "Queued." },
+            },
           },
         },
         "/things/{id}": {
@@ -253,20 +375,33 @@ describe("the API description follows API-STYLE.md", () => {
           Thing: {
             properties: {
               id: {},
+              made_at: { type: "string", description: "When it was made." },
               note: { description: long },
               place: {
                 type: "object",
                 description: "Where the thing is.",
-                properties: { lat: {}, label: { description: long } },
+                properties: {
+                  lat: {},
+                  label: { description: long },
+                  place_id: { description: "The place.", example: "x" },
+                },
               },
               stops: {
                 type: "array",
                 description: "Where the thing stops.",
-                items: { type: "object", properties: { at: {} } },
+                items: {
+                  type: "object",
+                  properties: {
+                    at: {},
+                    door_id: { description: "The door.", example: "x" },
+                  },
+                },
               },
               owner: { allOf: [{ $ref: "#/components/schemas/Owner" }] },
             },
           },
+          Id: { type: "string", description: "An ID.", example: "x" },
+          Moment: { type: "string", description: "A time.", example: "y" },
           ThingList: { description: "Things." },
           ThingPage: { description: "A page of things.", properties: {} },
           Owner: {
@@ -276,6 +411,12 @@ describe("the API description follows API-STYLE.md", () => {
                 allOf: [
                   { $ref: "#/components/schemas/Id" },
                   { description: "The ID of the owner." },
+                ],
+              },
+              joined_at: {
+                allOf: [
+                  { $ref: "#/components/schemas/Moment" },
+                  { description: "When the owner joined." },
                 ],
               },
             },
@@ -300,6 +441,9 @@ describe("the API description follows API-STYLE.md", () => {
       deleteStatus: ["DELETE /things/{id}"],
       listSchemaName: ["ThingList", "ThingPage"],
       booleanSpelling: ["GET /things all"],
+      responseExample: ["GET /things 200 application/json"],
+      idExample: ["Thing.id"],
+      timeExample: ["Thing.made_at"],
     });
   });
 

@@ -218,6 +218,14 @@ describe("the committed OpenAPI document", () => {
         found.set(key, [...(found.get(key) ?? []), where]);
       }
       for (const [field, value] of Object.entries(record)) {
+        // An example is a value, so its `properties` is data, not a shape. A
+        // field called `example` sits in a `properties` map and stays.
+        if (
+          (field === "example" || field === "examples") &&
+          !where.endsWith("/properties")
+        ) {
+          continue;
+        }
         walk(value, `${where}/${field}`);
       }
     };
@@ -277,6 +285,15 @@ describe("the committed OpenAPI document", () => {
     );
     expect(repeats.flat()).toContain("//items/__probe/schema");
     expect(repeats.flat()).toContain("//items/__probe_again/schema");
+
+    // An example that holds a `properties` field is data, and repeating it is
+    // no second shape.
+    const sample = { properties: { name: "Renewal" }, version: 1 };
+    const examples = inlineShapes({
+      "/a": { example: sample },
+      "/b": { example: structuredClone(sample) },
+    });
+    expect([...examples.values()].flat()).toEqual([]);
   });
 
   /**

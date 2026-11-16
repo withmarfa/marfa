@@ -2523,7 +2523,10 @@ export interface components {
     schemas: {
         /** @description An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join. */
         EdgeType: {
-            /** @description Unique identifier for the edge type. */
+            /**
+             * @description Unique identifier for the edge type.
+             * @example acme.deal-contact
+             */
             id: string;
             /** @description The name an app shows on the from end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes. */
             label: string;
@@ -2652,11 +2655,20 @@ export interface components {
         Tier: "library" | "feed";
         /** @description An edge is a typed, directed relationship from one item to another: `from_id` names the item it points from and `to_id` the item it points to. */
         Edge: {
-            /** @description Unique identifier for the edge. */
+            /**
+             * @description Unique identifier for the edge.
+             * @example 01a1011b-a9f9-7b73-b2b7-daa66d13daa5
+             */
             id: string;
-            /** @description The ID of the item the edge starts from. */
+            /**
+             * @description The ID of the item the edge starts from.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             from_id: string;
-            /** @description The ID of the item the edge points to. */
+            /**
+             * @description The ID of the item the edge points to.
+             * @example 01a1011a-f18e-77a2-ac7a-3c6ef3623c6e
+             */
             to_id: string;
             /** @description The identifier of the edge type, such as `parent-of`. */
             edge_type: string;
@@ -2664,16 +2676,25 @@ export interface components {
             properties: {
                 [key: string]: unknown;
             };
-            /** @description When the edge was created, in UTC. */
+            /**
+             * @description When the edge was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description When the edge last changed, in UTC. */
+            /**
+             * @description When the edge last changed, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             updated_at: string;
             /** @description The edge's version. It goes up by one on every update, including one that changes nothing. */
             version: number;
         };
         /** @description An item is one record in Marfa. */
         Item: {
-            /** @description Unique identifier for the item. */
+            /**
+             * @description Unique identifier for the item.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             id: string;
             /** @description The item's type identifier, such as `core.note`. */
             type: string;
@@ -2689,7 +2710,10 @@ export interface components {
             schema_version: number;
             /** @description The source the item was written under: the writer's own, or one its key claims. It never changes. */
             source: string;
-            /** @description The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none. */
+            /**
+             * @description The item's identifier at its source. With `source`, it is the item's natural key. Absent if the writer set none.
+             * @example deal-1042
+             */
             source_id?: string;
             /** @description `true` if every connector with a live write key for the item's type that owns or claims its `source` lists the type in `read_only_types`, so it puts back an edit made in Marfa on its next run. Marfa doesn't refuse the edit. */
             read_only: boolean;
@@ -2697,18 +2721,30 @@ export interface components {
             capture_latitude?: number;
             /** @description The longitude where the item was captured. Absent if the writer set none. */
             capture_longitude?: number;
-            /** @description When the item happened, in UTC. Defaults to when it was created. */
+            /**
+             * @description When the item happened, in UTC. Defaults to when it was created.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             occurred_at: string;
-            /** @description When the item was created, in UTC. */
+            /**
+             * @description When the item was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description When the item was last written, in UTC. A tag or extension write moves it too. */
+            /**
+             * @description When the item was last written, in UTC. A tag or extension write moves it too.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             updated_at: string;
             /**
              * @description When the item or one of its rows last changed, in UTC. A row change moves it and leaves `updated_at` and `version` alone.
              * @example 2026-10-03T09:30:00.000Z
              */
             last_activity_at: string;
-            /** @description When the item went to the trash, in UTC, or when a `system.*` item was revoked. A later write to the item leaves it as it is, and a restore clears it. `null` for an item outside the trash, and for one an archive restored to the trash without a time. */
+            /**
+             * @description When the item went to the trash, in UTC, or when a `system.*` item was revoked. A later write to the item leaves it as it is, and a restore clears it. `null` for an item outside the trash, and for one an archive restored to the trash without a time.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             trashed_at: string | null;
             /** @description Always `true` where present: the item went to the trash with another item, through a cascading edge such as `parent-of`. Present while it stays in the trash. Absent on an item trashed on its own. */
             trashed_by_cascade?: boolean;
@@ -2734,7 +2770,10 @@ export interface components {
         };
         /** @description An item's metadata: its tags and its extension namespaces. */
         Metadata: {
-            /** @description The ID of the item the metadata belongs to. */
+            /**
+             * @description The ID of the item the metadata belongs to.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             item_id: string;
             /** @description The item's tags. */
             tags: string[];
@@ -2789,9 +2828,15 @@ export interface components {
         };
         /** @description A snapshot of an item as it stood at one version, which Marfa records when the item is updated past it. */
         Version: {
-            /** @description Unique identifier for the snapshot. */
+            /**
+             * @description Unique identifier for the snapshot.
+             * @example 01a10125-b41b-70e1-9a0d-81af14c181a7
+             */
             id: string;
-            /** @description The ID of the item. */
+            /**
+             * @description The ID of the item.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             item_id: string;
             /** @description The item version the snapshot records. */
             version: number;
@@ -2802,9 +2847,15 @@ export interface components {
             /** @description The type the item had at this version, which an item moved since no longer has. A snapshot is answered only to a credential that may read it. */
             type: string;
             tier: components["schemas"]["Tier"] & unknown;
-            /** @description When the item happened, in UTC, at this version. */
+            /**
+             * @description When the item happened, in UTC, at this version.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             occurred_at: string;
-            /** @description The item's `source_id` at this version, or `null` if it had none. */
+            /**
+             * @description The item's `source_id` at this version, or `null` if it had none.
+             * @example deal-1042
+             */
             source_id: string | null;
             /** @description The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text. */
             writer: {
@@ -2824,7 +2875,10 @@ export interface components {
                  */
                 name: string;
             } | null;
-            /** @description When Marfa recorded the snapshot, in UTC. */
+            /**
+             * @description When Marfa recorded the snapshot, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
         };
         /** @description How many entries of a bulk write had each outcome. */
@@ -2856,7 +2910,10 @@ export interface components {
         };
         /** @description An item as it stood at one version, as a conflict shows it. */
         ConflictSnapshot: {
-            /** @description The ID of the item. */
+            /**
+             * @description The ID of the item.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             id: string;
             /** @description The item version this side shows. */
             version: number;
@@ -2865,9 +2922,15 @@ export interface components {
                 [key: string]: unknown;
             };
             tier: components["schemas"]["Tier"] & unknown;
-            /** @description When the item happened, in UTC, at this version. */
+            /**
+             * @description When the item happened, in UTC, at this version.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             occurred_at: string;
-            /** @description The item's `source_id` at this version, or `null` if it had none. */
+            /**
+             * @description The item's `source_id` at this version, or `null` if it had none.
+             * @example deal-1042
+             */
             source_id: string | null;
             /** @description The item's type identifier at this version. */
             type: string;
@@ -2980,7 +3043,10 @@ export interface components {
         };
         /** @description An item a bulk action left unchanged, and why. */
         BulkActionError: {
-            /** @description The ID of the item. */
+            /**
+             * @description The ID of the item.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             id: string;
             /** @description A machine-readable code for the error. Use it in your logic. */
             code: string;
@@ -2998,7 +3064,10 @@ export interface components {
              * @enum {string}
              */
             kind: "folder" | "view" | "webhook";
-            /** @description The ID of the folder, view or webhook. Absent when you can't read it. */
+            /**
+             * @description The ID of the folder, view or webhook. Absent when you can't read it.
+             * @example 01a10126-6c86-74b2-a04a-1fe68e721fde
+             */
             id?: string;
             /** @description The setting that names the type: `query.types`, `query.filter`, `defaults.type`, `first_placement` or `type_filter`. */
             field: string;
@@ -3052,7 +3121,10 @@ export interface components {
             name: string;
             /** @description The release the instance runs, such as `0.0.14`. */
             version: string;
-            /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
+            /**
+             * @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value.
+             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+             */
             instance_id: string;
             /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */
             contract: number;
@@ -3099,6 +3171,9 @@ export interface components {
          *           "status": "ok",
          *           "latency_ms": 0
          *         }
+         *       },
+         *       "backups": {
+         *         "status": "ok"
          *       }
          *     }
          */
@@ -3192,6 +3267,7 @@ export interface components {
                 /**
                  * Format: date-time
                  * @description When Marfa took the last backup it put. Present only for a caller that holds `instance.read`.
+                 * @example 2026-10-05T14:12:08.000Z
                  */
                 last_backup_at?: string | null;
                 /** @description How many backup runs in a row have failed or lost files. Present only for a caller that holds `instance.read`. */
@@ -3201,6 +3277,7 @@ export interface components {
                 /**
                  * Format: date-time
                  * @description When the last failed run ended. Present only for a caller that holds `instance.read`.
+                 * @example 2026-10-05T14:12:08.000Z
                  */
                 last_failed_at?: string | null;
                 /** @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set. */
@@ -3230,11 +3307,20 @@ export interface components {
                      * @enum {string}
                      */
                     reason: "clock_ahead";
-                    /** @description What the server's clock reads, in UTC. */
+                    /**
+                     * @description What the server's clock reads, in UTC.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
                     clock_at: string;
-                    /** @description The trusted time, in UTC: the time last confirmed or, if later, the latest time the server's clock read since while clean-up was not held. */
+                    /**
+                     * @description The trusted time, in UTC: the time last confirmed or, if later, the latest time the server's clock read since while clean-up was not held.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
                     trusted_at: string;
-                    /** @description When the hold ends if the clock runs without jumping until then, in UTC. `marfa housekeeping confirm-clock` on the server ends it at once. */
+                    /**
+                     * @description When the hold ends if the clock runs without jumping until then, in UTC. `marfa housekeeping confirm-clock` on the server ends it at once.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
                     ends_at: string;
                 } | null;
             };
@@ -3246,9 +3332,15 @@ export interface components {
         };
         /** @description A trashed item’s summary and recorded deletion identity. */
         TrashSummary: components["schemas"]["ItemSummary"] & {
-            /** @description When automatic deletion becomes eligible under the effective policy, or null when disabled or the date is unknown. The sweep may delete it later. */
+            /**
+             * @description When automatic deletion becomes eligible under the effective policy, or null when disabled or the date is unknown. The sweep may delete it later.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             eligible_for_deletion_at: string | null;
-            /** @description When the item entered the trash, or null if not recorded. */
+            /**
+             * @description When the item entered the trash, or null if not recorded.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             trashed_at: string | null;
             /** @description The sign-in that moved the item to the trash, captured at that time, or null if not recorded. */
             trashed_by: {
@@ -3271,7 +3363,10 @@ export interface components {
         };
         /** @description An item's name, source and creation time, without its content. */
         ItemSummary: {
-            /** @description Unique identifier for the item. */
+            /**
+             * @description Unique identifier for the item.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             id: string;
             /** @description The item type identifier. */
             type: string;
@@ -3281,7 +3376,10 @@ export interface components {
             name: string;
             /** @description The source that added the item. */
             source: string;
-            /** @description When the item was created, in UTC. */
+            /**
+             * @description When the item was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
         };
         /** @description A page of trashed item summaries. */
@@ -3898,7 +3996,10 @@ export interface components {
             /** @description The entry's position in the request, counting from 0. */
             index: number;
             outcome: components["schemas"]["BulkResultOutcome"] & unknown;
-            /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item. */
+            /**
+             * @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             id?: string;
             /**
              * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by its ends and edge type. Under `upsert`: `trashed`, a trashed item matches, or `unchanged`.
@@ -3960,7 +4061,10 @@ export interface components {
         };
         /** @description A bulk action Marfa runs in the background, with its progress. */
         BulkActionJob: {
-            /** @description Unique identifier for the job. */
+            /**
+             * @description Unique identifier for the job.
+             * @example 01a10123-8ec2-756e-a756-a708a7aea702
+             */
             id: string;
             /** @description The action, such as `purge`. */
             action: string;
@@ -3973,9 +4077,15 @@ export interface components {
             succeeded: number;
             /** @description How many items the job has left unchanged so far. */
             errored: number;
-            /** @description When the job started running, in UTC. Absent until then. */
+            /**
+             * @description When the job started running, in UTC. Absent until then.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             started_at?: string;
-            /** @description When the job completed, failed or was canceled, in UTC. Absent until then. */
+            /**
+             * @description When the job completed, failed or was canceled, in UTC. Absent until then.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             finished_at?: string;
             /** @description Why the job failed, for a person to read. Present only when `status` is `failed`. */
             error?: string;
@@ -4036,9 +4146,15 @@ export interface components {
         Tombstone: {
             /** @description The link value, or the natural key's `source_id`. */
             key: string;
-            /** @description When the item holding the key was purged. */
+            /**
+             * @description When the item holding the key was purged.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             purged_at: string;
-            /** @description When the purge happened, or the later time of the vendor's change a connector made to carry it out. Set with `POST /items/tombstones`. A vendor change after this time is a new item. */
+            /**
+             * @description When the purge happened, or the later time of the vendor's change a connector made to carry it out. Set with `POST /items/tombstones`. A vendor change after this time is a new item.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             settled_at: string;
         };
         /** @description An error response. */
@@ -4060,7 +4176,10 @@ export interface components {
         };
         /** @description An item whose title matches a name. */
         TitledItem: {
-            /** @description The item's ID. */
+            /**
+             * @description The item's ID.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             id: string;
             /** @description The item's type. */
             type: string;
@@ -4298,7 +4417,10 @@ export interface components {
         };
         /** @description An edge type to register. */
         EdgeTypeRegistrationRequest: {
-            /** @description The identifier of the edge type, such as `acme.list-member`. */
+            /**
+             * @description The identifier of the edge type, such as `acme.list-member`.
+             * @example acme.deal-contact
+             */
             id: string;
             /** @description The name an app shows on the from end, such as `Children` on a parent. Leave it out and the last segment of the `id` makes it, such as `List Member`. On a change, leaving it out keeps the stored one. */
             label?: string;
@@ -4473,7 +4595,10 @@ export interface components {
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         TypeDefinition: {
-            /** @description Unique identifier for the type. */
+            /**
+             * @description Unique identifier for the type.
+             * @example acme.deal
+             */
             id: string;
             /** @description The type's name for people to read. */
             label?: string;
@@ -4618,7 +4743,10 @@ export interface components {
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
-            /** @description The type's identifier, such as `acme.deal` or `user.recipe`. */
+            /**
+             * @description The type's identifier, such as `acme.deal` or `user.recipe`.
+             * @example acme.deal
+             */
             id: string;
         };
         /** @description An error response. */
@@ -4705,7 +4833,10 @@ export interface components {
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
             provenance?: components["schemas"]["TypeProvenance"] & unknown;
-            /** @description The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing. */
+            /**
+             * @description The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing.
+             * @example acme.deal
+             */
             id?: string;
         };
         /** @description An error response. */
@@ -4774,7 +4905,10 @@ export interface components {
              * @enum {string}
              */
             kind: "key" | "app";
-            /** @description The ID of the key, or the app's client ID. */
+            /**
+             * @description The ID of the key, or the app's client ID.
+             * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+             */
             id: string;
             /** @description The key's label. Absent for an app. */
             label?: string;
@@ -4835,6 +4969,7 @@ export interface components {
                 /**
                  * Format: uuid
                  * @description The row's ID.
+                 * @example 01a10122-d657-719d-9119-08d12dfd08cb
                  */
                 id: string;
                 /** @description The searchable column `snippet_html` is drawn from. */
@@ -4863,7 +4998,10 @@ export interface components {
             };
             /** @description One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none. */
             series_errors?: {
-                /** @description The ID of the recurring event. */
+                /**
+                 * @description The ID of the recurring event.
+                 * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                 */
                 item_id: string;
                 /** @description What is wrong with its rule, for a person to read. */
                 message: string;
@@ -4875,12 +5013,21 @@ export interface components {
         };
         /** @description One time an event happens. */
         Occurrence: {
-            /** @description When the occurrence starts, in UTC. */
+            /**
+             * @description When the occurrence starts, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             starts_at: string;
-            /** @description When the occurrence ends, in UTC. A whole-day event ends at midnight in its `timezone`, or in UTC if it has none. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end. */
+            /**
+             * @description When the occurrence ends, in UTC. A whole-day event ends at midnight in its `timezone`, or in UTC if it has none. One computed from a rule lasts as long as its series' first; any other ends at its item's `ends_at`. Absent when it has no end.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             ends_at?: string;
             item: components["schemas"]["Item"] & unknown;
-            /** @description The ID of the recurring event the occurrence belongs to. Absent on an event that doesn't recur. */
+            /**
+             * @description The ID of the recurring event the occurrence belongs to. Absent on an event that doesn't recur.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             series_id?: string;
             /** @description The start, in UTC, of the computed occurrence this stored exception takes the place of. Present only on an exception. */
             replaces?: string;
@@ -5095,7 +5242,10 @@ export interface components {
             mime_type: string;
             /** @description The blob's size in bytes. */
             size_bytes: number;
-            /** @description When a run of the `blob-orphans` housekeeping job first found nothing referencing the blob, in UTC. */
+            /**
+             * @description When a run of the `blob-orphans` housekeeping job first found nothing referencing the blob, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             reported_at: string;
         };
         /** @description A page holding every store. */
@@ -5109,7 +5259,10 @@ export interface components {
         };
         /** @description A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket. */
         BlobStore: {
-            /** @description Unique identifier for the store. */
+            /**
+             * @description Unique identifier for the store.
+             * @example 01a1011d-16e7-7315-9f31-171560751713
+             */
             id: string;
             /**
              * @description The kind of store: `disk` for the disk beside the server, `folder` for the files area of the backup folder, `s3` for an S3-compatible bucket.
@@ -5118,9 +5271,15 @@ export interface components {
             kind: "disk" | "folder" | "s3";
             /** @description Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store. */
             locator: string;
-            /** @description When the instance first attached the store, in UTC. */
+            /**
+             * @description When the instance first attached the store, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             attached_at: string;
-            /** @description When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. */
+            /**
+             * @description When the instance's configuration stopped naming the store, in UTC, or `null` while it names it.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             detached_at: string | null;
         };
         /** @description An error response. */
@@ -5166,7 +5325,10 @@ export interface components {
         };
         /** @description One store's copy of a blob. */
         BlobCopy: {
-            /** @description The ID of the store that holds the copy. */
+            /**
+             * @description The ID of the store that holds the copy.
+             * @example 01a1011d-16e7-7315-9f31-171560751713
+             */
             store_id: string;
             /**
              * @description The kind of store: `disk` for the disk beside the server, `folder` for the files area of the backup folder, `s3` for an S3-compatible bucket.
@@ -5175,9 +5337,15 @@ export interface components {
             kind: "disk" | "folder" | "s3";
             /** @description `true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`. */
             detached: boolean;
-            /** @description When Marfa recorded the copy, in UTC. */
+            /**
+             * @description When Marfa recorded the copy, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             recorded_at: string;
-            /** @description When a check last found the copy present and intact, in UTC, or `null` if none has. */
+            /**
+             * @description When a check last found the copy present and intact, in UTC, or `null` if none has.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             verified_at: string | null;
         };
         /** @description An error response. */
@@ -5244,13 +5412,22 @@ export interface components {
             name: string;
             /** @description How often the job runs, in seconds. */
             interval_seconds: number;
-            /** @description When the job is next due, in UTC. */
+            /**
+             * @description When the job is next due, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             next_run_at: string;
             /** @description When the current run started, in UTC, or `null` if the job isn't running. */
             running_since: string | null;
-            /** @description When the latest run started, in UTC, or `null` if the job has never run. */
+            /**
+             * @description When the latest run started, in UTC, or `null` if the job has never run.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_started_at: string | null;
-            /** @description When the last run finished, in UTC, or `null` if none has finished. */
+            /**
+             * @description When the last run finished, in UTC, or `null` if none has finished.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_finished_at: string | null;
             /** @description How the last run ended, or `null` if none has finished. */
             last_outcome: components["schemas"]["HousekeepingOutcome"] | null;
@@ -5272,9 +5449,15 @@ export interface components {
         HousekeepingRun: {
             /** @description The job's name. */
             name: string;
-            /** @description When the run started, in UTC. */
+            /**
+             * @description When the run started, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             started_at: string;
-            /** @description When the run finished, in UTC. */
+            /**
+             * @description When the run finished, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             finished_at: string;
             outcome: components["schemas"]["HousekeepingOutcome"] & unknown;
             /** @description What the run reported, or `null` if it reported nothing. */
@@ -5318,9 +5501,15 @@ export interface components {
         };
         /** @description A connector is a program outside Marfa that registers under an API key of its own, sends heartbeats and reports its runs. */
         Connector: {
-            /** @description Unique identifier for the connector. */
+            /**
+             * @description Unique identifier for the connector.
+             * @example 01a1011d-cf52-76e6-a56e-b54cda26b54a
+             */
             id: string;
-            /** @description The ID of the API key the connector registered under. */
+            /**
+             * @description The ID of the API key the connector registered under.
+             * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+             */
             key_id: string;
             /** @description The source of that key. The connector's state document and agreements belong to this source. */
             source: string;
@@ -5328,40 +5517,67 @@ export interface components {
             name: string;
             /** @description What the connector does; `null` if none was given. */
             description: string | null;
-            /** @description When the connector first registered. */
+            /**
+             * @description When the connector first registered.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             registered_at: string;
-            /** @description When the connector's name, description or `read_only_types` was last set. */
+            /**
+             * @description When the connector's name, description or `read_only_types` was last set.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             updated_at: string;
-            /** @description When the connector last sent a heartbeat; `null` if never. */
+            /**
+             * @description When the connector last sent a heartbeat; `null` if never.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_heartbeat_at: string | null;
             /** @description The types whose items the connector holds read only, putting back any edit made in Marfa. `[]` if it declared none. */
             read_only_types: string[];
             /** @description The connector's most recently reported run; `null` if it has reported none. */
             last_run: components["schemas"]["ConnectorRun"] | null;
             problems: components["schemas"]["ConnectorProblems"] & unknown;
-            /** @description When the hold on the connector lapses; `null` if no process holds it or its hold has lapsed. */
+            /**
+             * @description When the hold on the connector lapses; `null` if no process holds it or its hold has lapsed.
+             * @example 2026-10-05T14:42:08.000Z
+             */
             hold_expires_at: string | null;
         };
         /** @description A run a connector reported, with its outcome and times. */
         ConnectorRun: {
-            /** @description Unique identifier for the run. */
+            /**
+             * @description Unique identifier for the run.
+             * @example 01a10121-6581-79fb-b49f-cc623a9bcc5d
+             */
             id: string;
-            /** @description The ID of the connector that reported the run. */
+            /**
+             * @description The ID of the connector that reported the run.
+             * @example 01a1011d-cf52-76e6-a56e-b54cda26b54a
+             */
             connector_id: string;
             /**
              * @description How the run ended: `succeeded` or `failed`.
              * @enum {string}
              */
             outcome: "succeeded" | "failed";
-            /** @description When the run started, in UTC. */
+            /**
+             * @description When the run started, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             started_at: string;
-            /** @description When the run finished, in UTC. */
+            /**
+             * @description When the run finished, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             finished_at: string;
             /** @description A short summary of the run; `null` if none was reported. */
             summary: string | null;
             /** @description The error the run reported; `null` if none was reported. */
             error: string | null;
-            /** @description When Marfa recorded the run. */
+            /**
+             * @description When Marfa recorded the run.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             reported_at: string;
         };
         /** @description A page holding every connector you can read. */
@@ -5397,9 +5613,15 @@ export interface components {
         };
         /** @description An inbound endpoint is an address where a sender posts to a connector without a credential: the address is the credential. */
         InboundEndpoint: {
-            /** @description Unique identifier for the inbound endpoint. */
+            /**
+             * @description Unique identifier for the inbound endpoint.
+             * @example 01a10122-1dec-7dcc-8adc-6a99b44c6a94
+             */
             id: string;
-            /** @description The ID of the current connector registration for the endpoint's source. */
+            /**
+             * @description The ID of the current connector registration for the endpoint's source.
+             * @example 01a1011d-cf52-76e6-a56e-b54cda26b54a
+             */
             connector_id: string;
             /** @description A name for people to read; `null` if none was given. */
             label: string | null;
@@ -5407,9 +5629,15 @@ export interface components {
             duplicate_header: string | null;
             /** @description The address a sender posts to, a path on this instance. It is in full only in the response that created the endpoint; after that it shows `/inbound/****` and its last four characters. */
             path: string;
-            /** @description When the endpoint was created. */
+            /**
+             * @description When the endpoint was created.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description When the endpoint was retired; `null` while it is live. */
+            /**
+             * @description When the endpoint was retired; `null` while it is live.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             retired_at: string | null;
         };
         /** @description A page holding every inbound endpoint of the connector. */
@@ -5445,11 +5673,20 @@ export interface components {
         };
         /** @description A delivery is one request that arrived at an inbound endpoint, stored as it came until the connector marks it handled. */
         InboundDelivery: {
-            /** @description Unique identifier for the delivery. */
+            /**
+             * @description Unique identifier for the delivery.
+             * @example 01a1011f-f893-7259-9825-8ff347398fef
+             */
             id: string;
-            /** @description The ID of the endpoint that received the delivery. */
+            /**
+             * @description The ID of the endpoint that received the delivery.
+             * @example 01a10122-1dec-7dcc-8adc-6a99b44c6a94
+             */
             endpoint_id: string;
-            /** @description When Marfa received the delivery. */
+            /**
+             * @description When Marfa received the delivery.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             received_at: string;
             /** @description The HTTP method of the request. */
             method: string;
@@ -5466,7 +5703,10 @@ export interface components {
             sha256: string;
             /** @description The earliest retained delivery on the same endpoint with the same `duplicate_header` value; `null` if this is the first with its value, the delivery lacks the header, or the endpoint sets none. */
             duplicate_of: {
-                /** @description The ID of the earlier delivery. */
+                /**
+                 * @description The ID of the earlier delivery.
+                 * @example 01a10120-ad16-762a-ae62-2e2ac0ea2e26
+                 */
                 id: string;
                 /**
                  * @description How the earlier delivery was handled; `null` if it is still pending.
@@ -5474,7 +5714,10 @@ export interface components {
                  */
                 outcome: "processed" | "duplicate" | "rejected" | null;
             } | null;
-            /** @description When the delivery was marked handled; `null` while pending. */
+            /**
+             * @description When the delivery was marked handled; `null` while pending.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             handled_at: string | null;
             /**
              * @description How the connector handled the delivery: `processed`, `duplicate` or `rejected`; `null` while pending.
@@ -5523,12 +5766,18 @@ export interface components {
             state: {
                 [key: string]: unknown;
             };
-            /** @description When it was last written; `null` if it never was. */
+            /**
+             * @description When it was last written; `null` if it never was.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             updated_at: string | null;
         };
         /** @description An agreement is a connector's record of what it and its vendor last agreed about one item. */
         ConnectorAgreement: {
-            /** @description The ID of the item the agreement is about. */
+            /**
+             * @description The ID of the item the agreement is about.
+             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+             */
             item_id: string;
             /** @description `true` if a change to the item is waiting to be carried to the vendor. */
             waiting: boolean;
@@ -5536,7 +5785,10 @@ export interface components {
             record: {
                 [key: string]: unknown;
             };
-            /** @description When the agreement was last written. */
+            /**
+             * @description When the agreement was last written.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             updated_at: string;
         };
         /** @description One page of a connector's agreements. */
@@ -5555,11 +5807,17 @@ export interface components {
         };
         /** @description An active folder's identity, without settings or item content. */
         FolderSummary: {
-            /** @description The folder's item ID. */
+            /**
+             * @description The folder's item ID.
+             * @example 01a10126-6c86-74b2-a04a-1fe68e721fde
+             */
             id: string;
             /** @description The folder's title, with surrounding and repeated whitespace removed; Untitled folder if blank. */
             title: string;
-            /** @description When the folder was created, in UTC. */
+            /**
+             * @description When the folder was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
         };
         /**
@@ -5835,7 +6093,10 @@ export interface components {
         };
         /** @description A new API key, with its plaintext `key`. */
         KeyResponse: {
-            /** @description Unique identifier for the key. */
+            /**
+             * @description Unique identifier for the key.
+             * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+             */
             id: string;
             /** @description The plaintext key, which you send as a bearer token. Save it: no other response shows it. */
             key: string;
@@ -5847,7 +6108,10 @@ export interface components {
             sources: string[];
             /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
-            /** @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin. */
+            /**
+             * @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin.
+             * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+             */
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"] & unknown;
             /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
@@ -5868,11 +6132,20 @@ export interface components {
             };
             profile_permissions: components["schemas"]["StoredProfilePermissions"] & unknown;
             enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
-            /** @description When the key was created, in UTC. */
+            /**
+             * @description When the key was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
+            /**
+             * @description When the key stops working, in UTC, or `null` if it doesn't expire.
+             * @example 2027-01-01T00:00:00.000Z
+             */
             expires_at: string | null;
-            /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
+            /**
+             * @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_used_at: string | null;
         };
         /**
@@ -5889,7 +6162,10 @@ export interface components {
         };
         /** @description An API key, without its plaintext: what it may reach and when it was used. */
         ApiKey: {
-            /** @description Unique identifier for the key. */
+            /**
+             * @description Unique identifier for the key.
+             * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+             */
             id: string;
             /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
@@ -5899,7 +6175,10 @@ export interface components {
             sources: string[];
             /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
-            /** @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin. */
+            /**
+             * @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin.
+             * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+             */
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"] & unknown;
             /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
@@ -5920,11 +6199,20 @@ export interface components {
             };
             profile_permissions: components["schemas"]["StoredProfilePermissions"] & unknown;
             enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
-            /** @description When the key was created, in UTC. */
+            /**
+             * @description When the key was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
+            /**
+             * @description When the key stops working, in UTC, or `null` if it doesn't expire.
+             * @example 2027-01-01T00:00:00.000Z
+             */
             expires_at: string | null;
-            /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
+            /**
+             * @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_used_at: string | null;
         };
         /** @description An error response. */
@@ -5993,7 +6281,10 @@ export interface components {
         };
         /** @description The instance configuration: its display name, enforcement levers and live settings, with the instance's ID. */
         InstanceConfig: {
-            /** @description Unique identifier for the instance, the same value `GET /` returns. */
+            /**
+             * @description Unique identifier for the instance, the same value `GET /` returns.
+             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+             */
             instance_id: string;
             /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. */
             version_recent_days?: number;
@@ -6091,7 +6382,10 @@ export interface components {
         };
         /** @description The single owner of the instance. */
         Owner: {
-            /** @description Unique identifier for the owner. */
+            /**
+             * @description Unique identifier for the owner.
+             * @example 01a10127-2109-7883-b687-be1e0823be15
+             */
             id: string;
             /** @description Email address used to sign in. */
             email: string;
@@ -6099,7 +6393,10 @@ export interface components {
             name: string;
             /** @description The address of the owner's picture on this instance, or `null` when none is set. Fetch it with `GET /owner/avatar`. */
             avatar: string | null;
-            /** @description When the owner was created, in UTC. */
+            /**
+             * @description When the owner was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
         };
         /** @description An error response. */
@@ -6378,14 +6675,20 @@ export interface components {
          *     }
          */
         AppGrant: {
-            /** @description Unique identifier for the app's grant. */
+            /**
+             * @description Unique identifier for the app's grant.
+             * @example 01a10124-fbb0-7d10-83d0-e3779b10e370
+             */
             id: string;
             /**
              * @description `cli` registered with the `marfa` command line's `software_id`; otherwise `web` has approved web origins, and `app` is any other app.
              * @enum {string}
              */
             kind: "app" | "web" | "cli";
-            /** @description The ID of the registered app. */
+            /**
+             * @description The ID of the registered app.
+             * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+             */
             client_id: string;
             /** @description The app's registered name, or null if unavailable. */
             client_name: string | null;
@@ -6395,9 +6698,15 @@ export interface components {
             scopes: string[];
             /** @description The grant's status. */
             status: string;
-            /** @description When the owner last approved the app, in UTC. */
+            /**
+             * @description When the owner last approved the app, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             granted_at: string;
-            /** @description When the app last used its access, in UTC, or null if never used. */
+            /**
+             * @description When the app last used its access, in UTC, or null if never used.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_used_at: string | null;
         };
         /**
@@ -6447,7 +6756,10 @@ export interface components {
             tos_uri?: string;
             /** @description The app's privacy policy URL. Leave it out if the app has none. */
             policy_uri?: string;
-            /** @description The software's identifier. Leave it out if there is none. */
+            /**
+             * @description The software's identifier. Leave it out if there is none.
+             * @example notes-companion
+             */
             software_id?: string;
             /** @description The software's version. Leave it out if there is none. */
             software_version?: string;
@@ -6488,7 +6800,10 @@ export interface components {
         };
         /** @description A webhook sends the events you choose, as you can read them, to a URL. */
         Webhook: {
-            /** @description Unique identifier for the webhook. */
+            /**
+             * @description Unique identifier for the webhook.
+             * @example 01a1011f-4028-7e88-81e8-f1bbcd88f1b8
+             */
             id: string;
             /** @description The URL Marfa posts events to. */
             url: string;
@@ -6500,9 +6815,15 @@ export interface components {
             secret: string;
             /** @description `true` if Marfa sends events to the webhook. */
             active: boolean;
-            /** @description When the webhook was created, in UTC. */
+            /**
+             * @description When the webhook was created, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description When the webhook last changed, in UTC. */
+            /**
+             * @description When the webhook last changed, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             updated_at: string;
         };
         /** @description A page holding every webhook you can inspect. */
@@ -6521,7 +6842,10 @@ export interface components {
                  * @enum {string}
                  */
                 kind: "key" | "app";
-                /** @description The key ID or OAuth client ID. */
+                /**
+                 * @description The key ID or OAuth client ID.
+                 * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+                 */
                 id: string;
                 /** @description The maker's current name, or null if it is no longer available. */
                 name: string | null;
@@ -6553,14 +6877,20 @@ export interface components {
         };
         /** @description A delivery is one event Marfa sends, or tries to send, to a webhook's URL. */
         WebhookDelivery: {
-            /** @description Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt. */
+            /**
+             * @description Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt.
+             * @example 01a1011f-f893-7259-9825-8ff347398fef
+             */
             id: string;
             /**
              * @description `pending`: waiting to be sent or retried. `succeeded`: the receiver answered with a `2xx` status. `failed`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.
              * @enum {string}
              */
             status: "pending" | "succeeded" | "failed" | "canceled";
-            /** @description The ID of the webhook the delivery belongs to. */
+            /**
+             * @description The ID of the webhook the delivery belongs to.
+             * @example 01a1011f-4028-7e88-81e8-f1bbcd88f1b8
+             */
             webhook_id: string;
             /** @description The event delivered, such as `item.created`. */
             event_type: string;
@@ -6572,7 +6902,10 @@ export interface components {
             succeeded: boolean;
             /** @description Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt. */
             error: string | null;
-            /** @description When Marfa queued the delivery, in UTC. */
+            /**
+             * @description When Marfa queued the delivery, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
         };
         /** @description One page of audit log entries. */
@@ -6609,6 +6942,7 @@ export interface components {
                 kind: "server";
                 /**
                  * @description The server actor identifier.
+                 * @example server
                  * @enum {string}
                  */
                 id: "server";
@@ -6618,17 +6952,29 @@ export interface components {
                  */
                 name: "Marfa";
             } | null;
-            /** @description Unique identifier for the entry. */
+            /**
+             * @description Unique identifier for the entry.
+             * @example 01a10124-4345-793f-bd93-4540215f4539
+             */
             id: string;
-            /** @description When Marfa recorded the entry, in UTC. */
+            /**
+             * @description When Marfa recorded the entry, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
             created_at: string;
-            /** @description The ID of the credential that acted, or `null` if the entry names none, as for Marfa's own housekeeping. */
+            /**
+             * @description The ID of the credential that acted, or `null` if the entry names none, as for Marfa's own housekeeping.
+             * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+             */
             key_id: string | null;
             /** @description What happened, such as `key.create` or `owner.claimed`. */
             action: string;
             /** @description The kind of resource acted on, such as `key`. */
             resource_type: string;
-            /** @description The ID of the resource acted on, or `null` if there is none. */
+            /**
+             * @description The ID of the resource acted on, or `null` if there is none.
+             * @example 01a1011c-6264-7f44-88f4-78dde6c478dc
+             */
             resource_id: string | null;
             /** @description The IP address of the request that acted, or `null` if the entry records none. */
             client_ip: string | null;
@@ -6808,7 +7154,10 @@ export interface components {
             event_type: "stream_cursor";
             /** @description The ID of the latest event in the log, or `0` if it's empty. Read state after this frame, and you can resume from this ID without missing a change. */
             cursor: string;
-            /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
+            /**
+             * @description Only on a copy stream: the instance's ID, as `GET /` returns it.
+             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+             */
             instance_id?: string;
             /** @description Only on a copy stream: the reach to send as `X-Marfa-Reach`, to resume or to read the working copy's data. */
             reach?: string;
@@ -6822,7 +7171,10 @@ export interface components {
             event_type: "stream_live";
             /** @description A position you can resume from without receiving again what the catch-up covered. `null` only on a copy stream, when Marfa couldn't read the log in time and had nothing to replay. */
             cursor: string | null;
-            /** @description Only on a copy stream: the instance's ID, as `GET /` returns it. */
+            /**
+             * @description Only on a copy stream: the instance's ID, as `GET /` returns it.
+             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+             */
             instance_id?: string;
             /** @description Only on a copy stream: the reach to send as `X-Marfa-Reach`, to resume or to read the working copy's data. */
             reach?: string;
@@ -6849,7 +7201,10 @@ export interface components {
              * @constant
              */
             event_type: "catchup_too_old";
-            /** @description The ID of the oldest event the log still holds. */
+            /**
+             * @description The ID of the oldest event the log still holds.
+             * @example 1042
+             */
             min_retained_id: string;
             /** @description The `Last-Event-ID` you sent, or the ID of the latest event when you sent none. */
             requested: string;
@@ -6878,11 +7233,20 @@ export interface components {
         EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["RowsChangedFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReachChangedFrame"];
         /** @description The body of a webhook delivery of an item event. */
         WebhookItemEvent: components["schemas"]["ItemEventFrame"] & {
-            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
+            /**
+             * @description The event's ID in the log, the same as its `id:` on `GET /events`.
+             * @example 1042
+             */
             event_id: string;
-            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
+            /**
+             * @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat.
+             * @example 01a1011f-f893-7259-9825-8ff347398fef
+             */
             delivery_id: string;
-            /** @description When Marfa sent this attempt, in UTC. */
+            /**
+             * @description When Marfa sent this attempt, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             delivered_at: string;
         };
         /** @description The body of a webhook delivery of an edge event. */
@@ -6951,11 +7315,13 @@ export interface components {
             /**
              * Format: uuid
              * @description The ID of the instance that took the backup. Each instance keeps its backups in a folder of its own, and thins only its own.
+             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
              */
             instance_id: string;
             /**
              * Format: date-time
              * @description When Marfa took the backup.
+             * @example 2026-10-03T09:30:00.000Z
              */
             created_at: string;
             /** @description The backup's size, in bytes. */
@@ -7153,7 +7519,10 @@ export interface components {
             bytes: number;
             /** @description The ID of the last batch that changed a row of the table, or `null` if none has. */
             last_batch: string | null;
-            /** @description When a row of the table last changed, in UTC, or `null` if none has. */
+            /**
+             * @description When a row of the table last changed, in UTC, or `null` if none has.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             changed_at: string | null;
         };
         /** @description The tables an item's type declares, by name. */
@@ -7194,7 +7563,10 @@ export interface components {
             last_activity_at: string;
             /** @description One entry per operation, in the order you sent them. */
             results: {
-                /** @description The ID of the row. */
+                /**
+                 * @description The ID of the row.
+                 * @example 01a10122-d657-719d-9119-08d12dfd08cb
+                 */
                 id: string;
                 /**
                  * @description `created`, `replaced`, `patched` or `deleted` for a change, `unchanged` when the row already held the values, `absent` for a delete of a row that wasn't there.
@@ -7223,7 +7595,10 @@ export interface components {
             event_type: "rows.changed";
             /** @description The item whose rows changed. */
             item: {
-                /** @description The ID of the item. */
+                /**
+                 * @description The ID of the item.
+                 * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                 */
                 id: string;
                 /** @description The item's type. */
                 type: string;
@@ -7236,7 +7611,10 @@ export interface components {
             batch: string;
             /** @description Present when the batch is an undo: the ID of the batch it undid. */
             undoes?: string;
-            /** @description The time of the batch, in UTC. An item that held a later `last_activity_at` keeps it. */
+            /**
+             * @description The time of the batch, in UTC. An item that held a later `last_activity_at` keeps it.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             last_activity_at: string;
             /**
              * @description Present, as `false`, when the batch's values were too large to carry: each entry of `rows` then holds only its `id`, and `deleted` for a removed row.
@@ -7245,7 +7623,10 @@ export interface components {
             values_included?: false;
             /** @description Each row the batch changed, as the batch left it, or with `deleted` `true` for a removed row. A row changed at `last_activity_at`. */
             rows: {
-                /** @description The ID of the row. */
+                /**
+                 * @description The ID of the row.
+                 * @example 01a10122-d657-719d-9119-08d12dfd08cb
+                 */
                 id: string;
                 /** @description The row's values after the batch. */
                 values?: {
@@ -7315,11 +7696,20 @@ export interface components {
         };
         /** @description What a webhook delivery adds to the event it carries. */
         WebhookDeliveryAttempt: {
-            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
+            /**
+             * @description The event's ID in the log, the same as its `id:` on `GET /events`.
+             * @example 1042
+             */
             event_id: string;
-            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
+            /**
+             * @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat.
+             * @example 01a1011f-f893-7259-9825-8ff347398fef
+             */
             delivery_id: string;
-            /** @description When Marfa sent this attempt, in UTC. */
+            /**
+             * @description When Marfa sent this attempt, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
             delivered_at: string;
         };
         /** @description An error response. */
@@ -7399,7 +7789,10 @@ export interface components {
             last_activity_at: string;
             /** @description One entry per row the undone batch changed, by ID. */
             results: {
-                /** @description The ID of the row. */
+                /**
+                 * @description The ID of the row.
+                 * @example 01a10122-d657-719d-9119-08d12dfd08cb
+                 */
                 id: string;
                 /**
                  * @description `created` when the undo put back a row the batch deleted, `replaced` when it put back values the batch changed, `deleted` when it removed a row the batch created, and `unchanged` when the row already stood as it was before the batch.
@@ -7420,7 +7813,10 @@ export interface components {
         };
         /** @description The instance that wrote an archive, and what it keeps in this instance's backup destination. Present when the archive was written by another instance than this one. */
         PreviousInstance: {
-            /** @description The ID of the instance that wrote the archive. */
+            /**
+             * @description The ID of the instance that wrote the archive.
+             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+             */
             instance_id: string;
             /**
              * @description Where this instance takes its backups: `folder` for a backup folder, `bucket` for an object store, or `null` when it has no backup destination.
@@ -7523,6 +7919,57 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "type": "acme.deal",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:38:25.218Z",
+                     *           "updated_at": "2026-10-03T09:38:25.218Z",
+                     *           "last_activity_at": "2026-10-03T09:38:25.218Z",
+                     *           "occurred_at": "2026-10-03T09:38:25.218Z",
+                     *           "source": "crm",
+                     *           "source_id": "deal-1043",
+                     *           "version": 1,
+                     *           "schema_version": 1,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Pilot for Sample Ltd",
+                     *             "amount": 4500,
+                     *             "stage": "won"
+                     *           },
+                     *           "edges": {}
+                     *         },
+                     *         {
+                     *           "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "type": "acme.deal",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:37:25.975Z",
+                     *           "updated_at": "2026-10-03T09:37:25.975Z",
+                     *           "last_activity_at": "2026-10-03T09:37:25.975Z",
+                     *           "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *           "source": "crm",
+                     *           "source_id": "deal-1042",
+                     *           "version": 1,
+                     *           "schema_version": 1,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Renewal for Example Co",
+                     *             "amount": 12000,
+                     *             "stage": "lead"
+                     *           },
+                     *           "edges": {}
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemPage"];
                 };
             };
@@ -7667,15 +8114,24 @@ export interface operations {
                     properties?: {
                         [key: string]: unknown;
                     };
-                    /** @description A UUIDv7 you choose for the item. Leave it out and Marfa creates one. Sending an ID you already created returns the stored item, marked `acknowledged`. */
+                    /**
+                     * @description A UUIDv7 you choose for the item. Leave it out and Marfa creates one. Sending an ID you already created returns the stored item, marked `acknowledged`.
+                     * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                     */
                     id?: string;
                     /** @description The item's first lifecycle state, one the type's lifecycle can reach. Defaults to `active`. */
                     state?: string;
-                    /** @description When the item occurred, as an ISO 8601 time. Defaults to the creation time. */
+                    /**
+                     * @description When the item occurred, as an ISO 8601 time. Defaults to the creation time.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
                     occurred_at?: string;
                     /** @description The source to key and stamp the item with. Defaults to your credential's own; it can also name one of your key's `sources`. An item's source never changes. */
                     source?: string;
-                    /** @description The item's identifier at its source, such as a vendor's record ID. With `source`, it is the item's natural key: creating with a key that exists updates that item. */
+                    /**
+                     * @description The item's identifier at its source, such as a vendor's record ID. With `source`, it is the item's natural key: creating with a key that exists updates that item.
+                     * @example deal-1042
+                     */
                     source_id?: string;
                     /**
                      * @description `upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`.
@@ -7713,6 +8169,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *         "type": "acme.deal",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:38:25.218Z",
+                     *         "updated_at": "2026-10-03T09:38:25.218Z",
+                     *         "last_activity_at": "2026-10-03T09:38:25.218Z",
+                     *         "occurred_at": "2026-10-03T09:38:25.218Z",
+                     *         "source": "crm",
+                     *         "source_id": "deal-1043",
+                     *         "version": 1,
+                     *         "schema_version": 1,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "name": "Pilot for Sample Ltd",
+                     *           "amount": 4500,
+                     *           "stage": "won"
+                     *         },
+                     *         "edges": {}
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       },
+                     *       "acknowledged": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -7725,6 +8213,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10119-cf61-7ef1-bc70-3c55fcd9f838",
+                     *         "type": "acme.invoice",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:49:40.412Z",
+                     *         "updated_at": "2026-10-03T09:49:40.412Z",
+                     *         "last_activity_at": "2026-10-03T09:49:40.412Z",
+                     *         "occurred_at": "2026-10-03T09:49:40.412Z",
+                     *         "source": "crm",
+                     *         "source_id": "inv-1",
+                     *         "version": 1,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "name": "Invoice 2026-001"
+                     *         },
+                     *         "edges": {}
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10119-cf61-7ef1-bc70-3c55fcd9f838",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -7950,6 +8467,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "type": "acme.deal",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:37:25.975Z",
+                     *         "updated_at": "2026-10-03T09:37:25.975Z",
+                     *         "last_activity_at": "2026-10-03T09:37:25.975Z",
+                     *         "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *         "source": "crm",
+                     *         "source_id": "deal-1042",
+                     *         "version": 1,
+                     *         "schema_version": 1,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "name": "Renewal for Example Co",
+                     *           "amount": 12000,
+                     *           "stage": "lead"
+                     *         },
+                     *         "edges": {}
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "tags": [
+                     *           "renewal"
+                     *         ],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemDetail"];
                 };
             };
@@ -8111,6 +8661,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -8328,9 +8883,15 @@ export interface operations {
                      */
                     version_match?: "exact";
                     tier?: components["schemas"]["Tier"] & unknown;
-                    /** @description When the item occurred, as an ISO 8601 time. */
+                    /**
+                     * @description When the item occurred, as an ISO 8601 time.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
                     occurred_at?: string;
-                    /** @description The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes. */
+                    /**
+                     * @description The item's new `source_id`. Marfa moves its natural key under the item's own `source`, which never changes.
+                     * @example deal-1042
+                     */
                     source_id?: string;
                     /** @description Edge types to replace, each mapped to the item IDs it should now point to. An edge to an ID you still list stays as it is, with its properties. An empty list removes every edge of that type. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
@@ -8349,6 +8910,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "type": "acme.deal",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:37:25.975Z",
+                     *         "updated_at": "2026-10-03T09:39:50.097Z",
+                     *         "last_activity_at": "2026-10-03T09:39:50.097Z",
+                     *         "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *         "source": "crm",
+                     *         "source_id": "deal-1042",
+                     *         "version": 2,
+                     *         "schema_version": 1,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "name": "Renewal for Example Co",
+                     *           "amount": 12000,
+                     *           "stage": "won"
+                     *         },
+                     *         "edges": {}
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "tags": [
+                     *           "renewal"
+                     *         ],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"] & {
                         /** @description What Marfa did to resolve a conflict. Present only when `conflict=auto` resolved one. `conflicted_copy_id` is the ID of the sibling item that holds the losing values, which has a `derived-from` edge to this item. */
                         conflict_resolution?: {
@@ -8356,6 +8950,7 @@ export interface operations {
                             strategy: {
                                 [key: string]: components["schemas"]["MergeStrategy"];
                             };
+                            /** @example 01a10128-91df-7025-9301-fa8cfb85fa83 */
                             conflicted_copy_id?: string;
                         };
                     };
@@ -8588,6 +9183,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *           "type": "acme.contact",
+                     *           "version": 1,
+                     *           "takes": [],
+                     *           "count": 1
+                     *         }
+                     *       ],
+                     *       "count": 1,
+                     *       "digest": "1023138a64a006e1e1a612ca419385d9f11c3729c2f691985fecc5f46dbae0dd"
+                     *     }
+                     */
                     "application/json": components["schemas"]["TrashPreview"];
                 };
             };
@@ -8784,6 +9394,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -8990,6 +9605,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "type": "acme.contact",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:44:15.777Z",
+                     *         "updated_at": "2026-10-03T09:46:15.967Z",
+                     *         "last_activity_at": "2026-10-03T09:46:15.967Z",
+                     *         "occurred_at": "2026-10-03T09:44:15.777Z",
+                     *         "source": "crm",
+                     *         "source_id": "contact-19",
+                     *         "version": 1,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "name": "Casey Sample"
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -9186,6 +9829,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -9398,6 +10046,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "type": "acme.contact",
+                     *         "state": "archived",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:44:15.777Z",
+                     *         "updated_at": "2026-10-03T09:45:15.670Z",
+                     *         "last_activity_at": "2026-10-03T09:45:15.670Z",
+                     *         "occurred_at": "2026-10-03T09:44:15.777Z",
+                     *         "source": "crm",
+                     *         "source_id": "contact-19",
+                     *         "version": 1,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "name": "Casey Sample"
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -9607,6 +10283,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011b-3c44-7cbd-ac5d-06932dea785b",
+                     *           "item_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "version": 1,
+                     *           "type": "acme.deal",
+                     *           "tier": "library",
+                     *           "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *           "source_id": "deal-1042",
+                     *           "writer": {
+                     *             "kind": "key",
+                     *             "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *             "name": "CRM sync"
+                     *           },
+                     *           "created_at": "2026-10-03T09:39:50.097Z",
+                     *           "properties": {
+                     *             "name": "Renewal for Example Co",
+                     *             "amount": 12000,
+                     *             "stage": "lead"
+                     *           }
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["VersionPage"];
                 };
             };
@@ -9762,6 +10465,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "type": "acme.deal",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:37:25.975Z",
+                     *           "updated_at": "2026-10-03T09:39:50.097Z",
+                     *           "last_activity_at": "2026-10-03T09:39:50.097Z",
+                     *           "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *           "source": "crm",
+                     *           "source_id": "deal-1042",
+                     *           "version": 2,
+                     *           "schema_version": 1,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Renewal for Example Co",
+                     *             "amount": 12000,
+                     *             "stage": "won"
+                     *           }
+                     *         }
+                     *       ],
+                     *       "tombstones": []
+                     *     }
+                     */
                     "application/json": {
                         /** @description The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` items, are left out. */
                         data: components["schemas"]["Item"][];
@@ -9938,6 +10669,24 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "Renewal for Example Co",
+                     *           "items": [
+                     *             {
+                     *               "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *               "type": "acme.deal",
+                     *               "title": "Renewal for Example Co",
+                     *               "has_blob": false
+                     *             }
+                     *           ],
+                     *           "more": false
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": {
                         /** @description One result for each name, in the order the request named them. */
                         data: {
@@ -10122,6 +10871,66 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "type": "acme.deal",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:37:25.975Z",
+                     *           "updated_at": "2026-10-03T09:39:50.097Z",
+                     *           "last_activity_at": "2026-10-03T09:39:50.097Z",
+                     *           "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *           "source": "crm",
+                     *           "source_id": "deal-1042",
+                     *           "version": 2,
+                     *           "schema_version": 1,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Renewal for Example Co",
+                     *             "amount": 12000,
+                     *             "stage": "won"
+                     *           }
+                     *         },
+                     *         {
+                     *           "id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "type": "acme.contact",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:38:50.592Z",
+                     *           "updated_at": "2026-10-03T09:38:50.592Z",
+                     *           "last_activity_at": "2026-10-03T09:38:50.592Z",
+                     *           "occurred_at": "2026-10-03T09:38:50.592Z",
+                     *           "source": "crm",
+                     *           "source_id": "contact-17",
+                     *           "version": 1,
+                     *           "schema_version": 0,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Alex Example"
+                     *           }
+                     *         }
+                     *       ],
+                     *       "metadata": [
+                     *         {
+                     *           "item_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "tags": [
+                     *             "renewal"
+                     *           ],
+                     *           "extensions": {}
+                     *         },
+                     *         {
+                     *           "item_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "tags": [],
+                     *           "extensions": {}
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": {
                         /** @description The items you can read, in the order `ids` named them, each once. IDs that name nothing, a trashed item or an item whose type you can't read are left out. */
                         data: components["schemas"]["Item"][];
@@ -10288,7 +11097,10 @@ export interface operations {
                 "application/json": {
                     /** @description The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key. */
                     items: {
-                        /** @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read. */
+                        /**
+                         * @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read.
+                         * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                         */
                         id?: string;
                         /** @description The item's type identifier, such as `core.note`. */
                         type: string;
@@ -10303,10 +11115,14 @@ export interface operations {
                         properties_mode?: "merge" | "replace";
                         state?: components["schemas"]["ItemState"];
                         tier?: components["schemas"]["Tier"];
+                        /** @example 2026-10-03T09:30:00.000Z */
                         occurred_at?: string;
                         /** @description The source to key and stamp the entry's item with, as in `POST /items`. Defaults to your credential's own; it can also name one of your key's `sources`. */
                         source?: string;
-                        /** @description The item's identifier at its source. With `source`, it is the natural key that matches an existing item. */
+                        /**
+                         * @description The item's identifier at its source. With `source`, it is the natural key that matches an existing item.
+                         * @example deal-1042
+                         */
                         source_id?: string;
                         /** @description The version you read, used when the entry matches an existing item: the update then applies only if the item is still at this version. */
                         version?: number;
@@ -10340,6 +11156,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "counts": {
+                     *         "created": 1,
+                     *         "updated": 0,
+                     *         "skipped": 1,
+                     *         "errored": 0
+                     *       },
+                     *       "results": [
+                     *         {
+                     *           "index": 0,
+                     *           "outcome": "created",
+                     *           "id": "01a1011c-a927-72fe-aafd-8a149cf388d9"
+                     *         },
+                     *         {
+                     *           "index": 1,
+                     *           "outcome": "skipped",
+                     *           "id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "reason": "unchanged"
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkResponse"];
                 };
             };
@@ -10544,6 +11383,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "acme.contact": 2,
+                     *       "acme.deal": 2
+                     *     }
+                     */
                     "application/json": {
                         [key: string]: number;
                     };
@@ -10823,6 +11668,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [],
+                     *       "next_cursor": null,
+                     *       "window": {
+                     *         "from": "2026-10-03T09:30:00.885Z",
+                     *         "to": "2026-10-03T09:33:00.176Z"
+                     *       },
+                     *       "scan": {
+                     *         "series_errors": 0,
+                     *         "series_unexpanded": 0
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["OccurrencePage"];
                 };
             };
@@ -10951,7 +11810,10 @@ export interface operations {
                     source?: string;
                     /** @description The `source_id` values to name under `source`. */
                     source_ids?: string[];
-                    /** @description The time of the vendor's own change that carried out the purge, as an RFC 3339 time. A tombstone takes it only if it is later than the tombstone's current `settled_at`. */
+                    /**
+                     * @description The time of the vendor's own change that carried out the purge, as an RFC 3339 time. A tombstone takes it only if it is later than the tombstone's current `settled_at`.
+                     * @example 2026-10-05T14:12:08.000Z
+                     */
                     settled_at: string;
                 };
             };
@@ -10965,6 +11827,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": []
+                     *     }
+                     */
                     "application/json": {
                         /** @description The named tombstones as they stand after the write, in the order named. A key with no tombstone under `type` is left out. */
                         data: components["schemas"]["Tombstone"][];
@@ -11140,6 +12007,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *           "type": "acme.contact",
+                     *           "version": 1,
+                     *           "name": "Casey Sample",
+                     *           "source": "crm",
+                     *           "created_at": "2026-10-03T09:44:15.777Z",
+                     *           "trashed_at": "2026-10-03T09:47:15.447Z",
+                     *           "trashed_by": {
+                     *             "kind": "key",
+                     *             "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *             "name": "CRM sync"
+                     *           },
+                     *           "eligible_for_deletion_at": "2026-10-03T10:26:00.165Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null,
+                     *       "retention_days": 60
+                     *     }
+                     */
                     "application/json": components["schemas"]["TrashPage"];
                 };
             };
@@ -11269,6 +12159,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *       "type": "acme.contact",
+                     *       "version": 1,
+                     *       "name": "Casey Sample",
+                     *       "source": "crm",
+                     *       "created_at": "2026-10-03T09:44:15.777Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemSummary"];
                 };
             };
@@ -11439,6 +12339,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011a-c2a3-78ab-88fe-01dda6454da2",
+                     *       "type": "acme.contact",
+                     *       "version": 1,
+                     *       "name": "Casey Sample",
+                     *       "source": "crm",
+                     *       "created_at": "2026-10-03T09:44:15.777Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemSummary"];
                 };
             };
@@ -11609,6 +12519,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011d-1ee0-7792-bbc3-cef7e3884fde",
+                     *       "type": "acme.contact",
+                     *       "version": 1,
+                     *       "name": "Robin Sample",
+                     *       "source": "crm",
+                     *       "created_at": "2026-10-03T09:47:40.831Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemSummary"];
                 };
             };
@@ -11776,12 +12696,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "purged": 0,
+                     *       "failures": [],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": {
                         /** @description The number of items this batch permanently deleted. */
                         purged: number;
                         /** @description Failed or unconfirmed purges. */
                         failures: {
-                            /** @description The ID of the item whose purge failed or could not be confirmed. */
+                            /**
+                             * @description The ID of the item whose purge failed or could not be confirmed.
+                             * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                             */
                             id: string;
                             /** @description The code describing the failure or uncertain outcome. */
                             code: string;
@@ -12000,6 +12930,7 @@ export interface operations {
                     enable_fanout?: boolean;
                     /** @enum {string} */
                     action: "update_occurred_at";
+                    /** @example 2026-10-03T09:30:00.000Z */
                     occurred_at: string;
                 };
             };
@@ -12014,6 +12945,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "action": "update_tags",
+                     *       "matched": 1,
+                     *       "succeeded": 0,
+                     *       "errored": 0,
+                     *       "dry_run": true,
+                     *       "ids": [
+                     *         "01a1011a-4902-76cf-a4a9-88e99c038c8d"
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkActionResult"];
                 };
             };
@@ -12026,6 +12969,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011d-9881-7a06-919f-a8ab9d27b80d",
+                     *       "action": "update_tags",
+                     *       "status": "queued",
+                     *       "matched": 3,
+                     *       "processed": 0,
+                     *       "succeeded": 0,
+                     *       "errored": 0
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
@@ -12218,6 +13172,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011d-9881-7a06-919f-a8ab9d27b80d",
+                     *       "action": "update_tags",
+                     *       "status": "queued",
+                     *       "matched": 3,
+                     *       "processed": 0,
+                     *       "succeeded": 0,
+                     *       "errored": 0
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
@@ -12356,6 +13321,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011d-9881-7a06-919f-a8ab9d27b80d",
+                     *       "action": "update_tags",
+                     *       "status": "canceled",
+                     *       "matched": 3,
+                     *       "processed": 3,
+                     *       "succeeded": 3,
+                     *       "errored": 0,
+                     *       "started_at": "2026-10-03T09:52:05.085Z",
+                     *       "finished_at": "2026-10-03T09:54:05.816Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
@@ -12531,6 +13509,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "tags": [
+                     *         "renewal",
+                     *         "q4"
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemTags"];
                 };
             };
@@ -12745,6 +13731,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "tags": [
+                     *         "renewal",
+                     *         "q4",
+                     *         "priority"
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemTags"];
                 };
             };
@@ -12955,6 +13950,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "tags": [
+                     *         "renewal",
+                     *         "q4"
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemTags"];
                 };
             };
@@ -13138,6 +14141,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "tag": "q4",
+                     *           "count": 1
+                     *         },
+                     *         {
+                     *           "tag": "renewal",
+                     *           "count": 1
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["TagCountPage"];
                 };
             };
@@ -13263,6 +14281,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "namespace": "acme.crm",
+                     *       "document": {
+                     *         "pipeline": "enterprise"
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["Extension"];
                 };
             };
@@ -13418,6 +14444,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "namespace": "acme.crm",
+                     *           "document": {
+                     *             "pipeline": "enterprise"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["ExtensionPage"];
                 };
             };
@@ -13628,6 +14666,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": []
+                     *     }
+                     */
                     "application/json": components["schemas"]["ExtensionPage"];
                 };
             };
@@ -13817,6 +14860,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "namespace": "acme.crm",
+                     *           "document": {
+                     *             "pipeline": "enterprise"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["ExtensionPage"];
                 };
             };
@@ -15278,6 +16333,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *           "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "edge_type": "acme.deal-contact",
+                     *           "version": 1,
+                     *           "created_at": "2026-10-03T09:41:50.646Z",
+                     *           "updated_at": "2026-10-03T09:41:50.646Z",
+                     *           "properties": {}
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgePage"];
                 };
             };
@@ -15412,11 +16484,20 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description A UUIDv7 you choose for the edge. Leave it out and Marfa creates one. */
+                    /**
+                     * @description A UUIDv7 you choose for the edge. Leave it out and Marfa creates one.
+                     * @example 01a1011b-a9f9-7b73-b2b7-daa66d13daa5
+                     */
                     id?: string;
-                    /** @description The ID of the item the edge starts from. */
+                    /**
+                     * @description The ID of the item the edge starts from.
+                     * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                     */
                     from_id: string;
-                    /** @description The ID of the item the edge points to. */
+                    /**
+                     * @description The ID of the item the edge points to.
+                     * @example 01a1011a-f18e-77a2-ac7a-3c6ef3623c6e
+                     */
                     to_id: string;
                     /** @description The identifier of the edge type, such as `parent-of`. */
                     edge_type: string;
@@ -15437,6 +16518,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "edge": {
+                     *         "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *         "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *         "edge_type": "acme.deal-contact",
+                     *         "version": 1,
+                     *         "created_at": "2026-10-03T09:41:50.646Z",
+                     *         "updated_at": "2026-10-03T09:41:50.646Z",
+                     *         "properties": {}
+                     *       },
+                     *       "acknowledged": true
+                     *     }
+                     */
                     "application/json": {
                         edge: components["schemas"]["Edge"] & unknown;
                         /** @description Always `true`: Marfa wrote nothing. */
@@ -15453,6 +16549,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "edge": {
+                     *         "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *         "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *         "edge_type": "acme.deal-contact",
+                     *         "version": 1,
+                     *         "created_at": "2026-10-03T09:41:50.646Z",
+                     *         "updated_at": "2026-10-03T09:41:50.646Z",
+                     *         "properties": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgeResponse"];
                 };
             };
@@ -15666,6 +16776,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "edge": {
+                     *         "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *         "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *         "edge_type": "acme.deal-contact",
+                     *         "version": 1,
+                     *         "created_at": "2026-10-03T09:41:50.646Z",
+                     *         "updated_at": "2026-10-03T09:41:50.646Z",
+                     *         "properties": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgeResponse"];
                 };
             };
@@ -15824,6 +16948,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -16012,9 +17141,15 @@ export interface operations {
                     properties?: {
                         [key: string]: unknown;
                     };
-                    /** @description The ID of the item to move the edge's from end to. Only for an edge type where each item at the to end holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time. */
+                    /**
+                     * @description The ID of the item to move the edge's from end to. Only for an edge type where each item at the to end holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time.
+                     * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                     */
                     from_id?: string;
-                    /** @description The ID of the item to move the edge's to end to. Only for an edge type where each item at the from end holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time. */
+                    /**
+                     * @description The ID of the item to move the edge's to end to. Only for an edge type where each item at the from end holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time.
+                     * @example 01a1011a-f18e-77a2-ac7a-3c6ef3623c6e
+                     */
                     to_id?: string;
                     /** @description The version of the edge your change is based on, from a read. If the edge has moved on, the update fails with `version_conflict`. */
                     version: number;
@@ -16031,6 +17166,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "edge": {
+                     *         "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *         "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *         "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *         "edge_type": "acme.deal-contact",
+                     *         "version": 2,
+                     *         "created_at": "2026-10-03T09:41:50.646Z",
+                     *         "updated_at": "2026-10-03T09:42:50.325Z",
+                     *         "properties": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgeResponse"];
                 };
             };
@@ -16233,11 +17382,20 @@ export interface operations {
                 "application/json": {
                     /** @description The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key. */
                     edges: {
-                        /** @description A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one. */
+                        /**
+                         * @description A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one.
+                         * @example 01a1011b-a9f9-7b73-b2b7-daa66d13daa5
+                         */
                         id?: string;
-                        /** @description The ID of the item the edge starts from. */
+                        /**
+                         * @description The ID of the item the edge starts from.
+                         * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                         */
                         from_id: string;
-                        /** @description The ID of the item the edge points to. */
+                        /**
+                         * @description The ID of the item the edge points to.
+                         * @example 01a1011a-f18e-77a2-ac7a-3c6ef3623c6e
+                         */
                         to_id: string;
                         /** @description The identifier of the edge type, such as `parent-of`. */
                         edge_type: string;
@@ -16269,6 +17427,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "counts": {
+                     *         "created": 1,
+                     *         "updated": 0,
+                     *         "skipped": 0,
+                     *         "errored": 0
+                     *       },
+                     *       "results": [
+                     *         {
+                     *           "index": 0,
+                     *           "outcome": "created",
+                     *           "id": "01a1011e-8bc3-71cd-a077-c1167f68bd79"
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkResponse"];
                 };
             };
@@ -16459,6 +17634,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *           "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "edge_type": "acme.deal-contact",
+                     *           "version": 2,
+                     *           "created_at": "2026-10-03T09:41:50.646Z",
+                     *           "updated_at": "2026-10-03T09:42:50.325Z",
+                     *           "properties": {}
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgePage"];
                 };
             };
@@ -16618,6 +17810,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011e-8bc3-71cd-a077-c1167f68bd79",
+                     *           "from_id": "01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "edge_type": "acme.deal-contact",
+                     *           "version": 1,
+                     *           "created_at": "2026-10-03T09:43:15.546Z",
+                     *           "updated_at": "2026-10-03T09:43:15.546Z",
+                     *           "properties": {}
+                     *         },
+                     *         {
+                     *           "id": "01a1011e-1222-7633-b194-950271e759ed",
+                     *           "from_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "to_id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "edge_type": "acme.deal-contact",
+                     *           "version": 2,
+                     *           "created_at": "2026-10-03T09:41:50.646Z",
+                     *           "updated_at": "2026-10-03T09:42:50.325Z",
+                     *           "properties": {}
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgePage"];
                 };
             };
@@ -16786,6 +18005,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "item": {
+                     *             "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *             "type": "acme.deal",
+                     *             "state": "active",
+                     *             "tier": "library",
+                     *             "created_at": "2026-10-03T09:37:25.975Z",
+                     *             "updated_at": "2026-10-03T09:39:50.097Z",
+                     *             "last_activity_at": "2026-10-03T09:39:50.097Z",
+                     *             "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *             "source": "crm",
+                     *             "source_id": "deal-1042",
+                     *             "version": 2,
+                     *             "schema_version": 1,
+                     *             "trashed_at": null,
+                     *             "read_only": false,
+                     *             "properties": {
+                     *               "name": "Renewal for Example Co",
+                     *               "amount": 12000,
+                     *               "stage": "won"
+                     *             }
+                     *           },
+                     *           "metadata": {
+                     *             "item_id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *             "tags": [
+                     *               "renewal"
+                     *             ],
+                     *             "extensions": {}
+                     *           },
+                     *           "relevance_score": 1,
+                     *           "snippet_html": "<mark>Renewal</mark> for Example Co"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["SearchResultPage"];
                 };
             };
@@ -16917,6 +18175,77 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "acme.contact",
+                     *           "label": "Contact",
+                     *           "version": 0,
+                     *           "fields": {
+                     *             "name": {
+                     *               "type": "string",
+                     *               "label": "Name",
+                     *               "required": true
+                     *             }
+                     *           },
+                     *           "display_hints": {
+                     *             "title_field": "name"
+                     *           },
+                     *           "plural": "Contacts",
+                     *           "own_roles": [],
+                     *           "provenance": {
+                     *             "origin": "user",
+                     *             "created_by": {
+                     *               "kind": "key",
+                     *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *               "name": "CRM sync"
+                     *             }
+                     *           }
+                     *         },
+                     *         {
+                     *           "id": "acme.deal",
+                     *           "label": "Deal",
+                     *           "version": 0,
+                     *           "fields": {
+                     *             "name": {
+                     *               "type": "string",
+                     *               "label": "Name",
+                     *               "required": true
+                     *             },
+                     *             "amount": {
+                     *               "type": "number",
+                     *               "label": "Amount"
+                     *             },
+                     *             "stage": {
+                     *               "type": "enum",
+                     *               "label": "Stage",
+                     *               "enum_values": [
+                     *                 "lead",
+                     *                 "won",
+                     *                 "lost"
+                     *               ]
+                     *             }
+                     *           },
+                     *           "display_hints": {
+                     *             "title_field": "name"
+                     *           },
+                     *           "description": "A sales deal.",
+                     *           "plural": "Deals",
+                     *           "own_roles": [],
+                     *           "provenance": {
+                     *             "origin": "user",
+                     *             "created_by": {
+                     *               "kind": "key",
+                     *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *               "name": "CRM sync"
+                     *             }
+                     *           }
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["TypeDefinitionPage"];
                 };
             };
@@ -17044,6 +18373,32 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.contact",
+                     *       "label": "Contact",
+                     *       "version": 0,
+                     *       "fields": {
+                     *         "name": {
+                     *           "type": "string",
+                     *           "label": "Name",
+                     *           "required": true
+                     *         }
+                     *       },
+                     *       "plural": "Contacts",
+                     *       "display_hints": {
+                     *         "title_field": "name"
+                     *       },
+                     *       "provenance": {
+                     *         "origin": "user",
+                     *         "created_by": {
+                     *           "kind": "key",
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "name": "CRM sync"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["RegisteredType"];
                 };
             };
@@ -17227,6 +18582,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.deal",
+                     *       "version": 0,
+                     *       "fields": {
+                     *         "name": {
+                     *           "type": "string",
+                     *           "label": "Name",
+                     *           "required": true
+                     *         },
+                     *         "amount": {
+                     *           "type": "number",
+                     *           "label": "Amount"
+                     *         },
+                     *         "stage": {
+                     *           "type": "enum",
+                     *           "label": "Stage",
+                     *           "enum_values": [
+                     *             "lead",
+                     *             "won",
+                     *             "lost"
+                     *           ]
+                     *         }
+                     *       },
+                     *       "label": "Deal",
+                     *       "plural": "Deals",
+                     *       "description": "A sales deal.",
+                     *       "display_hints": {
+                     *         "title_field": "name"
+                     *       },
+                     *       "provenance": {
+                     *         "origin": "user",
+                     *         "created_by": {
+                     *           "kind": "key",
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "name": "CRM sync"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["RegisteredType"];
                 };
             };
@@ -17372,6 +18767,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.deal",
+                     *       "label": "Deal",
+                     *       "version": 1,
+                     *       "fields": {
+                     *         "name": {
+                     *           "type": "string",
+                     *           "label": "Name",
+                     *           "required": true
+                     *         },
+                     *         "amount": {
+                     *           "type": "number",
+                     *           "label": "Amount"
+                     *         },
+                     *         "stage": {
+                     *           "type": "enum",
+                     *           "label": "Stage",
+                     *           "enum_values": [
+                     *             "lead",
+                     *             "won",
+                     *             "lost"
+                     *           ]
+                     *         }
+                     *       },
+                     *       "plural": "Deals",
+                     *       "description": "A sales deal.",
+                     *       "display_hints": {
+                     *         "title_field": "name"
+                     *       },
+                     *       "provenance": {
+                     *         "origin": "user",
+                     *         "created_by": {
+                     *           "kind": "key",
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "name": "CRM sync"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["RegisteredType"];
                 };
             };
@@ -17574,6 +19009,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -17768,6 +19208,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "dry_run": true,
+                     *       "from": "acme.lead",
+                     *       "to": "acme.contact",
+                     *       "matched": 0,
+                     *       "ids": [],
+                     *       "settings": [],
+                     *       "grants": []
+                     *     }
+                     */
                     "application/json": components["schemas"]["TypeMoveDryRun"];
                 };
             };
@@ -17779,6 +19230,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011f-0564-7364-bb34-3390f1bba79e",
+                     *       "action": "type_move",
+                     *       "status": "queued",
+                     *       "matched": 1,
+                     *       "processed": 0,
+                     *       "succeeded": 0,
+                     *       "errored": 0
+                     *     }
+                     */
                     "application/json": components["schemas"]["BulkActionJob"];
                 };
             };
@@ -17964,6 +19426,92 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "type": {
+                     *         "id": "acme.deal",
+                     *         "version": 0,
+                     *         "fields": {
+                     *           "name": {
+                     *             "type": "string",
+                     *             "required": true,
+                     *             "searchable": true
+                     *           }
+                     *         },
+                     *         "label": "Deal"
+                     *       },
+                     *       "registered_type": {
+                     *         "id": "acme.deal",
+                     *         "label": "Deal",
+                     *         "version": 0,
+                     *         "fields": {
+                     *           "name": {
+                     *             "type": "string",
+                     *             "label": "Name",
+                     *             "required": true,
+                     *             "searchable": true
+                     *           },
+                     *           "amount": {
+                     *             "type": "number",
+                     *             "label": "Amount",
+                     *             "required": false,
+                     *             "searchable": true
+                     *           },
+                     *           "stage": {
+                     *             "type": "enum",
+                     *             "label": "Stage",
+                     *             "enum_values": [
+                     *               "lead",
+                     *               "won",
+                     *               "lost"
+                     *             ],
+                     *             "required": false,
+                     *             "searchable": true
+                     *           }
+                     *         },
+                     *         "plural": "Deals",
+                     *         "description": "A sales deal.",
+                     *         "display_hints": {
+                     *           "title_field": "name"
+                     *         }
+                     *       },
+                     *       "resolved_type": {
+                     *         "id": "acme.deal",
+                     *         "version": 0,
+                     *         "fields": {
+                     *           "name": {
+                     *             "type": "string",
+                     *             "label": "Name",
+                     *             "required": true,
+                     *             "searchable": true
+                     *           },
+                     *           "amount": {
+                     *             "type": "number",
+                     *             "label": "Amount",
+                     *             "required": false,
+                     *             "searchable": true
+                     *           },
+                     *           "stage": {
+                     *             "type": "enum",
+                     *             "label": "Stage",
+                     *             "enum_values": [
+                     *               "lead",
+                     *               "won",
+                     *               "lost"
+                     *             ],
+                     *             "required": false,
+                     *             "searchable": true
+                     *           }
+                     *         },
+                     *         "label": "Deal",
+                     *         "plural": "Deals",
+                     *         "description": "A sales deal.",
+                     *         "display_hints": {
+                     *           "title_field": "name"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["NormalizedType"];
                 };
             };
@@ -18136,6 +19684,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.deal",
+                     *       "version": 1,
+                     *       "fields": {
+                     *         "name": {
+                     *           "type": "string",
+                     *           "label": "Name",
+                     *           "required": true
+                     *         },
+                     *         "amount": {
+                     *           "type": "number",
+                     *           "label": "Amount"
+                     *         },
+                     *         "stage": {
+                     *           "type": "enum",
+                     *           "label": "Stage",
+                     *           "enum_values": [
+                     *             "lead",
+                     *             "won",
+                     *             "lost"
+                     *           ]
+                     *         }
+                     *       },
+                     *       "label": "Deal",
+                     *       "plural": "Deals",
+                     *       "description": "A sales deal.",
+                     *       "display_hints": {
+                     *         "title_field": "name",
+                     *         "icon": "simple-icons:github"
+                     *       },
+                     *       "provenance": {
+                     *         "origin": "user",
+                     *         "created_by": {
+                     *           "kind": "key",
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "name": "CRM sync"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["RegisteredType"];
                 };
             };
@@ -18317,6 +19906,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.deal",
+                     *       "version": 1,
+                     *       "fields": {
+                     *         "name": {
+                     *           "type": "string",
+                     *           "label": "Name",
+                     *           "required": true
+                     *         },
+                     *         "amount": {
+                     *           "type": "number",
+                     *           "label": "Amount"
+                     *         },
+                     *         "stage": {
+                     *           "type": "enum",
+                     *           "label": "Stage",
+                     *           "enum_values": [
+                     *             "lead",
+                     *             "won",
+                     *             "lost"
+                     *           ]
+                     *         }
+                     *       },
+                     *       "label": "Deal",
+                     *       "plural": "Deals",
+                     *       "description": "A sales deal.",
+                     *       "display_hints": {
+                     *         "title_field": "name"
+                     *       },
+                     *       "provenance": {
+                     *         "origin": "user",
+                     *         "created_by": {
+                     *           "kind": "key",
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "name": "CRM sync"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["RegisteredType"];
                 };
             };
@@ -18480,6 +20109,57 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "about",
+                     *           "label": "About",
+                     *           "reverse_label": "Subject of",
+                     *           "description": "Says that an item is about another item, such as a note about a book.",
+                     *           "cardinality": "many-to-many",
+                     *           "from_type_constraints": [
+                     *             "*"
+                     *           ],
+                     *           "to_type_constraints": [
+                     *             "*"
+                     *           ],
+                     *           "cascade_on_delete": "orphan",
+                     *           "written_from": "from",
+                     *           "property_schema": {},
+                     *           "shipped": true,
+                     *           "acyclic": false,
+                     *           "flat": false
+                     *         },
+                     *         {
+                     *           "id": "attached-to",
+                     *           "label": "Attached to",
+                     *           "reverse_label": "Attachments",
+                     *           "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
+                     *           "cardinality": "many-to-many",
+                     *           "from_type_constraints": [
+                     *             "*"
+                     *           ],
+                     *           "to_type_constraints": [
+                     *             "*"
+                     *           ],
+                     *           "cascade_on_delete": "with-hosts",
+                     *           "reverse_name": "has-attachment",
+                     *           "written_from": "from",
+                     *           "property_schema": {
+                     *             "position": {
+                     *               "type": "number",
+                     *               "description": "Where the attachment comes among the item's attachments, such as the page number of a scan."
+                     *             }
+                     *           },
+                     *           "shipped": true,
+                     *           "acyclic": false,
+                     *           "flat": false
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgeTypePage"];
                 };
             };
@@ -18607,6 +20287,26 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.deal-contact",
+                     *       "label": "Contact",
+                     *       "reverse_label": "Deals",
+                     *       "cardinality": "many-to-many",
+                     *       "from_type_constraints": [
+                     *         "acme.deal"
+                     *       ],
+                     *       "to_type_constraints": [
+                     *         "acme.contact"
+                     *       ],
+                     *       "cascade_on_delete": "orphan",
+                     *       "property_schema": {},
+                     *       "written_from": "from",
+                     *       "shipped": false,
+                     *       "acyclic": false,
+                     *       "flat": false
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgeType"];
                 };
             };
@@ -18618,6 +20318,26 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "acme.deal-contact",
+                     *       "label": "Contact",
+                     *       "reverse_label": "Deals",
+                     *       "cardinality": "many-to-many",
+                     *       "from_type_constraints": [
+                     *         "acme.deal"
+                     *       ],
+                     *       "to_type_constraints": [
+                     *         "acme.contact"
+                     *       ],
+                     *       "cascade_on_delete": "orphan",
+                     *       "property_schema": {},
+                     *       "written_from": "from",
+                     *       "shipped": false,
+                     *       "acyclic": false,
+                     *       "flat": false
+                     *     }
+                     */
                     "application/json": components["schemas"]["EdgeType"];
                 };
             };
@@ -18803,6 +20523,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -18970,6 +20695,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "hash": "sha256:3c560b4bf3ab13ccefa449c14ff8c7d8ea94a27bd827db9451e9bead83c2db1a",
+                     *       "mime_type": "text/plain",
+                     *       "size_bytes": 42
+                     *     }
+                     */
                     "application/json": {
                         /** @description The blob's hash: `sha256:` and 64 hexadecimal characters. */
                         hash: string;
@@ -19468,6 +21200,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "url": "https://marfa.example.com/blobs/sha256:3c560b4bf3ab13ccefa449c14ff8c7d8ea94a27bd827db9451e9bead83c2db1a/fetch?expires=1794820627318&signature=544c5cd50c2a9f349c62dd1826116ef539a427c92521322d5b47d646bf9c58f8",
+                     *       "ttl_seconds": 3600
+                     *     }
+                     */
                     "application/json": {
                         /** @description A URL that serves the bytes without a credential. */
                         url: string;
@@ -19608,6 +21346,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "store_id": "01a1011f-7f05-73ac-aae0-dc7cdd3cb4cd",
+                     *           "kind": "disk",
+                     *           "detached": false,
+                     *           "recorded_at": "2026-10-03T09:55:05.357Z",
+                     *           "verified_at": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["BlobCopyPage"];
                 };
             };
@@ -19748,6 +21500,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -19901,6 +21658,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011f-7f05-73ac-aae0-dc7cdd3cb4cd",
+                     *           "kind": "disk",
+                     *           "locator": "/var/lib/marfa/blobs",
+                     *           "attached_at": "2026-10-03T09:34:00.198Z",
+                     *           "detached_at": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null,
+                     *       "min_copies": 1
+                     *     }
+                     */
                     "application/json": components["schemas"]["BlobStorePage"];
                 };
             };
@@ -20021,6 +21793,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["BlobOrphanPage"];
                 };
             };
@@ -20310,6 +22088,31 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011f-f8a6-7d27-8213-d126f553409e",
+                     *           "url": "https://hooks.example.com/marfa",
+                     *           "events": [
+                     *             "item.created",
+                     *             "item.updated"
+                     *           ],
+                     *           "type_filter": "acme.deal",
+                     *           "secret": "****deb0",
+                     *           "active": true,
+                     *           "created_at": "2026-10-03T09:56:05.889Z",
+                     *           "updated_at": "2026-10-03T09:56:05.889Z",
+                     *           "maker": {
+                     *             "kind": "key",
+                     *             "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *             "name": "CRM sync"
+                     *           }
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["WebhookPage"];
                 };
             };
@@ -20446,6 +22249,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011f-f8a6-7d27-8213-d126f553409e",
+                     *       "url": "https://hooks.example.com/marfa",
+                     *       "events": [
+                     *         "item.created",
+                     *         "item.updated"
+                     *       ],
+                     *       "type_filter": "acme.deal",
+                     *       "secret": "b65d38b03fdd936af205fe4d2468727c8be397a5decde1bdf1e07e43e4c4deb0",
+                     *       "active": true,
+                     *       "created_at": "2026-10-03T09:56:05.889Z",
+                     *       "updated_at": "2026-10-03T09:56:05.889Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
@@ -20611,6 +22429,26 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011f-f8a6-7d27-8213-d126f553409e",
+                     *       "url": "https://hooks.example.com/marfa",
+                     *       "events": [
+                     *         "item.created",
+                     *         "item.updated"
+                     *       ],
+                     *       "type_filter": "acme.deal",
+                     *       "secret": "****deb0",
+                     *       "active": true,
+                     *       "created_at": "2026-10-03T09:56:05.889Z",
+                     *       "updated_at": "2026-10-03T09:56:05.889Z",
+                     *       "maker": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "CRM sync"
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["WebhookRead"];
                 };
             };
@@ -20749,6 +22587,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -20924,6 +22767,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011f-f8a6-7d27-8213-d126f553409e",
+                     *       "url": "https://hooks.example.com/marfa",
+                     *       "events": [
+                     *         "item.created",
+                     *         "item.updated"
+                     *       ],
+                     *       "type_filter": "acme.deal",
+                     *       "secret": "****deb0",
+                     *       "active": true,
+                     *       "created_at": "2026-10-03T09:56:05.889Z",
+                     *       "updated_at": "2026-10-03T09:56:30.354Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
@@ -21100,6 +22958,24 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10120-6e5f-7348-9e02-4dea7451f0a3",
+                     *           "status": "succeeded",
+                     *           "webhook_id": "01a10120-e800-7cc5-be50-9a7ccdf00013",
+                     *           "event_type": "item.created",
+                     *           "status_code": 200,
+                     *           "attempt": 1,
+                     *           "succeeded": true,
+                     *           "error": null,
+                     *           "created_at": "2026-10-03T10:15:10.251Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["WebhookDeliveryPage"];
                 };
             };
@@ -21240,6 +23116,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10121-61a1-7847-8af0-5f766cf979ef",
+                     *       "status": "pending",
+                     *       "webhook_id": "01a10121-db42-7a25-8f9b-94f271d09cd6",
+                     *       "event_type": "item.created",
+                     *       "status_code": 400,
+                     *       "attempt": 1,
+                     *       "succeeded": false,
+                     *       "error": "HTTP 400",
+                     *       "created_at": "2026-10-03T10:17:10.910Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["WebhookDelivery"];
                 };
             };
@@ -21401,6 +23290,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *           "title": "Deals",
+                     *           "created_at": "2026-10-03T09:57:30.610Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["FolderSummaryPage"];
                 };
             };
@@ -21553,6 +23454,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "type": "system.folder",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:57:30.610Z",
+                     *         "updated_at": "2026-10-03T09:57:30.610Z",
+                     *         "last_activity_at": "2026-10-03T09:57:30.610Z",
+                     *         "occurred_at": "2026-10-03T09:57:30.610Z",
+                     *         "source": "crm",
+                     *         "version": 1,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "title": "Deals",
+                     *           "query": {
+                     *             "types": [
+                     *               "acme.deal"
+                     *             ]
+                     *           },
+                     *           "defaults": {
+                     *             "type": "acme.deal"
+                     *           }
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -21774,6 +23710,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "type": "system.folder",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:57:30.610Z",
+                     *         "updated_at": "2026-10-03T09:58:30.928Z",
+                     *         "last_activity_at": "2026-10-03T09:58:30.928Z",
+                     *         "occurred_at": "2026-10-03T09:57:30.610Z",
+                     *         "source": "crm",
+                     *         "version": 2,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "title": "Open deals",
+                     *           "query": {
+                     *             "types": [
+                     *               "acme.deal"
+                     *             ]
+                     *           },
+                     *           "defaults": {
+                     *             "type": "acme.deal"
+                     *           }
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -21985,6 +23956,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "type": "system.folder",
+                     *         "state": "revoked",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T09:57:30.610Z",
+                     *         "updated_at": "2026-10-03T10:10:45.735Z",
+                     *         "last_activity_at": "2026-10-03T10:10:45.735Z",
+                     *         "occurred_at": "2026-10-03T09:57:30.610Z",
+                     *         "source": "crm",
+                     *         "version": 3,
+                     *         "schema_version": 0,
+                     *         "trashed_at": "2026-10-03T10:10:45.735Z",
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "title": "Open deals",
+                     *           "query": {
+                     *             "types": [
+                     *               "acme.deal"
+                     *             ]
+                     *           },
+                     *           "defaults": {
+                     *             "type": "acme.deal"
+                     *           },
+                     *           "revoked_at": "2026-10-03T10:10:45.735Z"
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -22553,6 +24560,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "type": "system.view",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T10:00:30.343Z",
+                     *         "updated_at": "2026-10-03T10:00:30.343Z",
+                     *         "last_activity_at": "2026-10-03T10:00:30.343Z",
+                     *         "occurred_at": "2026-10-03T10:00:30.343Z",
+                     *         "source": "crm",
+                     *         "version": 1,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "title": "Won deals",
+                     *           "query": {
+                     *             "types": [
+                     *               "acme.deal"
+                     *             ],
+                     *             "filter": "properties.stage eq \"won\""
+                     *           },
+                     *           "sort": [
+                     *             {
+                     *               "by": "updated_at",
+                     *               "direction": "desc"
+                     *             }
+                     *           ]
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -22744,6 +24790,55 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "type": "acme.deal",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:37:25.975Z",
+                     *           "updated_at": "2026-10-03T09:53:05.280Z",
+                     *           "last_activity_at": "2026-10-03T09:53:05.280Z",
+                     *           "occurred_at": "2026-10-03T09:37:25.975Z",
+                     *           "source": "crm",
+                     *           "source_id": "deal-1042",
+                     *           "version": 2,
+                     *           "schema_version": 1,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Renewal for Example Co",
+                     *             "amount": 12000,
+                     *             "stage": "won"
+                     *           }
+                     *         },
+                     *         {
+                     *           "id": "01a10119-55c0-77ac-9589-f7c48fa642b6",
+                     *           "type": "acme.deal",
+                     *           "state": "active",
+                     *           "tier": "library",
+                     *           "created_at": "2026-10-03T09:38:25.218Z",
+                     *           "updated_at": "2026-10-03T09:53:05.280Z",
+                     *           "last_activity_at": "2026-10-03T09:53:05.280Z",
+                     *           "occurred_at": "2026-10-03T09:38:25.218Z",
+                     *           "source": "crm",
+                     *           "source_id": "deal-1043",
+                     *           "version": 1,
+                     *           "schema_version": 1,
+                     *           "trashed_at": null,
+                     *           "read_only": false,
+                     *           "properties": {
+                     *             "name": "Pilot for Sample Ltd",
+                     *             "amount": 4500,
+                     *             "stage": "won"
+                     *           }
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ViewItemPage"];
                 };
             };
@@ -22892,6 +24987,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -23098,6 +25198,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "item": {
+                     *         "id": "01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "type": "system.view",
+                     *         "state": "active",
+                     *         "tier": "library",
+                     *         "created_at": "2026-10-03T10:00:30.343Z",
+                     *         "updated_at": "2026-10-03T10:00:55.723Z",
+                     *         "last_activity_at": "2026-10-03T10:00:55.723Z",
+                     *         "occurred_at": "2026-10-03T10:00:30.343Z",
+                     *         "source": "crm",
+                     *         "version": 2,
+                     *         "schema_version": 0,
+                     *         "trashed_at": null,
+                     *         "read_only": false,
+                     *         "properties": {
+                     *           "title": "Won this quarter",
+                     *           "query": {
+                     *             "types": [
+                     *               "acme.deal"
+                     *             ],
+                     *             "filter": "properties.stage eq \"won\""
+                     *           },
+                     *           "sort": [
+                     *             {
+                     *               "by": "updated_at",
+                     *               "direction": "desc"
+                     *             }
+                     *           ]
+                     *         }
+                     *       },
+                     *       "metadata": {
+                     *         "item_id": "01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *         "tags": [],
+                     *         "extensions": {}
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
@@ -23299,6 +25438,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *           "key_id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "source": "crm",
+                     *           "name": "crm",
+                     *           "description": null,
+                     *           "registered_at": "2026-10-03T10:01:55.251Z",
+                     *           "updated_at": "2026-10-03T10:02:55.417Z",
+                     *           "last_heartbeat_at": null,
+                     *           "read_only_types": [],
+                     *           "last_run": null,
+                     *           "hold_expires_at": null,
+                     *           "problems": {}
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ConnectorPage"];
                 };
             };
@@ -23421,6 +25581,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *       "key_id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *       "source": "crm",
+                     *       "name": "crm",
+                     *       "description": null,
+                     *       "registered_at": "2026-10-03T10:01:55.251Z",
+                     *       "updated_at": "2026-10-03T10:02:55.417Z",
+                     *       "last_heartbeat_at": null,
+                     *       "read_only_types": [],
+                     *       "last_run": null,
+                     *       "hold_expires_at": null,
+                     *       "problems": {}
+                     *     }
+                     */
                     "application/json": components["schemas"]["Connector"];
                 };
             };
@@ -23432,6 +25608,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *       "key_id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *       "source": "crm",
+                     *       "name": "crm",
+                     *       "description": null,
+                     *       "registered_at": "2026-10-03T10:01:55.251Z",
+                     *       "updated_at": "2026-10-03T10:01:55.251Z",
+                     *       "last_heartbeat_at": null,
+                     *       "read_only_types": [],
+                     *       "last_run": null,
+                     *       "hold_expires_at": null,
+                     *       "problems": {}
+                     *     }
+                     */
                     "application/json": components["schemas"]["Connector"];
                 };
             };
@@ -23594,6 +25786,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *       "key_id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *       "source": "crm",
+                     *       "name": "crm",
+                     *       "description": null,
+                     *       "registered_at": "2026-10-03T10:01:55.251Z",
+                     *       "updated_at": "2026-10-03T10:02:55.417Z",
+                     *       "last_heartbeat_at": null,
+                     *       "read_only_types": [],
+                     *       "last_run": null,
+                     *       "hold_expires_at": null,
+                     *       "problems": {}
+                     *     }
+                     */
                     "application/json": components["schemas"]["Connector"];
                 };
             };
@@ -23720,6 +25928,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -23882,8 +26095,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "last_heartbeat_at": "2026-10-03T10:03:55.774Z"
+                     *     }
+                     */
                     "application/json": {
-                        /** @description When Marfa recorded the heartbeat. */
+                        /**
+                         * @description When Marfa recorded the heartbeat.
+                         * @example 2026-10-05T14:12:08.000Z
+                         */
                         last_heartbeat_at: string;
                     };
                 };
@@ -24049,6 +26270,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10123-bdde-7e38-9f8d-1daf2fa80822",
+                     *           "connector_id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *           "outcome": "succeeded",
+                     *           "started_at": "2026-10-03T09:31:00.022Z",
+                     *           "finished_at": "2026-10-03T09:32:00.991Z",
+                     *           "summary": "Synced 14 deals",
+                     *           "error": null,
+                     *           "reported_at": "2026-10-03T10:04:55.291Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ConnectorRunPage"];
                 };
             };
@@ -24173,9 +26411,15 @@ export interface operations {
                      * @enum {string}
                      */
                     outcome: "succeeded" | "failed";
-                    /** @description When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC. */
+                    /**
+                     * @description When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
                     started_at: string;
-                    /** @description When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`. */
+                    /**
+                     * @description When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`.
+                     * @example 2026-10-05T14:12:08.000Z
+                     */
                     finished_at: string;
                     /** @description A short summary of the run. Leave it out for none. */
                     summary?: string;
@@ -24193,6 +26437,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10123-bdde-7e38-9f8d-1daf2fa80822",
+                     *       "connector_id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *       "outcome": "succeeded",
+                     *       "started_at": "2026-10-03T09:31:00.022Z",
+                     *       "finished_at": "2026-10-03T09:32:00.991Z",
+                     *       "summary": "Synced 14 deals",
+                     *       "error": null,
+                     *       "reported_at": "2026-10-03T10:04:55.291Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["ConnectorRun"];
                 };
             };
@@ -24377,8 +26633,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "expires_at": "2026-10-03T10:25:00.150Z",
+                     *       "ttl_seconds": 180,
+                     *       "renewed": false
+                     *     }
+                     */
                     "application/json": {
-                        /** @description When the hold lapses: the hold window after Marfa took or renewed it. The window is three minutes unless the instance sets another. */
+                        /**
+                         * @description When the hold lapses: the hold window after Marfa took or renewed it. The window is three minutes unless the instance sets another.
+                         * @example 2027-01-01T00:00:00.000Z
+                         */
                         expires_at: string;
                         /** @description The hold window in seconds, so you can schedule the next renewal without reading Marfa's clock. */
                         ttl_seconds: number;
@@ -24564,6 +26830,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -24726,6 +26997,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "problems": {},
+                     *       "state": {
+                     *         "cursor": "page-7"
+                     *       },
+                     *       "updated_at": "2026-10-03T10:05:20.601Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["ConnectorState"];
                 };
             };
@@ -24876,13 +27156,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "problems": {},
+                     *       "state": {
+                     *         "cursor": "page-7"
+                     *       },
+                     *       "updated_at": "2026-10-03T10:05:20.601Z"
+                     *     }
+                     */
                     "application/json": {
                         problems: components["schemas"]["ConnectorProblems"] & unknown;
                         /** @description The document as written. */
                         state: {
                             [key: string]: unknown;
                         };
-                        /** @description When it was written. */
+                        /**
+                         * @description When it was written.
+                         * @example 2026-10-05T14:12:08.000Z
+                         */
                         updated_at: string;
                     };
                 };
@@ -25061,6 +27353,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -25227,6 +27524,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "item_id": "01a10124-377f-7d3d-94ed-389b233f360b",
+                     *           "waiting": false,
+                     *           "record": {
+                     *             "remote_version": 3
+                     *           },
+                     *           "updated_at": "2026-10-03T10:06:20.766Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ConnectorAgreementPage"];
                 };
             };
@@ -25362,7 +27674,10 @@ export interface operations {
                     process: string;
                     /** @description Agreements to write. Each replaces the item's current agreement. Leave it out to write none. */
                     set?: {
-                        /** @description The ID of the item. */
+                        /**
+                         * @description The ID of the item.
+                         * @example 01a1011a-3923-73d1-963d-9e3779b19e37
+                         */
                         item_id: string;
                         /** @description `true` if a change to the item is waiting to be carried to the vendor. */
                         waiting: boolean;
@@ -25385,6 +27700,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "written": 1,
+                     *       "cleared": 0,
+                     *       "skipped": []
+                     *     }
+                     */
                     "application/json": {
                         /** @description How many agreements Marfa wrote. */
                         written: number;
@@ -25576,6 +27898,20 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "item_id": "01a10124-377f-7d3d-94ed-389b233f360b",
+                     *           "waiting": false,
+                     *           "record": {
+                     *             "remote_version": 3
+                     *           },
+                     *           "updated_at": "2026-10-03T10:06:20.766Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": {
                         /** @description The agreements found. This list never pages. */
                         data: components["schemas"]["ConnectorAgreement"][];
@@ -25753,6 +28089,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10124-b120-765c-9e33-12865174c46b",
+                     *           "connector_id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *           "label": "Invoice events",
+                     *           "duplicate_header": null,
+                     *           "path": "/inbound/****Yd2o",
+                     *           "created_at": "2026-10-03T10:07:20.026Z",
+                     *           "retired_at": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["InboundEndpointPage"];
                 };
             };
@@ -25900,6 +28252,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10124-b120-765c-9e33-12865174c46b",
+                     *       "connector_id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *       "label": "Invoice events",
+                     *       "duplicate_header": null,
+                     *       "path": "/inbound/2VQuysmm0VKcNeX8g6vthEB9_bz0HOp863HlkanYd2o",
+                     *       "created_at": "2026-10-03T10:07:20.026Z",
+                     *       "retired_at": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
@@ -26076,6 +28439,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10125-2ac1-7b6a-8932-136ba79e4aa7",
+                     *       "connector_id": "01a10123-4825-7ff1-8fde-fb30a676e02b",
+                     *       "label": "Webhook from billing",
+                     *       "duplicate_header": null,
+                     *       "path": "/inbound/****vUbE",
+                     *       "created_at": "2026-10-03T10:11:45.817Z",
+                     *       "retired_at": "2026-10-03T10:14:10.496Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["InboundEndpoint"];
                 };
             };
@@ -26247,6 +28621,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10125-a462-78dd-8b2f-80c896093994",
+                     *           "endpoint_id": "01a10125-2ac1-7b6a-8932-136ba79e4aa7",
+                     *           "received_at": "2026-10-03T10:12:45.009Z",
+                     *           "method": "POST",
+                     *           "query": "",
+                     *           "headers": [
+                     *             [
+                     *               "content-type",
+                     *               "application/json"
+                     *             ],
+                     *             [
+                     *               "content-length",
+                     *               "45"
+                     *             ]
+                     *           ],
+                     *           "size": 45,
+                     *           "sha256": "76dc0ca21d20409227b4bc59d913020a4bb40e46ff10574311a3b3f3bace4cfb",
+                     *           "duplicate_of": null,
+                     *           "handled_at": null,
+                     *           "outcome": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["InboundDeliveryPage"];
                 };
             };
@@ -26537,6 +28940,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a10125-a462-78dd-8b2f-80c896093994",
+                     *           "endpoint_id": "01a10125-2ac1-7b6a-8932-136ba79e4aa7",
+                     *           "received_at": "2026-10-03T10:12:45.009Z",
+                     *           "method": "POST",
+                     *           "query": "",
+                     *           "headers": [
+                     *             [
+                     *               "content-type",
+                     *               "application/json"
+                     *             ],
+                     *             [
+                     *               "content-length",
+                     *               "45"
+                     *             ]
+                     *           ],
+                     *           "size": 45,
+                     *           "sha256": "76dc0ca21d20409227b4bc59d913020a4bb40e46ff10574311a3b3f3bace4cfb",
+                     *           "duplicate_of": null,
+                     *           "handled_at": "2026-10-03T10:13:45.564Z",
+                     *           "outcome": "processed"
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": {
                         /** @description The deliveries, each once, in the order you first named it. */
                         data: components["schemas"]["InboundDelivery"][];
@@ -26714,6 +29145,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "source": "crm",
+                     *           "name": "CRM sync",
+                     *           "name_from": "key"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["SourcePage"];
                 };
             };
@@ -26825,6 +29268,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "source": "crm",
+                     *       "name": "CRM sync",
+                     *       "name_from": "key"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Source"];
                 };
             };
@@ -26969,6 +29419,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "source": "crm",
+                     *       "name": "CRM",
+                     *       "name_from": "set"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Source"];
                 };
             };
@@ -27129,6 +29586,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "label": "CRM sync",
+                     *           "source": "crm",
+                     *           "sources": [],
+                     *           "permissions": [
+                     *             "schema.write",
+                     *             "keys.mint",
+                     *             "items.purge",
+                     *             "webhooks.manage",
+                     *             "config.manage",
+                     *             "audit.read",
+                     *             "grants.manage",
+                     *             "instance.read",
+                     *             "instance.maintain",
+                     *             "connectors.manage",
+                     *             "blobs.manage",
+                     *             "keys.manage"
+                     *           ],
+                     *           "default_tier": "library",
+                     *           "type_permissions": {
+                     *             "*": "write"
+                     *           },
+                     *           "extension_permissions": {
+                     *             "*": "write"
+                     *           },
+                     *           "edge_permissions": {
+                     *             "*": "write"
+                     *           },
+                     *           "metadata_permissions": {
+                     *             "*": "write"
+                     *           },
+                     *           "profile_permissions": {
+                     *             "*": "read"
+                     *           },
+                     *           "created_at": "2026-10-03T09:35:25.394Z",
+                     *           "expires_at": null,
+                     *           "last_used_at": "2026-10-03T09:36:25.084Z"
+                     *         },
+                     *         {
+                     *           "id": "01a10126-1e03-79a5-ba6f-f711fc6f0e95",
+                     *           "label": "reporting",
+                     *           "source": "reporting",
+                     *           "sources": [],
+                     *           "permissions": [
+                     *             "instance.read"
+                     *           ],
+                     *           "default_tier": "library",
+                     *           "type_permissions": {
+                     *             "acme.deal": "read"
+                     *           },
+                     *           "extension_permissions": {},
+                     *           "edge_permissions": {},
+                     *           "metadata_permissions": {},
+                     *           "profile_permissions": {},
+                     *           "created_at": "2026-10-03T10:08:20.575Z",
+                     *           "expires_at": null,
+                     *           "last_used_at": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ApiKeyPage"];
                 };
             };
@@ -27272,7 +29795,10 @@ export interface operations {
                     };
                     profile_permissions?: components["schemas"]["ProfilePermissions"] & unknown;
                     enforcement_override?: components["schemas"]["EnforcementOverride"] & unknown;
-                    /** @description When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`. */
+                    /**
+                     * @description When the key stops working, as an ISO 8601 date and time in the future. Leave it out for a key that never expires, or, if your own key expires, for one that expires when yours does. It can't be later than your own key's `expires_at`.
+                     * @example 2027-01-01T00:00:00.000Z
+                     */
                     expires_at?: string;
                 };
             };
@@ -27286,6 +29812,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10126-1e03-79a5-ba6f-f711fc6f0e95",
+                     *       "label": "reporting",
+                     *       "source": "reporting",
+                     *       "sources": [],
+                     *       "permissions": [
+                     *         "instance.read"
+                     *       ],
+                     *       "default_tier": "library",
+                     *       "type_permissions": {
+                     *         "acme.deal": "read"
+                     *       },
+                     *       "extension_permissions": {},
+                     *       "edge_permissions": {},
+                     *       "metadata_permissions": {},
+                     *       "profile_permissions": {},
+                     *       "created_at": "2026-10-03T10:08:20.575Z",
+                     *       "expires_at": null,
+                     *       "last_used_at": null,
+                     *       "key": "marfa_k1_qon-FTZpKQ_unXjMBmHlrP"
+                     *     }
+                     */
                     "application/json": components["schemas"]["KeyResponse"];
                 };
             };
@@ -27449,6 +29998,47 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *       "label": "CRM sync",
+                     *       "source": "crm",
+                     *       "sources": [],
+                     *       "permissions": [
+                     *         "schema.write",
+                     *         "keys.mint",
+                     *         "items.purge",
+                     *         "webhooks.manage",
+                     *         "config.manage",
+                     *         "audit.read",
+                     *         "grants.manage",
+                     *         "instance.read",
+                     *         "instance.maintain",
+                     *         "connectors.manage",
+                     *         "blobs.manage",
+                     *         "keys.manage"
+                     *       ],
+                     *       "default_tier": "library",
+                     *       "type_permissions": {
+                     *         "*": "write"
+                     *       },
+                     *       "extension_permissions": {
+                     *         "*": "write"
+                     *       },
+                     *       "edge_permissions": {
+                     *         "*": "write"
+                     *       },
+                     *       "metadata_permissions": {
+                     *         "*": "write"
+                     *       },
+                     *       "profile_permissions": {
+                     *         "*": "read"
+                     *       },
+                     *       "created_at": "2026-10-03T09:35:25.394Z",
+                     *       "expires_at": null,
+                     *       "last_used_at": "2026-10-03T09:36:25.084Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
@@ -27588,6 +30178,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -27769,7 +30364,10 @@ export interface operations {
                     permissions?: components["schemas"]["Permission"][];
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
-                    /** @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made, through `keys.manage` or with `narrow_only`. */
+                    /**
+                     * @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made, through `keys.manage` or with `narrow_only`.
+                     * @example 2027-01-01T00:00:00.000Z
+                     */
                     expires_at?: string | null;
                     /** @description Can't change. To give a key another source, create a new key and revoke this one. */
                     source?: string;
@@ -27787,6 +30385,28 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10126-1e03-79a5-ba6f-f711fc6f0e95",
+                     *       "label": "reporting dashboard",
+                     *       "source": "reporting",
+                     *       "sources": [],
+                     *       "permissions": [
+                     *         "instance.read"
+                     *       ],
+                     *       "default_tier": "library",
+                     *       "type_permissions": {
+                     *         "acme.deal": "read"
+                     *       },
+                     *       "extension_permissions": {},
+                     *       "edge_permissions": {},
+                     *       "metadata_permissions": {},
+                     *       "profile_permissions": {},
+                     *       "created_at": "2026-10-03T10:08:20.575Z",
+                     *       "expires_at": null,
+                     *       "last_used_at": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["ApiKey"];
                 };
             };
@@ -27962,6 +30582,26 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "application_type": "web",
+                     *       "token_endpoint_auth_method": "none",
+                     *       "grant_types": [
+                     *         "authorization_code",
+                     *         "refresh_token"
+                     *       ],
+                     *       "response_types": [
+                     *         "code"
+                     *       ],
+                     *       "redirect_uris": [
+                     *         "https://notes.example.com/callback"
+                     *       ],
+                     *       "scope": "core.note:read offline_access",
+                     *       "client_name": "Notes Companion",
+                     *       "client_id": "01a10126-97a4-788d-8098-07948d5ea997",
+                     *       "client_id_issued_at": 1791019800
+                     *     }
+                     */
                     "application/json": {
                         /** @description The redirect URIs, as registered. */
                         redirect_uris?: string[];
@@ -27979,7 +30619,10 @@ export interface operations {
                         tos_uri?: string;
                         /** @description Client's policy uri */
                         policy_uri?: string;
-                        /** @description Unique identifier assigned by the developer to help in the dynamic registration process */
+                        /**
+                         * @description Unique identifier assigned by the developer to help in the dynamic registration process
+                         * @example notes-companion
+                         */
                         software_id?: string;
                         /** @description Version identifier for the software_id */
                         software_version?: string;
@@ -27997,9 +30640,15 @@ export interface operations {
                          * @enum {string}
                          */
                         application_type?: "web" | "native";
-                        /** @description Unique identifier for the client. */
+                        /**
+                         * @description Unique identifier for the client.
+                         * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+                         */
                         client_id: string;
-                        /** @description When the client was registered, in seconds since the Unix epoch. */
+                        /**
+                         * @description When the client was registered, in seconds since the Unix epoch.
+                         * @example 1791019800
+                         */
                         client_id_issued_at?: number;
                         /** @description `true` if the client is disabled. */
                         disabled?: boolean;
@@ -28148,6 +30797,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["AppGrantPage"];
                 };
             };
@@ -28274,6 +30929,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -28430,6 +31090,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "scopes": [
+                     *         "core.note:read"
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["NarrowedAppGrant"];
                 };
             };
@@ -28725,7 +31392,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/x-www-form-urlencoded": {
-                    /** @description The client ID from `POST /oauth/register`. */
+                    /**
+                     * @description The client ID from `POST /oauth/register`.
+                     * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+                     */
                     client_id: string;
                     /** @description Space-separated scopes to ask for. Defaults to the scopes the app registered for. */
                     scope?: string;
@@ -28905,7 +31575,10 @@ export interface operations {
                      * @enum {string}
                      */
                     grant_type: "authorization_code" | "refresh_token" | "urn:ietf:params:oauth:grant-type:device_code";
-                    /** @description The client ID the code or token was issued to. */
+                    /**
+                     * @description The client ID the code or token was issued to.
+                     * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+                     */
                     client_id: string;
                     /** @description The authorization code. Required for `authorization_code`. */
                     code?: string;
@@ -29098,7 +31771,10 @@ export interface operations {
                      * @enum {string}
                      */
                     token_type_hint?: "access_token" | "refresh_token";
-                    /** @description The client ID the token was issued to. */
+                    /**
+                     * @description The client ID the token was issued to.
+                     * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+                     */
                     client_id: string;
                 };
             };
@@ -29245,6 +31921,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10127-1145-7059-9f7f-0320e4cd3e20",
+                     *       "email": "alex@example.com",
+                     *       "name": "Alex Example",
+                     *       "avatar": null,
+                     *       "created_at": "2026-10-03T09:34:25.157Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Owner"];
                 };
             };
@@ -29396,6 +32081,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01926a3c-4b1d-7e52-9a8f-3c5d7e1b2a40",
+                     *       "email": "alex@example.com",
+                     *       "name": "Alex Example",
+                     *       "avatar": null,
+                     *       "created_at": "2026-10-03T09:30:00.000Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Owner"];
                 };
             };
@@ -29544,6 +32238,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10127-1145-7059-9f7f-0320e4cd3e20",
+                     *       "email": "alex@example.com",
+                     *       "name": "Alex Example",
+                     *       "avatar": null,
+                     *       "created_at": "2026-10-03T09:34:25.157Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Owner"];
                 };
             };
@@ -29712,6 +32415,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "Alex Example",
+                     *       "email": "alex@example.com",
+                     *       "avatar": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["Profile"];
                 };
             };
@@ -29844,6 +32554,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "Alex Example",
+                     *       "email": "alex@example.com",
+                     *       "avatar": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["Profile"];
                 };
             };
@@ -30167,6 +32884,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a10127-1145-7059-9f7f-0320e4cd3e20",
+                     *       "email": "alex@example.com",
+                     *       "name": "Alex Example",
+                     *       "avatar": "https://marfa.example.com/owner/avatar",
+                     *       "created_at": "2026-10-03T09:34:25.157Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Owner"];
                 };
             };
@@ -30343,6 +33069,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "Alex Example",
+                     *       "email": "alex@example.com",
+                     *       "avatar": "https://marfa.example.com/owner/avatar"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Profile"];
                 };
             };
@@ -30511,6 +33244,24 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "kind": "key",
+                     *           "name": "CRM sync",
+                     *           "created_at": "2026-10-03T09:35:25.394Z",
+                     *           "last_used_at": "2026-10-03T09:36:25.084Z",
+                     *           "expires_at": null,
+                     *           "client_ip": null,
+                     *           "user_agent": null,
+                     *           "minted_by": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["SignInPage"];
                 };
             };
@@ -30640,6 +33391,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -30812,6 +33568,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *       "kind": "key",
+                     *       "name": "CRM sync worker",
+                     *       "created_at": "2026-10-03T09:35:25.394Z",
+                     *       "last_used_at": "2026-10-03T09:36:25.084Z",
+                     *       "expires_at": null,
+                     *       "client_ip": null,
+                     *       "user_agent": null,
+                     *       "minted_by": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["SignIn"];
                 };
             };
@@ -30983,6 +33752,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["OwnerPasskeyPage"];
                 };
             };
@@ -31109,6 +33884,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
                     "application/json": components["schemas"]["Ok"];
                 };
             };
@@ -31278,6 +34058,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "id": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M",
+                     *       "name": "Laptop",
+                     *       "created_at": "2026-10-03T09:30:00.000Z",
+                     *       "last_used_at": "2026-10-05T14:12:08.000Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["OwnerPasskey"];
                 };
             };
@@ -31446,6 +34234,36 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "Marfa",
+                     *       "version": "0.0.0",
+                     *       "instance_id": "01a10127-86fe-728c-8cf8-38e902e15d4f",
+                     *       "contract": 0,
+                     *       "features": [
+                     *         "items",
+                     *         "search",
+                     *         "blobs",
+                     *         "types",
+                     *         "keys",
+                     *         "bulk",
+                     *         "oauth",
+                     *         "owner",
+                     *         "extensions",
+                     *         "events",
+                     *         "type_crud",
+                     *         "audit",
+                     *         "edges",
+                     *         "connectors",
+                     *         "inbound_webhooks",
+                     *         "webhooks",
+                     *         "export",
+                     *         "metrics",
+                     *         "restore"
+                     *       ],
+                     *       "max_request_bytes": 1048576
+                     *     }
+                     */
                     "application/json": components["schemas"]["InstanceDescription"];
                 };
             };
@@ -31504,6 +34322,82 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "instance": {
+                     *         "name": "Marfa",
+                     *         "version": "0.0.0"
+                     *       },
+                     *       "credential": {
+                     *         "kind": "key",
+                     *         "label": "CRM sync",
+                     *         "type_permissions": {
+                     *           "write": [
+                     *             "*"
+                     *           ]
+                     *         },
+                     *         "permissions": [
+                     *           "audit.read",
+                     *           "blobs.manage",
+                     *           "config.manage",
+                     *           "connectors.manage",
+                     *           "grants.manage",
+                     *           "instance.maintain",
+                     *           "instance.read",
+                     *           "items.purge",
+                     *           "keys.manage",
+                     *           "keys.mint",
+                     *           "schema.write",
+                     *           "webhooks.manage"
+                     *         ]
+                     *       },
+                     *       "types": [
+                     *         {
+                     *           "id": "acme.contact",
+                     *           "count": 3
+                     *         },
+                     *         {
+                     *           "id": "acme.deal",
+                     *           "description": "A sales deal.",
+                     *           "count": 3
+                     *         }
+                     *       ],
+                     *       "total": 7,
+                     *       "edge_types": [
+                     *         {
+                     *           "id": "about",
+                     *           "description": "Says that an item is about another item, such as a note about a book.",
+                     *           "access": "write"
+                     *         },
+                     *         {
+                     *           "id": "acme.deal-contact",
+                     *           "access": "write"
+                     *         }
+                     *       ],
+                     *       "tags": [
+                     *         {
+                     *           "tag": "reviewed",
+                     *           "count": 3
+                     *         },
+                     *         {
+                     *           "tag": "q4",
+                     *           "count": 1
+                     *         }
+                     *       ],
+                     *       "views": [
+                     *         {
+                     *           "id": "01a10122-ce84-7b6c-b1fd-38287d45e791",
+                     *           "title": "Won this quarter"
+                     *         }
+                     *       ],
+                     *       "folders": [
+                     *         {
+                     *           "id": "01a10122-54e3-7447-9e6f-91e7d99f361f",
+                     *           "title": "Open deals"
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["Overview"];
                 };
             };
@@ -31612,6 +34506,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "instance_id": "01a10127-86fe-728c-8cf8-38e902e15d4f"
+                     *     }
+                     */
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
@@ -31728,7 +34627,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
+                    /**
+                     * @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing.
+                     * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+                     */
                     instance_id?: string;
                     /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. */
                     version_recent_days?: number;
@@ -31786,6 +34688,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "instance_id": "01a10127-86fe-728c-8cf8-38e902e15d4f",
+                     *       "name": "Example instance"
+                     *     }
+                     */
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
@@ -31965,7 +34873,10 @@ export interface operations {
                     error_reporting_enabled?: boolean | null;
                     /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies. */
                     heartbeat_enabled?: boolean | null;
-                    /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
+                    /**
+                     * @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing.
+                     * @example 01a1011e-87bd-7ab7-bbab-538453d75381
+                     */
                     instance_id?: string;
                     /** @description The instance's display name. `null` removes it, so the server's default applies. */
                     name?: string | null;
@@ -32005,6 +34916,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "instance_id": "01a10127-86fe-728c-8cf8-38e902e15d4f",
+                     *       "name": "Example instance"
+                     *     }
+                     */
                     "application/json": components["schemas"]["InstanceConfig"];
                 };
             };
@@ -32170,6 +35087,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "key": "max_request_bytes",
+                     *           "description": "The largest request body the server accepts, in bytes. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.",
+                     *           "value": 1048576,
+                     *           "default": 1048576,
+                     *           "stored": null,
+                     *           "rule": "A whole number, from 1 to 1099511627776",
+                     *           "together": []
+                     *         },
+                     *         {
+                     *           "key": "max_bulk_request_bytes",
+                     *           "description": "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this. It may be set to at most 33554432, half of the 67108864 bytes a restore reads on one archive line. An export or backup refuses an item, version or edge whose line passes that limit, and names it. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.",
+                     *           "value": 16777216,
+                     *           "default": 16777216,
+                     *           "stored": null,
+                     *           "rule": "A whole number, from 1 to 33554432",
+                     *           "together": []
+                     *         }
+                     *       ],
+                     *       "rules": [
+                     *         {
+                     *           "name": "version_windows",
+                     *           "description": "The recent, daily and weekly version windows must not shrink in that order.",
+                     *           "keys": [
+                     *             "version_recent_days",
+                     *             "version_daily_snapshot_days",
+                     *             "version_weekly_snapshot_days"
+                     *           ]
+                     *         },
+                     *         {
+                     *           "name": "reporting_needs_a_receiver",
+                     *           "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set.",
+                     *           "keys": [
+                     *             "error_reporting_enabled",
+                     *             "heartbeat_enabled"
+                     *           ]
+                     *         }
+                     *       ],
+                     *       "start_only": [
+                     *         {
+                     *           "name": "MARFA_PORT",
+                     *           "description": "The port the server listens on.",
+                     *           "secret": false,
+                     *           "set": true
+                     *         },
+                     *         {
+                     *           "name": "MARFA_LISTEN_HOST",
+                     *           "description": "The address the server listens on.",
+                     *           "secret": false,
+                     *           "set": true
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["ConfigSettings"];
                 };
             };
@@ -32294,6 +35268,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "sign_in_address": "https://marfa.example.com",
+                     *       "addresses": [
+                     *         "https://marfa.example.com"
+                     *       ],
+                     *       "requires_confirmation": true,
+                     *       "consequences": [
+                     *         {
+                     *           "code": "address_removed",
+                     *           "sentence": "Links that use https://marfa.example.com stop working.",
+                     *           "count": null
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["AddressCheck"];
                 };
             };
@@ -32450,6 +35440,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "status": "ok",
+                     *       "components": {
+                     *         "database": {
+                     *           "status": "ok",
+                     *           "latency_ms": 0
+                     *         },
+                     *         "database_write": {
+                     *           "status": "ok",
+                     *           "latency_ms": 11
+                     *         },
+                     *         "disk": {
+                     *           "status": "ok"
+                     *         },
+                     *         "blob_storage": {
+                     *           "status": "ok"
+                     *         }
+                     *       },
+                     *       "backups": {
+                     *         "status": "ok"
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["Health"];
                 };
             };
@@ -32520,6 +35534,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "kind": "backup",
+                     *           "reference": "no_backup_destination",
+                     *           "title": "No backups are kept",
+                     *           "description": "This instance has nowhere to put them. Set MARFA_BACKUP_PATH to a folder on another disk, or S3_BUCKET to an object store, in the server's settings (`marfa.env` for an install made by `marfa server install`), then run `marfa server restart`."
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": components["schemas"]["AttentionPage"];
                 };
             };
@@ -32640,6 +35666,48 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "items": {
+                     *         "total": 9,
+                     *         "by_state": {
+                     *           "active": 9
+                     *         }
+                     *       },
+                     *       "blobs": {
+                     *         "count": 1,
+                     *         "total_bytes": 42
+                     *       },
+                     *       "types": {
+                     *         "core": 29,
+                     *         "registered": 3
+                     *       },
+                     *       "keys": {
+                     *         "total": 1
+                     *       },
+                     *       "webhooks": {
+                     *         "total": 1
+                     *       },
+                     *       "uptime_seconds": 3,
+                     *       "process": {
+                     *         "version": "0.0.0",
+                     *         "memory_rss_bytes": 37257216,
+                     *         "memory_rss_peak_bytes": 48201728,
+                     *         "cpu_user_seconds": 0.139065,
+                     *         "cpu_system_seconds": 0.065418
+                     *       },
+                     *       "storage": {
+                     *         "database_bytes": 909312,
+                     *         "wal_bytes": 5051152,
+                     *         "rows": {
+                     *           "items": 9,
+                     *           "versions": 4,
+                     *           "event_log": 37,
+                     *           "audit_log": 67
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/json": {
                         /** @description Instance-wide item counts. */
                         items: {
@@ -32838,6 +35906,51 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "actor": {
+                     *             "kind": "key",
+                     *             "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *             "name": "CRM sync"
+                     *           },
+                     *           "id": "01a10128-009f-7d6b-824c-72ebd7fd5893",
+                     *           "created_at": "2026-10-03T10:09:45.373Z",
+                     *           "key_id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *           "action": "config.update",
+                     *           "resource_type": "config",
+                     *           "resource_id": null,
+                     *           "client_ip": "203.0.113.24",
+                     *           "details": {
+                     *             "fields": [
+                     *               "name"
+                     *             ]
+                     *           }
+                     *         },
+                     *         {
+                     *           "actor": {
+                     *             "kind": "local",
+                     *             "id": "local",
+                     *             "name": "Local command"
+                     *           },
+                     *           "id": "01a10128-7a40-7d69-887d-0ec0248c3e58",
+                     *           "created_at": "2026-10-03T10:09:20.536Z",
+                     *           "key_id": "local:process",
+                     *           "action": "owner.update",
+                     *           "resource_type": "owner",
+                     *           "resource_id": "01a10127-1145-7059-9f7f-0320e4cd3e20",
+                     *           "client_ip": null,
+                     *           "details": {
+                     *             "fields": [
+                     *               "name"
+                     *             ]
+                     *           }
+                     *         }
+                     *       ],
+                     *       "next_cursor": "cCfRqqWQ6z893bq0IBwIHAQYYMjAyNi0xMS0xNlQwODoxNzowNy41OTNaCQGh425uCXdUpRQx8trU9jk"
+                     *     }
+                     */
                     "application/json": components["schemas"]["AuditEntryPage"];
                 };
             };
@@ -32958,6 +36071,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "enrichment-sweep",
+                     *           "interval_seconds": 30,
+                     *           "next_run_at": "2026-10-03T10:22:35.626Z",
+                     *           "running_since": null,
+                     *           "last_started_at": null,
+                     *           "last_finished_at": null,
+                     *           "last_outcome": null,
+                     *           "last_error": null,
+                     *           "last_result": null
+                     *         },
+                     *         {
+                     *           "name": "audit-cleanup",
+                     *           "interval_seconds": 86400,
+                     *           "next_run_at": "2026-10-03T10:16:10.512Z",
+                     *           "running_since": null,
+                     *           "last_started_at": null,
+                     *           "last_finished_at": null,
+                     *           "last_outcome": null,
+                     *           "last_error": null,
+                     *           "last_result": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["HousekeepingJobPage"];
                 };
             };
@@ -33084,6 +36226,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "trash-purge",
+                     *       "started_at": "2026-10-03T10:18:35.142Z",
+                     *       "finished_at": "2026-10-03T10:19:35.920Z",
+                     *       "outcome": "succeeded",
+                     *       "result": {
+                     *         "deleted": 0
+                     *       },
+                     *       "error": null
+                     *     }
+                     */
                     "application/json": components["schemas"]["HousekeepingRun"];
                 };
             };
@@ -33255,6 +36409,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {"item":{"id":"01a1011a-4902-76cf-a4a9-88e99c038c8d","type":"acme.deal","state":"active","tier":"library","created_at":"2026-10-03T09:37:25.975Z","updated_at":"2026-10-03T09:53:05.280Z","last_activity_at":"2026-10-03T09:53:05.280Z","occurred_at":"2026-10-03T09:37:25.975Z","source":"crm","source_id":"deal-1042","version":2,"schema_version":1,"trashed_at":null,"read_only":false,"properties":{"name":"Renewal for Example Co","amount":12000,"stage":"won"}},"metadata":{"item_id":"01a1011a-4902-76cf-a4a9-88e99c038c8d","tags":["renewal","q4","reviewed"],"extensions":{}}}
+                     *     {"item":{"id":"01a10119-55c0-77ac-9589-f7c48fa642b6","type":"acme.deal","state":"active","tier":"library","created_at":"2026-10-03T09:38:25.218Z","updated_at":"2026-10-03T09:53:05.280Z","last_activity_at":"2026-10-03T09:53:05.280Z","occurred_at":"2026-10-03T09:38:25.218Z","source":"crm","source_id":"deal-1043","version":1,"schema_version":1,"trashed_at":null,"read_only":false,"properties":{"name":"Pilot for Sample Ltd","amount":4500,"stage":"won"}},"metadata":{"item_id":"01a10119-55c0-77ac-9589-f7c48fa642b6","tags":["reviewed"],"extensions":{}}}
+                     *     {"item":{"id":"01a10124-377f-7d3d-94ed-389b233f360b","type":"acme.deal","state":"active","tier":"library","created_at":"2026-10-03T09:48:40.507Z","updated_at":"2026-10-03T09:53:05.280Z","last_activity_at":"2026-10-03T09:53:05.280Z","occurred_at":"2026-10-03T09:48:40.507Z","source":"crm","source_id":"deal-2001","version":1,"schema_version":1,"trashed_at":null,"read_only":false,"properties":{"name":"Expansion for Demo Corp","amount":8000,"stage":"lead"}},"metadata":{"item_id":"01a10124-377f-7d3d-94ed-389b233f360b","tags":["reviewed"],"extensions":{}}}
+                     */
                     "application/x-ndjson": string;
                     "application/x-tar": string;
                 };
@@ -33405,6 +36564,53 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "imported": 0,
+                     *       "duplicates": 9,
+                     *       "edges_imported": 0,
+                     *       "edges_skipped": 0,
+                     *       "edges_skipped_reasons": {},
+                     *       "blobs_imported": 0,
+                     *       "blobs_missing": [],
+                     *       "types_registered": 0,
+                     *       "types_skipped": 3,
+                     *       "edge_types_registered": 0,
+                     *       "edge_types_skipped": 0,
+                     *       "type_icons_added": 0,
+                     *       "type_icons_skipped": 0,
+                     *       "type_icons_skipped_reasons": {},
+                     *       "sources_added": 0,
+                     *       "sources_skipped": 1,
+                     *       "sources_skipped_reasons": {
+                     *         "already_set": 1
+                     *       },
+                     *       "settings_added": 0,
+                     *       "settings_skipped": 0,
+                     *       "settings_dropped": [],
+                     *       "settings_without_receiver": [],
+                     *       "enforcement_added": [],
+                     *       "enforcement_skipped": [],
+                     *       "connector_states_added": 0,
+                     *       "connector_states_skipped": 0,
+                     *       "connector_agreements_added": 0,
+                     *       "connector_agreements_skipped": 0,
+                     *       "rows_imported": 0,
+                     *       "rows_skipped": 0,
+                     *       "entries_skipped": [],
+                     *       "line_kinds_skipped": [],
+                     *       "not_restored": [
+                     *         {
+                     *           "kind": "sign_in",
+                     *           "message": "The owner's sign-in is not restored. Sign in again on this instance."
+                     *         },
+                     *         {
+                     *           "kind": "keys",
+                     *           "message": "Keys are not restored. Make new keys on this instance."
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/json": {
                         /** @description How many items Marfa wrote. */
                         imported: number;
@@ -33655,6 +36861,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "20261003T102400.836Z.tar",
+                     *           "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8",
+                     *           "created_at": "2026-10-03T10:24:00.836Z",
+                     *           "size_bytes": 8192
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
                     "application/json": {
                         /** @description The backups, newest first. */
                         data: components["schemas"]["Backup"][];
@@ -33791,6 +37010,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "outcome": "put",
+                     *       "backup": {
+                     *         "name": "20261003T102400.836Z.tar",
+                     *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8",
+                     *         "created_at": "2026-10-03T10:24:00.836Z",
+                     *         "size_bytes": 8192
+                     *       },
+                     *       "removed": 0,
+                     *       "unremoved": 0,
+                     *       "blobs_lost": [],
+                     *       "blobs_waiting": 0
+                     *     }
+                     */
                     "application/json": {
                         /**
                          * @description Always `put`.
@@ -33942,10 +37176,24 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "store_id": "01926a3c-8d2e-7a41-b5c6-2f9e0d4a7b13",
+                     *       "replaced_store_id": "01926a3c-4b1d-7e52-9a8f-3c5d7e1b2a40",
+                     *       "backups_forgotten": 3,
+                     *       "copies_forgotten": 41
+                     *     }
+                     */
                     "application/json": {
-                        /** @description The ID of the store the backup folder's files folder is now. */
+                        /**
+                         * @description The ID of the store the backup folder's files folder is now.
+                         * @example 01a1011d-16e7-7315-9f31-171560751713
+                         */
                         store_id: string;
-                        /** @description The ID of the store Marfa forgot. `GET /blobs/stores` lists it as detached. */
+                        /**
+                         * @description The ID of the store Marfa forgot. `GET /blobs/stores` lists it as detached.
+                         * @example 01a10128-91df-7025-9301-fa8cfb85fa83
+                         */
                         replaced_store_id: string;
                         /** @description How many backups in the old store Marfa forgot. */
                         backups_forgotten: number;
@@ -34091,6 +37339,55 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "imported": 1,
+                     *       "duplicates": 0,
+                     *       "edges_imported": 0,
+                     *       "edges_skipped": 0,
+                     *       "edges_skipped_reasons": {},
+                     *       "blobs_imported": 0,
+                     *       "blobs_missing": [],
+                     *       "types_registered": 0,
+                     *       "types_skipped": 1,
+                     *       "edge_types_registered": 0,
+                     *       "edge_types_skipped": 0,
+                     *       "type_icons_added": 0,
+                     *       "type_icons_skipped": 0,
+                     *       "type_icons_skipped_reasons": {},
+                     *       "sources_added": 0,
+                     *       "sources_skipped": 0,
+                     *       "sources_skipped_reasons": {},
+                     *       "settings_added": 0,
+                     *       "settings_skipped": 0,
+                     *       "settings_dropped": [],
+                     *       "settings_without_receiver": [],
+                     *       "enforcement_added": [],
+                     *       "enforcement_skipped": [],
+                     *       "connector_states_added": 0,
+                     *       "connector_states_skipped": 0,
+                     *       "connector_agreements_added": 0,
+                     *       "connector_agreements_skipped": 0,
+                     *       "rows_imported": 0,
+                     *       "rows_skipped": 0,
+                     *       "entries_skipped": [],
+                     *       "line_kinds_skipped": [],
+                     *       "not_restored": [
+                     *         {
+                     *           "kind": "sign_in",
+                     *           "message": "The owner's sign-in is not restored. Sign in again on this instance."
+                     *         },
+                     *         {
+                     *           "kind": "keys",
+                     *           "message": "Keys are not restored. Make new keys on this instance."
+                     *         }
+                     *       ],
+                     *       "backup": {
+                     *         "name": "20261116T081919.427Z.tar",
+                     *         "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
+                     *       }
+                     *     }
+                     */
                     "application/json": {
                         /** @description How many items Marfa wrote. */
                         imported: number;
@@ -34170,6 +37467,7 @@ export interface operations {
                             /**
                              * Format: uuid
                              * @description The ID of the instance that took the backup.
+                             * @example 01a1011e-87bd-7ab7-bbab-538453d75381
                              */
                             instance_id: string;
                         };
