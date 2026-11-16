@@ -4,7 +4,7 @@ The periodic jobs the server runs on itself, such as the trash purge, version th
 
 ## Registered jobs
 
-The server registers the following jobs, each run at the interval in the table. An owner changes the interval of `backup` alone. Three jobs are listed only where something switches them on (`housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans` and `housekeeping/switched-backup`); the others are listed on every instance. Settings are listed in [Settings](instance.md#settings).
+The server registers the following jobs, each run at the interval in the table. An owner changes the interval of `backup` alone. Four jobs are listed only where something switches them on (`housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans`, `housekeeping/switched-backup` and `housekeeping/switched-release-check`); the others are listed on every instance. Settings are listed in [Settings](instance.md#settings).
 
 <!-- housekeeping-table:start -->
 
@@ -13,7 +13,7 @@ The server registers the following jobs, each run at the interval in the table. 
 | `event-log-cleanup`        | hour                      | Removes expired event log entries and idempotency records.                                                                                                                                                                                                                           | yes                           |
 | `audit-cleanup`            | day                       | Removes expired audit entries and outbound webhook delivery history.                                                                                                                                                                                                                 | yes                           |
 | `inbound-delivery-cleanup` | minute                    | Removes inbound deliveries after their handled or pending retention window.                                                                                                                                                                                                          | yes                           |
-| `heartbeat`                | minute                    | Pings the liveness receiver `MARFA_HEARTBEAT_URL` names.                                                                                                                                                                                                                             | no                            |
+| `heartbeat`                | minute                    | Pings the liveness receiver `heartbeat_url` names.                                                                                                                                                                                                                                   | no                            |
 | `version-thinning`         | hour                      | Thins item versions according to the configured retention policy.                                                                                                                                                                                                                    | yes                           |
 | `feed-expiry`              | hour                      | Moves expired feed items to the trash.                                                                                                                                                                                                                                               | yes                           |
 | `trash-purge`              | day                       | Permanently removes items whose trash retention has elapsed.                                                                                                                                                                                                                         | yes                           |
@@ -25,6 +25,7 @@ The server registers the following jobs, each run at the interval in the table. 
 | `attention-check`          | 5 minutes                 | Checks what needs the owner's attention and announces each new entry (`events/attention-raised`).                                                                                                                                                                                    | no                            |
 | `bulk-action-gc`           | hour                      | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                                      | yes                           |
 | `table-row-cleanup`        | hour                      | Removes the rows and change logs of purged items, the batches of a table's change log older than `row_log_retention_days`, and rewrites the order a table keeps after its `order` changed and the search index of its rows after what it marks searchable changed, a page at a time. | yes                           |
+| `release-check`            | 6 hours                   | Asks GitHub for the newest published Marfa release and keeps what it finds (`updates.md`).                                                                                                                                                                                           | no                            |
 | `backup`                   | `backup_interval_seconds` | Puts a backup of the instance in the backup folder or the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                        | no                            |
 
 <!-- housekeeping-table:end -->
@@ -55,7 +56,7 @@ The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-lo
 
 ### `housekeeping/switched-heartbeat`
 
-The server MUST list `heartbeat` where `MARFA_HEARTBEAT_URL` is set.
+The server MUST list `heartbeat` where `heartbeat_url` is set.
 
 **Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
@@ -75,9 +76,17 @@ The server MUST list `backup` where the instance has a backup folder or an objec
 
 **Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
+### `housekeeping/switched-release-check`
+
+The server MUST list `release-check` where the stored setting `update_check_enabled` is `true`.
+
+**Reason:** as for `housekeeping/switched-blob-orphans`.
+
+**Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`, `compliance/updates.test.ts › makes no request for a release while update_check_enabled is false, and lists no release-check job`.
+
 ### `housekeeping/switched-off-not-listed`
 
-Where the condition that `housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans` or `housekeeping/switched-backup` gives for a job does not hold, the server MUST leave that job out of the listing.
+Where the condition that `housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans`, `housekeeping/switched-backup` or `housekeeping/switched-release-check` gives for a job does not hold, the server MUST leave that job out of the listing.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`, `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
@@ -705,7 +714,7 @@ If a run that outlived its deadline later finishes, then the server MUST NOT rec
 
 ### `housekeeping/restore-heartbeat`
 
-Where `MARFA_HEARTBEAT_URL` is set, while a restore runs, the server MUST send the heartbeat at its interval.
+Where `heartbeat_url` is set, while a restore runs, the server MUST send the heartbeat at its interval.
 
 **Reason:** a receiver that hears nothing reports the instance down, and a restore of a large archive can hold every write for minutes. The heartbeat writes nothing, so the restore gives it no reason to stop.
 

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Lie, Resolved, Volume};
+use super::{Lie, ReleaseFeed, Resolved, Volume};
 use crate::db::Pulse;
 
 #[derive(Debug)]
@@ -53,6 +53,10 @@ impl Faults {
 
     pub fn limit(&self, _lane: &str) -> Option<i64> {
         None
+    }
+
+    pub fn release_feed(&self) -> ReleaseFeed {
+        ReleaseFeed::Public
     }
 
     pub fn store_check_deadline(&self) -> Option<Duration> {

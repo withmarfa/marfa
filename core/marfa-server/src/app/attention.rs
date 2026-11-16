@@ -112,10 +112,9 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
         Some("no_backup_destination") => found.push(concern(
             "no_backup_destination",
             "No backups are kept",
-            "This instance has nowhere to put them. Set MARFA_BACKUP_PATH to a folder on another \
-             disk, or S3_BUCKET to an object store, in the server's settings (`marfa.env` for an \
-             install made by `marfa server install`), then run `marfa server \
-             restart`."
+            "This instance has nowhere to put them. Set backup_path to a folder on another disk, \
+             or object_store_bucket and its access key and secret to an object store, through \
+             `PATCH /config`."
                 .to_string(),
         )),
         Some("turned_off") => found.push(concern(
@@ -138,6 +137,7 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
             StoreFault::FolderGone => "The backup folder is not there".to_string(),
             StoreFault::FolderSilent => "The backup folder is not answering".to_string(),
             StoreFault::Refused => format!("Files are waiting for their copy in the {place}"),
+            StoreFault::Unusable => "The backup destination cannot be used".to_string(),
         };
         let waiting = backups["copies_waiting"].as_u64().unwrap_or(0);
         let error = error.trim_end_matches('.');
@@ -231,7 +231,27 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
             .folder()
             .and_then(|folder| unlocked(&folder.files())),
     );
+    found.extend(secrets_to_set(&app.settings.live()));
     Ok(found)
+}
+
+/// Each secret setting stored that this server's key cannot open.
+fn secrets_to_set(settings: &crate::settings::Snapshot) -> Vec<Concern> {
+    settings
+        .secrets_to_set()
+        .into_iter()
+        .map(|key| Concern {
+            kind: "setting",
+            reference: key.to_string(),
+            title: format!("Set {key} again"),
+            description: format!(
+                "{key} is a secret, and this server cannot read the value stored for it: the \
+                 instance was restored from a backup or an archive, which never holds a secret, \
+                 or the settings key beside the database was lost or replaced. Until it is set \
+                 again through `PATCH /config`, the server works as if it were not set."
+            ),
+        })
+        .collect()
 }
 
 /// A backup folder whose files area another server could use too, since it took no lock.

@@ -28,7 +28,7 @@ pub enum BackupsCommand {
         #[arg(long)]
         allow_missing_files: bool,
     },
-    /// The backup folder that `MARFA_BACKUP_PATH` names. Requires `backups.manage`.
+    /// The backup folder that the `backup_path` setting names. Requires `backups.manage`.
     Folder {
         #[command(subcommand)]
         command: FolderCommand,

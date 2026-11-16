@@ -396,6 +396,25 @@ export interface HousekeepingRun {
   error: string | null;
 }
 
+/** What `GET /update` answers. */
+export interface UpdateStatus {
+  release: string;
+  check_enabled: boolean;
+  checked_at: string | null;
+  check_error: { at: string | null; message: string } | null;
+  latest: { release: string; published_at: string } | null;
+  available: boolean;
+  method: "server" | "manual";
+  step: string | null;
+  progress: { state: string; release: string | null };
+  last: {
+    outcome: "succeeded" | "failed" | "rolled_back";
+    release: string;
+    finished_at: string;
+    reason: string | null;
+  } | null;
+}
+
 /** One backup in the instance's object store, as `GET /backups` lists it. */
 export interface BackupRow {
   name: string;
@@ -835,6 +854,7 @@ export interface RestoreArchiveResponse {
   entries_skipped: string[];
   line_kinds_skipped: string[];
   settings_without_receiver: string[];
+  secrets_to_set: string[];
   enforcement_added: string[];
   enforcement_skipped: string[];
   not_restored: { kind: string; message: string }[];

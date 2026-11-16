@@ -269,7 +269,7 @@ fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, 
         .into_iter()
         .map(|text| (key.to_string(), text))
         .collect();
-    let resolved = Snapshot::resolve(&Seeds::new(), &rows, 0);
+    let resolved = Snapshot::resolve(&Seeds::new(), None, &rows, 0);
     if resolved.unreadable().contains(&key) {
         return Err(Failure::refused_upgrade(
             UpgradeRefusal::SettingsUnreadable,
@@ -397,6 +397,47 @@ fn move_schema_into_file(conn: &Connection) {
     if let Err(error) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
         tracing::warn!(error = %error, "The database log was not moved into its file");
     }
+}
+
+/// What a build makes of a database file it has only read.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Inspection {
+    pub schema: Option<u32>,
+    pub standing: Standing,
+}
+
+/// Judges the schema as `open` does, on a read-only connection and nothing else `open` checks.
+pub fn inspect(path: &Path, migrations: &[Migration]) -> Result<Inspection, Failure> {
+    let label = path.display().to_string();
+    match std::fs::metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Inspection {
+                schema: None,
+                standing: Standing::Unfinished,
+            });
+        }
+        Err(error) => {
+            return Err(Failure::start(format!(
+                "{label} could not be read: {error}"
+            )));
+        }
+    }
+    let flags = OpenFlags::SQLITE_OPEN_URI
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let conn = Connection::open_with_flags(file_uri(path, "mode=ro"), flags)
+        .map_err(|error| refused_open(&label, error))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|error| refused_open(&label, error))?;
+    let standing = migrate::judge(&conn, migrations, &label)?;
+    let schema = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|error| refused_open(&label, error))?;
+    Ok(Inspection {
+        schema: Some(schema),
+        standing,
+    })
 }
 
 /// Nothing is written until the judgment has passed.

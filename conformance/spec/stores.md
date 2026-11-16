@@ -1,6 +1,6 @@
 # Stores
 
-Where a blob's bytes live, and the rules that keep them. A store is a place bytes live: the disk every upload lands on, an object store attached beside it when one is configured, and the files area of the backup folder when `MARFA_BACKUP_PATH` names one. The referee boots its server with the disk and an object store, so every rule about the object store is asserted against one rather than left to a deployment nobody runs.
+Where a blob's bytes live, and the rules that keep them. A store is a place bytes live: the disk every upload lands on, an object store attached beside it when one is configured, and the files area of the backup folder when `backup_path` names one. The referee boots its server with the disk and an object store, so every rule about the object store is asserted against one rather than left to a deployment nobody runs.
 
 ## The stores
 
@@ -24,7 +24,7 @@ When a caller authorized by `instance.read` or local authority sends `GET /blobs
 
 ### `stores/list-folder-locator`
 
-Where `MARFA_BACKUP_PATH` is set, when a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer the backup folder's store with its `locator` as `<MARFA_BACKUP_PATH>/files/<instance id>`, where `<instance id>` is the instance's id.
+Where `backup_path` is set, when a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer the backup folder's store with its `locator` as `<backup_path>/files/<instance id>`, where `<instance id>` is the instance's id.
 
 **Tests:** `compliance/backup-folder.test.ts › lists the backup folder's files area as a store of kind folder at its path`.
 
@@ -236,7 +236,7 @@ While an attached object store does not answer with the `.marfa-store` marker of
 
 ### `stores/object-layout`
 
-Where an object store is attached, the server MUST keep each copy's object and the store's `.marfa-store` marker under `<S3_PREFIX>/blobs/`.
+Where an object store is attached, the server MUST keep each copy's object and the store's `.marfa-store` marker under `<object_store_prefix>/blobs/`.
 
 **Reason:** a prefix holds one instance: its files under `blobs/`, and its backups under `backups/` and `backup-parts/` (`instance/backup-object`, `instance/backup-part-named`), so each can take a lifecycle rule of its own.
 
@@ -244,7 +244,7 @@ Where an object store is attached, the server MUST keep each copy's object and t
 
 ### `stores/object-layout-root-ignored`
 
-When the server starts on a prefix that holds a `.marfa-store` marker or copies directly under `<S3_PREFIX>/`, the server MUST NOT read them as the store's.
+When the server starts on a prefix that holds a `.marfa-store` marker or copies directly under `<object_store_prefix>/`, the server MUST NOT read them as the store's.
 
 **Reason:** an earlier build kept them there, and nothing is carried from earlier builds.
 

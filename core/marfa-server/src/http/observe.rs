@@ -21,7 +21,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
 use crate::log;
-use crate::settings::registry::ERROR_REPORTING_ENABLED;
+use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 use crate::telemetry::Finished;
 
 #[derive(Default)]
@@ -218,7 +218,9 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         key_id: notes.key_id.get().map(String::as_str),
         error_code,
     });
-    let reporting = fault.is_some() && observed.app.settings.live().get(ERROR_REPORTING_ENABLED);
+    let live = observed.app.settings.live();
+    let reporting = fault.is_some() && live.get(ERROR_REPORTING_ENABLED);
+    let webhook = live.error_notice_url().filter(|_| fault.is_some());
     observed.app.telemetry.finish(
         span,
         &Finished {
@@ -231,6 +233,8 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
             error_code,
             fault: fault.as_ref(),
             reporting,
+            webhook: webhook.as_deref(),
+            private_allowed: live.get(ALLOW_PRIVATE_ADDRESSES),
             timestamp: &timestamp,
         },
     );

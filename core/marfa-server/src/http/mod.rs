@@ -56,6 +56,7 @@ mod test_hooks;
 mod test_instance;
 mod trash;
 mod types;
+mod updates;
 mod views;
 mod webhooks;
 
@@ -349,6 +350,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/metrics", get(metrics::read))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
         .route("/clock/confirm", post(housekeeping::confirm_clock))
+        .route("/update", get(updates::read).post(updates::start))
         .route("/backups", get(backups::list).post(backups::run))
         .route("/backups/folder/adopt", post(backups::adopt_folder))
         .route(

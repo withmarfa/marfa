@@ -50,7 +50,7 @@ it("expires store-signed links on real time with a boot offset and later clock m
       expect(link.status).toBe(200);
       expect(link.data.ttl_seconds).toBe(LINK_TTL_S);
       expect(new URL(link.data.url).host).toBe(
-        new URL(process.env.S3_ENDPOINT!).host,
+        new URL(process.env.MARFA_OBJECT_STORE_ENDPOINT!).host,
       );
       const live = await fetch(link.data.url);
       expect(live.status).toBe(200);

@@ -3,6 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use ipnet::{Ipv4Net, Ipv6Net};
+use url::{Host, Url};
 
 const NOT_PUBLIC_V4: [(Ipv4Addr, u8); 16] = [
     (Ipv4Addr::new(0, 0, 0, 0), 8),
@@ -64,6 +65,15 @@ fn public_v6(ip: Ipv6Addr) -> bool {
         && !in_prefix(0x2001, 0xdb8, 0, 32)
         && !in_prefix(0x2002, 0, 0, 16)
         && !in_prefix(0x3fff, 0, 0, 20)
+}
+
+/// Whether `url`'s host is a literal address that is not public; a name is judged at lookup.
+pub fn names_private_literal(url: &str) -> bool {
+    match Url::parse(url).ok().as_ref().and_then(Url::host) {
+        Some(Host::Ipv4(ip)) => !is_public(IpAddr::V4(ip)),
+        Some(Host::Ipv6(ip)) => !is_public(IpAddr::V6(ip)),
+        Some(Host::Domain(_)) | None => false,
+    }
 }
 
 #[cfg(test)]

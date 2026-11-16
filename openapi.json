@@ -1584,9 +1584,10 @@
                 "type": "string",
                 "enum": [
                   "no_backup_destination",
-                  "turned_off"
+                  "turned_off",
+                  "destination_unusable"
                 ],
-                "description": "Why backups are `off`: `no_backup_destination` when neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` is set, or `turned_off` when `backup_interval_seconds` is 0, which is also given beside `failing`."
+                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`."
               },
               "destination": {
                 "type": "string",
@@ -1594,7 +1595,7 @@
                   "folder",
                   "bucket"
                 ],
-                "description": "Where Marfa puts backups: `folder` for the backup folder `MARFA_BACKUP_PATH` names, `bucket` for the object store `S3_BUCKET` names. Present only for a caller that holds `instance.read`, and only when one is set."
+                "description": "Where Marfa puts backups: `folder` for the backup folder `backup_path` names, `bucket` for the object store `object_store_bucket` names. Present only for a caller that holds `instance.read`, and only when one is in use."
               },
               "last_backup": {
                 "type": [
@@ -1655,7 +1656,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set."
+                "description": "Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there and a destination that can't be used. Present only for a caller that holds `instance.read`."
               },
               "damaged_parts": {
                 "type": [
@@ -7792,14 +7793,15 @@
               "folder",
               "key",
               "backup",
+              "setting",
               "clock",
               "unavailable"
             ],
-            "description": "health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off, failing, incomplete, or folder unlocked; clock: ahead or behind; unavailable: no answer."
+            "description": "health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off or failing; setting: a secret to set again; clock: ahead or behind; unavailable: no answer."
           },
           "reference": {
             "type": "string",
-            "description": "The component, job, connector, folder, or key ID, the check that could not answer, a backup concern such as `no_backup_destination`, `run`, `incomplete`, `parts_damaged`, or `folder_unlocked`, or a clock concern `clock_ahead` or `clock_behind`."
+            "description": "The component, job, connector, folder, or key ID, the check that couldn't answer, a backup concern such as `no_backup_destination`, `run` or `store`, a secret setting's key, or a clock concern `clock_ahead` or `clock_behind`."
           },
           "title": {
             "type": "string",
@@ -8958,11 +8960,11 @@
           },
           "error_reporting_enabled": {
             "type": "boolean",
-            "description": "`true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies."
+            "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies."
           },
           "heartbeat_enabled": {
             "type": "boolean",
-            "description": "`true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies."
+            "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies."
           },
           "name": {
             "type": "string",
@@ -9052,6 +9054,53 @@
           "sign_in_address": {
             "type": "string",
             "description": "The address people sign in at, an origin with no path. Absent: this computer's own address."
+          },
+          "backup_path": {
+            "type": "string",
+            "description": "The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder."
+          },
+          "object_store_bucket": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store."
+          },
+          "object_store_region": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "The region of the object store. Absent: `us-east-1`."
+          },
+          "object_store_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it."
+          },
+          "object_store_path_style": {
+            "type": "boolean",
+            "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`."
+          },
+          "object_store_prefix": {
+            "type": "string",
+            "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`."
+          },
+          "object_store_access_key_id": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "The access key ID for the object store.",
+            "example": "01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37"
+          },
+          "allow_private_addresses": {
+            "type": "boolean",
+            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`."
+          },
+          "secrets_set": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.",
+            "example": [
+              "object_store_secret_access_key"
+            ]
           }
         },
         "required": [
@@ -11413,6 +11462,14 @@
               "type": "string"
             },
             "description": "The keys of the other settings a rule across settings ties to this one."
+          },
+          "secret": {
+            "type": "boolean",
+            "description": "`true` if the setting holds a secret. Marfa then answers `value`, `default` and `stored` as `null`."
+          },
+          "set": {
+            "type": "boolean",
+            "description": "`true` if a secret setting holds a value Marfa can read. Present only for a secret."
           }
         },
         "required": [
@@ -11422,6 +11479,7 @@
           "default",
           "stored",
           "rule",
+          "secret",
           "together"
         ],
         "description": "A stored setting: its value, its default and the rule it follows."
@@ -12521,6 +12579,285 @@
             "$ref": "#/components/schemas/WebhookDeliveryAttempt"
           }
         ]
+      },
+      "UpdateLatest": {
+        "type": "object",
+        "properties": {
+          "release": {
+            "type": "string",
+            "description": "The release, such as `0.0.75`.",
+            "example": "0.0.75"
+          },
+          "published_at": {
+            "type": "string",
+            "description": "When the release was published, in UTC.",
+            "example": "2026-11-16T09:30:00.000Z"
+          }
+        },
+        "required": [
+          "release",
+          "published_at"
+        ],
+        "description": "The newest published release Marfa found."
+      },
+      "UpdateCheckError": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the check failed, in UTC.",
+            "example": "2026-11-16T15:30:00.000Z"
+          },
+          "message": {
+            "type": "string",
+            "description": "Why the check found no release, in words for a person.",
+            "example": "the host could not be reached"
+          }
+        },
+        "required": [
+          "at",
+          "message"
+        ],
+        "description": "Why the latest check for a release failed."
+      },
+      "UpdateProgress": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "fetching",
+              "checking",
+              "swapping",
+              "restarting",
+              "settling"
+            ],
+            "description": "Where the update is. `idle`: none under way. `fetching`: downloading. `checking`: checking the download. `swapping`: putting the new programs in place. `restarting`: the server is ending to start it. `settling`: the release is up, not yet settled."
+          },
+          "release": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release being moved to, or `null` when `state` is `idle`.",
+            "example": "0.0.75"
+          }
+        },
+        "required": [
+          "state",
+          "release"
+        ],
+        "description": "The update under way, if any."
+      },
+      "UpdateLast": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed",
+              "rolled_back"
+            ],
+            "description": "How the update ended. `succeeded`: the new release stayed up. `failed`: Marfa did not change the running release, or could not put the old one back. `rolled_back`: the new release did not stay up and Marfa put the old one back."
+          },
+          "release": {
+            "type": "string",
+            "description": "The release the update moved to.",
+            "example": "0.0.75"
+          },
+          "finished_at": {
+            "type": "string",
+            "description": "When the update ended, in UTC.",
+            "example": "2026-11-16T15:31:00.000Z"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the update did not succeed, in words for a person, or `null` when it did.",
+            "example": null
+          }
+        },
+        "required": [
+          "outcome",
+          "release",
+          "finished_at",
+          "reason"
+        ],
+        "description": "How the latest update ended."
+      },
+      "Update": {
+        "type": "object",
+        "properties": {
+          "release": {
+            "type": "string",
+            "description": "The release this server runs.",
+            "example": "0.0.74"
+          },
+          "check_enabled": {
+            "type": "boolean",
+            "description": "`true` if Marfa checks for new releases. See the stored setting `update_check_enabled`."
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When a check last found the newest release, in UTC, or `null` if none has.",
+            "example": "2026-11-16T15:00:00.000Z"
+          },
+          "check_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateCheckError"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the latest check failed, or `null` if it did not. A failed check keeps `latest` as it was."
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateLatest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest published release Marfa found, or `null` if it has found none or the check is off."
+          },
+          "available": {
+            "type": "boolean",
+            "description": "`true` if `latest` is newer than `version`."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "server",
+              "manual"
+            ],
+            "description": "How this server moves to a newer release. `server`: it can update itself when you start an update. `manual`: someone takes the step in `step` on its host."
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do on the host to move to `latest`, in plain words, when `available` is `true` and `method` is `manual`; otherwise `null`."
+          },
+          "progress": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UpdateProgress"
+              },
+              {
+                "description": "The update under way, if any."
+              }
+            ]
+          },
+          "last": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateLast"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the latest update ended, or `null` if none has."
+          }
+        },
+        "required": [
+          "release",
+          "check_enabled",
+          "checked_at",
+          "check_error",
+          "latest",
+          "available",
+          "method",
+          "step",
+          "progress",
+          "last"
+        ],
+        "description": "Which release this server runs, the newest one Marfa found, and how this server moves to it."
+      },
+      "UpdateNotReadyRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "update_not_ready"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "UpdateUnavailableRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "update_unavailable"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
       }
     },
     "parameters": {},
@@ -58283,11 +58620,11 @@
                   },
                   "error_reporting_enabled": {
                     "type": "boolean",
-                    "description": "`true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies."
+                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies."
                   },
                   "heartbeat_enabled": {
                     "type": "boolean",
-                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies."
+                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies."
                   },
                   "name": {
                     "type": "string",
@@ -58382,6 +58719,65 @@
                   "confirm_sign_in_address_change": {
                     "type": "boolean",
                     "description": "`true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing."
+                  },
+                  "backup_path": {
+                    "type": "string",
+                    "description": "The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder."
+                  },
+                  "object_store_bucket": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store."
+                  },
+                  "object_store_region": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "description": "The region of the object store. Absent: `us-east-1`."
+                  },
+                  "object_store_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it."
+                  },
+                  "object_store_path_style": {
+                    "type": "boolean",
+                    "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`."
+                  },
+                  "object_store_prefix": {
+                    "type": "string",
+                    "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`."
+                  },
+                  "object_store_access_key_id": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "description": "The access key ID for the object store.",
+                    "example": "01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37"
+                  },
+                  "allow_private_addresses": {
+                    "type": "boolean",
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`."
+                  },
+                  "object_store_secret_access_key": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "description": "The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it."
+                  },
+                  "heartbeat_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it."
+                  },
+                  "error_webhook_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it."
+                  },
+                  "secrets_set": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing."
                   }
                 },
                 "additionalProperties": false
@@ -58455,7 +58851,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address, which only the private local command can do.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or changes `allow_private_addresses`, which only the private local command can do.",
             "content": {
               "application/json": {
                 "schema": {
@@ -58747,14 +59143,14 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies."
                   },
                   "heartbeat_enabled": {
                     "type": [
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies."
+                    "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. `null` removes it, so the server's default applies."
                   },
                   "instance_id": {
                     "type": "string",
@@ -58885,6 +59281,98 @@
                   "confirm_sign_in_address_change": {
                     "type": "boolean",
                     "description": "`true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing."
+                  },
+                  "backup_path": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_bucket": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 255,
+                    "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_region": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100,
+                    "description": "The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_path_style": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "description": "`true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_prefix": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_access_key_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 256,
+                    "description": "The access key ID for the object store. `null` removes it, so the server's default applies.",
+                    "example": "01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37"
+                  },
+                  "allow_private_addresses": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. `null` removes it, so the server's default applies."
+                  },
+                  "object_store_secret_access_key": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4096,
+                    "description": "The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it."
+                  },
+                  "heartbeat_url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. `null` or an empty string removes it."
+                  },
+                  "error_webhook_url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it."
+                  },
+                  "secrets_set": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing."
                   }
                 },
                 "additionalProperties": false
@@ -58958,7 +59446,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address, which only the private local command can do.",
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.\n- `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or changes `allow_private_addresses`, which only the private local command can do.",
             "content": {
               "application/json": {
                 "schema": {
@@ -59199,7 +59687,8 @@
                       "default": 1048576,
                       "stored": null,
                       "rule": "A whole number, from 1 to 1099511627776",
-                      "together": []
+                      "together": [],
+                      "secret": false
                     },
                     {
                       "key": "max_bulk_request_bytes",
@@ -59208,7 +59697,8 @@
                       "default": 16777216,
                       "stored": null,
                       "rule": "A whole number, from 1 to 33554432",
-                      "together": []
+                      "together": [],
+                      "secret": false
                     }
                   ],
                   "rules": [
@@ -61650,6 +62140,524 @@
         }
       }
     },
+    "/update": {
+      "get": {
+        "operationId": "getUpdate",
+        "tags": [
+          "Health and maintenance"
+        ],
+        "summary": "Get the update status",
+        "description": "Returns the release this server runs, the newest published release Marfa found, and how this server moves to it. Requires `instance.read`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the update status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Update"
+                },
+                "example": {
+                  "release": "0.0.74",
+                  "check_enabled": true,
+                  "checked_at": "2026-11-16T15:00:00.000Z",
+                  "check_error": null,
+                  "latest": {
+                    "published_at": "2026-11-16T09:30:00.000Z",
+                    "release": "0.0.75"
+                  },
+                  "available": true,
+                  "method": "manual",
+                  "step": "Redeploy the image ghcr.io/withmarfa/marfa-server:0.0.75 on this host. For a server made with `marfa server install --docker`, run `marfa server upgrade --release 0.0.75` on that machine.",
+                  "progress": {
+                    "state": "idle",
+                    "release": null
+                  },
+                  "last": null
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "Caller lacks the required management permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        },
+        "x-marfa-local-command": true
+      },
+      "post": {
+        "operationId": "startUpdate",
+        "tags": [
+          "Health and maintenance"
+        ],
+        "summary": "Start an update",
+        "description": "Starts an update to the newest release where Marfa installed this server as a service, and returns the update status. Marfa checks the download, swaps the programs, and restarts the server. Requires `instance.maintain`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Marfa-Instance-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Returns the update status. An update already under way answers the same, and is not started again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Update"
+                },
+                "example": {
+                  "release": "0.0.74",
+                  "check_enabled": true,
+                  "checked_at": "2026-11-16T15:00:00.000Z",
+                  "check_error": null,
+                  "latest": {
+                    "published_at": "2026-11-16T09:30:00.000Z",
+                    "release": "0.0.75"
+                  },
+                  "available": true,
+                  "method": "server",
+                  "step": null,
+                  "progress": {
+                    "state": "fetching",
+                    "release": "0.0.75"
+                  },
+                  "last": null
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: a query parameter is unknown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "Caller lacks the required management permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "- `update_not_ready`: no release newer than the running one has been found, or the release check is off.\n- `update_unavailable`: this server can't update itself. `details.step` says what to do on its host, and nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UpdateNotReadyRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UpdateUnavailableRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        },
+        "x-marfa-local-command": true
+      }
+    },
     "/export": {
       "get": {
         "operationId": "exportArchive",
@@ -62165,6 +63173,13 @@
                     },
                     "previous_instance": {
                       "$ref": "#/components/schemas/PreviousInstance"
+                    },
+                    "secrets_to_set": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The secret settings the archive's instance had set that this instance holds no value it can read for. Set each again; the attention list names them until you do."
                     }
                   },
                   "required": [
@@ -62197,6 +63212,7 @@
                     "rows_imported",
                     "rows_skipped",
                     "settings_without_receiver",
+                    "secrets_to_set",
                     "enforcement_added",
                     "enforcement_skipped",
                     "not_restored"
@@ -62255,7 +63271,8 @@
                       "files/01a10128-f3e1-7ab1-b58c-a89836a748a8"
                     ],
                     "message": "Instance 01a10128-f3e1-7ab1-b58c-a89836a748a8 wrote this archive. If it took backups to this backup folder, its backups, their parts and its file copies are in backups/01a10128-f3e1-7ab1-b58c-a89836a748a8, backup-parts/01a10128-f3e1-7ab1-b58c-a89836a748a8 and files/01a10128-f3e1-7ab1-b58c-a89836a748a8. Delete them only once that instance no longer runs and nothing else restores from them."
-                  }
+                  },
+                  "secrets_to_set": []
                 }
               }
             },
@@ -62668,7 +63685,7 @@
             }
           },
           "409": {
-            "description": "`no_backup_destination`: the instance has nowhere to put backups, so it keeps none. Set `MARFA_BACKUP_PATH` to a folder, or `S3_BUCKET` to an object store, to keep them.",
+            "description": "`no_backup_destination`: the instance has nowhere to put backups, so it keeps none. Set `backup_path` to a folder, or `object_store_bucket` to an object store, to keep them.",
             "content": {
               "application/json": {
                 "schema": {
@@ -63594,6 +64611,13 @@
                         "instance_id"
                       ],
                       "description": "The backup Marfa restored."
+                    },
+                    "secrets_to_set": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The secret settings the archive's instance had set that this instance holds no value it can read for. Set each again; the attention list names them until you do."
                     }
                   },
                   "required": [
@@ -63626,6 +64650,7 @@
                     "rows_imported",
                     "rows_skipped",
                     "settings_without_receiver",
+                    "secrets_to_set",
                     "enforcement_added",
                     "enforcement_skipped",
                     "not_restored",
@@ -63677,7 +64702,8 @@
                   "backup": {
                     "name": "20261003T102400.836Z.json",
                     "instance_id": "01a10128-f3e1-7ab1-b58c-a89836a748a8"
-                  }
+                  },
+                  "secrets_to_set": []
                 }
               }
             },
@@ -64357,7 +65383,7 @@
     },
     {
       "name": "Health and maintenance",
-      "description": "How the instance is doing: its health, what needs attention, its metrics, its audit log and its housekeeping jobs.",
+      "description": "How the instance is doing: its health, what needs attention, its metrics, its audit log, its housekeeping jobs and its updates.",
       "x-operation-order": [
         "getHealth",
         "listAttention",
@@ -64365,7 +65391,9 @@
         "listAuditLog",
         "listHousekeeping",
         "runHousekeeping",
-        "confirmClock"
+        "confirmClock",
+        "getUpdate",
+        "startUpdate"
       ]
     },
     {

@@ -376,12 +376,7 @@ async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_re
     assert_eq!(said[0]["reference"], "no_backup_destination");
     assert_eq!(said[0]["title"], "No backups are kept");
     let how = said[0]["description"].as_str().unwrap();
-    for part in [
-        "MARFA_BACKUP_PATH",
-        "S3_BUCKET",
-        "marfa.env",
-        "marfa server restart",
-    ] {
+    for part in ["backup_path", "object_store_bucket", "PATCH /config"] {
         assert!(how.contains(part), "{part}: {how}");
     }
 

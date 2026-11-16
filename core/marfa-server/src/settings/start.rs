@@ -1,6 +1,5 @@
 use std::ops::Deref;
-use std::path::{Component, Path, PathBuf};
-use url::Url;
+use std::path::{Path, PathBuf};
 
 use super::Environment;
 use super::rule;
@@ -23,6 +22,15 @@ pub enum DatabasePath {
 }
 
 impl DatabasePath {
+    /// The database the environment names, whether or not the rest of its settings read.
+    pub fn named_by(environment: &Environment) -> DatabasePath {
+        DatabasePath::read(
+            environment
+                .get("MARFA_DATABASE_PATH")
+                .unwrap_or("./data/marfa.db"),
+        )
+    }
+
     fn read(text: &str) -> DatabasePath {
         if text == ":memory:" {
             DatabasePath::Memory
@@ -138,63 +146,11 @@ pub struct Fixed {
     pub blob_path: PathBuf,
     /// A folder of OCR language models read beside the ones the server carries.
     pub enrichment_tessdata_dir: Option<PathBuf>,
-    /// Never stored and never logged: its address can hold a credential.
-    pub heartbeat_url: Option<String>,
     /// Judged by the presence of the settings that name it, not by reachability.
-    pub error_receiver: bool,
-    /// Never stored: a key that may change the configuration must not reach the owner's network.
-    pub webhook_private_addresses: bool,
-    pub object_store: Option<ObjectStoreSettings>,
-    /// The folder backups go to, which the server never creates.
-    pub backup_path: Option<PathBuf>,
+    pub exception_receiver: bool,
     /// Stored at start only while the instance has no owner.
     pub claim_address: Option<Address>,
     pub owner_recovery: bool,
-}
-
-/// Never logged: the endpoint and the secret can hold credentials.
-pub struct ObjectStoreSettings {
-    pub bucket: String,
-    pub region: String,
-    pub endpoint: Option<String>,
-    pub access_key_id: Option<String>,
-    pub secret_access_key: Option<String>,
-    pub path_style: bool,
-    pub prefix: String,
-}
-
-impl ObjectStoreSettings {
-    pub fn locator(&self) -> String {
-        format!("s3://{}/{}", self.bucket, self.prefix)
-    }
-}
-
-const PREFIX_RULE: &str = "must be /-joined segments of letters, digits, `.`, `_` and `-`, \
-                           none of them `.` or `..`";
-
-fn prefix(text: &str) -> Result<String, String> {
-    let trimmed = text.trim_matches('/');
-    let fits = !trimmed.is_empty()
-        && trimmed.split('/').all(|segment| {
-            !matches!(segment, "" | "." | "..")
-                && segment
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-        });
-    if fits {
-        Ok(trimmed.to_string())
-    } else {
-        Err(PREFIX_RULE.to_string())
-    }
-}
-
-fn absolute_folder(text: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(text);
-    if path.is_absolute() && !path.components().any(|part| part == Component::ParentDir) {
-        Ok(path)
-    } else {
-        Err("must be an absolute path with no `..` in it".to_string())
-    }
 }
 
 pub struct Start {
@@ -274,52 +230,6 @@ impl Reader<'_> {
         }
     }
 
-    fn object_store(&mut self) -> Option<ObjectStoreSettings> {
-        let bucket = self.environment.get("S3_BUCKET")?.to_string();
-        let endpoint = self.url_kept_private("S3_ENDPOINT").filter(|text| {
-            // The object store's errors, which are logged, carry the whole endpoint.
-            let bare = Url::parse(text)
-                .is_ok_and(|url| url.username().is_empty() && url.password().is_none());
-            if !bare {
-                self.refuse(
-                    "S3_ENDPOINT must not carry a user name or password; set \
-                     S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY instead"
-                        .to_string(),
-                );
-            }
-            bare
-        });
-        let path_style = match endpoint {
-            Some(_) => self
-                .take("S3_FORCE_PATH_STYLE", rule::boolean)
-                .unwrap_or(true),
-            None => true,
-        };
-        let text = |name: &str| self.environment.get(name).map(str::to_string);
-        let (region, access_key_id) = (text("S3_REGION"), text("S3_ACCESS_KEY_ID"));
-        Some(ObjectStoreSettings {
-            bucket,
-            region: region.unwrap_or_else(|| "us-east-1".to_string()),
-            endpoint,
-            access_key_id,
-            secret_access_key: self.secret("S3_SECRET_ACCESS_KEY", 1),
-            path_style,
-            prefix: self
-                .take("S3_PREFIX", prefix)
-                .unwrap_or_else(|| "marfa".to_string()),
-        })
-    }
-
-    fn url_kept_private(&mut self, name: &str) -> Option<String> {
-        let text = self.environment.get(name)?;
-        let usable = Url::parse(text).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
-        if usable {
-            return Some(text.to_string());
-        }
-        self.refuse(format!("{name} must be an absolute http or https URL"));
-        None
-    }
-
     /// A secret is used as written, so whitespace around it would be part of
     /// it, and its value never reaches a refusal.
     fn secret(&mut self, name: &str, min_length: usize) -> Option<String> {
@@ -387,7 +297,6 @@ impl Fixed {
         let trust = reader.trust();
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
         let test_hooks = reader.flag("MARFA_TEST_HOOKS");
-        let webhook_private_addresses = reader.flag("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES");
         let claim_address = reader.take("MARFA_CLAIM_ADDRESS", claim_address);
         let owner_recovery = reader.flag("MARFA_OWNER_RECOVERY");
         #[cfg(feature = "test-hooks")]
@@ -419,21 +328,7 @@ impl Fixed {
             auth_secret: reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET),
         };
 
-        let heartbeat_url = reader.url_kept_private("MARFA_HEARTBEAT_URL");
-        let object_store = reader.object_store();
-        let backup_path = reader.take("MARFA_BACKUP_PATH", absolute_folder);
-        if object_store.is_some() && backup_path.is_some() {
-            reader.refuse(
-                "S3_BUCKET and MARFA_BACKUP_PATH are both set; backups go to one place, so set \
-                 only one of them"
-                    .to_string(),
-            );
-        }
-        let database = DatabasePath::read(
-            environment
-                .get("MARFA_DATABASE_PATH")
-                .unwrap_or("./data/marfa.db"),
-        );
+        let database = DatabasePath::named_by(environment);
         let control_socket = environment
             .get("MARFA_CONTROL_SOCKET")
             .map(PathBuf::from)
@@ -459,13 +354,8 @@ impl Fixed {
                 .get("MARFA_ENRICHMENT_TESSDATA_DIR")
                 .filter(|folder| !folder.is_empty())
                 .map(PathBuf::from),
-            heartbeat_url,
-            error_receiver: environment.get("MARFA_ERROR_WEBHOOK_URL").is_some()
-                || (environment.get("MARFA_POSTHOG_HOST").is_some()
-                    && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some()),
-            webhook_private_addresses,
-            object_store,
-            backup_path,
+            exception_receiver: environment.get("MARFA_POSTHOG_HOST").is_some()
+                && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some(),
             claim_address,
             owner_recovery,
         };

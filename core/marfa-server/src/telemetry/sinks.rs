@@ -9,9 +9,10 @@ use marfa_telemetry::exception::{Event, Exception};
 use marfa_telemetry::host::{CONNECT_LIMIT, may_use_proxy};
 use serde_json::{Value, json};
 
-use super::config::{Exceptions, Webhook};
+use super::config::Exceptions;
 use super::fault::Fault;
 use super::lane::Lane;
+use crate::app::outbound::notice_agent;
 
 const QUEUE: usize = 256;
 const WINDOW: Duration = Duration::from_secs(2);
@@ -96,16 +97,30 @@ fn event(report: &Report, attributes: &[(String, String)]) -> Value {
     .json()
 }
 
-pub fn webhook(config: Webhook, environment: String) -> Lane<Report> {
-    let agent = agent(config.timeout, &config.url);
+const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A report, with the error webhook and `allow_private_addresses` as they stood when it was made.
+#[derive(Clone)]
+pub struct Notice {
+    pub report: Report,
+    pub url: String,
+    pub private_allowed: bool,
+}
+
+pub fn webhook(environment: String) -> Lane<Notice> {
     let mut told: HashMap<String, Instant> = HashMap::new();
     Lane::start(
         "error-webhook",
         QUEUE,
         Duration::ZERO,
         1,
-        move |reports: Vec<Report>| {
-            for report in reports {
+        move |notices: Vec<Notice>| {
+            for Notice {
+                report,
+                url,
+                private_allowed,
+            } in notices
+            {
                 let now = Instant::now();
                 told.retain(|_, at| now.duration_since(*at) < DEBOUNCE);
                 let key = format!(
@@ -116,6 +131,12 @@ pub fn webhook(config: Webhook, environment: String) -> Lane<Report> {
                 if told.contains_key(&key) || told.len() >= MAX_DEBOUNCED {
                     continue;
                 }
+                let connect = WEBHOOK_TIMEOUT.min(CONNECT_LIMIT);
+                // A notice refused for its address was never sent, so it holds back no other.
+                let Some(agent) = notice_agent(&url, WEBHOOK_TIMEOUT, connect, private_allowed)
+                else {
+                    continue;
+                };
                 told.insert(key, now);
                 let notice = json!({
                     "timestamp": report.timestamp,
@@ -126,7 +147,7 @@ pub fn webhook(config: Webhook, environment: String) -> Lane<Report> {
                     "environment": environment,
                 });
                 let _ = agent
-                    .post(&config.url)
+                    .post(&url)
                     .header("Content-Type", "application/json")
                     .send(notice.to_string().as_bytes());
             }

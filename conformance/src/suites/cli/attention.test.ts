@@ -320,9 +320,9 @@ it(
       expect(said.code, said.stderr).toBe(0);
       expect(said.stdout).toContain("backup  No backups are kept");
       for (const part of [
-        "MARFA_BACKUP_PATH",
-        "S3_BUCKET",
-        "marfa server restart",
+        "backup_path",
+        "object_store_bucket",
+        "PATCH /config",
       ]) {
         expect(said.stdout, part).toContain(part);
       }

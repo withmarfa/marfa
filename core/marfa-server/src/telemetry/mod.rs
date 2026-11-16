@@ -25,7 +25,7 @@ pub use fault::{Fault, Kind, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
 
 use lane::Lane;
-use sinks::Report;
+use sinks::{Notice, Report};
 
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
 
@@ -41,6 +41,9 @@ pub struct Finished<'a> {
     pub error_code: Option<&'a str>,
     pub fault: Option<&'a Arc<Fault>>,
     pub reporting: bool,
+    /// Where `error_webhook_url` sends a notice of the fault, if it is set.
+    pub webhook: Option<&'a str>,
+    pub private_allowed: bool,
     pub timestamp: &'a str,
 }
 
@@ -49,7 +52,7 @@ struct Active {
     tracers: Option<SdkTracerProvider>,
     loggers: Option<SdkLoggerProvider>,
     exceptions: Option<Lane<Report>>,
-    webhook: Option<Lane<Report>>,
+    webhook: Lane<Notice>,
 }
 
 #[derive(Clone, Default)]
@@ -130,10 +133,7 @@ impl Telemetry {
             .exceptions
             .clone()
             .map(|settings| sinks::exceptions(settings, pairs.clone()));
-        let webhook = config
-            .webhook
-            .clone()
-            .map(|settings| sinks::webhook(settings, config.environment.clone()));
+        let webhook = sinks::webhook(config.environment.clone());
         let _ = self.active.set(Active {
             tracer,
             tracers,
@@ -179,8 +179,12 @@ impl Telemetry {
                     error_code: done.error_code.unwrap_or("internal_error").to_string(),
                     timestamp: done.timestamp.to_string(),
                 };
-                if let Some(lane) = &active.webhook {
-                    lane.offer(report.clone());
+                if let Some(url) = done.webhook {
+                    active.webhook.offer(Notice {
+                        report: report.clone(),
+                        url: url.to_string(),
+                        private_allowed: done.private_allowed,
+                    });
                 }
                 if let Some(lane) = &active.exceptions {
                     lane.offer(report);
@@ -201,9 +205,10 @@ impl Telemetry {
         if let Some(provider) = &active.loggers {
             let _ = provider.shutdown_with_timeout(left());
         }
-        for lane in [&active.exceptions, &active.webhook].into_iter().flatten() {
+        if let Some(lane) = &active.exceptions {
             lane.flush(left());
         }
+        active.webhook.flush(left());
     }
 }
 

@@ -12,12 +12,13 @@ import { DISK_ONLY, ownObjectStore } from "../../utils/own-blob-server.js";
 
 /**
  * Which jobs `GET /housekeeping` lists. Thirteen are listed on every instance.
- * Three are listed only where something switches them on: the heartbeat by
- * the receiver the environment names, the orphan sweep by `blob_cleanup_enabled`
- * and the backup by a place to put backups and `backup_interval_seconds`.
+ * Four are listed only where something switches them on: the heartbeat by
+ * the receiver the environment names, the orphan sweep by `blob_cleanup_enabled`,
+ * the release check by `update_check_enabled` and the backup by a place to put
+ * backups and `backup_interval_seconds`.
  *
  * Each case boots a server of its own, because the receiver and the stores
- * are the server's. The two stored settings are changed through `/config` on
+ * are the server's. The stored settings are changed through `/config` on
  * a server that lists every job, which is the witness that a job left out
  * was listed before.
  */
@@ -65,9 +66,11 @@ describe("the jobs the listing holds", () => {
   it(
     "lists the jobs every instance runs, and no job that something switches on, on an instance with none of them",
     async () => {
-      // The orphan sweep is on by default, so the instance has it too.
+      // The orphan sweep and the release check are on by default, so the instance has them too.
       const { names } = await listed("housekeeping-listing-bare", DISK_ONLY);
-      expect(names).toEqual([...EVERY_INSTANCE, "blob-orphans"].sort());
+      expect(names).toEqual(
+        [...EVERY_INSTANCE, "blob-orphans", "release-check"].sort(),
+      );
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -83,15 +86,16 @@ describe("the jobs the listing holds", () => {
         "backup",
         "blob-orphans",
         "heartbeat",
+        "release-check",
       ].sort();
       const without = (...left: string[]) =>
         all.filter((name) => !left.includes(name));
 
-      // The witness: each of the three is listed where it is switched on.
+      // The witness: each of the four is listed where it is switched on.
       const on = await listed("housekeeping-listing-on", everything);
       expect(on.names).toEqual(all);
 
-      // The two stored settings are changed with no restart, and the listing
+      // The stored settings are changed with no restart, and the listing
       // follows each.
       const operator = operatorOf(on.server);
       const nameOf = async (): Promise<string[]> =>
@@ -101,6 +105,7 @@ describe("the jobs the listing holds", () => {
       for (const [setting, off, job] of [
         ["blob_cleanup_enabled", false, "blob-orphans"],
         ["backup_interval_seconds", 0, "backup"],
+        ["update_check_enabled", false, "release-check"],
       ] as const) {
         const changed = await operator.patchConfig({ [setting]: off });
         expect(changed.status, JSON.stringify(changed.error)).toBe(200);

@@ -112,7 +112,7 @@ async function download(server: FreshServer, hash: string) {
 describe("an object store's layout under its prefix", () => {
   it("keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups and backup-parts folders", async () => {
     const store = ownObjectStore();
-    const bucket = bucketAt(store.S3_PREFIX);
+    const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
     const server = await boot("bucket-layout", store);
     const id = await instanceIdOf(server);
     const kept = await file(server, "a file under the blobs folder");
@@ -123,17 +123,23 @@ describe("an object store's layout under its prefix", () => {
     const keys = await bucket.keys();
     const files = keys.filter((key) => key.includes(hex));
     expect(files.length).toBe(1);
-    expect(files[0]!.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`)).toBe(true);
-    expect(keys).toContain(`${store.S3_PREFIX}/blobs/.marfa-store`);
+    expect(
+      files[0]!.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${hex}/`),
+    ).toBe(true);
     expect(keys).toContain(
-      `${store.S3_PREFIX}/backups/${id}/${run.data.backup.name}`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`,
+    );
+    expect(keys).toContain(
+      `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${id}/${run.data.backup.name}`,
     );
     expect(
       keys.filter(
         (key) =>
-          !key.startsWith(`${store.S3_PREFIX}/blobs/`) &&
-          !key.startsWith(`${store.S3_PREFIX}/backups/`) &&
-          !key.startsWith(`${store.S3_PREFIX}/backup-parts/${id}/`),
+          !key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/`) &&
+          !key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/backups/`) &&
+          !key.startsWith(
+            `${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${id}/`,
+          ),
       ),
     ).toEqual([]);
     expect(await bucket.partKeys(id)).not.toEqual([]);
@@ -141,12 +147,12 @@ describe("an object store's layout under its prefix", () => {
 
   it("starts beside objects an older layout left at the prefix's root, and never reads or deletes them", async () => {
     const store = ownObjectStore();
-    const bucket = bucketAt(store.S3_PREFIX);
+    const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
     const bytes = bytesOf("a file an older layout kept", 4096);
     const hex = createHash("sha256").update(bytes).digest("hex");
     const left = [
-      `${store.S3_PREFIX}/.marfa-store`,
-      `${store.S3_PREFIX}/${hex}/${randomUUID().replaceAll("-", "")}`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/.marfa-store`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/${hex}/${randomUUID().replaceAll("-", "")}`,
     ];
     await bucket.put(left[0]!, randomUUID());
     await bucket.put(left[1]!, bytes);
@@ -157,14 +163,14 @@ describe("an object store's layout under its prefix", () => {
       (found) => found.kind === "s3",
     )!;
     const marker = new TextDecoder().decode(
-      await bucket.get(`${store.S3_PREFIX}/blobs/.marfa-store`),
+      await bucket.get(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/.marfa-store`),
     );
     expect(marker.trim()).toBe(s3.id);
     const uploaded = await working.uploadBlob(bytes, "text/plain");
     expect(uploaded.status).toBe(201);
     await replicated(operator);
     const written = (await bucket.keys()).filter((key) =>
-      key.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`),
+      key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${hex}/`),
     );
     expect(written.length).toBe(1);
 
@@ -183,7 +189,7 @@ describe("two servers on one prefix", () => {
     { retry: 0 },
     async () => {
       const store = ownObjectStore();
-      const bucket = bucketAt(store.S3_PREFIX);
+      const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
       const first = await boot("bucket-first", store);
       const firstId = await instanceIdOf(first);
       const both = await file(first, "a file both servers wrote");
@@ -295,7 +301,7 @@ describe("two servers on one prefix", () => {
 
   it("refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it", async () => {
     const store = ownObjectStore();
-    const bucket = bucketAt(store.S3_PREFIX);
+    const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
     const first = await boot("bucket-own-first", store);
     const firstId = await instanceIdOf(first);
     const kept = await file(
@@ -307,7 +313,7 @@ describe("two servers on one prefix", () => {
     const hex = kept.hash.replace(/^sha256:/, "");
     const objects = async () =>
       (await bucket.keys()).filter((key) =>
-        key.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`),
+        key.startsWith(`${store.MARFA_OBJECT_STORE_PREFIX}/blobs/${hex}/`),
       );
     const firsts = await objects();
     expect(firsts.length).toBe(1);
@@ -360,7 +366,7 @@ describe("two servers on one prefix", () => {
 
   it("keeps the files a backup in its folder names when its database never recorded that backup, and deletes only the backups it recorded", async () => {
     const store = ownObjectStore();
-    const bucket = bucketAt(store.S3_PREFIX);
+    const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
     const server = await boot("bucket-image", store);
     const id = await instanceIdOf(server);
     const early = await ownerOf(server).runBackup();
@@ -373,8 +379,8 @@ describe("two servers on one prefix", () => {
     await name(server, later.hash);
     const unrecorded = await ownerOf(server).runBackup();
     expect(unrecorded.status, JSON.stringify(unrecorded.error)).toBe(200);
-    const unrecordedKey = `${store.S3_PREFIX}/backups/${id}/${unrecorded.data.backup.name}`;
-    const earlyKey = `${store.S3_PREFIX}/backups/${id}/${early.data.backup.name}`;
+    const unrecordedKey = `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${id}/${unrecorded.data.backup.name}`;
+    const earlyKey = `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${id}/${early.data.backup.name}`;
 
     await server.restart(() => {
       for (const suffix of ["", "-wal", "-shm"]) {

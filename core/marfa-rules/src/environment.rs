@@ -1,8 +1,13 @@
 //! Environment names that a program other than the server reads.
 
-/// Names the `marfa` command reads from a shell, and `marfa server run` hands on, so a server
-/// that finds one in its environment has no setting to warn of.
-pub const COMMAND_LINE: [&str; 12] = [
+/// What a service unit that `marfa server install` writes sets, so the server knows a service
+/// manager restarts it when it exits with a failure: `launchd` or `systemd`.
+pub const SERVICE: &str = "MARFA_SERVICE";
+
+/// Names the `marfa` command reads from a shell, and `marfa server run` hands on, and the one
+/// a service unit sets, so a server that finds one in its environment has no setting to warn of.
+pub const COMMAND_LINE: [&str; 13] = [
+    SERVICE,
     "MARFA_API_URL",
     "MARFA_API_KEY",
     "MARFA_PROFILE",

@@ -3,6 +3,7 @@
 pub mod address;
 mod fair;
 mod slots;
+pub mod store;
 
 pub use slots::{Asker, deliveries_released, delivery_share_is_free};
 use slots::{BOUND, Lane};
@@ -197,6 +198,52 @@ impl Resolver for Pinned {
         }
         Ok(answers)
     }
+}
+
+/// Every address `url` leads to, where each is public. The lookup blocks.
+fn public_addresses(url: &Url) -> Option<Vec<SocketAddr>> {
+    let port = url.port_or_known_default()?;
+    let found: Vec<SocketAddr> = match url.host()? {
+        Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+        Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+        Host::Domain(name) => (name, port).to_socket_addrs().ok()?.collect(),
+    };
+    let public = !found.is_empty() && found.iter().all(|at| address::is_public(at.ip()));
+    public.then_some(found)
+}
+
+/// `None` where private addresses are not allowed and `url` leads to one.
+pub fn notice_agent(
+    url: &str,
+    total: Duration,
+    connect: Duration,
+    private_allowed: bool,
+) -> Option<ureq::Agent> {
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .timeout_global(Some(total))
+        .timeout_connect(Some(connect))
+        .user_agent(concat!("marfa-server/", env!("CARGO_PKG_VERSION")));
+    if private_allowed {
+        let config = if marfa_telemetry::host::may_use_proxy(url) {
+            config
+        } else {
+            config.proxy(None)
+        };
+        return Some(config.build().into());
+    }
+    let addresses = public_addresses(&Url::parse(url).ok()?)?;
+    Some(ureq::Agent::with_parts(
+        config.proxy(None).build(),
+        ureq::unversioned::transport::DefaultConnector::default(),
+        Pinned(addresses),
+    ))
 }
 
 static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {

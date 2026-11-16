@@ -2944,7 +2944,7 @@ async fn a_move_confirmation_is_refused_once_an_item_of_the_type_changed() {
 
 #[tokio::test]
 async fn a_move_confirmation_is_refused_once_a_setting_names_the_type() {
-    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let instance = Instance::start(&[("MARFA_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
     let token = mover(&instance).await;
     let id = lead(&instance, &token, "Ada").await;
     let shown = move_preview(&instance, &token).await;
@@ -3100,7 +3100,7 @@ async fn a_move_confirmation_is_refused_once_the_type_gained_a_subtype() {
 
 #[tokio::test]
 async fn a_move_confirmation_is_stale_when_a_setting_became_blocked_after_the_preview() {
-    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let instance = Instance::start(&[("MARFA_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
     let token = mover(&instance).await;
     let id = lead(&instance, &token, "Ada").await;
     let shown = move_preview(&instance, &token).await;

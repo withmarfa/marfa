@@ -28,7 +28,8 @@ let operator: MarfaClient;
  *  booted without `pnpm marfa:up` or `pnpm garage:up`, which is a failure
  *  here rather than a skip. */
 function bootEnv(
-  name: "MARFA_API_URL" | "MARFA_CONTROL_SOCKET" | "S3_ENDPOINT",
+  name:
+    "MARFA_API_URL" | "MARFA_CONTROL_SOCKET" | "MARFA_OBJECT_STORE_ENDPOINT",
 ) {
   const value = process.env[name];
   if (!value) {
@@ -227,7 +228,7 @@ describe("the rules that keep a blob's bytes", () => {
     const link = await client.getBlobUrl(first);
     expect(link.status).toBe(200);
     expect(new URL(link.data.url).host).toBe(
-      new URL(bootEnv("S3_ENDPOINT")).host,
+      new URL(bootEnv("MARFA_OBJECT_STORE_ENDPOINT")).host,
     );
     const fetched = await fetch(link.data.url);
     expect(fetched.status).toBe(200);
@@ -253,7 +254,7 @@ describe("the rules that keep a blob's bytes", () => {
     );
     await replicateToZero();
     expect(new URL((await client.getBlobUrl(first)).data.url).host).toBe(
-      new URL(bootEnv("S3_ENDPOINT")).host,
+      new URL(bootEnv("MARFA_OBJECT_STORE_ENDPOINT")).host,
     );
   });
 
@@ -271,7 +272,7 @@ describe("the rules that keep a blob's bytes", () => {
     const link = await client.getBlobUrl(hash);
     expect(link.status).toBe(200);
     const url = new URL(link.data.url);
-    expect(url.host).toBe(new URL(bootEnv("S3_ENDPOINT")).host);
+    expect(url.host).toBe(new URL(bootEnv("MARFA_OBJECT_STORE_ENDPOINT")).host);
 
     // The witness: the link works before it is altered, so the refusal
     // below is about the alteration and not about a link that was never

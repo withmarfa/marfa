@@ -376,9 +376,9 @@ If the server of an install answers `/health` with `backups.status` `off` and `b
 
 ### `cli/command-server-status-backup-setting`
 
-If the server of an install answers `/health` with `backups.reason` `no_backup_destination`, then the CLI MUST name in `marfa server status` `MARFA_BACKUP_PATH`, `S3_BUCKET`, the install's settings file and `marfa server restart`.
+If the server of an install answers `/health` with `backups.reason` `no_backup_destination`, then the CLI MUST name in `marfa server status` `backup_path`, `object_store_bucket` and `marfa config update`.
 
-**Reason:** a person needs to know which setting to add, where, and how to make the server read it.
+**Reason:** a person needs to know which setting to set and the command that sets it.
 
 **Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`.
 

@@ -6,6 +6,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { PUBLIC_ONLY } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
@@ -197,9 +198,7 @@ describe("webhook host-name lookups", () => {
   }, 120_000);
 
   it("accepts a registration within its limit when it waits for a slot and then looks up", async () => {
-    await server.restart({
-      env: { MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: "false" },
-    });
+    await server.restart({ env: PUBLIC_ONLY });
     await server.setFault("resolve:stalled.test=stall:8000");
     const made: string[] = [];
     const register = async (label: string): Promise<number> => {

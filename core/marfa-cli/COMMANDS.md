@@ -2218,7 +2218,7 @@ marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>
 
 ### marfa backups folder
 
-The backup folder that `MARFA_BACKUP_PATH` names. Requires `backups.manage`.
+The backup folder that the `backup_path` setting names. Requires `backups.manage`.
 
 ```text
 marfa backups folder [OPTIONS] <COMMAND>
@@ -2525,6 +2525,32 @@ Take the server's clock as right. Requires `instance.maintain`. While the clock 
 
 ```text
 marfa housekeeping confirm-clock [OPTIONS]
+```
+
+## update
+
+Whether a newer release is ready, and updating the server to it.
+
+### marfa update
+
+```text
+marfa update [OPTIONS] <COMMAND>
+```
+
+### marfa update status
+
+The release the server runs, the newest release it found and when, and whether and how it can be updated. Requires `instance.read`.
+
+```text
+marfa update status [OPTIONS]
+```
+
+### marfa update start
+
+Have the server update itself to the newest release it found, where it runs as the service `marfa server install` set up. Elsewhere it changes nothing and says the step to take on the host. Requires `instance.maintain`.
+
+```text
+marfa update start [OPTIONS]
 ```
 
 ## connectors

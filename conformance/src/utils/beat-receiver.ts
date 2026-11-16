@@ -3,7 +3,7 @@ import { waitFor } from "./wait.js";
 
 /** A heartbeat receiver on loopback that counts the requests it answers. */
 export interface BeatReceiver {
-  /** The value to give `MARFA_HEARTBEAT_URL`. */
+  /** The value to give `heartbeat_url`. */
   url: string;
   count(): number;
   /** Waits until `more` beats beyond the count now have arrived. */

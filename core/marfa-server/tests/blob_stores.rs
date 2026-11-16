@@ -809,7 +809,8 @@ async fn an_object_store_that_answers_404_everywhere_has_nothing_struck() {
 }
 
 #[tokio::test]
-async fn a_start_falls_back_to_the_recorded_object_store_only_when_it_is_not_reached() {
+async fn a_start_falls_back_to_the_recorded_object_store_when_it_is_not_reached_and_reports_one_that_refuses()
+ {
     let s3 = FakeS3::start().await;
     let env = s3.settings(BUCKET, "blobs");
     let instance = Instance::start(&pairs(&env)).await;
@@ -819,33 +820,43 @@ async fn a_start_falls_back_to_the_recorded_object_store_only_when_it_is_not_rea
     instance.app.close().await;
 
     s3.set_mode(Mode::AllNotFound);
-    let refused = App::start(settings(instance.dir.path(), &pairs(&env))).await;
-    let message = refused.err().map(|failure| failure.to_string()).unwrap();
-    assert!(message.contains("s3://marfa/blobs"), "{message}");
+    let refusing = App::start(settings(instance.dir.path(), &pairs(&env)))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    let trouble = refusing.blobs.trouble().unwrap();
+    assert!(trouble.contains("s3://marfa/blobs"), "{trouble}");
+    assert!(refusing.blobs.s3().is_none());
+    refusing.close().await;
 
     let mut closed = env.clone();
     closed[2].1 = closed_endpoint().await;
-    let again = App::start(settings(instance.dir.path(), &pairs(&closed))).await;
-    assert!(
-        again.is_ok(),
-        "{:?}",
-        again.err().map(|failure| failure.to_string())
-    );
+    let again = App::start(settings(instance.dir.path(), &pairs(&closed)))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    assert!(again.blobs.trouble().is_none());
+    assert!(again.blobs.s3().is_some());
 }
 
 #[tokio::test]
-async fn a_start_refused_for_its_object_store_leaves_the_blob_folder_untouched() {
+async fn a_start_whose_object_store_never_answered_serves_from_the_disk_and_reports_it() {
     let dir = TempDir::new().unwrap();
     let endpoint = closed_endpoint().await;
     let env = [
-        ("S3_BUCKET", BUCKET),
-        ("S3_ENDPOINT", endpoint.as_str()),
-        ("S3_ACCESS_KEY_ID", "test-key"),
-        ("S3_SECRET_ACCESS_KEY", "test-secret"),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
+        ("MARFA_OBJECT_STORE_BUCKET", BUCKET),
+        ("MARFA_OBJECT_STORE_ENDPOINT", endpoint.as_str()),
+        ("MARFA_OBJECT_STORE_ACCESS_KEY_ID", "test-key"),
+        ("MARFA_OBJECT_STORE_SECRET_ACCESS_KEY", "test-secret"),
     ];
-    let refused = App::start(settings(dir.path(), &env)).await;
-    assert!(refused.is_err());
-    assert!(!dir.path().join("blobs").exists());
+    let app = App::start(settings(dir.path(), &env))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    let trouble = app.blobs.trouble().unwrap();
+    assert!(trouble.contains("did not answer"), "{trouble}");
+    assert!(app.blobs.s3().is_none() && !app.blobs.replicates());
 }
 
 #[tokio::test]

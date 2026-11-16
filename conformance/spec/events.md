@@ -1679,7 +1679,7 @@ If a redelivery names a `failed` delivery older than the effective audit retenti
 
 ## Where a webhook may send
 
-These rules hold where the instance does not allow private addresses, which is the default. An operator whose receivers run on a private network allows them with `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true`, and the run's own server sets it because every other fixture's receiver is on loopback. The address fixtures boot a server of their own that does not.
+These rules hold where the instance does not allow private addresses, which is the default. An operator whose receivers run on a private network allows them with `allow_private_addresses` set to `true` through the private local process (`instance/private-addresses-local`), and the run's own server sets it because every other fixture's receiver is on loopback. The address fixtures boot a server of their own that does not.
 
 ### `events/address-private`
 
@@ -1697,7 +1697,7 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 ### `events/address-refusal-setting`
 
-Where the instance does not allow private addresses, if the server answers `400 validation_error` to a `url` for an address that is not public, then the server MUST name `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` in the error's `message`.
+Where the instance does not allow private addresses, if the server answers `400 validation_error` to a `url` for an address that is not public, then the server MUST name `allow_private_addresses` in the error's `message`.
 
 **Reason:** the caller reading the refusal is often the person who runs the instance, and the setting is the one thing that changes the answer.
 

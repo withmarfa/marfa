@@ -256,6 +256,36 @@ const MEASURING_SETTINGS = {
 };
 
 /**
+ * The stored settings a server with hooks seeds from these variables, which a
+ * server without hooks ignores: the adapter writes them through
+ * `PATCH /config` instead, as an owner would. An empty value sets nothing.
+ */
+const SEEDED_BY_NAME: Record<string, "text" | "boolean"> = {
+  MARFA_BACKUP_PATH: "text",
+  MARFA_OBJECT_STORE_BUCKET: "text",
+  MARFA_OBJECT_STORE_REGION: "text",
+  MARFA_OBJECT_STORE_ENDPOINT: "text",
+  MARFA_OBJECT_STORE_PATH_STYLE: "boolean",
+  MARFA_OBJECT_STORE_PREFIX: "text",
+  MARFA_OBJECT_STORE_ACCESS_KEY_ID: "text",
+  MARFA_OBJECT_STORE_SECRET_ACCESS_KEY: "text",
+  MARFA_HEARTBEAT_URL: "text",
+  MARFA_ERROR_WEBHOOK_URL: "text",
+  MARFA_ALLOW_PRIVATE_ADDRESSES: "boolean",
+};
+
+function storedFrom(env: Record<string, string | undefined>) {
+  const body: Record<string, string | boolean> = {};
+  for (const [name, kind] of Object.entries(SEEDED_BY_NAME)) {
+    const value = env[name];
+    if (value === undefined || value === "") continue;
+    const key = name.slice("MARFA_".length).toLowerCase();
+    body[key] = kind === "boolean" ? /^(true|1|yes|on)$/i.test(value) : value;
+  }
+  return body;
+}
+
+/**
  * The program `MARFA_SERVER_BIN` names. It is never guessed: a release build
  * without the test hooks would boot and fail every fixture that needs them.
  */
@@ -574,11 +604,12 @@ async function startServer(args: BootOptions): Promise<Started> {
     // default here: `marfa:up` says `false` outright, so an ambient
     // variable cannot flip the instance every other file shares.
     MARFA_RATE_LIMIT_ENABLED: process.env.MARFA_RATE_LIMIT_ENABLED || "false",
-    // Every webhook fixture delivers to a receiver on loopback, which a
-    // server refuses by default. On unless the caller says otherwise, so the
-    // fixture about that refusal can boot a server of its own with it off.
-    MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
-      process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
+    // Every webhook fixture delivers to a receiver on loopback, and the run's
+    // object store listens there, which a server refuses by default. On
+    // unless the caller says otherwise, so the fixtures about that refusal
+    // can boot a server of their own with it off.
+    MARFA_ALLOW_PRIVATE_ADDRESSES:
+      process.env.MARFA_ALLOW_PRIVATE_ADDRESSES || "true",
   };
   // The program carries its test hooks, unless the run says it is a release
   // build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
@@ -830,17 +861,22 @@ export async function bootServer(args: BootOptions): Promise<void> {
     managementKey = management.body.key;
   }
   if (status.body.claimed !== true && hookFreeRun()) {
-    const set = await fetch(`${url}/config`, {
+    // Through the private local process: only it changes `allow_private_addresses`.
+    const set = await controlRequest(controlSocket, "/config", {
       method: "PATCH",
-      headers: {
-        authorization: `Bearer ${managementKey}`,
-        "content-type": "application/json",
+      body: {
+        ...MEASURING_SETTINGS,
+        ...storedFrom({
+          ...process.env,
+          MARFA_ALLOW_PRIVATE_ADDRESSES:
+            process.env.MARFA_ALLOW_PRIVATE_ADDRESSES || "true",
+          ...args.env,
+        }),
       },
-      body: JSON.stringify(MEASURING_SETTINGS),
     });
-    if (!set.ok) {
+    if (set.status !== 200) {
       throw new Error(
-        `Setting the instance up for measuring answered ${String(set.status)}: ${(await set.text()).slice(0, 300)}`,
+        `Setting the instance up for measuring answered ${String(set.status)}: ${JSON.stringify(set.body).slice(0, 300)}`,
       );
     }
   }
@@ -993,6 +1029,7 @@ function clearState(state: string): void {
     `${p.db}-wal`,
     `${p.db}-shm`,
     `${p.db}.server-lock`,
+    resolve(state, "marfa.settings.key"),
     p.env,
     p.log,
     p.stderr,

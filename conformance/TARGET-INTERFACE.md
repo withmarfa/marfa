@@ -113,6 +113,10 @@ stays because that thing is what it checks.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
+- `compliance/secret-settings.test.ts` searches the database file and the log
+  beside it for a secret setting's value, because the contract is about the
+  bytes at rest, and removes or damages `marfa.settings.key` while the server is
+  stopped, because only a lost or broken disk loses the key.
 - `compliance/type-conflicts.test.ts` writes a stored type definition. Only a
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,
@@ -210,8 +214,9 @@ and a value passed for one replaces its own:
   names, it is unset unless the last boot of the same state had it there.
   `MARFA_SIGN_IN_ADDRESS=` boots with none.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
-  webhook delivery to private addresses allowed, so the fixtures can use a
-  receiver on the loopback address.
+  private addresses allowed (`allow_private_addresses`), so the fixtures can
+  use a receiver and the object store on the loopback address. A release build
+  without hooks takes the setting through the private socket.
 - `MARFA_TEST_HOOKS` true.
 
 ## Stopping a server nobody stopped
@@ -304,7 +309,7 @@ the answer stored for a repeated request.
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
 A name is `hold:<point>`, `fail:<point>`, `refuse:<point>`, `release:<point>`, `deadline:<job>`, `free:<volume>`, `limit:<lane>`,
-`unreadable:<stored>`, `lose:blob`, `damage:blob`, `damage:blob-unreadable`, `hide:event`, `hide:webhook-position`,
+`unreadable:<stored>`, `lose:blob`, `damage:blob`, `damage:blob-unreadable`, `hide:event`, `hide:webhook-position`, `release-feed`,
 `unfold-deadline`, `store-check-deadline` or `resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
 not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
@@ -380,6 +385,7 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `damage:blob-unreadable=<hashes>`      | A read of each named blob from the disk store, and a question whether the disk store holds it, fail with `EIO`, until the store deletes that blob or the fault is cleared or set again. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `hide:event=<first>[-<last>]`          | The server reads the events with ids from `<first>` to `<last>` (one id when `-<last>` is left out) as absent when it queues webhook deliveries, until the fault is cleared or set again. The server's own checks of its place in the log then meet the gap. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                      |
 | `hide:webhook-position`                | The server reads the place it keeps in the event log for webhooks as absent, until the fault is cleared. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `release-feed=<address>`               | The release check asks the http or https address named, in place of GitHub, and may reach one on this machine. A target with test hooks asks nobody for a release until this fault is armed. The check keeps what the address answers, as `GET /update` reads it.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `store-check-deadline=<ms>`            | Shortens the 15,000 ms the target waits for a store to answer whether it holds a blob, to open its bytes, or to delete them, and the 15,000 ms a write waits before the time it allows for the blob's size, so a fixture shows what a store that does not answer does without waiting out the 15 seconds. It tests the bound, not the 15,000 ms.                                                                                                                                                                                                                                                                                                                                                       |
 
 For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. Scripted answers replace only the underlying DNS resolver: every call to it consumes one answer, including an erroneous second lookup after the address check. The normal address check applies unchanged. The socket translates a returned checked address to its connected address without resolving or consuming another answer. The mapping remains necessary to exercise the public-address check with a loopback receiver.

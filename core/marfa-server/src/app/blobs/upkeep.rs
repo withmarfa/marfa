@@ -346,6 +346,9 @@ pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
     match error.kind() {
         io::ErrorKind::TimedOut => "the object store did not answer in time",
         io::ErrorKind::NotFound => "the bucket or the file was not found",
+        io::ErrorKind::PermissionDenied => {
+            "the object store refused access with the access key and secret it was given"
+        }
         _ => "the object store refused or failed the request, and the server's log has the detail",
     }
 }

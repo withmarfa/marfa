@@ -42,8 +42,8 @@ import { waitFor } from "../../utils/wait.js";
 
 /**
  * Backups to the object store a server is given: one manifest object per
- * backup under `<S3_PREFIX>/backups/<instance id>/`, naming parts under
- * `<S3_PREFIX>/backup-parts/<instance id>/` that make an archive with no file
+ * backup under `<MARFA_OBJECT_STORE_PREFIX>/backups/<instance id>/`, naming parts under
+ * `<MARFA_OBJECT_STORE_PREFIX>/backup-parts/<instance id>/` that make an archive with no file
  * bytes,
  * taken on a schedule or when the owner asks, listed and restored by the
  * owner alone. Each server here has a prefix of its own, so its bucket holds
@@ -54,7 +54,7 @@ const OTHER_INSTANCE = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const YEAR_SECONDS = "31536000";
 const AUTH_SECRET = `backups-${"s".repeat(40)}-${String(Date.now())}`;
 const store = ownObjectStore();
-const bucket = bucketAt(store.S3_PREFIX);
+const bucket = bucketAt(store.MARFA_OBJECT_STORE_PREFIX);
 let origin: FreshServer;
 let originId: string;
 let fresh: FreshServer | undefined;
@@ -174,7 +174,7 @@ describe("a backup in the object store", () => {
     firstName = name;
 
     expect(await bucket.backupKeys()).toEqual([
-      `${store.S3_PREFIX}/backups/${originId}/${name}`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${originId}/${name}`,
     ]);
     const stored = await backupInBucket(bucket, originId, name);
     expect(storedSize(stored)).toBe(size_bytes);
@@ -197,7 +197,7 @@ describe("a backup in the object store", () => {
         ...new Set(
           stored.manifest.parts.map(
             (part) =>
-              `${store.S3_PREFIX}/backup-parts/${originId}/${partName(part)}`,
+              `${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${originId}/${partName(part)}`,
           ),
         ),
       ].sort(),
@@ -281,8 +281,8 @@ describe("a backup in the object store", () => {
       origin.managementKey,
       TEST_OWNER.password,
       AUTH_SECRET,
-      process.env.S3_ACCESS_KEY_ID!,
-      process.env.S3_SECRET_ACCESS_KEY!,
+      process.env.MARFA_OBJECT_STORE_ACCESS_KEY_ID!,
+      process.env.MARFA_OBJECT_STORE_SECRET_ACCESS_KEY!,
     ];
     // What a sign-in is found by: the digest the instance keeps of its token.
     const signIns = withInstanceDatabase(origin.sqlitePath, (db) =>
@@ -373,10 +373,12 @@ describe("a backup in the object store", () => {
       instance_id: originId,
       destination: "bucket",
       kept_by_previous_instance: [
-        `${store.S3_PREFIX}/backups/${originId}`,
-        `${store.S3_PREFIX}/backup-parts/${originId}`,
+        `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${originId}`,
+        `${store.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${originId}`,
       ],
-      message: expect.stringContaining(`${store.S3_PREFIX}/blobs/`),
+      message: expect.stringContaining(
+        `${store.MARFA_OBJECT_STORE_PREFIX}/blobs/`,
+      ),
     });
     expect((await working.getItem(made.note)).status).toBe(200);
     const read = await operator.downloadBlob(made.hash);
@@ -391,11 +393,11 @@ describe("a backup in the object store", () => {
 
   it("answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's", async () => {
     await bucket.put(
-      `${store.S3_PREFIX}/backups/${originId}/notes.json`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/backups/${originId}/notes.json`,
       "not a backup",
     );
     await bucket.put(
-      `${store.S3_PREFIX}/backups/deeper/${firstName}`,
+      `${store.MARFA_OBJECT_STORE_PREFIX}/backups/deeper/${firstName}`,
       "not a backup",
     );
     const owner = ownerOf(origin);
@@ -507,7 +509,7 @@ describe("a backup taken while replication is held", () => {
 
   it("calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again", async () => {
     const own = ownObjectStore();
-    const mine = bucketAt(own.S3_PREFIX);
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backups-integrity-struck", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
@@ -576,7 +578,7 @@ describe("a backup taken while replication is held", () => {
 
   it("calls the backups failing, not incomplete, in health and attention while files wait for their copy and a part an older backup names is damaged", async () => {
     const own = ownObjectStore();
-    const mine = bucketAt(own.S3_PREFIX);
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backups-incomplete-damaged", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
@@ -623,7 +625,7 @@ describe("a backup taken while replication is held", () => {
         (await backupConcerns(server)).map((concern) => concern.reference),
       ).toEqual(["incomplete"]);
 
-      const key = `${own.S3_PREFIX}/backup-parts/${id}/${partName(olderItems)}`;
+      const key = `${own.MARFA_OBJECT_STORE_PREFIX}/backup-parts/${id}/${partName(olderItems)}`;
       const whole = await mine.get(key);
       const changed = new Uint8Array(whole);
       changed[Math.floor(changed.length / 2)]! ^= 0x01;
@@ -653,7 +655,7 @@ describe("a backup taken while replication is held", () => {
 describe("the backup schedule", () => {
   it("skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked", async () => {
     const own = ownObjectStore();
-    const mine = bucketAt(own.S3_PREFIX);
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backups-unchanged", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
@@ -687,7 +689,7 @@ describe("the backup schedule", () => {
 
   it("takes a scheduled backup after a batch changes rows, and skips one when nothing changed", async () => {
     const own = ownObjectStore();
-    const mine = bucketAt(own.S3_PREFIX);
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backups-rows", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
@@ -716,7 +718,7 @@ describe("the backup schedule", () => {
 
   it("backs up on its interval with no request", async () => {
     const own = ownObjectStore();
-    const mine = bucketAt(own.S3_PREFIX);
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backups-interval", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: "1",
@@ -740,7 +742,7 @@ describe("the backup schedule", () => {
 
   it("takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing", async () => {
     const own = ownObjectStore();
-    const mine = bucketAt(own.S3_PREFIX);
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
     const server = await bootFreshServer("backups-off", {
       ...own,
       MARFA_BACKUP_INTERVAL_SECONDS: "0",
@@ -801,9 +803,9 @@ describe("the backup schedule", () => {
         }),
       ]);
       for (const part of [
-        "MARFA_BACKUP_PATH",
-        "S3_BUCKET",
-        "marfa server restart",
+        "backup_path",
+        "object_store_bucket",
+        "PATCH /config",
       ]) {
         expect(concerns[0]!.description).toContain(part);
       }
@@ -821,7 +823,7 @@ describe("the backup schedule", () => {
         "turned_off",
       ]);
       expect(concerns[0]!.title).toBe("Scheduled backups are turned off");
-      expect(concerns[0]!.description).not.toContain("MARFA_BACKUP_PATH");
+      expect(concerns[0]!.description).not.toContain("backup_path");
     } finally {
       await off.stop();
     }

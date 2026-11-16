@@ -84,6 +84,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **local authority**: Authority that only the private Unix socket supplies, to a process running under the server's operating-system account. Not an API key, and never asserted through public HTTP.
 - **local command**: A request made with local authority, over the private socket: the route to what no key may do, such as claiming the instance, recovering the owner's password and minting a key with no ceiling. A write it makes has the writer `kind` `local`. Not an API key, and not a command of the CLI.
 - **setup code**: A machine-issued proof that authorizes one owner claim. It grants no API access.
+- **secret setting**: A stored setting that holds a credential, such as `object_store_secret_access_key`, `heartbeat_url` or `error_webhook_url`. The server seals it with a key that stays beside the database, says only whether it is set, and never puts its value in an answer, a log, a backup or an archive. Not a start-only secret such as `MARFA_AUTH_SECRET`, which the environment or `marfa.secrets` holds.
 
 ### Access words
 
@@ -135,7 +136,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 - **contract version**: One integer, answered at `GET /` as `contract`, sent on every answer as `X-Marfa-Contract` and carried as the API document's `info.version`. Not the product version and not the build.
 - **housekeeping**: The periodic jobs the server runs on itself, from one table and one scheduler; `housekeeping.md` lists them. What stays of a connector's data is `housekeeping/connector-state-kept`. One is "a housekeeping job", never a job alone: a bare job is a queued bulk action.
 - **archive**: The file `GET /export?format=archive` writes and `POST /restore` reads: a `manifest.json` with its own `version`, and the items and instance lines. Its version is the archive version, a number of its own, and not the contract version. A backup is a manifest and the parts it names, which together make an archive. Not the `archived` state of an item, which is `state` alone.
-- **backup**: An archive of the instance that the server puts in the object store (`S3_BUCKET`) or the backup folder (`MARFA_BACKUP_PATH`), on a schedule and when the owner asks with `POST /backups`. It holds every item and instance line, the trash included, and no file bytes and no credential. Not an export, which a credential reads of its own reach, and not a copy of the data directory.
+- **backup**: An archive of the instance that the server puts in the object store (`object_store_bucket`) or the backup folder (`backup_path`), on a schedule and when the owner asks with `POST /backups`. It holds every item and instance line, the trash included, and no file bytes, no credential and no secret setting's value. Not an export, which a credential reads of its own reach, and not a copy of the data directory.
 
 ### Devices and folders
 

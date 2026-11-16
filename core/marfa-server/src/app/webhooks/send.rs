@@ -273,7 +273,10 @@ async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Opti
     let Ok(url) = Url::parse(&ready.url) else {
         return Ok(Some(Attempted::Sent(Outcome::Unreachable)));
     };
-    let private_allowed = app.settings.start.webhook_private_addresses;
+    let private_allowed = app
+        .settings
+        .live()
+        .get(crate::settings::registry::ALLOW_PRIVATE_ADDRESSES);
     let reached = outbound::reach(&app.faults, &url, private_allowed, Asker::Delivery(maker));
     let targets = match reached.await {
         Reach::Targets(targets) => targets,
