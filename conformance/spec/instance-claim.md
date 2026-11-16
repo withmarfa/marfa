@@ -540,6 +540,14 @@ If a key or app submits `PATCH /profile` with a field it lacks current write per
 
 **Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `› refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not`.
 
+### `instance-claim/profile-email-named`
+
+If a key or an app whose profile permissions hold `*` at `write` but do not name `email` at `write` submits `PATCH /profile` containing `email`, then the server MUST answer `403 forbidden` with `details.profile_field` `email` and leave the email as it was.
+
+**Reason:** Password sign-in matches the email, so a credential changes it only when it was granted that by name.
+
+**Tests:** `compliance/profile.test.ts › changes the email only for a credential that names email write, never through the profile wildcard`.
+
 ### `instance-claim/owner-avatar-upload`
 
 When the private local command sends `PUT /profile/avatar` with the bytes of a PNG, JPEG or WebP avatar, the server MUST store them as the owner's avatar and return the owner's profile.

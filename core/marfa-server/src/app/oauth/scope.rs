@@ -1016,7 +1016,11 @@ mod tests {
             level("metadata.types:write", Axis::Metadata, "edge_types"),
             Level::None
         );
-        assert_eq!(level("profile:write", Axis::Profile, "email"), Level::Write);
+        assert_eq!(level("profile:write", Axis::Profile, "email"), Level::Read);
+        assert_eq!(
+            level("profile:write profile.email:write", Axis::Profile, "email"),
+            Level::Write
+        );
         assert_eq!(level("profile:write", Axis::Profile, "name"), Level::Write);
         assert!(to_grants(&set("keys.mint offline_access")).holds(Permission::KeysMint));
     }

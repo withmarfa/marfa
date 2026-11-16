@@ -120,7 +120,8 @@ pub struct PermissionMapArgs {
     /// `edge_types=write`, repeatable.
     #[arg(long = "metadata-permission", value_name = "NAME=LEVEL")]
     pub metadata_permissions: Vec<String>,
-    /// A profile field and its level, `email=read`, repeatable.
+    /// A profile field and its level, `name=write`, repeatable. Only
+    /// `email=write` lets the key change the email; `*=write` does not.
     #[arg(long = "profile-permission", value_name = "FIELD=LEVEL")]
     pub profile_permissions: Vec<String>,
     /// The enforcement override, as the JSON object the operation takes.
@@ -174,10 +175,12 @@ impl PermissionMapArgs {
                     && map.iter().any(|(field, level)| {
                         !matches!(field.as_str(), "*" | "name" | "email" | "avatar")
                             || !matches!(level.as_str(), Some("read" | "write"))
-                            || (field == "email" && level != "read")
                     })
                 {
-                    return Err(CliError::Invalid("profile permissions accept *, name, email, or avatar at read or write; email accepts only read".into()));
+                    return Err(CliError::Invalid(
+                        "profile permissions accept *, name, email, or avatar at read or write"
+                            .into(),
+                    ));
                 }
                 body.insert(key.into(), Value::Object(map));
             }
@@ -707,6 +710,39 @@ mod access_tests {
         let printed = minted_text(&minted);
         assert!(printed.starts_with("marfa_k1_secret\nkey key_1 (Reader);"));
         assert!(printed.ends_with("\n  Powers: Read the activity log"));
+    }
+}
+
+#[cfg(test)]
+mod profile_permission_tests {
+    use super::*;
+
+    fn applied(values: &[&str]) -> Result<Map<String, Value>, CliError> {
+        let args = PermissionMapArgs {
+            profile_permissions: values.iter().map(|value| value.to_string()).collect(),
+            ..PermissionMapArgs::default()
+        };
+        let mut body = Map::new();
+        args.apply(&mut body)?;
+        Ok(body)
+    }
+
+    #[test]
+    fn email_write_is_asked_for_by_name_and_an_unknown_field_or_level_is_refused() {
+        let body = applied(&["*=write", "email=write"]).unwrap();
+        assert_eq!(
+            body["profile_permissions"],
+            json!({ "*": "write", "email": "write" })
+        );
+        for wrong in ["age=read", "email=admin"] {
+            match applied(&[wrong]) {
+                Err(CliError::Invalid(message)) => assert_eq!(
+                    message,
+                    "profile permissions accept *, name, email, or avatar at read or write"
+                ),
+                other => panic!("{wrong} gave {other:?}"),
+            }
+        }
     }
 }
 

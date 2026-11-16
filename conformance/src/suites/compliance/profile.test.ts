@@ -157,6 +157,40 @@ describe("owner and delegated profile changes", () => {
     expect(result).not.toHaveProperty("ok");
     await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
+  it("changes the email only for a credential that names email write, never through the profile wildcard", async () => {
+    const wildcard = await mint("profile-wildcard-write", { "*": "write" });
+    // The witness: the wildcard writes the name and reads the email.
+    expect(
+      (await profile({ name: "Wildcard writer" }, wildcard.key)).status,
+    ).toBe(200);
+    const email = (await read()).email as string;
+    const shown = await fetch(server.apiUrl + "/profile", {
+      headers: { authorization: `Bearer ${wildcard.key}` },
+    });
+    expect(((await shown.json()) as { email: string }).email).toBe(email);
+    try {
+      const refused = await profile(
+        { email: "wildcard@example.test" },
+        wildcard.key,
+      );
+      expect(refused.status).toBe(403);
+      expect(
+        ((await refused.json()) as { error: { details: unknown } }).error
+          .details,
+      ).toMatchObject({ profile_field: "email", required: "write" });
+      expect((await read()).email).toBe(email);
+
+      const named = await mint("profile-email-named", {
+        "*": "write",
+        email: "write",
+      });
+      const moved = await profile({ email: "named@example.test" }, named.key);
+      expect(moved.status).toBe(200);
+      expect((await read()).email).toBe("named@example.test");
+    } finally {
+      expect((await owner({ email })).status).toBe(200);
+    }
+  });
   it("refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not", async () => {
     const made = await mint("profile-name-lost", { name: "write" });
     const key = made.key;

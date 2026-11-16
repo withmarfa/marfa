@@ -1904,7 +1904,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
 | `--edge-permission <TYPE=LEVEL>` | An edge type and its level, `references=write`, repeatable. |
 | `--metadata-permission <NAME=LEVEL>` | A kind of registration and its level, `types=write` or `edge_types=write`, repeatable. |
-| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `email=read`, repeatable. |
+| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `name=write`, repeatable. Only `email=write` lets the key change the email; `*=write` does not. |
 | `--enforcement-override <JSON>` | The enforcement override, as the JSON object the operation takes. |
 | `--claim <SOURCE>` | A source a write under the key may name, so its items are keyed by it. Repeatable. |
 | `--no-claims` | Claim no source besides the key's own, asked for out loud. On a mint naming no permission or map, naming the claims is naming what the key holds: it holds no map and no permission either. |
@@ -1949,7 +1949,7 @@ marfa keys update [OPTIONS] <ID>
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
 | `--edge-permission <TYPE=LEVEL>` | An edge type and its level, `references=write`, repeatable. |
 | `--metadata-permission <NAME=LEVEL>` | A kind of registration and its level, `types=write` or `edge_types=write`, repeatable. |
-| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `email=read`, repeatable. |
+| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `name=write`, repeatable. Only `email=write` lets the key change the email; `*=write` does not. |
 | `--enforcement-override <JSON>` | The enforcement override, as the JSON object the operation takes. |
 | `--no-type-permissions` | Empty the type permission map on this update. |
 | `--no-extension-permissions` | Empty the extension permission map on this update. |

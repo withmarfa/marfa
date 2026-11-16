@@ -228,9 +228,7 @@ pub fn description(row: &LevelRow) -> Option<String> {
         (Reach::Metadata, "metadata") => "The types and relationship types you have defined",
         (Reach::Metadata, "metadata.types") => "The kinds of item you have defined",
         (Reach::Metadata, "metadata.edge_types") => "The kinds of link you have defined",
-        (Reach::Profile, "profile") if writes => {
-            "Read and change your name, email address and avatar"
-        }
+        (Reach::Profile, "profile") if writes => "Read and change your name and avatar",
         (Reach::Profile, "profile") => "Your name, email address and avatar",
         (Reach::Profile, "profile.name") if writes => "Read and change your name",
         (Reach::Profile, "profile.name") => "Your name",
