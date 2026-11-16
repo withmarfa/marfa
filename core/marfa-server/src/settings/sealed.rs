@@ -231,7 +231,9 @@ impl Sealer {
 
     #[cfg(test)]
     pub fn for_tests() -> Sealer {
-        Sealer::with(&[7u8; KEY_BYTES], Found::Kept).expect("a key of the right length")
+        let mut key = [0u8; KEY_BYTES];
+        getrandom::fill(&mut key).expect("randomness for a test key");
+        Sealer::with(&key, Found::Kept).expect("a key of the right length")
     }
 }
 
