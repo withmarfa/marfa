@@ -306,11 +306,11 @@ When a request other than `OPTIONS` names a method no operation serves on a path
 
 ### `errors/unmatched-options`
 
-When an `OPTIONS` request is not a preflight that `keys-and-oauth/page-origin-allowed`, `keys-and-oauth/origin-configured` or `keys-and-oauth/register-preflight` answers, the server MUST answer `404 not_found`.
+When an `OPTIONS` request is not a preflight that `keys-and-oauth/preflight-takes` or `keys-and-oauth/register-preflight` answers, the server MUST answer `404 not_found`.
 
 **Reason:** no operation takes `OPTIONS`, so a `204` to any other would say one does. A browser reads a preflight without `Access-Control-Allow-Origin` as a refusal whatever its status.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none`, `compliance/web-page-origin.test.ts › refuses a preflight for a method no operation at its path takes, for a path none serves, and for a header that is no name`, `compliance/web-page-register.test.ts › answers an OPTIONS to registration that is no preflight for POST 404 not_found`.
 
 ### `errors/unmatched-reach`
 

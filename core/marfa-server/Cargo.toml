@@ -48,6 +48,7 @@ marfa-allocator.workspace = true
 marfa-enrichment.workspace = true
 marfa-rules.workspace = true
 marfa-telemetry.workspace = true
+matchit = "0.8"
 object_store = { version = "0.14", default-features = false, features = ["aws"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 opentelemetry-http = { version = "0.33", default-features = false }

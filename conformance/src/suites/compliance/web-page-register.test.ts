@@ -175,6 +175,42 @@ describe("a page that has never been registered", () => {
     expect(other.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("answers an OPTIONS to registration that is no preflight for POST 404 not_found", async () => {
+    const origin = "https://not-preflighting.web-page-register.test";
+    // The witness: the preflight for POST is answered to the same origin.
+    const served = await fetch(`${server.apiUrl}/oauth/register`, {
+      method: "OPTIONS",
+      headers: {
+        origin,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    expect(served.status).toBe(204);
+    const notServed: Record<string, string>[] = [
+      { origin },
+      {},
+      { origin, "access-control-request-method": "DELETE" },
+      { "access-control-request-method": "POST" },
+    ];
+    for (const headers of notServed) {
+      const refused = await fetch(`${server.apiUrl}/oauth/register`, {
+        method: "OPTIONS",
+        headers,
+      });
+      const label = JSON.stringify(headers);
+      expect(refused.status, label).toBe(404);
+      expect(
+        ((await refused.json()) as { error: { code: string } }).error.code,
+        label,
+      ).toBe("not_found");
+      expect(
+        refused.headers.get("access-control-allow-origin"),
+        label,
+      ).toBeNull();
+    }
+  });
+
   it("still refuses that origin on a data operation and at the token endpoint before approval", async () => {
     const origin = "https://unapproved.web-page-register.test";
     expect((await registerFrom(origin)).status).toBe(201);

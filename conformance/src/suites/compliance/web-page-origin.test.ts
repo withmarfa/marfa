@@ -1,4 +1,6 @@
+import { request as httpRequest } from "node:http";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -33,6 +35,7 @@ let issuer: string;
 let cookie: string;
 
 const CONFIGURED = "https://configured.web-page-origin.test";
+const LOOPBACK = "http://localhost:5173";
 const SCOPE = "core.note:read core.note:write";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 /** What an approval page says beside the addresses it names. */
@@ -43,7 +46,7 @@ const shown = (origin: string): string => origin.replace(/^https:\/\//, "");
 
 beforeAll(async () => {
   server = await bootFreshServer("web-page-origin", {
-    MARFA_CORS_ORIGINS: CONFIGURED,
+    MARFA_CORS_ORIGINS: `${CONFIGURED},${LOOPBACK}`,
   });
   issuer = await issuerOrigin(server);
   cookie = await signIn(server, issuer);
@@ -366,6 +369,25 @@ describe("a web page's address", () => {
     await expectRefused(origin, server.workingKey);
   });
 
+  it("answers the request that disconnects a page's last grant with its origin allowed, and the next request without", async () => {
+    const origin = "https://disconnecting.web-page-origin.test";
+    const page = await registerPage([`${origin}/callback`]);
+    const { access } = await approve(page);
+    // The witness: the origin is allowed until the delete.
+    await expectAllowed(origin, access);
+    const grant = await grantOf(page);
+    expect(grant, "the page is not listed").toBeDefined();
+    const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
+      method: "DELETE",
+      headers: { origin, authorization: `Bearer ${server.managementKey}` },
+    });
+    await revoked.body?.cancel();
+    expect(revoked.status).toBe(200);
+    expect(revoked.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(await grantOf(page)).toBeUndefined();
+    await expectRefused(origin, server.workingKey);
+  });
+
   it("keeps an origin approved twice until its one grant is disconnected", async () => {
     const origin = "https://twice.web-page-origin.test";
     const page = await registerPage([`${origin}/callback`]);
@@ -440,6 +462,226 @@ describe("a web page's address", () => {
       "https://beside-configured.web-page-origin.test",
       server.workingKey,
     );
+  });
+
+  it("refuses a loopback origin that nothing names, and allows one cors_origins names", async () => {
+    // The witness: the loopback origin the setting names is allowed.
+    await expectAllowed(LOOPBACK, server.workingKey);
+    for (const origin of [
+      "http://localhost:5174",
+      "http://127.0.0.1:5173",
+      "http://[::1]:5173",
+      "http://localhost",
+    ]) {
+      await expectRefused(origin, server.workingKey);
+    }
+  });
+
+  it("takes an origin off the next request once cors_origins stops naming it", async () => {
+    const removable = "https://removable.web-page-origin.test";
+    const name = (origins: string[]) =>
+      controlRequest(server.controlSocket, "/config", {
+        method: "PATCH",
+        body: { cors_origins: origins },
+      });
+    expect((await name([CONFIGURED, LOOPBACK, removable])).status).toBe(200);
+    await expectAllowed(removable, server.workingKey);
+    expect((await name([CONFIGURED, LOOPBACK])).status).toBe(200);
+    await expectRefused(removable, server.workingKey);
+    await expectAllowed(CONFIGURED, server.workingKey);
+  });
+
+  it("judges an origin only as a browser writes it, and no origin where a request names two", async () => {
+    // The witness: the origin as a browser writes it is allowed.
+    await expectAllowed(CONFIGURED, server.workingKey);
+    for (const written of [
+      "HTTPS://configured.web-page-origin.test",
+      "https://Configured.Web-Page-Origin.test",
+      "https://configured.web-page-origin.test:443",
+      "https://configured.web-page-origin.test/",
+      "https://configured.web-page-origin.test/path",
+      "null",
+    ]) {
+      await expectRefused(written, server.workingKey);
+    }
+    const url = new URL(`${server.apiUrl}/items?limit=1`);
+    const twice = (second: string) =>
+      new Promise<string | undefined>((resolve, reject) => {
+        const asked = httpRequest(
+          {
+            host: url.hostname,
+            port: url.port,
+            path: `${url.pathname}${url.search}`,
+            headers: [
+              "Origin",
+              CONFIGURED,
+              "Origin",
+              second,
+              "Authorization",
+              `Bearer ${server.workingKey}`,
+            ],
+          },
+          (answer) => {
+            answer.resume();
+            answer.on("end", () =>
+              resolve(answer.headers["access-control-allow-origin"]),
+            );
+          },
+        );
+        asked.on("error", reject);
+        asked.end();
+      });
+    expect(await twice(CONFIGURED)).toBeUndefined();
+    expect(await twice(LOOPBACK)).toBeUndefined();
+  });
+
+  it("answers a preflight for a method an operation at its path takes, naming the methods and headers", async () => {
+    const asked = (path: string, method: string, headers: string) =>
+      fetch(`${server.apiUrl}${path}`, {
+        method: "OPTIONS",
+        headers: {
+          origin: CONFIGURED,
+          "access-control-request-method": method,
+          "access-control-request-headers": headers,
+        },
+      });
+    const items = await asked("/items", "POST", "authorization, content-type");
+    expect(items.status).toBe(204);
+    expect(items.headers.get("access-control-allow-origin")).toBe(CONFIGURED);
+    expect(items.headers.get("access-control-allow-methods")).toBe(
+      "GET, HEAD, POST",
+    );
+    expect(items.headers.get("access-control-allow-headers")).toBe(
+      "authorization, content-type",
+    );
+    const one = await asked("/items/abc", "PATCH", "authorization");
+    expect(one.status).toBe(204);
+    expect(one.headers.get("access-control-allow-methods")).toBe(
+      "DELETE, GET, HEAD, PATCH",
+    );
+  });
+
+  it("refuses a preflight for a method no operation at its path takes, for a path none serves, and for a header that is no name", async () => {
+    const asked = (path: string, method: string, headers = "authorization") =>
+      fetch(`${server.apiUrl}${path}`, {
+        method: "OPTIONS",
+        headers: {
+          origin: CONFIGURED,
+          "access-control-request-method": method,
+          "access-control-request-headers": headers,
+        },
+      });
+    // The witness: the same origin is answered for a method the path takes.
+    expect((await asked("/health", "GET")).status).toBe(204);
+    for (const [path, method, headers] of [
+      ["/health", "DELETE", "authorization"],
+      ["/items", "PUT", "authorization"],
+      ["/items", "TRACE", "authorization"],
+      ["/no-such-door", "GET", "authorization"],
+      ["/items", "POST", "authorization,,content-type"],
+      ["/items", "POST", "bad header"],
+    ] as const) {
+      const refused = await asked(path, method, headers);
+      const label = `${method} ${path} ${headers}`;
+      expect(refused.status, label).toBe(404);
+      expect(
+        ((await refused.json()) as { error: { code: string } }).error.code,
+        label,
+      ).toBe("not_found");
+      expect(
+        refused.headers.get("access-control-allow-origin"),
+        label,
+      ).toBeNull();
+    }
+  });
+
+  it("names Origin in Vary on every answer, and a preflight's request headers in Vary on its answer", async () => {
+    const varies = (response: Response) =>
+      (response.headers.get("vary") ?? "")
+        .toLowerCase()
+        .split(",")
+        .map((name) => name.trim());
+    const authorization = { authorization: `Bearer ${server.workingKey}` };
+    for (const headers of [
+      authorization,
+      { ...authorization, origin: CONFIGURED },
+      { ...authorization, origin: "https://nobody.web-page-origin.test" },
+    ]) {
+      const read = await fetch(`${server.apiUrl}/items?limit=1`, { headers });
+      await read.body?.cancel();
+      expect(varies(read), JSON.stringify(headers)).toContain("origin");
+    }
+    const missing = await fetch(`${server.apiUrl}/no-such-door`, {
+      headers: { origin: CONFIGURED },
+    });
+    await missing.body?.cancel();
+    expect(varies(missing)).toContain("origin");
+
+    const preflight = await fetch(`${server.apiUrl}/items`, {
+      method: "OPTIONS",
+      headers: {
+        origin: CONFIGURED,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "authorization",
+      },
+    });
+    expect(preflight.status).toBe(204);
+    expect(varies(preflight)).toEqual(
+      expect.arrayContaining([
+        "origin",
+        "access-control-request-method",
+        "access-control-request-headers",
+      ]),
+    );
+  });
+
+  it("answers no cross-origin header to a request that names no origin", async () => {
+    const authorization = { authorization: `Bearer ${server.workingKey}` };
+    const crossOrigin = (response: Response) =>
+      [...response.headers.keys()].filter((name) =>
+        name.startsWith("access-control-"),
+      );
+    for (const path of [
+      "/health",
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-protected-resource",
+      "/items?limit=1",
+    ]) {
+      const bare = await fetch(`${server.apiUrl}${path}`, {
+        headers: authorization,
+      });
+      await bare.body?.cancel();
+      expect(crossOrigin(bare), path).toEqual([]);
+      // The witness: the same request from a page is answered in cross-origin headers.
+      const asked = await fetch(`${server.apiUrl}${path}`, {
+        headers: { ...authorization, origin: CONFIGURED },
+      });
+      await asked.body?.cancel();
+      expect(crossOrigin(asked), path).toContain("access-control-allow-origin");
+    }
+    // A preflight that names no origin is no browser's preflight, whether the
+    // path takes the method or answers every origin's.
+    for (const path of ["/items", "/oauth/register"]) {
+      const preflightFrom = (headers: Record<string, string>) =>
+        fetch(`${server.apiUrl}${path}`, {
+          method: "OPTIONS",
+          headers: {
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "content-type",
+            ...headers,
+          },
+        });
+      const bare = await preflightFrom({});
+      await bare.body?.cancel();
+      expect(crossOrigin(bare), `OPTIONS ${path}`).toEqual([]);
+      // The witness: the same preflight from an origin is answered in cross-origin headers.
+      const asked = await preflightFrom({ origin: CONFIGURED });
+      await asked.body?.cancel();
+      expect(asked.status, `OPTIONS ${path}`).toBe(204);
+      expect(crossOrigin(asked), `OPTIONS ${path}`).toContain(
+        "access-control-allow-origin",
+      );
+    }
   });
 });
 
