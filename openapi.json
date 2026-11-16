@@ -10621,7 +10621,7 @@
       },
       "EdgeEventFrame": {
         "type": "object",
-        "description": "An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`, and, except on a copy stream, only if your source filter shows the edge's source item.",
+        "description": "An edge event: a change to an edge. You receive it only if you can read both the edge type and `from_type`, and, except on a copy stream, only if your source filter shows the edge's source item.",
         "properties": {
           "event_type": {
             "type": "string",
@@ -10642,7 +10642,7 @@
               }
             ]
           },
-          "source_type": {
+          "from_type": {
             "type": "string",
             "description": "The type of the edge's source item when the event happened."
           },

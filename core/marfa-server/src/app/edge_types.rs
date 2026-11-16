@@ -227,9 +227,9 @@ fn require_stored_targets(unit: &Unit<'_, '_>, id: &str, built: &Obj) -> Result<
     if text_of(built, "cascade_on_delete") != Some("cascade") {
         return Ok(());
     }
-    for target_type in edges::target_types(unit.tx(), id)? {
+    for to_type in edges::to_types(unit.tx(), id)? {
         unit.caller
-            .require_cascade_target(&target_type)
+            .require_cascade_to(&to_type)
             .map_err(|_| {
                 Refusal::new(
                     Code::TypeNotPermitted,

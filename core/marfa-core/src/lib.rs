@@ -4201,7 +4201,7 @@ fn queue_create(
         .flat_map(|(edge_type, targets)| {
             targets.iter().map(|to_id| edge_rules::Proposed {
                 edge_type,
-                source: edge_rules::Source::Made {
+                from: edge_rules::FromEnd::Made {
                     id: from_id,
                     r#type: &draft.r#type,
                 },
@@ -4655,7 +4655,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
         conn,
         &[edge_rules::Proposed {
             edge_type: &held.edge_type,
-            source: edge_rules::Source::Held(from_id),
+            from: edge_rules::FromEnd::Held(from_id),
             to_id,
             replacing: Some(&held.id),
         }],
@@ -4687,7 +4687,7 @@ fn refuse_unqueueable_edge(conn: &Connection, draft: &EdgeDraft) -> Result<()> {
         conn,
         &[edge_rules::Proposed {
             edge_type: &draft.edge_type,
-            source: edge_rules::Source::Held(&draft.from_id),
+            from: edge_rules::FromEnd::Held(&draft.from_id),
             to_id: &draft.to_id,
             replacing: draft.id.as_deref(),
         }],

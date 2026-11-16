@@ -576,6 +576,6 @@ When the source filter that applies to a credential excludes an item the credent
 
 ### `reach/frame-edge-shape`
 
-When a copy stream sends `edge.created`, `edge.updated` or `edge.deleted`, the server MUST send the frame with `event_type`, `edge` and `source_type` and without `listed`, on a live stream and on a replayed one.
+When a copy stream sends `edge.created`, `edge.updated` or `edge.deleted`, the server MUST send the frame with `event_type`, `edge` and `from_type` and without `listed`, on a live stream and on a replayed one.
 
 **Tests:** `compliance/reach.test.ts › sends edge frames on a copy stream in their ordinary shape, live and replayed`.

@@ -170,7 +170,7 @@ describe("edge events", () => {
         "edge.deleted",
       ]);
       for (const frame of frames) {
-        expect((frame.data as { source_type?: string }).source_type).toBe(
+        expect((frame.data as { from_type?: string }).from_type).toBe(
           "core.note",
         );
       }
@@ -674,7 +674,7 @@ describe("the stream answers only the edges a subscriber may read", () => {
             // The witness: the purge announced the edge, naming its source.
             const frame = purgedEdgeFrame(wide.events, edgeId);
             expect(frame, "the purge never announced the edge").toBeDefined();
-            expect((frame?.data as { source_type?: string }).source_type).toBe(
+            expect((frame?.data as { from_type?: string }).from_type).toBe(
               "core.bookmark",
             );
 

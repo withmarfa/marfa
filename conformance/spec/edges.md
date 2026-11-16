@@ -600,7 +600,7 @@ If `PATCH /edges/{id}` moves an end of a `one-to-one` edge onto an item that alr
 
 ### `edges/move-constraint`
 
-If `PATCH /edges/{id}` moves the target onto an item whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` naming the `target_type`.
+If `PATCH /edges/{id}` moves the target onto an item whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` naming the `to_type`.
 
 **Tests:** `compliance/edge-move.test.ts › refuses a move onto a target its type's constraint refuses, and answers one the key cannot read exactly as a missing one`.
 
@@ -940,13 +940,13 @@ An edge type's `from_type_constraints` and `to_type_constraints` each hold `*`, 
 
 ### `edges/endpoint-source`
 
-If `POST /edges` names a source whose type the edge type's `from_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `source_type` and the types `allowed`.
+If `POST /edges` names a source whose type the edge type's `from_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `from_type` and the types `allowed`.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching source type rejected`.
 
 ### `edges/endpoint-target`
 
-If `POST /edges` names a target whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `target_type` and the types `allowed`.
+If `POST /edges` names a target whose type the edge type's `to_type_constraints` do not admit, then the server MUST answer `400 edge_constraint_violation` with `details` naming the `edge_type`, the `to_type` and the types `allowed`.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching target type rejected`.
 
@@ -1148,7 +1148,7 @@ If `POST /edges` names an `in-collection` edge to a target whose type does not p
 
 ### `edges/collection-no-nesting`
 
-If `POST /edges` names an `in-collection` edge from a source whose type plays the `container` role, declared or inherited, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`.
+If `POST /edges` names an `in-collection` edge from a source whose type plays the `container` role, declared or inherited, then the server MUST answer `400 edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `from_type`.
 
 **Reason:** a container holds items, never other containers, and `parent-of` is for hierarchy.
 
@@ -1166,7 +1166,7 @@ A move to another type keeps every edge at the item, so the server holds each on
 
 ### `edges/retype-endpoint`
 
-If a move names a type that the constraint of an edge at the item does not admit on the item's side, then the server MUST refuse that item's move `edge_constraint_violation` with `details` naming the `edge_type`, the `source_type` or `target_type` the item would take, and the types `allowed`, and leave the item as it was.
+If a move names a type that the constraint of an edge at the item does not admit on the item's side, then the server MUST refuse that item's move `edge_constraint_violation` with `details` naming the `edge_type`, the `from_type` or `to_type` the item would take, and the types `allowed`, and leave the item as it was.
 
 **Reason:** an edge the server would refuse to write must not come to stand by a move, whichever door makes it. The refusal names the item's own side alone, since the writer may not be able to read the other end. A move job reports the refused item among its `errors` and goes on with the others, as it does for any item it cannot move.
 
@@ -1174,7 +1174,7 @@ If a move names a type that the constraint of an edge at the item does not admit
 
 ### `edges/retype-nesting`
 
-If a move names a type that the `to_type_constraints` of a `flat` edge type admit, and the item is the source of an edge of that type, then the server MUST refuse that item's move `edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `source_type`, and leave the item as it was.
+If a move names a type that the `to_type_constraints` of a `flat` edge type admit, and the item is the source of an edge of that type, then the server MUST refuse that item's move `edge_constraint_violation` with `details.constraint` `nesting`, naming the `source_id` and `from_type`, and leave the item as it was.
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses a move that makes a collection member a container, as nesting`, `› refuses a natural-key upsert and a type move job that would move an item out of what its edges admit`.
 

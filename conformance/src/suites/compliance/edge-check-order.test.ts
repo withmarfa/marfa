@@ -420,7 +420,7 @@ describe("the order POST /edges asks its refusals in", () => {
     });
     expect(alone.status).toBe(400);
     expect(alone.error?.error.code).toBe("edge_constraint_violation");
-    expect(alone.error?.error.details?.source_type).toBe("core.note");
+    expect(alone.error?.error.details?.from_type).toBe("core.note");
   });
 
   it("answers a missing target as forbidden when the key lacks write on the edge type", async () => {
@@ -459,8 +459,8 @@ describe("the order POST /edges asks its refusals in", () => {
     });
     expect(both.status).toBe(400);
     expect(both.error?.error.code).toBe("edge_constraint_violation");
-    expect(both.error?.error.details?.source_type).toBe("core.note");
-    expect(both.error?.error.details?.target_type).toBeUndefined();
+    expect(both.error?.error.details?.from_type).toBe("core.note");
+    expect(both.error?.error.details?.to_type).toBeUndefined();
 
     // The witness: a source of the right type meets the target's constraint.
     const alone = await client.createEdge({
@@ -470,7 +470,7 @@ describe("the order POST /edges asks its refusals in", () => {
     });
     expect(alone.status).toBe(400);
     expect(alone.error?.error.code).toBe("edge_constraint_violation");
-    expect(alone.error?.error.details?.target_type).toBe("core.note");
+    expect(alone.error?.error.details?.to_type).toBe("core.note");
   });
 
   it("refuses an endpoint type before it names a duplicate", async () => {
@@ -498,7 +498,7 @@ describe("the order POST /edges asks its refusals in", () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("edge_constraint_violation");
-    expect(refused.error?.error.details?.source_type).toBe("core.note");
+    expect(refused.error?.error.details?.from_type).toBe("core.note");
 
     // The witness: a held edge the constraint admits is a duplicate.
     const admitted = await bookmark();

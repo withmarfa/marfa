@@ -55,7 +55,7 @@ pub enum Need {
         name: String,
         write: bool,
     },
-    CascadeTarget {
+    CascadeTo {
         name: String,
     },
     EdgeSource {
@@ -78,7 +78,7 @@ impl Need {
             Need::Item { .. } | Need::BlockingEnd { .. } => 2,
             Need::Type { .. } => 3,
             Need::Extension { .. } => 4,
-            Need::Edge { .. } | Need::CascadeTarget { .. } => 5,
+            Need::Edge { .. } | Need::CascadeTo { .. } => 5,
             Need::Source { .. } => 6,
         }
     }
@@ -319,7 +319,7 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                 }
             }
             Need::EdgeSource { id, type_id } => {
-                let current = edges::source_type(tx, &id)?;
+                let current = edges::from_type(tx, &id)?;
                 let types = std::iter::once(&type_id).chain(current.iter());
                 if !types.clone().all(|held| caller.may_read_type(held)) {
                     return Err(edge_gone());
@@ -349,7 +349,7 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                     return Err(edge_gone());
                 }
             }
-            Need::CascadeTarget { name } => caller.require_cascade_target(&name)?,
+            Need::CascadeTo { name } => caller.require_cascade_to(&name)?,
             Need::Source { name, disclosed } => {
                 if caller.may_grant(&name) {
                     continue;

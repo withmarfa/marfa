@@ -82,8 +82,8 @@ impl Caller {
             Lender::Item { type_id } => self.may_read_type(type_id),
             Lender::Edge {
                 edge_type,
-                source_type,
-            } => self.may_read_edge(edge_type, source_type),
+                from_type,
+            } => self.may_read_edge(edge_type, from_type),
             Lender::Extension {
                 namespace,
                 item_type,

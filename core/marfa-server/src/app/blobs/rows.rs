@@ -20,7 +20,7 @@ pub enum Lender {
     },
     Edge {
         edge_type: String,
-        source_type: String,
+        from_type: String,
     },
     Extension {
         namespace: String,
@@ -169,7 +169,7 @@ impl Iterator for Lenders<'_, '_> {
             "item" => Ok(Lender::Item { type_id: item_type }),
             "edge" => Ok(Lender::Edge {
                 edge_type,
-                source_type: item_type,
+                from_type: item_type,
             }),
             "extension" => Ok(Lender::Extension {
                 namespace,
@@ -1132,7 +1132,7 @@ mod tests {
             vec![
                 Lender::Edge {
                     edge_type: "parent-of".into(),
-                    source_type: "core.note".into(),
+                    from_type: "core.note".into(),
                 },
                 Lender::Extension {
                     namespace: "acme".into(),

@@ -108,7 +108,7 @@ pub fn naming_host(
     Ok(None)
 }
 
-pub fn source_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+pub fn from_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     match rows::by_id(tx, id)? {
         Some(edge) => super::items::type_of(tx, &edge.from_id),
         None => Ok(None),
@@ -119,8 +119,8 @@ pub fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64> {
     rows::count_of_type(tx, edge_type)
 }
 
-pub fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
-    rows::target_types(tx, edge_type)
+pub fn to_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
+    rows::to_types(tx, edge_type)
 }
 
 /// An edge, its two ends, and the digests it names that lend.

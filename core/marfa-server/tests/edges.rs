@@ -280,7 +280,7 @@ async fn an_edge_that_cascades_takes_write_on_its_targets_type_at_every_door() {
 }
 
 #[tokio::test]
-async fn registering_a_cascade_over_stored_edges_takes_write_on_their_targets() {
+async fn registering_a_cascade_over_stored_edges_takes_write_on_their_to_ends() {
     let instance = Instance::start().await;
     let reader = instance
         .key(

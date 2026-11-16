@@ -164,31 +164,31 @@ pub(crate) fn judge_restored_ends(
     catalog: &Catalog,
     kind: &EdgeType,
     source: (&str, &str),
-    target_type: &str,
+    to_type: &str,
 ) -> Result<()> {
-    let (from_id, source_type) = source;
+    let (from_id, from_type) = source;
     let lineage = |type_id: &str| lineage_of(catalog.types.rows(), type_id);
-    let held = lineage(source_type);
+    let held = lineage(from_type);
     if let Some(held) = &held
         && !lineage_admits(held, &kind.from_type_constraints)
     {
         return Err(constraint(edges::refused_end(
             kind,
             End::From,
-            source_type,
+            from_type,
         )));
     }
-    if let Some(target) = lineage(target_type)
+    if let Some(target) = lineage(to_type)
         && !lineage_admits(&target, &kind.to_type_constraints)
     {
         return Err(constraint(edges::refused_end(
             kind,
             End::To,
-            target_type,
+            to_type,
         )));
     }
     if kind.flat && held.is_some_and(|held| lineage_admits(&held, &kind.to_type_constraints)) {
-        let mut nesting = edges::refused_nesting(&kind.id, from_id, source_type);
+        let mut nesting = edges::refused_nesting(&kind.id, from_id, from_type);
         nesting.message = format!(
             "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",
             kind.id
@@ -387,10 +387,10 @@ impl<'c> Writing<'_, '_, 'c> {
     /// An edge that cascades asks for write on its target's type.
     fn judge_cascade(&self, kind: &EdgeType, target: &Item) -> Result<()> {
         if OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::Cascade {
-            self.note(Need::CascadeTarget {
+            self.note(Need::CascadeTo {
                 name: target.type_id.clone(),
             });
-            self.caller().require_cascade_target(&target.type_id)?;
+            self.caller().require_cascade_to(&target.type_id)?;
         }
         Ok(())
     }
@@ -408,8 +408,8 @@ impl<'c> Writing<'_, '_, 'c> {
         }
         let proposed = Proposed {
             edge_type: &kind.id,
-            source: &source.id,
-            target: to_id,
+            from: &source.id,
+            to: to_id,
             moving: edge.moving,
         };
         let store = self.store();
@@ -443,12 +443,12 @@ impl<'c> Writing<'_, '_, 'c> {
     }
 
     fn judge_ends(&self, kind: &EdgeType, source: (&str, &str), target: &Item) -> Result<()> {
-        let (from_id, source_type) = source;
-        if !admitted(self.catalog, &kind.from_type_constraints, source_type) {
+        let (from_id, from_type) = source;
+        if !admitted(self.catalog, &kind.from_type_constraints, from_type) {
             return Err(constraint(edges::refused_end(
                 kind,
                 End::From,
-                source_type,
+                from_type,
             )));
         }
         if !admitted(self.catalog, &kind.to_type_constraints, &target.type_id) {
@@ -467,8 +467,8 @@ impl<'c> Writing<'_, '_, 'c> {
             .with_detail("to_id", target.id.as_str())
             .with_detail("constraint", "revoked"));
         }
-        if kind.flat && admitted(self.catalog, &kind.to_type_constraints, source_type) {
-            let mut nesting = edges::refused_nesting(&kind.id, from_id, source_type);
+        if kind.flat && admitted(self.catalog, &kind.to_type_constraints, from_type) {
+            let mut nesting = edges::refused_nesting(&kind.id, from_id, from_type);
             nesting.message = format!(
                 "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",
                 kind.id
@@ -658,8 +658,8 @@ impl<'c> Writing<'_, '_, 'c> {
         }
         let proposed = Proposed {
             edge_type,
-            source: &source.id,
-            target: &target.id,
+            from: &source.id,
+            to: &target.id,
             moving: None,
         };
         let store = self.store();
@@ -1010,7 +1010,7 @@ pub(crate) fn announce(
         type_id: &source.type_id,
         source: &source.source,
         payload: format!(
-            "{{\"edge\":{},\"source_type\":{}{also}}}",
+            "{{\"edge\":{},\"from_type\":{}{also}}}",
             edge.answered()?,
             Value::from(source.type_id.as_str())
         ),

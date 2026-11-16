@@ -2914,13 +2914,13 @@ A device judges an edge write from the catalog, items and edges its copy holds, 
 
 ### `queue-and-verdicts/edge-endpoint-refused`
 
-If an edge write would leave an end the copy holds, or the item a create makes, of a type that the held catalog says the edge type does not admit at that end, by type, by a type above it or by a role it plays (`edges/endpoint-source`, `edges/endpoint-target` and `edges/endpoint-subtype`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, the end's `source_type` or `target_type` and the `allowed` constraints, queueing nothing.
+If an edge write would leave an end the copy holds, or the item a create makes, of a type that the held catalog says the edge type does not admit at that end, by type, by a type above it or by a role it plays (`edges/endpoint-source`, `edges/endpoint-target` and `edges/endpoint-subtype`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, the end's `from_type` or `to_type` and the `allowed` constraints, queueing nothing.
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
 
 ### `queue-and-verdicts/edge-nesting-refused`
 
-If an edge write would leave an edge of a type the held catalog marks `flat` running from an end the copy holds, or from the item a create makes, whose type the edge type's `to_type_constraints` admit (`edges/collection-no-nesting`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `nesting` with the `edge_type`, `from_id` and `source_type`, queueing nothing.
+If an edge write would leave an edge of a type the held catalog marks `flat` running from an end the copy holds, or from the item a create makes, whose type the edge type's `to_type_constraints` admit (`edges/collection-no-nesting`), then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, `details.constraint` `nesting` with the `edge_type`, `from_id` and `from_type`, queueing nothing.
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally each edge the server refuses for its ends, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
 

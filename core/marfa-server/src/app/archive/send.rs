@@ -256,7 +256,7 @@ fn edges_need(need: &EdgeNeed) -> Judge {
         Ok(need
             .0
             .iter()
-            .all(|(edge_type, source_type)| read.caller.may_read_edge(edge_type, source_type)))
+            .all(|(edge_type, from_type)| read.caller.may_read_edge(edge_type, from_type)))
     })
 }
 

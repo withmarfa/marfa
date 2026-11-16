@@ -563,7 +563,7 @@ describe("outbound webhook delivery", () => {
     expect(delivered.headers["x-marfa-event-type"]).toBe("edge.deleted");
     expect(JSON.parse(delivered.body)).toMatchObject({
       event_type: "edge.deleted",
-      source_type: "core.note",
+      from_type: "core.note",
       purged_with: note,
     });
     await receiver.waitFor(
@@ -1741,7 +1741,7 @@ describe("outbound webhook delivery", () => {
       // The witness: the event was sent while its source was a note.
       expect(JSON.parse(first.body)).toMatchObject({
         event_type: "edge.created",
-        source_type: "core.note",
+        from_type: "core.note",
         edge: { id: retypedEdge },
       });
 
@@ -1761,7 +1761,7 @@ describe("outbound webhook delivery", () => {
       );
       const [, retry] = hook.attempts("retyped") as [Attempt, Attempt];
       expect(JSON.parse(retry.body)).toMatchObject({
-        source_type: "core.note",
+        from_type: "core.note",
         edge: { id: retypedEdge },
       });
       const settled = await deliveryOf(

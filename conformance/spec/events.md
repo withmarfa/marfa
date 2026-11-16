@@ -522,9 +522,9 @@ The server MUST send an edge event as `edge.created`, `edge.updated` or `edge.de
 
 ### `events/edge-source-type`
 
-The server MUST carry on an edge event `source_type`, the type its source item had when the event was published.
+The server MUST carry on an edge event `from_type`, the type its source item had when the event was published.
 
-**Reason:** `source_type` decides who is told about the event, and a purge takes the source item before the event is read.
+**Reason:** `from_type` decides who is told about the event, and a purge takes the source item before the event is read.
 
 **Tests:** `compliance/edge-events.test.ts › carries the source item's type on every edge frame`.
 

@@ -148,7 +148,7 @@ pub(super) fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64
         .query_row([edge_type], |row| row.get(0))?)
 }
 
-pub(super) fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
+pub(super) fn to_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare(
         "SELECT DISTINCT i.type FROM edges e JOIN items i ON i.id = e.to_id \
          WHERE e.edge_type = ?1 ORDER BY i.type",
@@ -308,8 +308,8 @@ fn links(tx: &Transaction<'_>, column: &str, id: &str) -> Result<Vec<Link>> {
         Ok(Link {
             id: row.get(0)?,
             edge_type: row.get(1)?,
-            source: row.get(2)?,
-            target: row.get(3)?,
+            from: row.get(2)?,
+            to: row.get(3)?,
         })
     })?;
     Ok(found.collect::<rusqlite::Result<_>>()?)

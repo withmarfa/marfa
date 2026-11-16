@@ -295,7 +295,7 @@ describe("moving an edge's end", () => {
     expect(refusal(constrained)).toMatchObject({
       status: 400,
       code: "edge_constraint_violation",
-      details: { target_type: "core.bookmark" },
+      details: { to_type: "core.bookmark" },
     });
 
     const masked = (r: ApiResponse<unknown>, id: string) =>

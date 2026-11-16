@@ -6825,7 +6825,7 @@ export interface components {
             /** @description Only on a copy stream: `true` if the item is in the set you can list, `false` if you can read it only by ID. */
             listed?: boolean;
         };
-        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`, and, except on a copy stream, only if your source filter shows the edge's source item. */
+        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `from_type`, and, except on a copy stream, only if your source filter shows the edge's source item. */
         EdgeEventFrame: {
             /**
              * @description The event, which is also the frame's `event:`.
@@ -6834,7 +6834,7 @@ export interface components {
             event_type: "edge.created" | "edge.updated" | "edge.deleted";
             edge: components["schemas"]["Edge"] & unknown;
             /** @description The type of the edge's source item when the event happened. */
-            source_type?: string;
+            from_type?: string;
             /** @description On `edge.deleted` of an edge a purge removed: the ID of the purged item. */
             purged_with?: string;
         };

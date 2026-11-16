@@ -43,28 +43,28 @@ use marfa_rules::edges::{self, Graph, Link, OnDelete};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
-/// The source of an edge being judged: a row the copy may hold, or the item a
+/// The from end of an edge being judged: a row the copy may hold, or the item a
 /// create is making or landing on. The server replaces a row's outbound
 /// edges of each type a create names, so those the row holds are not
 /// counted against the ones named.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Source<'a> {
+pub(crate) enum FromEnd<'a> {
     Held(&'a str),
     Made { id: &'a str, r#type: &'a str },
 }
 
-impl Source<'_> {
+impl FromEnd<'_> {
     fn id(&self) -> &str {
         match self {
-            Source::Held(id) | Source::Made { id, .. } => id,
+            FromEnd::Held(id) | FromEnd::Made { id, .. } => id,
         }
     }
 
     /// The row whose outbound edges of the type the write replaces.
     fn replaced(&self) -> Option<&str> {
         match self {
-            Source::Held(_) => None,
-            Source::Made { id, .. } => Some(id),
+            FromEnd::Held(_) => None,
+            FromEnd::Made { id, .. } => Some(id),
         }
     }
 }
@@ -73,7 +73,7 @@ impl Source<'_> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Proposed<'a> {
     pub edge_type: &'a str,
-    pub source: Source<'a>,
+    pub from: FromEnd<'a>,
     pub to_id: &'a str,
     /// The held edge the write is: the edge a move changes, or the one a
     /// create names by id, which the server acknowledges or refuses by its
@@ -119,8 +119,8 @@ fn refused_end(edge_type: &EdgeType, end: End, r#type: &str) -> CoreError {
     refused(edges::refused_end(edge_type, end, r#type))
 }
 
-fn refused_nesting(edge_type: &str, from_id: &str, source_type: &str) -> CoreError {
-    refused(edges::refused_nesting(edge_type, from_id, source_type))
+fn refused_nesting(edge_type: &str, from_id: &str, from_type: &str) -> CoreError {
+    refused(edges::refused_nesting(edge_type, from_id, from_type))
 }
 
 /// Lineages read once per call, since a retype judges every edge at an item.
@@ -156,20 +156,20 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
             catalog: &catalog,
             refused: &unread,
             replaced: edge
-                .source
+                .from
                 .replaced()
                 .map(|source| (source, edge.edge_type)),
         };
         let proposed = edges::Proposed {
             edge_type: edge.edge_type,
-            source: edge.source.id(),
-            target: edge.to_id,
+            from: edge.from.id(),
+            to: edge.to_id,
             moving: edge.replacing,
         };
         if edges::duplicate(&copy, &proposed)?.is_some()
             || earlier().any(|earlier| {
                 earlier.edge_type == edge.edge_type
-                    && earlier.source.id() == edge.source.id()
+                    && earlier.from.id() == edge.from.id()
                     && earlier.to_id == edge.to_id
             })
         {
@@ -180,7 +180,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 ),
                 json!({
                     "edge_type": edge.edge_type,
-                    "from_id": edge.source.id(),
+                    "from_id": edge.from.id(),
                     "to_id": edge.to_id,
                     "constraint": "duplicate",
                 }),
@@ -192,7 +192,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 continue;
             }
             let at = |edge: &Proposed| match end {
-                End::From => edge.source.id().to_string(),
+                End::From => edge.from.id().to_string(),
                 End::To => edge.to_id.to_string(),
             };
             if full == Some(end)
@@ -211,7 +211,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 message: format!("Edge \"{}\" would close a cycle", edge.edge_type),
                 details: Some(Box::new(json!({
                     "edge_type": edge.edge_type,
-                    "from_id": edge.source.id(),
+                    "from_id": edge.from.id(),
                     "to_id": edge.to_id,
                 }))),
             });
@@ -220,7 +220,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
         if part(edge.edge_type) && edges::closes_cycle(&copy, &proposed, part)? {
             return Err(refused(edges::refused_parts_cycle(
                 edge.edge_type,
-                edge.source.id(),
+                edge.from.id(),
                 edge.to_id,
             )));
         }
@@ -319,7 +319,7 @@ impl HeldEdges<'_> {
             .into_iter()
             .filter(|link| {
                 !self.refused.contains(&link.id)
-                    && self.replaced != Some((link.source.as_str(), link.edge_type.as_str()))
+                    && self.replaced != Some((link.from.as_str(), link.edge_type.as_str()))
             })
             .collect()
     }
@@ -331,8 +331,8 @@ impl HeldEdges<'_> {
                 Ok(Link {
                     id: row.get(0)?,
                     edge_type: row.get(1)?,
-                    source: row.get(2)?,
-                    target: row.get(3)?,
+                    from: row.get(2)?,
+                    to: row.get(3)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -408,37 +408,37 @@ fn refuse_unfitting_ends(
     edge: &Proposed,
     edge_type: &EdgeType,
 ) -> Result<()> {
-    let source_type = match edge.source {
-        Source::Made { r#type, .. } => Some(r#type.to_string()),
-        Source::Held(id) => match held_row(conn, id)? {
+    let from_type = match edge.from {
+        FromEnd::Made { r#type, .. } => Some(r#type.to_string()),
+        FromEnd::Held(id) => match held_row(conn, id)? {
             Some((_, true)) => return Err(end_not_found("source", id)),
             Some((r#type, false)) => Some(r#type),
             None => None,
         },
     };
-    let target_type = match held_row(conn, edge.to_id)? {
+    let to_type = match held_row(conn, edge.to_id)? {
         Some((_, true)) => return Err(end_not_found("target", edge.to_id)),
         Some((r#type, false)) => Some(r#type),
         None => None,
     };
-    if let Some(r#type) = &source_type
+    if let Some(r#type) = &from_type
         && let Some(lineage) = lineages.of(conn, r#type)?
         && lineage.admitted_by(&edge_type.from_type_constraints) == Some(false)
     {
         return Err(refused_end(edge_type, End::From, r#type));
     }
-    if let Some(r#type) = &target_type
+    if let Some(r#type) = &to_type
         && let Some(lineage) = lineages.of(conn, r#type)?
         && lineage.admitted_by(&edge_type.to_type_constraints) == Some(false)
     {
         return Err(refused_end(edge_type, End::To, r#type));
     }
     if edge_type.flat
-        && let Some(r#type) = &source_type
+        && let Some(r#type) = &from_type
         && let Some(lineage) = lineages.of(conn, r#type)?
         && lineage.admitted_by(&edge_type.to_type_constraints) == Some(true)
     {
-        return Err(refused_nesting(edge.edge_type, edge.source.id(), r#type));
+        return Err(refused_nesting(edge.edge_type, edge.from.id(), r#type));
     }
     Ok(())
 }
@@ -1562,7 +1562,7 @@ mod tests {
                 edge(TASK, NOTE_B, "mock.notes"),
                 json!({
                     "edge_type": "mock.notes",
-                    "source_type": "core.task",
+                    "from_type": "core.task",
                     "allowed": ["core.note"],
                 }),
                 "a source of a type the edge type does not admit",
@@ -1571,7 +1571,7 @@ mod tests {
                 edge(NOTE_A, TASK, "mock.notes"),
                 json!({
                     "edge_type": "mock.notes",
-                    "target_type": "core.task",
+                    "to_type": "core.task",
                     "allowed": ["core.note"],
                 }),
                 "a target of a type the edge type does not admit",
@@ -1581,7 +1581,7 @@ mod tests {
                 json!({
                     "edge_type": "mock.member",
                     "from_id": SERIES,
-                    "source_type": "core.collection",
+                    "from_type": "core.collection",
                     "constraint": "nesting",
                 }),
                 "a collection nested in an album",
@@ -1649,7 +1649,7 @@ mod tests {
                 "core.task",
                 json!({
                     "edge_type": "mock.notes",
-                    "source_type": "core.task",
+                    "from_type": "core.task",
                     "allowed": ["core.note"],
                 }),
                 "the source of a notes edge made a task",
@@ -1659,7 +1659,7 @@ mod tests {
                 "core.task",
                 json!({
                     "edge_type": "mock.notes",
-                    "target_type": "core.task",
+                    "to_type": "core.task",
                     "allowed": ["core.note"],
                 }),
                 "the target of a notes edge made a task",
@@ -1670,7 +1670,7 @@ mod tests {
                 json!({
                     "edge_type": "mock.member",
                     "from_id": TASK,
-                    "source_type": "core.collection",
+                    "from_type": "core.collection",
                     "constraint": "nesting",
                 }),
                 "an album's member made a collection",
@@ -1813,7 +1813,7 @@ mod tests {
         hold(&core, "task-b", TASK, NOTE_B, "mock.notes");
         let what = "a repeat of an edge from a task, which the edge type does not admit";
         assert_eq!(
-            details_of(core.check_edge(&edge(TASK, NOTE_B, "mock.notes")), what)["source_type"],
+            details_of(core.check_edge(&edge(TASK, NOTE_B, "mock.notes")), what)["from_type"],
             "core.task",
             "{what}"
         );

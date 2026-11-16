@@ -192,7 +192,7 @@ describe("edge type-constraints", () => {
       expect(refused.error?.error.details).toEqual({
         edge_type: "in-collection",
         from_id: source.id,
-        source_type: source.type,
+        from_type: source.type,
         constraint: "nesting",
       });
     }
@@ -243,12 +243,12 @@ describe("endpoint constraints on every write path", () => {
   /** What a refused endpoint names: the type, the end's type and the types allowed. */
   const wrongSource = () => ({
     edge_type: edgeType,
-    source_type: "core.note",
+    from_type: "core.note",
     allowed: ["core.highlight"],
   });
   const wrongTarget = () => ({
     edge_type: edgeType,
-    target_type: "core.bookmark",
+    to_type: "core.bookmark",
     allowed: ["core.note"],
   });
 
@@ -409,7 +409,7 @@ describe("moving an item that holds edges to another type", () => {
     expect(fromSource.error?.error.code).toBe("edge_constraint_violation");
     expect(fromSource.error?.error.details).toEqual({
       edge_type: edgeTypeId,
-      source_type: "core.task",
+      from_type: "core.task",
       allowed: ["core.note"],
     });
 
@@ -422,7 +422,7 @@ describe("moving an item that holds edges to another type", () => {
     expect(atTarget.error?.error.code).toBe("edge_constraint_violation");
     expect(atTarget.error?.error.details).toEqual({
       edge_type: edgeTypeId,
-      target_type: "core.task",
+      to_type: "core.task",
       allowed: ["core.note"],
     });
 
@@ -447,7 +447,7 @@ describe("moving an item that holds edges to another type", () => {
       outcome: "errored",
       error: {
         code: "edge_constraint_violation",
-        details: { edge_type: edgeTypeId, source_type: "core.task" },
+        details: { edge_type: edgeTypeId, from_type: "core.task" },
       },
     });
     expect(page.data.results[1]).toMatchObject({ outcome: "updated" });
@@ -483,7 +483,7 @@ describe("moving an item that holds edges to another type", () => {
     expect(refused.error?.error.details).toEqual({
       edge_type: "in-collection",
       from_id: member,
-      source_type: "core.collection",
+      from_type: "core.collection",
       constraint: "nesting",
     });
     const held = await client.getItem(member);

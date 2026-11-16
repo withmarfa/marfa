@@ -214,8 +214,8 @@ fn moving(item: Item, mark: Option<Mark>) -> Moving {
 
 fn readable_ends(gate: &Gate<'_, '_>, link: &Link) -> Result<Option<(String, String)>> {
     let (source, target) = (
-        super::type_of(gate.tx, &link.source)?,
-        super::type_of(gate.tx, &link.target)?,
+        super::type_of(gate.tx, &link.from)?,
+        super::type_of(gate.tx, &link.to)?,
     );
     Ok(source.zip(target).filter(|(source, target)| {
         gate.caller.may_read_edge(&link.edge_type, source) && gate.caller.may_read_type(target)
@@ -227,18 +227,18 @@ fn blocked(gate: &Gate<'_, '_>, root: &str, held: &[Link]) -> Result<Refusal> {
     for link in held {
         if let Some((source, target)) = readable_ends(gate, link)? {
             gate.note(Need::BlockingEnd {
-                id: link.source.clone(),
+                id: link.from.clone(),
                 type_id: source,
             });
             gate.note(Need::BlockingEnd {
-                id: link.target.clone(),
+                id: link.to.clone(),
                 type_id: target,
             });
             named.push(json!({
                 "id": link.id,
                 "edge_type": link.edge_type,
-                "from_id": link.source,
-                "to_id": link.target,
+                "from_id": link.from,
+                "to_id": link.to,
             }));
         }
     }
@@ -319,8 +319,8 @@ fn binned(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
     require_free(gate, &moved, |link| {
         closure
             .root_of
-            .get(&link.source)
-            .or_else(|| closure.root_of.get(&link.target))
+            .get(&link.from)
+            .or_else(|| closure.root_of.get(&link.to))
             .cloned()
             .unwrap_or_else(first_named)
     })?;
@@ -375,7 +375,7 @@ fn goes_with_hosts(gate: &Gate<'_, '_>, part: &Item, going: &HashSet<String>) ->
         .outbound(&part.id)?
         .iter()
         .filter(|link| with_hosts(gate, &link.edge_type))
-        .all(|link| going.contains(&link.target)))
+        .all(|link| going.contains(&link.to)))
 }
 
 /// Each edge stands with the first row of the walk that touches it.
@@ -397,8 +397,8 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
         }
         for link in gate.store().inbound(&item.id)? {
             if with_hosts(gate, &link.edge_type)
-                && !going.contains(&link.source)
-                && let Some(part) = rows::by_id(gate.tx, &link.source)?
+                && !going.contains(&link.from)
+                && let Some(part) = rows::by_id(gate.tx, &link.from)?
                 && goes_with_hosts(gate, &part, &going)?
             {
                 going.insert(part.id.clone());
@@ -484,10 +484,10 @@ pub(super) fn returning(gate: &Gate<'_, '_>, row: &Item) -> Result<Vec<Returning
     let mut next = 0;
     loop {
         for link in gate.store().inbound(&host.id)? {
-            if !with_hosts(gate, &link.edge_type) || seen.contains(&link.source) {
+            if !with_hosts(gate, &link.edge_type) || seen.contains(&link.from) {
                 continue;
             }
-            let Some(part) = rows::by_id(gate.tx, &link.source)? else {
+            let Some(part) = rows::by_id(gate.tx, &link.from)? else {
                 continue;
             };
             let Some(mark) = part.mark.clone().filter(|mark| mark.hosts) else {
@@ -523,7 +523,7 @@ pub(super) fn late_part(gate: &Gate<'_, '_>, source: &Item, host: &Item) -> Resu
         return Ok(Vec::new());
     }
     for link in store.outbound(&source.id)? {
-        if with_hosts(gate, &link.edge_type) && !store.in_bin(&link.target)? {
+        if with_hosts(gate, &link.edge_type) && !store.in_bin(&link.to)? {
             return Ok(Vec::new());
         }
     }
