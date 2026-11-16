@@ -598,7 +598,7 @@ fn an_update_reads_the_items_type_for_its_prop() {
 }
 
 #[test]
-fn an_edge_names_its_two_ends_by_from_and_to() {
+fn an_edge_names_its_two_ends_by_from_id_and_to_id() {
     let home = scratch("edge-flags");
     let door = Door::open(vec![Answer::json(
         "201 Created",
@@ -610,7 +610,7 @@ fn an_edge_names_its_two_ends_by_from_and_to() {
         &home,
         &door.url,
         &[
-            "edges", "create", "--from", "a", "--to", "b", "--type", "about",
+            "edges", "create", "--from-id", "a", "--to-id", "b", "--type", "about",
         ],
     );
     assert_eq!(ran.code, 0, "{}", ran.stderr);
@@ -621,10 +621,16 @@ fn an_edge_names_its_two_ends_by_from_and_to() {
     // The old names are gone, and `--source` is the writer's alone.
     for words in [
         [
-            "edges", "create", "--source", "a", "--to", "b", "--type", "about",
+            "edges", "create", "--source", "a", "--to-id", "b", "--type", "about",
         ],
         [
-            "edges", "create", "--from", "a", "--target", "b", "--type", "about",
+            "edges", "create", "--from", "a", "--to-id", "b", "--type", "about",
+        ],
+        [
+            "edges", "create", "--from-id", "a", "--to", "b", "--type", "about",
+        ],
+        [
+            "edges", "create", "--from-id", "a", "--target", "b", "--type", "about",
         ],
     ] {
         let ran = run(&home, "http://127.0.0.1:9", &words);
@@ -637,11 +643,13 @@ fn an_edge_names_its_two_ends_by_from_and_to() {
     }
     let ran = run(&home, "http://127.0.0.1:9", &["edges", "update", "--help"]);
     assert!(
-        ran.stdout.contains("--from") && ran.stdout.contains("--to"),
+        ran.stdout.contains("--from-id <ID>") && ran.stdout.contains("--to-id <ID>"),
         "{}",
         ran.stdout
     );
     assert!(!ran.stdout.contains("--source"), "{}", ran.stdout);
+    assert!(!ran.stdout.contains("--from <"), "{}", ran.stdout);
+    assert!(!ran.stdout.contains("--to <"), "{}", ran.stdout);
 }
 
 #[test]

@@ -366,8 +366,8 @@ fn a_file_added_on_its_own_is_a_file_item_with_its_tags_and_tier() {
 #[test]
 fn edges_are_created_between_two_items_and_updated_under_a_version() {
     let created = edges::create_request(&edges::EdgeCreateArgs {
-        source: "a".into(),
-        target: "b".into(),
+        from: "a".into(),
+        to: "b".into(),
         type_: "references".into(),
         properties: Some(r#"{"weight":1}"#.into()),
         ..Default::default()
@@ -431,8 +431,8 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
     );
     refused(
         edges::create_request(&edges::EdgeCreateArgs {
-            source: "a".into(),
-            target: "b".into(),
+            from: "a".into(),
+            to: "b".into(),
             type_: "references".into(),
             properties: Some(text.into()),
             ..Default::default()

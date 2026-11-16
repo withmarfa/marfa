@@ -717,12 +717,12 @@ pub enum EdgesCommand {
     },
     /// Link two items, and queue the edge.
     Create {
-        /// The item the edge starts from.
-        #[arg(long = "from", value_name = "ID")]
-        source: String,
-        /// The item the edge points at.
-        #[arg(long = "to", value_name = "ID")]
-        target: String,
+        /// The item the edge points from.
+        #[arg(long = "from-id", value_name = "ID")]
+        from: String,
+        /// The item the edge points to.
+        #[arg(long = "to-id", value_name = "ID")]
+        to: String,
         /// The edge type.
         #[arg(long = "type", value_name = "TYPE")]
         type_: String,
@@ -735,12 +735,12 @@ pub enum EdgesCommand {
     },
     /// Say whether `edges create` would refuse an edge now, from what the copy holds, and queue nothing. The server still judges an edge the copy finds nothing against.
     Check {
-        /// The item the edge starts from.
-        #[arg(long = "from", value_name = "ID")]
-        source: String,
-        /// The item the edge points at.
-        #[arg(long = "to", value_name = "ID")]
-        target: String,
+        /// The item the edge points from.
+        #[arg(long = "from-id", value_name = "ID")]
+        from: String,
+        /// The item the edge points to.
+        #[arg(long = "to-id", value_name = "ID")]
+        to: String,
         /// The edge type.
         #[arg(long = "type", value_name = "TYPE")]
         type_: String,
@@ -753,16 +753,16 @@ pub enum EdgesCommand {
     },
     /// Say whether `edges update` would refuse moving one end of an edge now, from what the copy holds, and queue nothing. A move onto the end the edge holds already changes nothing. The server still judges a move the copy finds nothing against.
     #[command(name = "check-move")]
-    #[command(group(clap::ArgGroup::new("end").required(true).args(["source", "target"])))]
+    #[command(group(clap::ArgGroup::new("end").required(true).args(["from", "to"])))]
     CheckMove {
         /// The edge id.
         id: String,
-        /// Move the edge to this source.
-        #[arg(long = "from", value_name = "ID")]
-        source: Option<String>,
-        /// Move the edge to this target.
-        #[arg(long = "to", value_name = "ID")]
-        target: Option<String>,
+        /// Move the edge's from end to this item.
+        #[arg(long = "from-id", value_name = "ID")]
+        from: Option<String>,
+        /// Move the edge's to end to this item.
+        #[arg(long = "to-id", value_name = "ID")]
+        to: Option<String>,
     },
     /// Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.
     Update {
@@ -774,12 +774,12 @@ pub enum EdgesCommand {
         /// The version the edit was based on. Required, as on an item.
         #[arg(long)]
         version: Option<i64>,
-        /// Move the edge to this source, where each target holds one of its type.
-        #[arg(long = "from", value_name = "ID")]
-        source: Option<String>,
-        /// Move the edge to this target, where each source holds one of its type.
-        #[arg(long = "to", value_name = "ID")]
-        target: Option<String>,
+        /// Move the edge's from end to this item, where each to end holds one edge of its type.
+        #[arg(long = "from-id", value_name = "ID")]
+        from: Option<String>,
+        /// Move the edge's to end to this item, where each from end holds one edge of its type.
+        #[arg(long = "to-id", value_name = "ID")]
+        to: Option<String>,
     },
     /// Drop an edge locally and queue the delete.
     Delete {
@@ -1959,8 +1959,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 EdgesCommand::List { item } => edge_list(&core.edges_from(&item)?, json),
                 EdgesCommand::To { item } => edge_list(&core.edges_to(&item)?, json),
                 EdgesCommand::Create {
-                    source,
-                    target,
+                    from: source,
+                    to: target,
                     type_,
                     properties: props,
                     id,
@@ -1975,8 +1975,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     output::queued_one(&core.create_edge(&draft)?, json)
                 }
                 EdgesCommand::Check {
-                    source,
-                    target,
+                    from: source,
+                    to: target,
                     type_,
                     properties: props,
                     id,
@@ -1994,7 +1994,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                             .to_string()
                     })
                 }
-                EdgesCommand::CheckMove { id, source, target } => {
+                EdgesCommand::CheckMove { id, from: source, to: target } => {
                     let (end, to) = match (source, target) {
                         (Some(source), None) => (marfa_core::End::From, source),
                         (None, Some(target)) => (marfa_core::End::To, target),
@@ -2010,8 +2010,8 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     id,
                     properties: props,
                     version,
-                    source,
-                    target,
+                    from: source,
+                    to: target,
                 } => {
                     let edit = EdgeEdit {
                         properties: item_properties(&props)?,
@@ -2592,7 +2592,7 @@ fn field_line(field: &marfa_core::TypeField) -> String {
 
 fn edge_type_line(held: &marfa_core::EdgeType) -> String {
     format!(
-        "{}  {} / {}  {}{}  written at {}{}",
+        "{}  {} / {}  {}{}  written from {}{}",
         printable(&held.id),
         printable(&held.label),
         printable(&held.reverse_label),
@@ -2604,8 +2604,8 @@ fn edge_type_line(held: &marfa_core::EdgeType) -> String {
                 printable(name)
             )),
         match held.written_from {
-            marfa_core::WrittenFrom::From => "its source",
-            marfa_core::WrittenFrom::To => "its target",
+            marfa_core::WrittenFrom::From => "its from end",
+            marfa_core::WrittenFrom::To => "its to end",
             marfa_core::WrittenFrom::None => "no end",
         },
         if held.shipped { "  shipped" } else { "" }

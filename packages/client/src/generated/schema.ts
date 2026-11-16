@@ -761,7 +761,7 @@ export interface paths {
         };
         /**
          * List edges
-         * @description Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear: `GET /events` reports deletions. Nor does an edge whose source item `source_filter` leaves out.
+         * @description Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear: `GET /events` reports deletions. Nor does an edge whose from item `source_filter` leaves out.
          */
         get: operations["listEdges"];
         put?: never;
@@ -853,7 +853,7 @@ export interface paths {
         };
         /**
          * List inbound edges
-         * @description Returns the edges that point at an item. An item in the trash still lists its edges. An edge whose source item `source_filter` leaves out doesn't appear here, whatever the source of this item. `GET /items/{id}/edges` lists the edges that start at it.
+         * @description Returns the edges that point at an item. An item in the trash still lists its edges. An edge whose from item `source_filter` leaves out doesn't appear here, whatever this item's source. `GET /items/{id}/edges` lists the edges that start at it.
          */
         get: operations["listItemBackrefs"];
         put?: never;
@@ -2557,23 +2557,23 @@ export interface components {
         EdgeType: {
             /** @description Unique identifier for the edge type. */
             id: string;
-            /** @description The name an app shows on the source end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes. */
+            /** @description The name an app shows on the from end of an edge of this type, such as `Children` on a parent. Not the `reverse_name`, which is the code name a file writes. */
             label: string;
-            /** @description The name an app shows on the target end, such as `Parent` on a child. It is the same text as `label` when the relation is two-way, and an app then shows both directions as one list. */
+            /** @description The name an app shows on the to end, such as `Parent` on a child. It is the same text as `label` when the relation is two-way, and an app then shows both directions as one list. */
             reverse_label: string;
             /** @description What the edge type is for. */
             description?: string;
             /**
-             * @description How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.
+             * @description How many edges of the type an item can hold. `one-to-one`: each item at either end holds one. `one-to-many`: each item at the to end holds one. `many-to-one`: each item at the from end holds one. `many-to-many`: no limit.
              * @enum {string}
              */
             cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-            /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. */
+            /** @description The types the item an edge points from can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. */
             from_type_constraints: string[];
-            /** @description The types an edge's target item can have, in the same form as `from_type_constraints`. */
+            /** @description The types the item an edge points to can have, in the same form as `from_type_constraints`. */
             to_type_constraints: string[];
             /**
-             * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any.
+             * @description What deleting an item an edge joins does. `cascade`: deleting the item the edge points from trashes the item it points to. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the item the edge points from is trashed with the last item it points to, restored with any.
              * @enum {string}
              */
             cascade_on_delete: "cascade" | "orphan" | "block" | "with-hosts";
@@ -2581,10 +2581,10 @@ export interface components {
             property_schema: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
-            /** @description The name the edge goes by when read from its target, such as `child-of` for `parent-of`. */
+            /** @description The name the edge goes by when read from its to end, such as `child-of` for `parent-of`. */
             reverse_name?: string;
             /**
-             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it.
+             * @description The end of an edge whose file writes it in a folder: `from`, or `to` under the reverse name. `none` means no file writes it, so a folder never renders it.
              * @enum {string}
              */
             written_from: "from" | "to" | "none";
@@ -2592,7 +2592,7 @@ export interface components {
             shipped: boolean;
             /** @description `true` if the server refuses an edge of this type that closes a cycle through other edges of the type. Every edge type refuses an edge from an item to itself. */
             acyclic: boolean;
-            /** @description `true` if the server refuses an edge of this type whose source type its `to_type_constraints` admit, so an item that can be a target is never a source. */
+            /** @description `true` if the server refuses an edge of this type from an item whose type its `to_type_constraints` admit, so an item that an edge of the type can point to never points from one. */
             flat: boolean;
         };
         /** @description One property an edge of an edge type can carry. */
@@ -2682,7 +2682,7 @@ export interface components {
          * @enum {string}
          */
         Tier: "library" | "feed";
-        /** @description An edge is a typed, directed relationship from a source item to a target item. */
+        /** @description An edge is a typed, directed relationship from one item to another: `from_id` names the item it points from and `to_id` the item it points to. */
         Edge: {
             /** @description Unique identifier for the edge. */
             id: string;
@@ -3609,7 +3609,7 @@ export interface components {
         ItemDetail: {
             item: components["schemas"]["Item"] & unknown;
             metadata: components["schemas"]["Metadata"] & unknown;
-            /** @description The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. An edge whose source item `source_filter` leaves out doesn't appear. Present with `include=backrefs`. */
+            /** @description The item's inbound edges you can read, by edge type. Each holds the first page of that type, which `GET /items/{id}/backrefs` continues. An edge whose from item `source_filter` leaves out doesn't appear. Present with `include=backrefs`. */
             backrefs?: {
                 [key: string]: components["schemas"]["EdgePage"];
             };
@@ -3935,7 +3935,7 @@ export interface components {
             /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item. */
             id?: string;
             /**
-             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`: `trashed`, a trashed item matches, or `unchanged`.
+             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by from item, to item and edge type. Under `upsert`: `trashed`, a trashed item matches, or `unchanged`.
              * @enum {string}
              */
             reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed" | "unchanged";
@@ -4333,23 +4333,23 @@ export interface components {
         EdgeTypeRegistrationRequest: {
             /** @description The identifier of the edge type, such as `acme.list-member`. */
             id: string;
-            /** @description The name an app shows on the source end, such as `Children` on a parent. Leave it out and the last segment of the `id` makes it, such as `List Member`. On a change, leaving it out keeps the stored one. */
+            /** @description The name an app shows on the from end, such as `Children` on a parent. Leave it out and the last segment of the `id` makes it, such as `List Member`. On a change, leaving it out keeps the stored one. */
             label?: string;
-            /** @description The name an app shows on the target end, such as `Parent` on a child. Leave it out and `label` names both ends. On a change, leaving it out keeps the stored one; send the `label` to make a type two-way. */
+            /** @description The name an app shows on the to end, such as `Parent` on a child. Leave it out and `label` names both ends. On a change, leaving it out keeps the stored one; send the `label` to make a type two-way. */
             reverse_label?: string;
             /** @description What the edge type is for. */
             description?: string;
             /**
-             * @description How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.
+             * @description How many edges of the type an item can hold. `one-to-one`: each item at either end holds one. `one-to-many`: each item at the to end holds one. `many-to-one`: each item at the from end holds one. `many-to-many`: no limit.
              * @enum {string}
              */
             cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-            /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. Leave it out to allow any type. */
+            /** @description The types the item an edge points from can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. Leave it out to allow any type. */
             from_type_constraints?: string[];
-            /** @description The types an edge's target item can have, in the same form as `from_type_constraints`. Leave it out to allow any type. */
+            /** @description The types the item an edge points to can have, in the same form as `from_type_constraints`. Leave it out to allow any type. */
             to_type_constraints?: string[];
             /**
-             * @description What deleting an item an edge joins does. `cascade`: the source's delete trashes the target. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the source is trashed with its last target, restored with any. Leave it out for `orphan`.
+             * @description What deleting an item an edge joins does. `cascade`: deleting the item the edge points from trashes the item it points to. `orphan`: the other stays. `block`: the delete fails. `with-hosts`: the item the edge points from is trashed with the last item it points to, restored with any. Leave it out for `orphan`.
              * @enum {string}
              */
             cascade_on_delete?: "cascade" | "orphan" | "block" | "with-hosts";
@@ -4357,10 +4357,10 @@ export interface components {
             property_schema?: {
                 [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
-            /** @description The name the edge goes by when read from its target, such as `child-of` for `parent-of`. No other edge type can use it as an ID or reverse name. */
+            /** @description The name the edge goes by when read from its to end, such as `child-of` for `parent-of`. No other edge type can use it as an ID or reverse name. */
             reverse_name?: string;
             /**
-             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it. `target` needs a `reverse_name`. Leave it out for `source`.
+             * @description The end of an edge whose file writes it in a folder: `from`, or `to` under the reverse name. `none` means no file writes it, so a folder never renders it. `to` needs a `reverse_name`. Leave it out for `from`.
              * @enum {string}
              */
             written_from?: "from" | "to" | "none";
@@ -4407,7 +4407,7 @@ export interface components {
             own_roles: components["schemas"]["TypeRole"][];
         };
         /**
-         * @description A structural role a type plays. `container`: the type can be the target of an `in-collection` edge.
+         * @description A structural role a type plays. `container`: the type can be the item an `in-collection` edge points to.
          * @enum {string}
          */
         TypeRole: "container";
@@ -6825,7 +6825,7 @@ export interface components {
             /** @description Only on a copy stream: `true` if the item is in the set you can list, `false` if you can read it only by ID. */
             listed?: boolean;
         };
-        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `from_type`, and, except on a copy stream, only if your source filter shows the edge's source item. */
+        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `from_type`, and, except on a copy stream, only if your source filter shows the item the edge points from. */
         EdgeEventFrame: {
             /**
              * @description The event, which is also the frame's `event:`.
@@ -6833,7 +6833,7 @@ export interface components {
              */
             event_type: "edge.created" | "edge.updated" | "edge.deleted";
             edge: components["schemas"]["Edge"] & unknown;
-            /** @description The type of the edge's source item when the event happened. */
+            /** @description The type of the item the edge points from when the event happened. */
             from_type?: string;
             /** @description On `edge.deleted` of an edge a purge removed: the ID of the purged item. */
             purged_with?: string;
@@ -7725,7 +7725,7 @@ export interface operations {
                     capture_longitude?: number;
                     /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                     tags?: string[];
-                    /** @description Edges to create with the item, as edge type to a list of target item IDs. The new item is the source. Marfa creates the item and all its edges, or none. When the request lands on an item by its natural key, each type you name replaces that item's edges of the type, and an edge to an ID you still list stays as it is. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
+                    /** @description Edges to create with the item, as edge type to a list of IDs of the items they point to. Each points from the new item. Marfa creates the item and all its edges, or none. When the request lands on an item by its natural key, each type you name replaces that item's edges of the type, and an edge to an ID you still list stays as it is. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
                     edges?: {
                         [key: string]: string[];
                     };
@@ -7766,7 +7766,7 @@ export interface operations {
              * @description - `validation_error`: a field is invalid or undeclared.
              *     - `missing_required_field`: `type` is missing.
              *     - `unknown_type`: `type` isn't registered.
-             *     - `invalid_id`: `id` or an edge target isn't a valid ID.
+             *     - `invalid_id`: `id` or an ID an edge points to isn't valid.
              *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
              */
@@ -7812,7 +7812,7 @@ export interface operations {
             };
             /**
              * @description - `edge_type_not_found`: an edge names an edge type that doesn't exist.
-             *     - `item_not_found`: an edge's target doesn't exist, or its type is one you can't read.
+             *     - `item_not_found`: an item an edge points to doesn't exist, or its type is one you can't read.
              *     - `blob_not_found`: `blob_ref` names bytes you didn't upload and can't read.
              */
             404: {
@@ -8399,7 +8399,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `version` is missing.
              *     - `validation_error`: the body is malformed or changes nothing.
-             *     - `invalid_id`: the ID or a target isn't valid.
+             *     - `invalid_id`: the ID or an ID an edge points to isn't valid.
              *     - `invalid_properties`: the properties don't fit the type, or an inline edge lacks a property its type requires.
              *     - `unknown_type`: `type` isn't registered.
              *     - `edge_constraint_violation`, `edge_cycle`: an edge breaks its type's rules.
@@ -8445,7 +8445,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: no item you can read has this ID or an edge target's ID. For a trashed item, `details.trashed` is `true` if you can read its type.
+             * @description - `item_not_found`: no item you can read has this ID or an ID an edge points to. For a trashed item, `details.trashed` is `true` if you can read its type.
              *     - `edge_type_not_found`: an edge names an edge type that doesn't exist.
              *     - `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can't read now.
              *     - `blob_not_found`: `blob_ref` names bytes you didn't upload and can't read.
@@ -10347,7 +10347,7 @@ export interface operations {
                         version?: number;
                         /** @description Tags to put on the item: at most 100, each up to 128 characters. */
                         tags?: string[];
-                        /** @description Edge types to set, each mapped to the target item IDs the item should now point to. An edge to an ID you still list stays as it is, with its properties. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
+                        /** @description Edge types to set, each mapped to the IDs of the items the item should now point to. An edge to an ID you still list stays as it is, with its properties. Types you don't name are untouched. A new edge made this way carries no properties, so an edge type that requires one refuses the write. */
                         edges?: {
                             [key: string]: string[];
                         };
@@ -10423,7 +10423,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an edge target. `details.code` is `item_not_found` or `edge_type_not_found`. */
+            /** @description - `bulk_atomic_rollback`: with `atomic` true, an entry names an item or edge type that isn't there, such as an item an edge points to. `details.code` is `item_not_found` or `edge_type_not_found`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15575,7 +15575,7 @@ export interface operations {
     createEdge: {
         parameters: {
             query?: {
-                /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
+                /** @description The version you read of the item the edge points from. If it differs, the edge is not changed. Leave it out to use that item as it is. */
                 from_version?: number;
             };
             header?: {
@@ -15606,7 +15606,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the stored edge with `acknowledged: true` after any `from_version` precondition passes. `id` repeats a create you made with the same source, target and edge type, so Marfa wrote nothing and sent no event. */
+            /** @description Returns the stored edge with `acknowledged: true` after any `from_version` precondition passes. `id` repeats a create you made with the same from item, to item and edge type, so Marfa wrote nothing and sent no event. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15666,7 +15666,7 @@ export interface operations {
             };
             /**
              * @description - `edge_permission_denied`: you don't have write on the edge type. `details.grant` names the missing grant.
-             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -15680,7 +15680,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: the source or target doesn't exist, or its type is one you can't read.
+             * @description - `item_not_found`: the item `from_id` or `to_id` names doesn't exist, or its type is one you can't read.
              *     - `edge_type_not_found`: the edge type doesn't exist.
              */
             404: {
@@ -15708,7 +15708,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `from_version` differs; `current` is the source now.
+             * @description - `version_conflict`: `from_version` differs; `current` is the item the edge points from now.
              *     - `id_reused`: `id` belongs to a different edge. `details.differs` lists the differing ends or type; an unreadable edge supplies only `details.existing_id`.
              */
             409: {
@@ -15884,7 +15884,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read. */
+            /** @description `edge_not_found`: no edge has this ID, or its edge type or the type of the item it points from is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15976,7 +15976,7 @@ export interface operations {
     deleteEdge: {
         parameters: {
             query?: {
-                /** @description The source item version you read. If it differs, the edge is not changed. Leave it out to use the source as it is. */
+                /** @description The version you read of the item the edge points from. If it differs, the edge is not changed. Leave it out to use that item as it is. */
                 from_version?: number;
             };
             header?: {
@@ -16032,7 +16032,7 @@ export interface operations {
             };
             /**
              * @description - `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
-             *     - `type_not_permitted`: you can read the source item's type but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: you can read the type of the item the edge points from but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -16045,7 +16045,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description `edge_not_found`: no edge has this ID, another request already deleted it, or its edge type or source item's type is one you can't read. */
+            /** @description `edge_not_found`: no edge has this ID, another request already deleted it, or its edge type or the type of the item it points from is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16058,7 +16058,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeNotFoundRefusal"];
                 };
             };
-            /** @description `version_conflict`: `from_version` differs from the source item. `current` is the source now; no edge changed. */
+            /** @description `version_conflict`: `from_version` differs from the version of the item the edge points from. `current` is that item now; no edge changed. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16190,9 +16190,9 @@ export interface operations {
                     properties?: {
                         [key: string]: unknown;
                     };
-                    /** @description The ID of the source item to move the edge to. Only for an edge type where each target holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time. */
+                    /** @description The ID of the item to move the edge's from end to. Only for an edge type where each item at the to end holds one edge (`one-to-one`, `one-to-many`). An update moves one end at a time. */
                     from_id?: string;
-                    /** @description The ID of the target item to move the edge to. Only for an edge type where each source holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time. */
+                    /** @description The ID of the item to move the edge's to end to. Only for an edge type where each item at the from end holds one edge (`one-to-one`, `many-to-one`). An update moves one end at a time. */
                     to_id?: string;
                     /** @description The version of the edge your change is based on, from a read. If the edge has moved on, the update fails with `version_conflict`. */
                     version: number;
@@ -16244,7 +16244,7 @@ export interface operations {
             };
             /**
              * @description - `edge_permission_denied`: you can read the edge type but don't have write on it. `details.grant` names the missing grant.
-             *     - `type_not_permitted`: you can read the source item's type, or the new source's, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: you can read the type of the item the edge points from, or of the item you move it to, but don't have write on it, or your credential reaches no type. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -16258,7 +16258,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `edge_not_found`: no edge has this ID, or its edge type or source item's type is one you can't read.
+             * @description - `edge_not_found`: no edge has this ID, or its edge type or the type of the item it points from is one you can't read.
              *     - `item_not_found`: the item you move the edge to doesn't exist or is of a type you can't read, or the end that stays is in the trash.
              *     - `edge_type_not_found`: you move an end of an edge whose edge type is no longer registered.
              */
@@ -16481,7 +16481,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: your credential reaches no type.
-             *     - `bulk_atomic_rollback`: with `atomic` true, you don't have write on an entry's source item type or edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.
+             *     - `bulk_atomic_rollback`: with `atomic` true, you don't have write on the type of the item an entry points from, or on its edge type. `details.code` is `type_not_permitted` or `edge_permission_denied`.
              */
             403: {
                 headers: {
@@ -18800,7 +18800,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_from: target` with no `reverse_name`, or `extends` is set.
+             * @description - `validation_error`: a field is invalid, such as a bad `id` or `reverse_name`, a `role:` naming no role, or `written_from: to` with no `reverse_name`, or `extends` is set.
              *     - `missing_required_field`: `id` or `cardinality` is missing.
              *     - `invalid_schema`: a property's `type` isn't a field type, or the body has a key the schema doesn't define (`details.errors` names each path).
              */
@@ -18830,7 +18830,7 @@ export interface operations {
             /**
              * @description - `forbidden`: you don't have `metadata.edge_types:write`.
              *     - `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.
-             *     - `type_not_permitted`: the edge type cascades on delete and holds edges whose targets are of a type you can't write. `details.grant` names the missing grant.
+             *     - `type_not_permitted`: the edge type cascades on delete and holds edges that point to items of a type you can't write. `details.grant` names the missing grant.
              */
             403: {
                 headers: {

@@ -29,12 +29,12 @@ pub enum EdgesCommand {
         /// The properties, as a JSON object. Whole values.
         #[arg(long, value_name = "JSON")]
         properties: Option<String>,
-        /// Move the edge to this source, where each target holds one of its type.
-        #[arg(long = "from", value_name = "ID")]
-        source: Option<String>,
-        /// Move the edge to this target, where each source holds one of its type.
-        #[arg(long = "to", value_name = "ID")]
-        target: Option<String>,
+        /// Move the edge's from end to this item, where each to end holds one edge of its type.
+        #[arg(long = "from-id", value_name = "ID")]
+        from: Option<String>,
+        /// Move the edge's to end to this item, where each from end holds one edge of its type.
+        #[arg(long = "to-id", value_name = "ID")]
+        to: Option<String>,
         /// The version the edit was based on.
         #[arg(long)]
         version: i64,
@@ -69,12 +69,12 @@ pub struct EdgeListArgs {
 
 #[derive(Debug, Default, Args)]
 pub struct EdgeCreateArgs {
-    /// The item the edge leaves.
-    #[arg(long = "from", value_name = "ID")]
-    pub source: String,
-    /// The item the edge arrives at.
-    #[arg(long = "to", value_name = "ID")]
-    pub target: String,
+    /// The item the edge points from.
+    #[arg(long = "from-id", value_name = "ID")]
+    pub from: String,
+    /// The item the edge points to.
+    #[arg(long = "to-id", value_name = "ID")]
+    pub to: String,
     /// The edge type.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: String,
@@ -121,8 +121,8 @@ pub fn get_request(id: &str) -> Request {
 pub fn create_request(args: &EdgeCreateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     insert_opt(&mut body, "id", args.id.clone());
-    body.insert("from_id".into(), Value::String(args.source.clone()));
-    body.insert("to_id".into(), Value::String(args.target.clone()));
+    body.insert("from_id".into(), Value::String(args.from.clone()));
+    body.insert("to_id".into(), Value::String(args.to.clone()));
     body.insert("edge_type".into(), Value::String(args.type_.clone()));
     if let Some(properties) = &args.properties {
         body.insert(
@@ -194,8 +194,8 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         EdgesCommand::Update {
             id,
             properties,
-            source,
-            target,
+            from: source,
+            to: target,
             version,
             idempotency,
         } => idempotency.apply(update_request(
@@ -219,7 +219,7 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
                 .unwrap_or_default();
             let mut sentence = format!(
                 "linked {} -> {} with {} edge {id}",
-                args.source, args.target, args.type_
+                args.from, args.to, args.type_
             );
             if answer.get("acknowledged") == Some(&Value::Bool(true)) {
                 sentence.push_str("; the server already held this write");

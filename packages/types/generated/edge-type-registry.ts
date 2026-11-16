@@ -174,10 +174,10 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "about": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
-    "property_schema": {},
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
     "to_type_constraints": [
       "*"
     ],
@@ -186,15 +186,15 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "attached-to": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "with-hosts",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "position": {
         "type": "number"
       }
     },
     "reverse_name": "has-attachment",
-    "from_type_constraints": [
-      "*"
-    ],
     "to_type_constraints": [
       "*"
     ],
@@ -203,10 +203,10 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "comments-on": {
     "cardinality": "many-to-one",
     "cascade_on_delete": "with-hosts",
-    "property_schema": {},
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
     "to_type_constraints": [
       "*"
     ],
@@ -215,10 +215,10 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "derived-from": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
-    "property_schema": {},
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
     "to_type_constraints": [
       "*"
     ],
@@ -227,10 +227,10 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "excerpt-of": {
     "cardinality": "many-to-one",
     "cascade_on_delete": "orphan",
-    "property_schema": {},
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
     "to_type_constraints": [
       "*"
     ],
@@ -239,14 +239,14 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "in-collection": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "position": {
         "type": "number"
       }
     },
-    "from_type_constraints": [
-      "*"
-    ],
     "to_type_constraints": [
       "role:container"
     ],
@@ -255,14 +255,14 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "in-folder": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "path": {
         "type": "string"
       }
     },
-    "from_type_constraints": [
-      "*"
-    ],
     "to_type_constraints": [
       "system.folder"
     ],
@@ -271,14 +271,14 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "in-thread": {
     "cardinality": "many-to-one",
     "cascade_on_delete": "orphan",
+    "from_type_constraints": [
+      "*"
+    ],
     "property_schema": {
       "position": {
         "type": "number"
       }
     },
-    "from_type_constraints": [
-      "*"
-    ],
     "to_type_constraints": [
       "*"
     ],
@@ -287,11 +287,11 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "parent-of": {
     "cardinality": "one-to-many",
     "cascade_on_delete": "cascade",
-    "property_schema": {},
-    "reverse_name": "child-of",
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
+    "reverse_name": "child-of",
     "to_type_constraints": [
       "*"
     ],
@@ -300,10 +300,10 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "references": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
-    "property_schema": {},
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
     "to_type_constraints": [
       "*"
     ],
@@ -312,10 +312,10 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
   "supersedes": {
     "cardinality": "one-to-one",
     "cascade_on_delete": "orphan",
-    "property_schema": {},
     "from_type_constraints": [
       "*"
     ],
+    "property_schema": {},
     "to_type_constraints": [
       "*"
     ],
