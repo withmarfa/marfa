@@ -212,9 +212,7 @@ fn public_addresses(url: &Url) -> Option<Vec<SocketAddr>> {
     public.then_some(found)
 }
 
-/// An agent for a request sent from a thread of its own, or `None` where private addresses are
-/// not allowed and `url` leads to one. Only an allowed request may go through a proxy from the
-/// environment, and never one to this machine, which a proxy cannot reach.
+/// `None` where private addresses are not allowed and `url` leads to one.
 pub fn notice_agent(
     url: &str,
     total: Duration,

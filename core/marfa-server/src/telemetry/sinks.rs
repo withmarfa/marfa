@@ -99,8 +99,7 @@ fn event(report: &Report, attributes: &[(String, String)]) -> Value {
 
 const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A report, and the address `error_webhook_url` and whether private addresses were allowed
-/// when it was made.
+/// A report, with the error webhook and `allow_private_addresses` as they stood when it was made.
 #[derive(Clone)]
 pub struct Notice {
     pub report: Report,

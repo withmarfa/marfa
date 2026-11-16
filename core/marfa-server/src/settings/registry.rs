@@ -42,8 +42,7 @@ pub enum Keep {
     /// Sealed in the database with the machine's key, never shown back, and named in an archive
     /// without its value.
     Secret,
-    /// Sealed and never shown back as a secret is, and named in no archive, as it belongs to
-    /// this machine's other settings.
+    /// A secret that stays with this machine's settings, named in no archive.
     MachineSecret,
 }
 

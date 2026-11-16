@@ -1,5 +1,4 @@
-//! The object store's connections while private addresses are not allowed: each goes straight
-//! to a public address its own lookup found, never through a proxy.
+//! Object store connections that reach only public addresses, never through a proxy.
 
 use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};

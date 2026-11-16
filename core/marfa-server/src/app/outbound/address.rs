@@ -67,8 +67,7 @@ fn public_v6(ip: Ipv6Addr) -> bool {
         && !in_prefix(0x3fff, 0, 0, 20)
 }
 
-/// Whether `url`'s host is written as an address that is not public. A name is judged when it
-/// is looked up.
+/// Whether `url`'s host is a literal address that is not public; a name is judged at lookup.
 pub fn names_private_literal(url: &str) -> bool {
     match Url::parse(url).ok().as_ref().and_then(Url::host) {
         Some(Host::Ipv4(ip)) => !is_public(IpAddr::V4(ip)),
