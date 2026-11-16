@@ -6,7 +6,6 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::client::GrantType;
-use super::clients::email_write_refused;
 use super::pkce;
 use super::resource::{Refused, at_token};
 use super::scope::{OFFLINE_ACCESS, ScopeSet, first_uncovered};
@@ -149,13 +148,6 @@ pub async fn exchange(
             "unauthorized_client",
             "This client is not registered for this grant.",
         )));
-    }
-    if form
-        .get("scope")
-        .map(ScopeSet::parse)
-        .is_some_and(|asked| asked.writes_email())
-    {
-        return Ok(Err(email_write_refused()));
     }
     let ip = visit.client_ip();
     match grant {

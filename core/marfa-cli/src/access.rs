@@ -29,7 +29,7 @@ pub const ROWS: [(&str, &str); 12] = [
 ];
 
 /// The title of each named power, in the order a page lists them.
-pub const POWERS: [(&str, &str); 12] = [
+pub const POWERS: [(&str, &str); 14] = [
     ("keys.mint", "Make, see, edit and revoke keys"),
     ("keys.manage", "See, edit, narrow and revoke every key"),
     ("grants.manage", "See and disconnect other apps"),
@@ -51,6 +51,11 @@ pub const POWERS: [(&str, &str); 12] = [
     ("connectors.manage", "See, manage and remove all connectors"),
     ("audit.read", "Read the activity log"),
     ("items.purge", "Delete items in the trash for good"),
+    ("backups.manage", "See, take and adopt backups"),
+    (
+        "sign_ins.manage",
+        "See, rename and end sign-ins and passkeys",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

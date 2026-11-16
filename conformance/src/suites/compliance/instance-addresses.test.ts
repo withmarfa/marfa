@@ -161,32 +161,30 @@ describe("the sign-in address", () => {
     expect(answer.body.error.code).toBe("forbidden");
     expect(answer.body.error.details).toEqual({ needs: "local" });
     expect((await config()).sign_in_address).toBe(SIGN_IN);
-    const origins = await call("key", "PATCH", "/config", {
-      cors_origins: ["https://app.example"],
-    });
-    expect(origins.status).toBe(403);
-    expect(origins.body.error.code).toBe("forbidden");
-    expect(await config()).not.toHaveProperty("cors_origins");
-    // The witness: the private socket may change the same setting.
-    const socket = await call("socket", "PATCH", "/config", {
-      cors_origins: ["https://app.example"],
-    });
-    expect(socket.status, JSON.stringify(socket.body)).toBe(200);
     const unchanged = await call("key", "PATCH", "/config", {
       sign_in_address: SIGN_IN,
       cors_origins: ["https://app.example"],
     });
     expect(unchanged.status, JSON.stringify(unchanged.body)).toBe(200);
-    const moved = await call("key", "PATCH", "/config", {
-      sign_in_address: SIGN_IN,
-      cors_origins: ["https://app.example", "https://more.example"],
-    });
-    expect(moved.status).toBe(403);
-    expect(moved.body.error.code).toBe("forbidden");
     expect((await config()).cors_origins).toEqual(["https://app.example"]);
     expect(
-      (await call("socket", "PATCH", "/config", { cors_origins: null })).status,
+      (await call("key", "PATCH", "/config", { cors_origins: null })).status,
     ).toBe(200);
+  });
+
+  it("lets a key holding config.manage change cors_origins", async () => {
+    const origins = await call("key", "PATCH", "/config", {
+      cors_origins: ["https://app.example", "https://more.example"],
+    });
+    expect(origins.status, JSON.stringify(origins.body)).toBe(200);
+    expect((await config()).cors_origins).toEqual([
+      "https://app.example",
+      "https://more.example",
+    ]);
+    expect(
+      (await call("key", "PATCH", "/config", { cors_origins: null })).status,
+    ).toBe(200);
+    expect(await config()).not.toHaveProperty("cors_origins");
   });
 
   it("is not moved, and the answer names the consequences, until a write confirms it", async () => {

@@ -47,3 +47,14 @@ pub async fn run(
     let ended = housekeeping::run_now(&app, &name).await?;
     Ok(json_answer(StatusCode::OK, &ended.to_json()))
 }
+
+/// Takes the server's clock as right, which ends a hold on clean-up.
+pub async fn confirm_clock(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    caller.require(Permission::InstanceMaintain)?;
+    query::only(&uri, &[])?;
+    let confirmed = housekeeping::confirm_clock(&app).await?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &json!({ "confirmed_at": confirmed }),
+    ))
+}

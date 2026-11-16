@@ -6,23 +6,11 @@ use axum::http::{HeaderMap, StatusCode, Uri};
 use super::setup::{admit_claim, make_claim};
 use super::{cookies, with_cookie};
 use crate::app::App;
-use crate::app::access::Caller;
 use crate::app::auth::Visit;
-use crate::app::auth::owner::{self, UPDATE_FIELDS, Update};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
 use crate::http::named_instance;
 use crate::http::query;
-
-pub async fn read(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
-    query::only(&uri, &[])?;
-    let found = owner::find(&app).await?.ok_or_else(owner::not_found)?;
-    Ok(json_answer(
-        StatusCode::OK,
-        &found.to_json(app.addresses().sign_in().origin()),
-    ))
-}
 
 pub async fn claim(
     State(app): State<Arc<App>>,
@@ -48,22 +36,4 @@ pub async fn claim(
         answer = with_cookie(answer, cookie);
     }
     Ok(answer)
-}
-
-pub async fn update(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    visit: Visit,
-    uri: Uri,
-    body: JsonBody,
-) -> Answer {
-    caller.require_local()?;
-    query::only(&uri, &[])?;
-    let body = body.object(&UPDATE_FIELDS).await?;
-    let change = Update::from_body(&body)?;
-    let found = owner::update(&app, &caller, change, visit).await?;
-    Ok(json_answer(
-        StatusCode::OK,
-        &found.to_json(app.addresses().sign_in().origin()),
-    ))
 }

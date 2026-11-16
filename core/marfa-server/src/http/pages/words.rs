@@ -13,7 +13,7 @@ pub fn level(level: Level) -> &'static str {
 
 pub const CHOOSE_TYPES_WORD: &str = "Choose types";
 pub const EDIT_LINE: &str = "Edit includes adding and deleting items.";
-pub const POWERS_TITLE: &str = "More control over Marfa";
+pub const POWERS_TITLE: &str = "Look after this Marfa";
 pub const UNDONE_MARK: &str = "Can't be undone.";
 
 pub struct PowerWords {
@@ -21,7 +21,7 @@ pub struct PowerWords {
     pub note: Option<&'static str>,
 }
 
-const POWERS: [(&str, PowerWords); 12] = [
+const POWERS: [(&str, PowerWords); 14] = [
     (
         "keys.mint",
         PowerWords {
@@ -104,6 +104,20 @@ const POWERS: [(&str, PowerWords); 12] = [
         PowerWords {
             title: "Delete items in the trash for good",
             note: None,
+        },
+    ),
+    (
+        "backups.manage",
+        PowerWords {
+            title: "See, take and adopt backups",
+            note: None,
+        },
+    ),
+    (
+        "sign_ins.manage",
+        PowerWords {
+            title: "See, rename and end sign-ins and passkeys",
+            note: Some("Includes ending this app's own access."),
         },
     ),
 ];

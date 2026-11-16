@@ -236,14 +236,14 @@ fn listing_of(uri: &Uri, page: i64) -> Result<Listing> {
 }
 
 pub async fn summaries(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
+    caller.require_reach()?;
     let listing = listing_of(&uri, SUMMARIES_PAGE)?;
     let answer = items::summaries(&app, &caller, listing).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
 
 pub async fn bin(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::ItemsPurge)?;
     let listing = listing_of(&uri, BIN_PAGE)?;
     let answer = items::bin(&app, &caller, listing).await?;
     Ok(text_answer(StatusCode::OK, answer))
@@ -296,7 +296,7 @@ async fn owner_act(
 /// Each row is purged at the version the page read, in a write of its own so that other
 /// requests pass between pages. A row already gone is not a failure.
 pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_local()?;
+    caller.require(Permission::ItemsPurge)?;
     query::only(&uri, &["cursor"])?;
     let listing = Listing {
         type_id: None,

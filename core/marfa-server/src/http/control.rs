@@ -13,7 +13,6 @@ use crate::app::access::Caller;
 use crate::app::auth::Visit;
 use crate::app::auth::claim::{self, Proof};
 use crate::app::auth::owner::{self, Details};
-use crate::app::housekeeping;
 use crate::app::refusal::Refusal;
 
 const CLAIM_FIELDS: [&str; 3] = ["email", "password", "name"];
@@ -66,16 +65,6 @@ pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: Json
     Ok(json_answer(
         StatusCode::CREATED,
         &owner.to_json(app.addresses().sign_in().origin()),
-    ))
-}
-
-/// Takes the server's clock as right, which ends a hold on clean-up.
-pub async fn confirm_clock(State(app): State<Arc<App>>, caller: Caller) -> Answer {
-    caller.require_local()?;
-    let confirmed = housekeeping::confirm_clock(&app).await?;
-    Ok(json_answer(
-        StatusCode::OK,
-        &json!({ "confirmed_at": confirmed }),
     ))
 }
 

@@ -36,7 +36,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `MARFA_API_URL`             | The booted server. Unset, the run stops: there is no default target.                                        |
 | `MARFA_API_KEY`             | Ordinary content/provisioning key with seven named permissions and write access in all five maps.           |
-| `MARFA_MANAGEMENT_KEY`      | Ordinary management fixture key with all twelve named permissions and empty content maps.                   |
+| `MARFA_MANAGEMENT_KEY`      | Ordinary management fixture key with all fourteen named permissions and empty content maps.                 |
 | `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances. |
 | `MARFA_OWNER_COOKIE`        | The owner's sign-in session, for the fixtures of the sign-in pages.                                         |
 | `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket, which owner-only fixtures use.                        |

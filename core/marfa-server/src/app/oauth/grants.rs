@@ -184,7 +184,7 @@ pub async fn narrow(
 ) -> Result<ScopeSet> {
     let cache = app.catalog_handle();
     app.write(caller, NARROWED, move |unit| {
-        unit.caller.require_local()?;
+        unit.caller.require(Permission::GrantsManage)?;
         let tx = unit.tx();
         let consent = of_owner(tx, &id)?.ok_or_else(no_such_grant)?;
         require_as_seen(tx, &consent, &asked.expected)?;

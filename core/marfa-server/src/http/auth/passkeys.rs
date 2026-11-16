@@ -10,7 +10,7 @@ use super::sign_in::{done, refuse_elsewhere, require_own_page};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
-use crate::app::access::{Caller, unauthorized};
+use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::owner;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
 use crate::app::auth::{Visit, form_origins};
@@ -151,8 +151,9 @@ pub async fn remove(
 }
 
 /// It carries no credential, so the browser signs in there.
-pub async fn add_url(State(app): State<Arc<App>>, caller: Caller) -> Answer {
-    caller.require_local()?;
+pub async fn add_url(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    caller.require(Permission::SignInsManage)?;
+    query::only(&uri, &[])?;
     let origin = app.addresses().sign_in().origin().to_string();
     let url = format!("{origin}/auth/sign-in?prompt=login&return_to={PAGE}");
     Ok(json_answer(StatusCode::OK, &json!({ "url": url })))

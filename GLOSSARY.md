@@ -82,7 +82,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **session**: A signed-in browser: the cookie a password sign-in sets, which only the sign-in pages read, for consent, device approval and the owner's passkeys. Not a credential, so ending one ends no app's access. A connector's session token is another thing; name it in full.
 - **sign-in**: One way the owner's Marfa can be reached, as `GET /owner/sign-ins` lists it: a browser session (`kind` `browser`), an app the owner approved (`kind` `app`, its grant) or a live key (`kind` `key`).
 - **local authority**: Authority that only the private Unix socket supplies, to a process running under the server's operating-system account. Not an API key, and never asserted through public HTTP.
-- **local command**: A request made with local authority, over the private socket: the route to what no key may do, such as reading and recovering the owner, and minting a key with no ceiling. A write it makes has the writer `kind` `local`. Not an API key, and not a command of the CLI.
+- **local command**: A request made with local authority, over the private socket: the route to what no key may do, such as claiming the instance, recovering the owner's password and minting a key with no ceiling. A write it makes has the writer `kind` `local`. Not an API key, and not a command of the CLI.
 - **setup code**: A machine-issued proof that authorizes one owner claim. It grants no API access.
 
 ### Access words
@@ -124,6 +124,8 @@ Access is read the same way wherever a person sees it: on the pages where they a
 | `connectors.manage` | See, manage and remove all connectors              |
 | `audit.read`        | Read the activity log                              |
 | `items.purge`       | Delete items in the trash for good                 |
+| `backups.manage`    | See, take and adopt backups                        |
+| `sign_ins.manage`   | See, rename and end sign-ins and passkeys          |
 
 ### The instance
 
@@ -191,7 +193,7 @@ These words are not used: none belongs in a tracked file, in code, a comment, a 
 
 ## Permissions
 
-A permission is named by what it permits, never by a noun for the whole. It opens the operations it names and no item: what a credential reads and writes is its maps' alone, and no permission gives local authority. The first sentence of each row is copied into the contract's table of the twelve, in `conformance/spec/keys-and-oauth.md`, through `PERMISSION_TEXT` in `conformance/src/utils/catalogue-tables.ts`; change both together.
+A permission is named by what it permits, never by a noun for the whole. It opens the operations it names and no item: what a credential reads and writes is its maps' alone, and no permission gives local authority. The first sentence of each row is copied into the contract's table of the fourteen, in `conformance/spec/keys-and-oauth.md`, through `PERMISSION_TEXT` in `conformance/src/utils/catalogue-tables.ts`; change both together.
 
 | Permission          | What it permits                                                                                                                                                                                                                    |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -207,8 +209,10 @@ A permission is named by what it permits, never by a noun for the whole. It open
 | `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.                                                                            |
 | `blobs.manage`      | Managing blob bytes and copies across the instance, without granting item content access.                                                                                                                                          |
 | `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                                                                                           |
+| `backups.manage`    | Listing the backups, taking one now and adopting the backup folder. Restoring one over the data is not part of it.                                                                                                                  |
+| `sign_ins.manage`   | Listing, renaming and ending the owner's sign-ins, and listing, renaming and removing the owner's passkeys and getting the link that adds one.                                                                                      |
 
-The twelve permissions use ten roots, `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors` and `blobs`, which the type grammar reserves with the scope roots (`types/id-reserved-scope-root`). The scope parser takes no other name under them (`keys-and-oauth/device-permission-scope-closed`).
+The fourteen permissions use twelve roots, `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors`, `blobs`, `backups` and `sign_ins`, which the type grammar reserves with the scope roots (`types/id-reserved-scope-root`). The scope parser takes no other name under them (`keys-and-oauth/device-permission-scope-closed`).
 
 ## Time
 

@@ -716,10 +716,11 @@ impl<'a, 'c> Reader<'a, 'c> {
                 .last()
                 .map(|row| (row.created_at.clone(), row.id.clone()));
             for row in batch {
-                if self
-                    .caller
-                    .levers()?
-                    .lists(&self.catalog.rules, &row.type_id, &row.source)
+                if self.caller.may_read_type(&row.type_id)
+                    && self
+                        .caller
+                        .levers()?
+                        .lists(&self.catalog.rules, &row.type_id, &row.source)
                     && (q.is_empty()
                         || name_of(self.tx, &self.catalog, &row)?
                             .to_lowercase()

@@ -69,6 +69,10 @@ pub enum Permission {
     ConnectorsManage,
     #[value(name = "blobs.manage")]
     BlobsManage,
+    #[value(name = "backups.manage")]
+    BackupsManage,
+    #[value(name = "sign_ins.manage")]
+    SignInsManage,
     #[value(name = "keys.manage")]
     KeysManage,
 }
@@ -87,6 +91,8 @@ impl Permission {
             Permission::InstanceMaintain => "instance.maintain",
             Permission::ConnectorsManage => "connectors.manage",
             Permission::BlobsManage => "blobs.manage",
+            Permission::BackupsManage => "backups.manage",
+            Permission::SignInsManage => "sign_ins.manage",
             Permission::KeysManage => "keys.manage",
         }
     }

@@ -186,7 +186,6 @@ impl Axis {
                 .or_else(|| map.exact("*"))
                 .unwrap_or(Level::None),
             Axis::Metadata => map.widest(name),
-            Axis::Profile if name == "email" => map.widest(name).min(Level::Read),
             Axis::Profile if PROFILE_ROWS.contains(&name) => map.widest(name),
             Axis::Profile => Level::None,
         }
@@ -242,9 +241,6 @@ impl Axis {
             }
             Axis::Profile if name != "*" && !PROFILE_ROWS.contains(&name) => {
                 Some("The name must be name, email, avatar or *.")
-            }
-            Axis::Profile if name == "email" && word != Some("read") => {
-                Some("Only the owner can change email, so its level must be read.")
             }
             Axis::Edge | Axis::Extension | Axis::Metadata | Axis::Profile
                 if !matches!(word, Some("read" | "write")) =>
@@ -380,7 +376,7 @@ mod tests {
         let held = map(json!({ "*": "write", "types": "read" }));
         assert_eq!(Axis::Metadata.level(&held, "types"), Level::Write);
         assert_eq!(Axis::Profile.level(&held, "name"), Level::Write);
-        assert_eq!(Axis::Profile.level(&held, "email"), Level::Read);
+        assert_eq!(Axis::Profile.level(&held, "email"), Level::Write);
         assert_eq!(Axis::Profile.level(&held, "age"), Level::None);
     }
 
@@ -523,10 +519,7 @@ mod tests {
             paths(Axis::Edge, json!({"about":"none"})),
             ["edge_permissions.about"]
         );
-        assert_eq!(
-            paths(Axis::Profile, json!({"email":"write"})),
-            ["profile_permissions.email"]
-        );
+        assert!(paths(Axis::Profile, json!({"email":"write"})).is_empty());
         assert_eq!(
             paths(Axis::Profile, json!({"age":"read"})),
             ["profile_permissions.age"]

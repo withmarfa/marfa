@@ -16,17 +16,16 @@ use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Level};
 use crate::app::auth::Visit;
-use crate::app::auth::avatar::{Door, MAX_BYTES};
+use crate::app::auth::avatar::MAX_BYTES;
 use crate::app::auth::owner::{self, Owner, PROFILE_FIELDS, ProfileUpdate};
 use crate::app::refusal::{Code, Refusal};
 
-const OWNER_AVATAR: &str = "/owner/avatar";
 const PROFILE_AVATAR: &str = "/profile/avatar";
 
 /// An avatar's body is read by its own door, under its own cap.
 pub fn is_avatar(request: &Request) -> bool {
     let path = request.uri().path();
-    request.method() == axum::http::Method::PUT && (path == OWNER_AVATAR || path == PROFILE_AVATAR)
+    request.method() == axum::http::Method::PUT && path == PROFILE_AVATAR
 }
 
 /// A body the general cap and deadline leave to the door that reads it.
@@ -89,9 +88,8 @@ async fn put(
     caller: &Caller,
     visit: Visit,
     request: Request,
-    door: Door,
 ) -> Result<Owner, Stopped> {
-    app.admit_avatar(caller, door)?;
+    app.admit_avatar(caller)?;
     query::only(request.uri(), &[])?;
     let (parts, mut body) = request.into_parts();
     let bytes = arrived(
@@ -100,20 +98,7 @@ async fn put(
         app.upload_idle(),
     )
     .await?;
-    Ok(app.put_avatar(caller, door, bytes, visit).await?)
-}
-
-pub async fn put_owner(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    visit: Visit,
-    request: Request,
-) -> Answer {
-    let owner = put(&app, &caller, visit, request, Door::Owner).await?;
-    Ok(json_answer(
-        StatusCode::OK,
-        &owner.to_json(app.addresses().sign_in().origin()),
-    ))
+    Ok(app.put_avatar(caller, bytes, visit).await?)
 }
 
 pub async fn put_profile(
@@ -122,7 +107,7 @@ pub async fn put_profile(
     visit: Visit,
     request: Request,
 ) -> Answer {
-    let owner = put(&app, &caller, visit, request, Door::Profile).await?;
+    let owner = put(&app, &caller, visit, request).await?;
     Ok(json_answer(
         StatusCode::OK,
         &owner::profile_of(&owner, app.addresses().sign_in().origin(), &caller),

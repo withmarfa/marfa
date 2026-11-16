@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::App;
-use super::access::Caller;
+use super::access::{Caller, Permission};
 use super::archive::tar::{BLOCK, END, header, padding};
 use super::archive::{self, MANIFEST, Out, Parted};
 use super::blobs::folder::{self as backup_folder, Adoptable, Area, Folder};
@@ -935,7 +935,7 @@ impl App {
     /// The backups where this instance keeps them, of every instance that put them there, newest
     /// first.
     pub async fn list_backups(&self, caller: &Caller) -> Result<Vec<Value>> {
-        caller.require_local()?;
+        caller.require(Permission::BackupsManage)?;
         let destination = self.destination()?;
         let found = destination
             .list_all()
@@ -967,7 +967,7 @@ impl App {
 
     /// Puts a backup now, whether or not anything has changed since the last.
     pub async fn run_backup(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        caller.require_local()?;
+        caller.require(Permission::BackupsManage)?;
         let app = self.clone();
         let outcome = tokio::spawn(async move { back_up(&app, true).await })
             .await
@@ -1201,7 +1201,7 @@ impl App {
 
     /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
     pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        caller.require_local()?;
+        caller.require(Permission::BackupsManage)?;
         let destination = self.destination()?;
         let Destination::Folder(folder) = &destination else {
             return Err(Refusal::new(

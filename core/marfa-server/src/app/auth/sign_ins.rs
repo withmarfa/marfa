@@ -7,7 +7,7 @@ use super::Visit;
 use super::owner::said_name;
 use super::session::{self, ENDED, Session};
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 use crate::app::clock::Stamp;
 use crate::app::keys::{self, Key};
 use crate::app::oauth::grants;
@@ -105,7 +105,9 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
     let at = app.clock.stamp();
     app.db
         .read(move |tx| {
-            caller.current(tx, &at)?;
+            caller
+                .current(tx, &at)?
+                .require(Permission::SignInsManage)?;
             let mut found = Vec::new();
             for (session, client_ip) in session::all_live(tx, Stamp::read(&at)?)? {
                 found.push(browser(&session, client_ip));
@@ -170,8 +172,9 @@ pub async fn end(
     let action = app
         .db
         .read(move |tx| {
-            asking.require_local()?;
-            asking.current(tx, &at)?;
+            asking
+                .current(tx, &at)?
+                .require(Permission::SignInsManage)?;
             Ok(match to_end(tx, &looked_for, with_keys, &at)? {
                 Named::Key(_) => keys::REVOKED,
                 Named::App(_) => grants::REVOKED,
@@ -181,7 +184,7 @@ pub async fn end(
         .await?;
     let cache = app.catalog_handle();
     app.write(caller, action, move |unit| {
-        unit.caller.require_local()?;
+        unit.caller.require(Permission::SignInsManage)?;
         match to_end(unit.tx(), &id, with_keys, &unit.at)? {
             Named::Browser(session) => session::ended(
                 unit.tx(),
@@ -221,8 +224,9 @@ pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -
     let action = app
         .db
         .read(move |tx| {
-            asking.require_local()?;
-            asking.current(tx, &at)?;
+            asking
+                .current(tx, &at)?
+                .require(Permission::SignInsManage)?;
             Ok(match to_rename(tx, &looked_for, &at)? {
                 Named::Key(_) => keys::UPDATED,
                 _ => grants::RENAMED,
@@ -232,7 +236,7 @@ pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -
     let cache = app.catalog_handle();
     let days = inactivity_days(app);
     app.write(caller, action, move |unit| {
-        unit.caller.require_local()?;
+        unit.caller.require(Permission::SignInsManage)?;
         let tx = unit.tx();
         match to_rename(tx, &id, &unit.at)? {
             Named::App(consent) => {
