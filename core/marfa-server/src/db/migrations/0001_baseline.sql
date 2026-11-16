@@ -1260,15 +1260,17 @@ CREATE TABLE IF NOT EXISTS found_backup_parts (
     PRIMARY KEY (seq, sha256)
 ) STRICT, WITHOUT ROWID;
 
--- The parts of this instance's backups the server stored or checked in a store. `etag` is
--- the ETag the object store gave the part when the server stored or last hashed it, and
--- `damaged_at` is set once a check found the stored part does not hold the bytes its name
--- gives, until the server stores it again or a hash shows it whole.
+-- The parts of this instance's backups the server stored or checked in a store. `tag` is
+-- what the store gave the part when the server stored or last hashed it: an object store's
+-- ETag, or a backup folder's size, modified time and inode. `hashed_at` is when the server
+-- last stored or hashed it. `damaged` is set once a check found the part does not hold the
+-- bytes its name gives, until the server stores it again or a hash shows it whole.
 CREATE TABLE IF NOT EXISTS backup_parts (
     store_id TEXT NOT NULL,
     sha256 TEXT NOT NULL,
-    etag TEXT,
-    damaged_at TEXT,
+    tag TEXT,
+    hashed_at TEXT,
+    damaged INTEGER NOT NULL DEFAULT 0 CHECK (damaged IN (0, 1)),
     PRIMARY KEY (store_id, sha256)
 ) STRICT, WITHOUT ROWID;
 

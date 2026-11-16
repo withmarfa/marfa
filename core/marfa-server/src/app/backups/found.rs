@@ -194,7 +194,7 @@ async fn read(app: &App, destination: &Destination, name: &str) -> Result<()> {
                 .await
                 .map_err(unreachable)?;
             let named = match got {
-                Some((_, bytes)) => files_named(part, bytes).await.map_err(unreachable)?,
+                Some(got) => files_named(part, got.bytes).await.map_err(unreachable)?,
                 None => None,
             };
             let files = named.unwrap_or_else(|| {

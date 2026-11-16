@@ -93,8 +93,8 @@ impl Drop for Restoring<'_> {
 #[derive(Clone, Debug)]
 pub(super) struct Stored {
     size: u64,
-    /// The ETag an object store lists it with; a backup folder gives none.
-    etag: Option<String>,
+    /// The ETag an object store lists it with, or the stamp a backup folder gives it.
+    tag: Option<String>,
 }
 
 /// What the database records of backups.
@@ -449,6 +449,14 @@ fn folder_not_there(folder: &Folder) -> String {
     )
 }
 
+/// A file the destination holds, as one read of it answers.
+struct Got {
+    size: u64,
+    /// The ETag or stamp of the bytes this read answers.
+    tag: Option<String>,
+    bytes: ByteStream,
+}
+
 /// Where backups go: the object store or the backup folder.
 #[derive(Clone)]
 pub(crate) enum Destination {
@@ -515,7 +523,7 @@ impl Destination {
     }
 
     /// The files directly in `instance`'s folder of `area`, by name, with each one's size and the
-    /// ETag an object store lists it with.
+    /// ETag an object store or the stamp a backup folder lists it with.
     async fn listed(
         &self,
         area: Area,
@@ -531,7 +539,7 @@ impl Destination {
                 let listed = blocking(move || folder.list_in(area, &instance)).await?;
                 Ok(listed
                     .into_iter()
-                    .map(|(name, size)| (name, size, None))
+                    .map(|(name, size, stamp)| (name, size, Some(stamp)))
                     .collect())
             }
         }
@@ -553,8 +561,8 @@ impl Destination {
             .listed(Area::Parts, instance)
             .await?
             .into_iter()
-            .filter_map(|(name, size, etag)| {
-                Some((parts::parse(&name)?.to_string(), Stored { size, etag }))
+            .filter_map(|(name, size, tag)| {
+                Some((parts::parse(&name)?.to_string(), Stored { size, tag }))
             })
             .collect())
     }
@@ -572,14 +580,15 @@ impl Destination {
         }
     }
 
-    /// The file `name` in `instance`'s folder of `area`, with its size.
+    /// The file `name` in `instance`'s folder of `area`, with its size and the tag of the bytes
+    /// it answers.
     async fn get(
         &self,
         area: Area,
         instance: &str,
         name: &str,
         idle: Duration,
-    ) -> std::io::Result<Option<(u64, ByteStream)>> {
+    ) -> std::io::Result<Option<Got>> {
         let found = match self {
             Destination::Bucket(bucket) => {
                 let key = key_of(area, instance, name);
@@ -594,10 +603,17 @@ impl Destination {
                     (folder.clone(), instance.to_string(), name.to_string());
                 blocking(move || folder.open_in(area, &instance, &name))
                     .await?
-                    .map(|(size, file)| (size, super::blobs::store::file_stream(file, 0, size)))
+                    .map(|(size, stamp, file)| {
+                        let bytes = super::blobs::store::file_stream(file, 0, size);
+                        (size, Some(stamp), bytes)
+                    })
             }
         };
-        Ok(found.map(|(size, bytes)| (size, super::blobs::store::idle_limited(bytes, idle))))
+        Ok(found.map(|(size, tag, bytes)| Got {
+            size,
+            tag,
+            bytes: super::blobs::store::idle_limited(bytes, idle),
+        }))
     }
 
     /// The manifest of backup `name` of `instance`, with its size, or why it does not read.
@@ -607,7 +623,10 @@ impl Destination {
         name: &str,
         idle: Duration,
     ) -> std::io::Result<Option<(u64, std::result::Result<Manifest, String>)>> {
-        let Some((size, mut bytes)) = self.get(Area::Backups, instance, name, idle).await? else {
+        let Some(Got {
+            size, mut bytes, ..
+        }) = self.get(Area::Backups, instance, name, idle).await?
+        else {
             return Ok(None);
         };
         if size > archive::LINE_CAP as u64 {
@@ -625,7 +644,7 @@ impl Destination {
     }
 
     /// Stores `bytes` as `name` in this instance's folder of `area`, whole or not at all, in place
-    /// of what is there. Answers the size and the ETag an object store gave it.
+    /// of what is there. Answers the size and the tag the destination gave it.
     async fn put(
         &self,
         app: &App,
@@ -656,7 +675,8 @@ impl Destination {
                     ),
                 )
                 .await?;
-                Ok((written.place().await?, None))
+                let (size, stamp) = written.place().await?;
+                Ok((size, Some(stamp)))
             }
         }
     }
@@ -1085,7 +1105,7 @@ impl App {
                         .map_err(|error| {
                             destination.unreachable("reading a part of the backup", &error)
                         })?;
-                    let Some((_, mut bytes)) = got else {
+                    let Some(Got { mut bytes, .. }) = got else {
                         return Err(parts_missing(name, vec![named]));
                     };
                     let mut checked = Checked::default();
@@ -1354,6 +1374,9 @@ impl App {
         let failing = state.as_ref().is_none_or(|state| state.failures > 0);
         let incomplete = files_waiting.is_some_and(|waiting| waiting > 0);
         let damage = damaged.is_some_and(|damaged| damaged > 0);
+        if destination.is_some() && turned_off {
+            health.insert("reason".into(), "turned_off".into());
+        }
         let status = match (&destination, turned_off, failing, &store_error) {
             (None, ..) => {
                 health.insert("reason".into(), "no_backup_destination".into());
@@ -1371,9 +1394,6 @@ impl App {
             health.insert("last_backup".into(), state.last_backup.into());
             health.insert("last_backup_at".into(), state.last_backup_at.into());
             health.insert("failures".into(), state.failures.into());
-        if destination.is_some() && turned_off {
-            health.insert("reason".into(), "turned_off".into());
-        }
             health.insert("last_error".into(), state.last_error.into());
             health.insert("last_failed_at".into(), state.last_failed_at.into());
         }
@@ -1579,6 +1599,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
             changes,
             lost,
             manifest,
+            mut stock,
         }) => {
             let store = destination.id();
             let (recorded, without) = (name.clone(), lost_message(&name, &lost));
@@ -1591,7 +1612,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                 .await?
                 .unwrap_or(0);
             let (removed, unremoved) = thin(app, &destination, at).await;
-            let parts_removed = prune(app, &destination, &manifest).await;
+            let parts_removed = prune(app, &destination, &manifest, &mut stock).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
@@ -1736,10 +1757,13 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
                 Refusal::internal(&format!("a backup's part did not open: {error}"))
             })?;
             let bytes = pause.watch(
-                super::blobs::store::file_stream(file, 0, sealed.size),
+                parts::checked(
+                    super::blobs::store::file_stream(file, 0, sealed.size),
+                    &part,
+                ),
                 last == Some(at),
             );
-            let (_, etag) = destination
+            let (_, tag) = destination
                 .put(
                     app,
                     Area::Parts,
@@ -1748,8 +1772,16 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
                     bytes,
                 )
                 .await
-                .map_err(|error| destination.unreachable("storing a part of the backup", &error))?;
-            stock.stored(app, destination, &part, etag).await?;
+                .map_err(|error| {
+                    if parts::Changed::is(&error) {
+                        Refusal::internal(
+                            "a part of the backup changed on the server's disk before it was stored",
+                        )
+                    } else {
+                        destination.unreachable("storing a part of the backup", &error)
+                    }
+                })?;
+            stock.stored(app, &part, tag).await?;
             sent += part.size_bytes;
         }
     }
@@ -1791,6 +1823,7 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
         sent,
         copied,
         lost = lost.len(),
+        hashed = stock.hashed(),
         read_ms,
         put_ms = began.elapsed().as_millis() as u64 - read_ms,
         "A backup was put"
@@ -1803,6 +1836,7 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
         changes,
         lost,
         manifest,
+        stock,
     })
 }
 
@@ -1872,9 +1906,14 @@ async fn reusable(
 /// manifest of every backup the folder lists, the database records or the server found, and
 /// deletes nothing if one does not read, a store does not answer, or a manifest whose write failed
 /// may still land. A found backup the folder no longer lists keeps its parts until the server
-/// forgets it. In an object store it then checks each part a backup names by its ETag, so a part
-/// written since it was stored shows in health. Answers how many parts it deleted.
-async fn prune(app: &Arc<App>, destination: &Destination, put: &Manifest) -> usize {
+/// forgets it. It then checks each part a backup names as `Stock::whole` does, so a part changed
+/// since it was stored or hashed shows in health. Answers how many parts it deleted.
+async fn prune(
+    app: &Arc<App>,
+    destination: &Destination,
+    put: &Manifest,
+    stock: &mut Stock,
+) -> usize {
     let own = app.instance_id.clone();
     let listed = match destination.list_in(Area::Backups, &own).await {
         Ok(listed) => listed,
@@ -1944,19 +1983,10 @@ async fn prune(app: &Arc<App>, destination: &Destination, put: &Manifest) -> usi
             }
         }
     }
-    let mut stock = match Stock::load(app, destination).await {
-        Ok(stock) => stock,
-        Err(error) => {
-            tracing::warn!(error = %error.message, "The parts were not listed, so none was deleted");
-            return 0;
-        }
-    };
-    if matches!(destination, Destination::Bucket(_)) {
-        for part in named.values() {
-            if let Err(error) = stock.whole(app, destination, part).await {
-                tracing::warn!(error = %error.message, "A part a backup names was not checked");
-                break;
-            }
+    for part in named.values() {
+        if let Err(error) = stock.whole(app, destination, part).await {
+            tracing::warn!(error = %error.message, "A part a backup names was not checked");
+            break;
         }
     }
     let kept: HashSet<String> = named
@@ -1997,6 +2027,8 @@ struct Put {
     changes: i64,
     lost: Vec<String>,
     manifest: Manifest,
+    /// What the destination holds of the parts, as the backup left it.
+    stock: Stock,
 }
 
 fn purged_while_taken(hash: &str) -> Refusal {

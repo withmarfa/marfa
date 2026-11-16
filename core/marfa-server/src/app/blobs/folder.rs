@@ -2,8 +2,9 @@
 //! parts manifests name under `backup-parts/<instance id>/`, and a copy of each file under
 //! `files/<instance id>/`, a disk store of its own.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write as _};
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::SystemTime;
@@ -242,8 +243,9 @@ impl Folder {
         self.root.join(area.name()).join(instance)
     }
 
-    /// The files directly in `instance`'s folder of `area`, by name and size. It blocks.
-    pub fn list_in(&self, area: Area, instance: &str) -> io::Result<Vec<(String, u64)>> {
+    /// The files directly in `instance`'s folder of `area`, by name, with each one's size and
+    /// stamp. It blocks.
+    pub fn list_in(&self, area: Area, instance: &str) -> io::Result<Vec<(String, u64, String)>> {
         self.checked()?;
         listed(&self.folder_of(area, instance))
     }
@@ -263,26 +265,26 @@ impl Folder {
                 continue;
             }
             let instance = entry.file_name().to_string_lossy().into_owned();
-            for (name, size) in listed(&entry.path())? {
+            for (name, size, _) in listed(&entry.path())? {
                 found.push((vec![instance.clone(), name], size));
             }
         }
         Ok(found)
     }
 
-    /// The file `name` in `instance`'s folder of `area`, with its size, where the folder holds it.
-    /// It blocks.
+    /// The file `name` in `instance`'s folder of `area`, with its size and stamp as it was
+    /// opened, where the folder holds it. It blocks.
     pub fn open_in(
         &self,
         area: Area,
         instance: &str,
         name: &str,
-    ) -> io::Result<Option<(u64, File)>> {
+    ) -> io::Result<Option<(u64, String, File)>> {
         self.checked()?;
         match File::open(self.folder_of(area, instance).join(name)) {
             Ok(file) => {
                 let meta = file.metadata()?;
-                Ok(meta.is_file().then_some((meta.len(), file)))
+                Ok(meta.is_file().then(|| (meta.len(), stamp(&meta), file)))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
@@ -398,8 +400,21 @@ fn make_inside(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Files directly in `folder` whose names a listing may read, by name and size.
-fn listed(folder: &Path) -> io::Result<Vec<(String, u64)>> {
+/// A file's size, modified time and inode, which change when its bytes are written or replaced
+/// through the file system. A change that keeps all three, such as one with its time set back or
+/// a disk's own decay, keeps the stamp.
+pub fn stamp(meta: &Metadata) -> String {
+    format!(
+        "{}-{}.{:09}-{}",
+        meta.len(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+        meta.ino()
+    )
+}
+
+/// Files directly in `folder` whose names a listing may read, by name, size and stamp.
+fn listed(folder: &Path) -> io::Result<Vec<(String, u64, String)>> {
     let entries = match fs::read_dir(folder) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -413,7 +428,7 @@ fn listed(folder: &Path) -> io::Result<Vec<(String, u64)>> {
             continue;
         }
         match entry.metadata() {
-            Ok(meta) if meta.is_file() => found.push((name, meta.len())),
+            Ok(meta) if meta.is_file() => found.push((name, meta.len(), stamp(&meta))),
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
@@ -440,15 +455,18 @@ impl Partial {
     }
 
     /// Syncs the bytes, gives them the backup's name and syncs the folder that names them.
-    fn place(&mut self) -> io::Result<()> {
+    /// Answers the file's stamp, which the rename keeps.
+    fn place(&mut self) -> io::Result<String> {
         let Some(file) = self.file.take() else {
             return Err(io::Error::other("a partial backup was closed"));
         };
         file.sync_all()?;
+        let stamped = stamp(&file.metadata()?);
         drop(file);
         fs::rename(&self.path, &self.target)?;
         self.placed = true;
-        File::open(&self.folder)?.sync_all()
+        File::open(&self.folder)?.sync_all()?;
+        Ok(stamped)
     }
 }
 
@@ -469,13 +487,13 @@ pub struct Written {
 }
 
 impl Written {
-    /// Gives the file its name, so it is listed whole or not at all.
-    pub async fn place(self) -> io::Result<u64> {
+    /// Gives the file its name, so it is listed whole or not at all. Answers its size and stamp.
+    pub async fn place(self) -> io::Result<(u64, String)> {
         let Written { mut partial, size } = self;
-        tokio::task::spawn_blocking(move || partial.place())
+        let stamped = tokio::task::spawn_blocking(move || partial.place())
             .await
             .map_err(io::Error::other)??;
-        Ok(size)
+        Ok((size, stamped))
     }
 }
 
@@ -571,11 +589,21 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(written.place().await.unwrap(), 6);
+        let (size, placed) = written.place().await.unwrap();
+        assert_eq!(size, 6);
         assert_eq!(
             folder.list_in(Area::Backups, "instance").unwrap(),
-            [("a.json".into(), 6)]
+            [("a.json".into(), 6, placed.clone())]
         );
+        let (_, opened, _) = folder
+            .open_in(Area::Backups, "instance", "a.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(opened, placed);
+        let path = dir.path().join(BACKUPS).join("instance").join("a.json");
+        fs::write(&path, b"onetwo").unwrap();
+        let (_, _, rewritten) = folder.list_in(Area::Backups, "instance").unwrap().remove(0);
+        assert_ne!(rewritten, placed);
         let dropped = write(
             folder.clone(),
             Area::Backups,
@@ -624,14 +652,16 @@ mod tests {
         fs::write(own.join("kept.json"), b"whole").unwrap();
         fs::write(parts.join(".p.ndjson.gz.0190.partial"), b"half").unwrap();
         fs::write(parts.join("p.ndjson.gz"), b"part").unwrap();
-        assert_eq!(
-            folder.list_in(Area::Backups, "instance").unwrap(),
-            [("kept.json".into(), 5)]
-        );
-        assert_eq!(
-            folder.list_in(Area::Parts, "instance").unwrap(),
-            [("p.ndjson.gz".into(), 4)]
-        );
+        let sized = |area| -> Vec<(String, u64)> {
+            folder
+                .list_in(area, "instance")
+                .unwrap()
+                .into_iter()
+                .map(|(name, size, _)| (name, size))
+                .collect()
+        };
+        assert_eq!(sized(Area::Backups), [("kept.json".into(), 5)]);
+        assert_eq!(sized(Area::Parts), [("p.ndjson.gz".into(), 4)]);
         assert_eq!(folder.clear_leftovers().unwrap(), 2);
         assert!(own.join("kept.json").exists());
         assert!(parts.join("p.ndjson.gz").exists());

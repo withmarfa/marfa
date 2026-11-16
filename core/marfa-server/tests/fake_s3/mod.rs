@@ -65,6 +65,8 @@ struct Held {
     late: Vec<(String, Object)>,
     /// The next this many listings leave out every object whose key starts with the prefix.
     omitted: Option<(String, u32)>,
+    /// The next `GET` of the key finds this object in place of the one there.
+    replaced: Option<(String, Object)>,
     uploads: HashMap<String, Upload>,
     next_upload: u64,
     writes: u64,
@@ -401,7 +403,17 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
                 .unwrap()
         }
         Method::GET | Method::HEAD => {
-            let Some(object) = held.lock().unwrap().objects.get(&key).cloned() else {
+            let found = {
+                let held = &mut *held.lock().unwrap();
+                if method == Method::GET
+                    && held.replaced.as_ref().is_some_and(|(at, _)| *at == key)
+                    && let Some((at, object)) = held.replaced.take()
+                {
+                    held.objects.insert(at, object);
+                }
+                held.objects.get(&key).cloned()
+            };
+            let Some(object) = found else {
                 return not_found();
             };
             let Object {
@@ -555,6 +567,12 @@ impl FakeS3 {
             .unwrap()
             .objects
             .insert(key.to_string(), object);
+    }
+
+    /// Puts `object` at `key` just before the next `GET` of it reads it, as a write that lands
+    /// between a listing and a read does.
+    pub fn replace_before_next_get(&self, key: &str, object: Object) {
+        self.held.lock().unwrap().replaced = Some((key.to_string(), object));
     }
 
     /// Puts bytes at `key` with no metadata, as a write the server did not make.

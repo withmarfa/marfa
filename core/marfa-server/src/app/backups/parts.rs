@@ -209,9 +209,51 @@ impl Checked {
         self.size
     }
 
-    pub fn matches(self, part: &Part) -> bool {
-        self.size == part.size_bytes && hex::encode(self.digest.finalize()) == part.sha256
+    pub fn matches(&self, part: &Part) -> bool {
+        self.size == part.size_bytes && hex::encode(self.digest.clone().finalize()) == part.sha256
     }
+}
+
+/// The error of a part whose bytes changed between being written and being stored.
+#[derive(Debug)]
+pub struct Changed;
+
+impl std::fmt::Display for Changed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a part of the backup changed before it was stored")
+    }
+}
+
+impl std::error::Error for Changed {}
+
+impl Changed {
+    pub fn is(error: &io::Error) -> bool {
+        error.get_ref().is_some_and(|inner| inner.is::<Changed>())
+    }
+}
+
+/// `bytes` as they are read, which fail before they end unless they are `part`'s, so no
+/// destination takes them as whole.
+pub fn checked(bytes: ByteStream, part: &Part) -> ByteStream {
+    let state = (bytes, Some(Checked::default()), part.clone());
+    futures_util::stream::unfold(state, |(mut bytes, checking, part)| async move {
+        let mut checked = checking?;
+        let changed = || Err(io::Error::other(Changed));
+        match bytes.next().await {
+            Some(Ok(chunk)) => {
+                checked.update(&chunk);
+                if checked.size() > part.size_bytes {
+                    Some((changed(), (bytes, None, part)))
+                } else {
+                    Some((Ok(chunk), (bytes, Some(checked), part)))
+                }
+            }
+            Some(Err(error)) => Some((Err(error), (bytes, None, part))),
+            None if checked.matches(&part) => None,
+            None => Some((changed(), (bytes, None, part))),
+        }
+    })
+    .boxed()
 }
 
 /// The hashes of a `files.ndjson.gz` as its bytes arrive, one line at a time.
@@ -417,6 +459,30 @@ mod tests {
             next = group.end;
         }
         assert_eq!(next, count);
+    }
+
+    async fn through_checked(chunks: &[&'static [u8]], part: &Part) -> Vec<io::Result<Bytes>> {
+        let chunks: Vec<io::Result<Bytes>> = chunks
+            .iter()
+            .map(|chunk| Ok(Bytes::from_static(chunk)))
+            .collect();
+        checked(stream::iter(chunks).boxed(), part).collect().await
+    }
+
+    #[tokio::test]
+    async fn checked_bytes_end_only_when_they_are_the_parts() {
+        let part = part(ITEMS, b"onetwo");
+        let whole = through_checked(&[b"one", b"two"], &part).await;
+        assert_eq!(whole.len(), 2);
+        assert!(whole.iter().all(Result::is_ok));
+        let cases: [&[&'static [u8]]; 3] =
+            [&[b"one", b"twx"], &[b"one", b"tw"], &[b"one", b"two", b"!"]];
+        for changed in cases {
+            let read = through_checked(changed, &part).await;
+            let last = read.last().unwrap().as_ref().unwrap_err();
+            assert!(Changed::is(last), "{changed:?}");
+            assert!(read[..read.len() - 1].iter().all(Result::is_ok));
+        }
     }
 
     #[test]

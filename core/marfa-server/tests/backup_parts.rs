@@ -168,7 +168,7 @@ fn text(seed: u64, length: usize) -> String {
 }
 
 struct Instance {
-    _dir: TempDir,
+    dir: TempDir,
     app: Arc<App>,
     public: Router,
     control: Router,
@@ -206,7 +206,7 @@ impl Instance {
             public: public(app.clone()),
             control: control(app.clone()),
             app,
-            _dir: dir,
+            dir,
             writer: String::new(),
         };
         let minted = instance
@@ -1342,6 +1342,267 @@ async fn a_damaged_part_the_origin_finds_in_an_object_store_shows_in_health_unti
     .await;
 }
 
+/// Health's status and reason as a request with no credential reads them.
+async fn public_backups(instance: &Instance) -> Value {
+    let public = instance
+        .send(
+            &instance.public,
+            None,
+            Method::GET,
+            "/health",
+            Body::empty(),
+            "application/json",
+        )
+        .await;
+    assert_eq!(public.status, StatusCode::OK, "{}", public.body);
+    public.body["backups"].clone()
+}
+
+async fn turned_off_is_said_while_something_else_fails_backups(place: Place) {
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    origin.item("core.note", json!({ "title": "kept" })).await;
+    let answer = origin.back_up().await;
+    let name = answer["backup"]["name"].as_str().unwrap().to_string();
+    let set = origin
+        .local(
+            Method::PATCH,
+            "/config",
+            Some(json!({ "backup_interval_seconds": 0 })),
+        )
+        .await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.body);
+    assert_eq!(
+        public_backups(&origin).await,
+        json!({ "status": "off", "reason": "turned_off" })
+    );
+    assert_eq!(origin.backup_concerns().await, ["turned_off"]);
+
+    let (items_sha, _) = entry_part(&place.manifest(&id, &name), "items.ndjson.gz");
+    let whole = place.part(&id, &items_sha);
+    place.write(
+        "backup-parts",
+        &id,
+        &part_name(&items_sha),
+        &altered(whole.clone()),
+    );
+    missing_parts(&origin.restore(&id, &name, "").await);
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 1, "{health}");
+    assert_eq!(
+        public_backups(&origin).await,
+        json!({ "status": "failing", "reason": "turned_off" })
+    );
+    let concerns = origin.backup_concerns().await;
+    for reference in ["turned_off", "parts_damaged"] {
+        assert!(concerns.contains(&reference.to_string()), "{concerns:?}");
+    }
+    place.write("backup-parts", &id, &part_name(&items_sha), &whole);
+    origin.app.clock.pause(true);
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    assert_eq!(origin.backups_health().await["damaged_parts"], 0);
+
+    let Place::Folder(folder) = &place else {
+        return;
+    };
+    let away = folder.path().with_extension("away");
+    fs::rename(folder.path(), &away).unwrap();
+    let gone = public_backups(&origin).await;
+    let concerns = origin.backup_concerns().await;
+    fs::rename(&away, folder.path()).unwrap();
+    assert_eq!(gone, json!({ "status": "failing", "reason": "turned_off" }));
+    for reference in ["turned_off", "store"] {
+        assert!(concerns.contains(&reference.to_string()), "{concerns:?}");
+    }
+}
+
+#[tokio::test]
+async fn turned_off_is_said_while_a_part_is_damaged_or_the_folder_is_gone() {
+    turned_off_is_said_while_something_else_fails_backups(Place::folder().await).await;
+}
+
+#[tokio::test]
+async fn turned_off_is_said_while_a_part_in_an_object_store_is_damaged() {
+    turned_off_is_said_while_something_else_fails_backups(Place::bucket().await).await;
+}
+
+#[tokio::test]
+async fn an_object_store_part_is_trusted_by_the_etag_of_the_bytes_that_were_hashed() {
+    let place = Place::bucket().await;
+    let Place::Bucket(store) = &place else {
+        unreachable!()
+    };
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    origin.item("core.note", json!({ "title": "first" })).await;
+    let first = origin.back_up().await;
+    let first_name = first["backup"]["name"].as_str().unwrap().to_string();
+    let (old_items, _) = entry_part(&place.manifest(&id, &first_name), "items.ndjson.gz");
+    origin.app.clock.pause(true);
+    origin.item("core.note", json!({ "title": "second" })).await;
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    let key = Place::key("backup-parts", &id, &part_name(&old_items));
+    let good = store.stored(&key).unwrap();
+    store.put_object(&key, &altered(place.part(&id, &old_items)));
+    let damaged = store.stored(&key).unwrap();
+
+    // The listing gives the damaged object's ETag; a write lands before the check reads it.
+    store.replace_before_next_get(&key, good);
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    assert_eq!(origin.backups_health().await["damaged_parts"], 0);
+
+    // The damaged bytes come back, as a write of the same bytes gives the same ETag.
+    store.restore(&key, damaged);
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 1, "{health}");
+    let refused = Instance::start(&place)
+        .await
+        .restore(&id, &first_name, "")
+        .await;
+    assert_eq!(
+        missing_parts(&refused),
+        BTreeSet::from([part_name(&old_items)])
+    );
+}
+
+/// Changes one byte in the middle of each file the server has spooled, keeping its size.
+fn alter_spools(instance: &Instance) -> usize {
+    let mut altered_spools = 0;
+    for entry in fs::read_dir(instance.dir.path().join("blobs").join("tmp")).unwrap() {
+        let path = entry.unwrap().path();
+        let bytes = fs::read(&path).unwrap();
+        if path.is_file() && !bytes.is_empty() {
+            fs::write(&path, altered(bytes)).unwrap();
+            altered_spools += 1;
+        }
+    }
+    altered_spools
+}
+
+async fn a_part_changed_on_the_servers_disk_before_it_is_stored_fails_the_backup(place: Place) {
+    let origin = Arc::new(Instance::start(&place).await);
+    let id = origin.id();
+    fill(&origin).await;
+    origin.app.faults.set("hold:backup:read", None).unwrap();
+    let running = origin.clone();
+    let run = tokio::spawn(async move { running.local(Method::POST, "/backups", None).await });
+    until("the backup to hold", || {
+        origin
+            .app
+            .faults
+            .list()
+            .iter()
+            .any(|fault| fault.waiting > 0)
+    })
+    .await;
+    assert!(alter_spools(&origin) > 0);
+    origin.app.faults.clear(None);
+    let refused = run.await.unwrap();
+    assert_eq!(
+        refused.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        refused.body
+    );
+    assert!(place.names("backups", &id).is_empty());
+    for (sha256, _) in place.parts(&id) {
+        assert_eq!(sha_of(&place.part(&id, &sha256)), sha256);
+    }
+    let health = origin.backups_health().await;
+    assert_eq!(health["failures"], 1, "{health}");
+    assert!(health["store_error"].is_null(), "{health}");
+
+    let put = origin.back_up().await;
+    let name = put["backup"]["name"].as_str().unwrap().to_string();
+    for (sha256, _) in place.parts(&id) {
+        assert_eq!(sha_of(&place.part(&id, &sha256)), sha256);
+    }
+    let restored = Instance::start(&place).await.restore(&id, &name, "").await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+}
+
+#[tokio::test]
+async fn a_part_changed_on_the_servers_disk_before_it_reaches_a_folder_fails_the_backup() {
+    a_part_changed_on_the_servers_disk_before_it_is_stored_fails_the_backup(Place::folder().await)
+        .await;
+}
+
+#[tokio::test]
+async fn a_part_changed_on_the_servers_disk_before_it_reaches_an_object_store_fails_the_backup() {
+    a_part_changed_on_the_servers_disk_before_it_is_stored_fails_the_backup(Place::bucket().await)
+        .await;
+}
+
+/// Writes `bytes` over the file at `path` in place, and gives it back the modified time it had.
+fn rewrite_keeping_time(path: &std::path::Path, bytes: &[u8]) {
+    let modified = fs::metadata(path).unwrap().modified().unwrap();
+    fs::write(path, bytes).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_folder_part_is_read_when_its_size_time_or_inode_change_or_when_its_check_is_due() {
+    let place = Place::folder().await;
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    let (large, _) = fill(&origin).await;
+    let first = origin.back_up().await;
+    let first_name = first["backup"]["name"].as_str().unwrap().to_string();
+    let manifest = place.manifest(&id, &first_name);
+    let (large_sha, large_size) = large_part(&place, &id, &manifest, &large);
+    let (items_sha, items_size) = entry_part(&manifest, "items.ndjson.gz");
+    origin.app.clock.pause(true);
+
+    let large_path = place.path("backup-parts", &id, &part_name(&large_sha));
+    let inode = std::os::unix::fs::MetadataExt::ino(&fs::metadata(&large_path).unwrap());
+    rewrite_keeping_time(&large_path, &altered(place.part(&id, &large_sha)));
+    assert_eq!(
+        std::os::unix::fs::MetadataExt::ino(&fs::metadata(&large_path).unwrap()),
+        inode
+    );
+    origin.app.clock.advance(1000).unwrap();
+    let unread = origin.back_up().await;
+    assert_eq!(unread["sent_bytes"], 0, "{unread}");
+    let unread_name = unread["backup"]["name"].as_str().unwrap().to_string();
+    let refused = Instance::start(&place)
+        .await
+        .restore(&id, &unread_name, "")
+        .await;
+    assert_eq!(
+        missing_parts(&refused),
+        BTreeSet::from([part_name(&large_sha)])
+    );
+
+    let items_path = place.path("backup-parts", &id, &part_name(&items_sha));
+    fs::write(&items_path, altered(place.part(&id, &items_sha))).unwrap();
+    origin.app.clock.advance(1000).unwrap();
+    let touched = origin.back_up().await;
+    assert_eq!(touched["sent_bytes"], items_size, "{touched}");
+
+    origin.app.clock.advance(8 * DAY_MS).unwrap();
+    let due = origin.back_up().await;
+    assert_eq!(due["sent_bytes"], large_size, "{due}");
+    for (sha256, _) in place.parts(&id) {
+        assert_eq!(sha_of(&place.part(&id, &sha256)), sha256);
+    }
+    let due_name = due["backup"]["name"].as_str().unwrap().to_string();
+    let restored = Instance::start(&place)
+        .await
+        .restore(&id, &due_name, "")
+        .await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+}
+
 #[tokio::test]
 async fn an_object_store_part_is_taken_as_whole_only_while_it_keeps_the_etag_it_was_stored_with() {
     let place = Place::bucket().await;
@@ -1409,9 +1670,7 @@ async fn an_object_store_part_is_taken_as_whole_only_while_it_keeps_the_etag_it_
     );
 }
 
-#[tokio::test]
-async fn an_object_store_part_only_an_older_backup_names_shows_in_health_once_rewritten() {
-    let place = Place::bucket().await;
+async fn a_part_only_an_older_backup_names_shows_in_health_once_rewritten(place: Place) {
     let origin = Instance::start(&place).await;
     let id = origin.id();
     origin.item("core.note", json!({ "title": "first" })).await;
@@ -1449,6 +1708,16 @@ async fn an_object_store_part_only_an_older_backup_names_shows_in_health_once_re
         missing_parts(&refused),
         BTreeSet::from([part_name(&old_items)])
     );
+}
+
+#[tokio::test]
+async fn a_part_only_an_older_backup_names_in_a_folder_shows_in_health_once_rewritten() {
+    a_part_only_an_older_backup_names_shows_in_health_once_rewritten(Place::folder().await).await;
+}
+
+#[tokio::test]
+async fn a_part_only_an_older_backup_names_in_an_object_store_shows_in_health_once_rewritten() {
+    a_part_only_an_older_backup_names_shows_in_health_once_rewritten(Place::bucket().await).await;
 }
 
 const FOUND: &str = "20200101T000000.000Z.json";

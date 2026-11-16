@@ -6,7 +6,9 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -706,6 +708,57 @@ function partsSuite(make: () => Place, folder: boolean) {
     expect(
       (await clientsFor(refuser!).working.getItem(file.data.item.id)).status,
     ).toBe(200);
+  });
+
+  it("takes a folder part as held while its size, modified time and inode are unchanged, and hashes it again once 7 days have passed since its last hash", async () => {
+    const path = join(
+      place.env.MARFA_BACKUP_PATH!,
+      "backup-parts",
+      originId,
+      large.name,
+    );
+    const at = new Date(
+      Math.floor(statSync(path).mtimeMs / 1000) * 1000 - 60_000,
+    );
+    utimesSync(path, at, at);
+    const checked = await backUp();
+    expect(checked.sent_bytes).toBe(0);
+    expect(
+      sizesOf((await place.backup(originId, checked.backup.name)).manifest).get(
+        large.name,
+      ),
+    ).toBe(large.size);
+
+    const inode = statSync(path).ino;
+    writeFileSync(path, altered(readFileSync(path)));
+    utimesSync(path, at, at);
+    const kept = statSync(path);
+    expect([kept.ino, kept.size, kept.mtimeMs]).toEqual([
+      inode,
+      large.size,
+      at.getTime(),
+    ]);
+
+    const held = await backUp();
+    expect(held.sent_bytes).toBe(0);
+    // The witness: the part it took as held does not restore.
+    expect(`${sha256Of(readFileSync(path))}.ndjson.gz`).not.toBe(large.name);
+    const refused = await ownerOf(refuser!).restoreBackup(
+      originId,
+      held.backup.name,
+    );
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error.code).toBe("backup_parts_missing");
+
+    await origin.advanceClock(8 * 24 * 3_600_000);
+    const due = await backUp();
+    expect(due.sent_bytes).toBe(large.size);
+    expect(`${sha256Of(readFileSync(path))}.ndjson.gz`).toBe(large.name);
+    const restored = await ownerOf(refuser!).restoreBackup(
+      originId,
+      due.backup.name,
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 }
 

@@ -512,15 +512,21 @@ impl S3 {
             .map_err(failed)
     }
 
-    /// The whole object at `key` and its size, or `None` where the store holds none.
+    /// The whole object at `key`, its size and the ETag of the bytes it answers, or `None` where
+    /// the store holds none.
     pub async fn get_whole(
         &self,
         key: &str,
-    ) -> io::Result<Option<(u64, BoxStream<'static, io::Result<Bytes>>)>> {
+    ) -> io::Result<Option<(u64, Option<String>, BoxStream<'static, io::Result<Bytes>>)>> {
         match self.client.get(&self.path_of(key)).await {
             Ok(found) => {
                 let size = found.meta.size;
-                Ok(Some((size, found.into_stream().map_err(failed).boxed())))
+                let tag = found.meta.e_tag.as_deref().map(etag);
+                Ok(Some((
+                    size,
+                    tag,
+                    found.into_stream().map_err(failed).boxed(),
+                )))
             }
             Err(error) if is_missing(&error) => Ok(None),
             Err(error) => Err(failed(error)),
