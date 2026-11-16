@@ -136,14 +136,9 @@ async function send(
       ? {}
       : { body: way.body(JSON.stringify(options.payload ?? {})) }),
   };
-  // Owner updates, sign-in management, and grant narrowing refuse every key,
-  // so the private local command is what reaches their body. Public claims
-  // keep their own proof.
-  if (
-    door === "PATCH /owner" ||
-    door === "PATCH /grants/{id}" ||
-    template.startsWith("/owner/")
-  )
+  // The private local command reaches these bodies whatever the key holds.
+  // Public claims keep their own proof.
+  if (door === "PATCH /grants/{id}" || template.startsWith("/owner/"))
     return localFetch(socket(), `${apiUrl}${path}`, {
       ...init,
       headers: way.headers,

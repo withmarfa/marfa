@@ -369,8 +369,6 @@ impl Plan {
         )
     }
 
-    /// Whether the origins sign-in forms are taken from change. Those forms
-    /// reach the owner's cookie, so this is the operator's as the address is.
     /// What the change does to the addresses, and whether it needs a person to
     /// confirm it. This is the one place that decides.
     fn addresses_at(&self, app: &App, tx: &Transaction<'_>) -> Result<Moved> {

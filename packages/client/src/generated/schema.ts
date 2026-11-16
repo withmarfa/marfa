@@ -2563,10 +2563,10 @@ export interface components {
             source_allowlist?: components["schemas"]["TypeAndSourceLever"] & unknown;
             source_filter?: components["schemas"]["TypeAndSourceLever"] & unknown;
         };
-        /** @description Profile field permissions. Only the owner can change email. */
+        /** @description Profile field permissions. */
         ProfilePermissions: {
             /**
-             * @description Access to every profile field. write changes only name and avatar.
+             * @description Access to every profile field.
              * @enum {string}
              */
             "*"?: "read" | "write";
@@ -2576,17 +2576,17 @@ export interface components {
              */
             name?: "read" | "write";
             /**
-             * @description Read access to the owner's email address.
+             * @description Access to the owner's email address.
              * @enum {string}
              */
-            email?: "read";
+            email?: "read" | "write";
             /**
              * @description Access to the owner's profile avatar.
              * @enum {string}
              */
             avatar?: "read" | "write";
         };
-        /** @description Stored profile levels by field. Only name and avatar permit writes. */
+        /** @description Stored profile levels by field. */
         StoredProfilePermissions: {
             [key: string]: components["schemas"]["PermissionLevel"];
         };
@@ -32221,7 +32221,7 @@ export interface operations {
                      * @example {
                      *       "name": "Alex Example",
                      *       "email": "alex@example.com",
-                     *       "avatar": "https://marfa.example.com/owner/avatar"
+                     *       "avatar": "https://marfa.example.com/profile/avatar"
                      *     }
                      */
                     "application/json": components["schemas"]["Profile"];

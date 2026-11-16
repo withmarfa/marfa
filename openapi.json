@@ -287,7 +287,7 @@
               "read",
               "write"
             ],
-            "description": "Access to every profile field. write changes only name and avatar."
+            "description": "Access to every profile field."
           },
           "name": {
             "type": "string",
@@ -300,9 +300,10 @@
           "email": {
             "type": "string",
             "enum": [
-              "read"
+              "read",
+              "write"
             ],
-            "description": "Read access to the owner's email address."
+            "description": "Access to the owner's email address."
           },
           "avatar": {
             "type": "string",
@@ -314,14 +315,14 @@
           }
         },
         "additionalProperties": false,
-        "description": "Profile field permissions. Only the owner can change email."
+        "description": "Profile field permissions."
       },
       "StoredProfilePermissions": {
         "type": "object",
         "additionalProperties": {
           "$ref": "#/components/schemas/PermissionLevel"
         },
-        "description": "Stored profile levels by field. Only name and avatar permit writes."
+        "description": "Stored profile levels by field."
       },
       "PermissionLevel": {
         "type": "string",
@@ -55335,7 +55336,7 @@
                 "example": {
                   "name": "Alex Example",
                   "email": "alex@example.com",
-                  "avatar": "https://marfa.example.com/owner/avatar"
+                  "avatar": "https://marfa.example.com/profile/avatar"
                 }
               }
             },
