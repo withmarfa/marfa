@@ -618,6 +618,8 @@ mod tests {
         kept(dir.path(), &dir.path().join("blobs")).unwrap();
         assert_eq!(mode(&key), 0o600);
 
+        // A POSIX access control list grants nothing past a mode that gives the group nothing.
+        chmod(&key, 0o640);
         if let_another_account(&key, Grant::ReadFile) {
             assert!(reach(&key).itself);
             kept(dir.path(), &dir.path().join("blobs")).unwrap();
