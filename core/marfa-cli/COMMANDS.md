@@ -590,7 +590,7 @@ marfa items get [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--include <NAME>` | Extra to hydrate onto the item: `edges`, `metadata`; repeat it for both. |
+| `--include <NAME>` | Extra to add to the item: `backrefs`, `neighbors` or `versions`; repeatable. |
 
 ### marfa items create
 

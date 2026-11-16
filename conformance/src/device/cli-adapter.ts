@@ -1258,6 +1258,14 @@ export class CliDevice implements DeviceUnderTest {
     }
   }
 
+  /** A list as every list prints it: the rows under `data`, and `next_cursor`. */
+  private async data<T>(args: string[]): Promise<Outcome<T[]>> {
+    return rows(
+      await this.json<{ data: T[]; next_cursor: string | null }>(args),
+      (answer) => answer.data,
+    );
+  }
+
   /**
    * A refusal is a non-zero exit with something on stderr, and nothing else.
    *
@@ -1267,14 +1275,6 @@ export class CliDevice implements DeviceUnderTest {
    * the device refused pass against a device that is simply broken, which is
    * the one way this suite could be green about nothing.
    */
-  /** A list as every list prints it: the rows under `data`, and `next_cursor`. */
-  private async data<T>(args: string[]): Promise<Outcome<T[]>> {
-    return rows(
-      await this.json<{ data: T[]; next_cursor: string | null }>(args),
-      (answer) => answer.data,
-    );
-  }
-
   private async json<T>(args: string[]): Promise<Outcome<T>> {
     return this.invoke<T>([...this.prefix(), ...args]);
   }

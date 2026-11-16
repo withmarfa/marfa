@@ -37,7 +37,7 @@ pub enum ItemsCommand {
     Get {
         /// The item id.
         id: String,
-        /// Extra to hydrate onto the item: `edges`, `metadata`; repeat it for both.
+        /// Extra to add to the item: `backrefs`, `neighbors` or `versions`; repeatable.
         #[arg(long, value_name = "NAME")]
         include: Vec<String>,
     },
