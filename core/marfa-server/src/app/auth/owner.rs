@@ -151,15 +151,26 @@ pub(super) fn is_hidden(c: char) -> bool {
         || ('\u{2060}'..='\u{206f}').contains(&c)
 }
 
-pub(super) fn checked_name(text: &str) -> Result<Option<String>> {
+fn name_problem(text: &str) -> std::result::Result<Option<String>, &'static str> {
     if text.chars().any(is_hidden) {
-        return Err(invalid("name", "Use letters, numbers and punctuation."));
+        return Err("Use letters, numbers and punctuation.");
     }
     let name = text.trim();
     if name.chars().count() > MAX_NAME_CHARS {
-        return Err(invalid("name", "Use at most 200 characters."));
+        return Err("Use at most 200 characters.");
     }
     Ok((!name.is_empty()).then(|| name.to_string()))
+}
+
+pub(super) fn checked_name(text: &str) -> Result<Option<String>> {
+    name_problem(text).map_err(|message| invalid("name", message))
+}
+
+/// A name for a thing that has one field, refused with the field's own message.
+pub(super) fn said_name(text: &str, empty: &'static str) -> Result<String> {
+    name_problem(text)
+        .map_err(Refusal::validation)?
+        .ok_or_else(|| Refusal::validation(empty))
 }
 
 impl Details {
@@ -392,4 +403,34 @@ pub async fn recover(app: &App, new_password: String) -> Result<()> {
     .await?;
     limits::clear_for_recovery(&app.limiter);
     Ok(())
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn a_name_refused_for_one_field_says_why_at_the_top() {
+        let hidden = "pass\u{200b}key";
+        let long = "n".repeat(MAX_NAME_CHARS + 1);
+        // The witness: an ordinary name is taken, and an empty one is the caller's own message.
+        assert_eq!(said_name("  Laptop ", "Give it a name.").unwrap(), "Laptop");
+        assert_eq!(
+            said_name("   ", "Give it a name.").unwrap_err().message,
+            "Give it a name."
+        );
+        assert_eq!(
+            said_name(hidden, "x").unwrap_err().message,
+            "Use letters, numbers and punctuation."
+        );
+        assert_eq!(
+            said_name(&long, "x").unwrap_err().message,
+            "Use at most 200 characters."
+        );
+        // The owner's own name keeps the path of the field in its details.
+        assert_eq!(
+            checked_name(&long).unwrap_err().message,
+            "Invalid owner details."
+        );
+    }
 }
