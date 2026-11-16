@@ -101,14 +101,14 @@ impl Wrote {
 pub(crate) fn source_missing(id: &str) -> Refusal {
     Refusal::new(
         Code::ItemNotFound,
-        format!("Edge source item not found: {id}"),
+        format!("Edge from item not found: {id}"),
     )
 }
 
 pub(crate) fn target_missing(id: &str) -> Refusal {
     Refusal::new(
         Code::ItemNotFound,
-        format!("Edge target item not found: {id}"),
+        format!("Edge to item not found: {id}"),
     )
 }
 

@@ -522,7 +522,7 @@ The server MUST send an edge event as `edge.created`, `edge.updated` or `edge.de
 
 ### `events/edge-source-type`
 
-The server MUST carry on an edge event `from_type`, the type its source item had when the event was published.
+The server MUST carry on an edge event `from_type`, the type its from item had when the event was published.
 
 **Reason:** `from_type` decides who is told about the event, and a purge takes the source item before the event is read.
 
@@ -678,7 +678,7 @@ The server MUST withhold an edge event from a subscriber that may not read the e
 
 ### `events/edge-frame-source`
 
-The server MUST withhold an edge event from a subscriber that may not read the type the edge's source item had when the event was published.
+The server MUST withhold an edge event from a subscriber that may not read the type the edge's from item had when the event was published.
 
 **Tests:** `compliance/edge-events.test.ts › withholds a live edge frame the credential could not read singly`, `› withholds the same frames on a replay from a cursor`.
 
@@ -696,7 +696,7 @@ When a stream replays from a cursor, the server MUST withhold the edge events it
 
 ### `events/edge-frame-published-type`
 
-When a purge has taken an edge's source item, the server MUST withhold the edge's `edge.deleted` from a subscriber that may not read the type the source item had when the event was published.
+When a purge has taken an edge's from item, the server MUST withhold the edge's `edge.deleted` from a subscriber that may not read the type the from item had when the event was published.
 
 **Tests:** `compliance/edge-events.test.ts › withholds a purged item's edges from a subscriber that could not read it, live and on a replay`.
 
@@ -714,9 +714,9 @@ Where the source filter names an item's type or a type above it and does not nam
 
 ### `events/source-filter-edge`
 
-Where the source filter applies to a stream that is not a copy stream, the server MUST withhold an edge event from it, live and on a replay from a cursor, when the filter leaves out the source item the event carried when it was published, and not when it leaves out only the edge's target item.
+Where the source filter applies to a stream that is not a copy stream, the server MUST withhold an edge event from it, live and on a replay from a cursor, when the filter leaves out the from item the event carried when it was published, and not when it leaves out only the edge's to item.
 
-**Reason:** an edge listing decides an edge by its source item (`edges/read-source-filter`), and a stream frame is the same disclosure.
+**Reason:** an edge listing decides an edge by its from item (`edges/read-source-filter`), and a stream frame is the same disclosure.
 
 **Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose source item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
 
@@ -1238,9 +1238,9 @@ The server MUST NOT deliver an edge event to a subscription whose credential may
 
 ### `events/delivery-reach-edge-source`
 
-The server MUST NOT deliver an edge event to a subscription whose credential may not read the type the edge's source item had when the event was published.
+The server MUST NOT deliver an edge event to a subscription whose credential may not read the type the edge's from item had when the event was published.
 
-**Reason:** the stream holds the same rule, `events/edge-frame-source`, and a later retype of the source changes nothing about who may be told of the event.
+**Reason:** the stream holds the same rule, `events/edge-frame-source`, and a later retype of the from item changes nothing about who may be told of the event.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers an edge event only where the key may read the type its source had when the event was published`.
 
@@ -1252,7 +1252,7 @@ When the server delivers `metadata.changed`, the server MUST include only the ex
 
 ### `events/delivery-edge-purged-source`
 
-When a purge has taken an edge's source item, the server MUST withhold the edge's `edge.deleted` from a webhook whose credential may not read the type the source item had when the event was published.
+When a purge has taken an edge's from item, the server MUST withhold the edge's `edge.deleted` from a webhook whose credential may not read the type the from item had when the event was published.
 
 **Reason:** the stream holds the same rule, `events/edge-frame-published-type`, and a webhook that told its owner what the stream would not would disclose an edge's ends.
 
@@ -1268,7 +1268,7 @@ Where the `enforcement.source_filter` that holds for a subscription's credential
 
 ### `events/delivery-source-filter-edge`
 
-Where an `enforcement.source_filter` holds for a subscription's credential, the server MUST withhold an edge event from the subscription when the filter leaves out the source item the event carried when it was published, and not when it leaves out only the edge's target item.
+Where an `enforcement.source_filter` holds for a subscription's credential, the server MUST withhold an edge event from the subscription when the filter leaves out the from item the event carried when it was published, and not when it leaves out only the edge's to item.
 
 **Reason:** the stream holds the same rule, `events/source-filter-edge`.
 

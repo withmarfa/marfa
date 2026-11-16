@@ -668,7 +668,7 @@ When a `filter` applies `not_exists` to `edge[<edge type>]`, the server MUST sel
 
 ### `search-and-filters/filter-backref-eq`
 
-When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select the items that are the target of an edge of that type whose source is that id.
+When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select the items that are the to item of an edge of that type whose from item is that id.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
@@ -676,7 +676,7 @@ When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select t
 
 ### `search-and-filters/filter-backref-neq`
 
-When a `filter` holds `backref[<edge type>] neq "<id>"`, the server MUST select every item that is not the target of an edge of that type from that id, an item with no inbound edge of that type included.
+When a `filter` holds `backref[<edge type>] neq "<id>"`, the server MUST select every item that is not the to item of an edge of that type from that id, an item with no inbound edge of that type included.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
@@ -684,7 +684,7 @@ When a `filter` holds `backref[<edge type>] neq "<id>"`, the server MUST select 
 
 ### `search-and-filters/filter-backref-exists`
 
-When a `filter` applies `exists` to `backref[<edge type>]`, the server MUST select the items that are the target of at least one edge of that type.
+When a `filter` applies `exists` to `backref[<edge type>]`, the server MUST select the items that are the to item of at least one edge of that type.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
@@ -692,7 +692,7 @@ When a `filter` applies `exists` to `backref[<edge type>]`, the server MUST sele
 
 ### `search-and-filters/filter-backref-not-exists`
 
-When a `filter` applies `not_exists` to `backref[<edge type>]`, the server MUST select the items that are the target of no edge of that type.
+When a `filter` applies `not_exists` to `backref[<edge type>]`, the server MUST select the items that are the to item of no edge of that type.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
@@ -978,11 +978,11 @@ If a `filter` compares `status_group` with a value other than `"not_started"`, `
 
 ## The part term
 
-A `part` term selects the items that are parts of another (`edges/parts-trash`): an item out of the bin that is the source of a `with-hosts` edge whose target is out of the bin. No listing leaves parts out unless its filter says so. A device answers the term from its working copy by the same rule (`device/filter-part`).
+A `part` term selects the items that are parts of another (`edges/parts-trash`): an item out of the bin that is the from item of a `with-hosts` edge whose to item is out of the bin. No listing leaves parts out unless its filter says so. A device answers the term from its working copy by the same rule (`device/filter-part`).
 
 ### `search-and-filters/part`
 
-When a `filter`, on `GET /items`, `GET /items/stats`, in a view's `query` or in a bulk action's `filter`, holds `part eq true`, the server MUST select each item out of the bin that is the source of an edge of a `with-hosts` type whose target is out of the bin.
+When a `filter`, on `GET /items`, `GET /items/stats`, in a view's `query` or in a bulk action's `filter`, holds `part eq true`, the server MUST select each item out of the bin that is the from item of an edge of a `with-hosts` type whose to item is out of the bin.
 
 **Tests:** `correctness/edges/edges-parts.test.ts › selects parts with a host out of the bin on GET /items, stats, a saved view and a bulk filter`.
 

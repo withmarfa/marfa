@@ -256,7 +256,7 @@ When a write names the type the item already has, the server MUST leave the reac
 
 ### `reach/moves-edge-source`
 
-When `PATCH /edges/{id}` moves the source of an edge, the server MUST change the reach.
+When `PATCH /edges/{id}` moves the from item of an edge, the server MUST change the reach.
 
 **Reason:** the server makes the change on the move alone and never from the items a copy holds, so a copy cannot tell a move that leaves its items as they were from one that does, and a device expires its copy for every move it sends (`queue-and-verdicts/edge-source-move-expires`).
 
@@ -264,7 +264,7 @@ When `PATCH /edges/{id}` moves the source of an edge, the server MUST change the
 
 ### `reach/keeps-edge-writes`
 
-When a write that moves no item to another type creates or deletes an edge, or `PATCH /edges/{id}` moves only the target of an edge, the server MUST leave the reach as it was.
+When a write that moves no item to another type creates or deletes an edge, or `PATCH /edges/{id}` moves only the to item of an edge, the server MUST leave the reach as it was.
 
 **Tests:** `compliance/reach.test.ts › changes the reach when an edge moves to another source, and keeps it when only the target moves`.
 
