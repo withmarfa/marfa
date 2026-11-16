@@ -177,6 +177,8 @@ pub struct Http {
     /// What to tell a person to check when a call that waits on the server's
     /// work ends without an answer (`Http::working`).
     working: Option<String>,
+    /// Whether a `401` on a kept token renews it and sends the call again.
+    renews: bool,
     /// Whether a write on this transport is announced: a folder's health
     /// report, which changes no data, is not.
     announces: bool,
@@ -709,6 +711,7 @@ impl Http {
             call_budget: None,
             stream_wait: None,
             working: None,
+            renews: true,
             announces: true,
         })
     }
@@ -729,6 +732,16 @@ impl Http {
     pub fn working(&self, check: &str) -> Self {
         Self {
             working: Some(check.to_string()),
+            ..self.clone()
+        }
+    }
+
+    /// This transport for a call that sends a secret the server judges, such
+    /// as a password: a `401` is that secret's refusal, so it renews no token
+    /// and sends nothing a second time.
+    pub fn without_renewal(&self) -> Self {
+        Self {
+            renews: false,
             ..self.clone()
         }
     }
@@ -949,6 +962,7 @@ impl Http {
         let sent = self.authorization();
         let response = run(&sent)?;
         if response.status().as_u16() == 401
+            && self.renews
             && header(&response, CONTRACT_HEADER).as_deref()
                 == Some(CONTRACT_VERSION.to_string().as_str())
             && !asks_new_sign_in(&response)
@@ -2603,6 +2617,33 @@ mod tests {
                 assert_eq!(server.asked(), 4);
                 assert!(server.seen("/next").is_empty());
             }
+        }
+    }
+
+    #[test]
+    fn a_call_without_renewal_sends_a_refused_secret_once() {
+        for renews in [true, false] {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                "/items/x",
+                vec![
+                    crate::scripted::refusal(401, "unauthorized"),
+                    crate::scripted::refusal(401, "unauthorized"),
+                ],
+            );
+            let http = Http::new(&server.url(), "old").unwrap();
+            let renewals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = Arc::clone(&renewals);
+            http.renew_with(Box::new(move |_| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok("new".into())
+            }));
+            let http = if renews { http } else { http.without_renewal() };
+            assert!(http.item("x").is_err());
+            // The witness is the transport that renews: it renews and sends again.
+            let (sent, renewed) = if renews { (2, 1) } else { (1, 0) };
+            assert_eq!(server.seen("/items/x").len(), sent, "renews: {renews}");
+            assert_eq!(renewals.load(Ordering::SeqCst), renewed, "renews: {renews}");
         }
     }
 

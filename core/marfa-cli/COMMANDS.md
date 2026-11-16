@@ -80,7 +80,8 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Read the instance's metrics | `marfa metrics` |
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
-| Change a setting | `marfa config update`, `marfa config replace` |
+| Change one setting, or return it to its default | `marfa config set`, `marfa config unset` |
+| Change many settings at once | `marfa config update`, `marfa config replace` |
 | List every setting with its default and rule | `marfa config settings` |
 | Check what changing the addresses would do | `marfa config check-address` |
 | Make, list, change and revoke a key | `marfa keys create`, `marfa keys list`, `marfa keys update`, `marfa keys revoke` |
@@ -89,11 +90,11 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | End one sign-in | `marfa sign-ins end` |
 | End every sign-in of a kind at once | `marfa sign-ins end-all` |
 | List, narrow and revoke a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps revoke` |
-| Read and change the owner's email, name and avatar, or clear the avatar | `marfa owner show`, `marfa owner update`, `marfa owner avatar` |
 | Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
-| Set a new owner password | `marfa owner recover` |
+| Change the owner's password | `marfa owner password` |
+| Recover the owner's password | `marfa owner recover` |
 | Claim a new instance | `marfa setup status`, `marfa setup code`, `marfa setup open`, `marfa setup claim` |
-| Read and change the profile apps show | `marfa profile show`, `marfa profile update` |
+| Read and change the owner's email, name and avatar, or clear the avatar | `marfa profile show`, `marfa profile update`, `marfa profile avatar` |
 | See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
 | Remove a connector | `marfa connectors delete` |
 | Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
@@ -234,20 +235,12 @@ marfa setup claim [OPTIONS]
 
 ## owner
 
-The owner: the one account behind the sign-in surface.
+The owner's way in: passkeys, the password and recovering it.
 
 ### marfa owner
 
 ```text
 marfa owner [OPTIONS] <COMMAND>
-```
-
-### marfa owner show
-
-Show the owner's profile: the name, email and avatar the credential reads.
-
-```text
-marfa owner show [OPTIONS]
 ```
 
 ### marfa owner passkeys
@@ -306,6 +299,18 @@ marfa owner passkeys add [OPTIONS]
 | --- | --- |
 | `--no-browser` | Print the sign-in URL without opening a browser. |
 
+### marfa owner password
+
+Replace the owner's password. Asks for the current password and the new one with no echo, or reads them from standard input with `--stdin`; a password is never an argument. Ends every browser sign-in and keeps keys and apps. Requires `sign_ins.manage`.
+
+```text
+marfa owner password [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--stdin` | Read a JSON object holding `current_password` and `new_password` from standard input instead of asking for them. |
+
 ### marfa owner recover
 
 Recover the owner's password using private machine authority; revoke browser sessions.
@@ -318,36 +323,9 @@ marfa owner recover [OPTIONS]
 | --- | --- |
 | `--stdin` | Read a JSON object containing password from standard input instead of a hidden prompt. |
 
-### marfa owner update
-
-Change the owner's email, display name, or avatar. Requires `profile` write on each.
-
-```text
-marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--clear-avatar>
-```
-
-| Option | Description |
-| --- | --- |
-| `--email <EMAIL>` | The email address the owner uses to sign in. |
-| `--name <NAME>` | The owner's display name. |
-| `--avatar <FILE>` | A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes. |
-| `--clear-avatar` | Remove the owner's avatar. |
-
-### marfa owner avatar
-
-Fetch the owner's avatar.
-
-```text
-marfa owner avatar [OPTIONS]
-```
-
-| Option | Description |
-| --- | --- |
-| `--output <PATH>` | Where to write the avatar. Omitted, its bytes go to stdout. |
-
 ## profile
 
-The owner's name and avatar, changed with a key or app's profile write permission.
+The owner's email address, name and avatar, with a key or an app's profile permissions.
 
 ### marfa profile
 
@@ -365,17 +343,30 @@ marfa profile show [OPTIONS]
 
 ### marfa profile update
 
-Change the owner's name or avatar with profile write permission for each field.
+Change the owner's email address, name or avatar with profile write permission for each field.
 
 ```text
-marfa profile update [OPTIONS] <--name <NAME>|--avatar <FILE>|--clear-avatar>
+marfa profile update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--clear-avatar>
 ```
 
 | Option | Description |
 | --- | --- |
+| `--email <EMAIL>` | The email address the owner uses to sign in. |
 | `--name <NAME>` | The owner's new display name. |
 | `--avatar <FILE>` | A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes. |
 | `--clear-avatar` | Remove the owner's avatar. |
+
+### marfa profile avatar
+
+Fetch the owner's avatar. Needs profile read permission for the avatar.
+
+```text
+marfa profile avatar [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--output <PATH>` | Where to write the avatar. Omitted, its bytes go to stdout. |
 
 ## apps
 
@@ -2106,6 +2097,35 @@ marfa config update [OPTIONS]
 | `--body <JSON>` | The JSON body inline. |
 | `--confirm-address-change` | Confirm a change to the sign-in address, which signs out every browser and app, and leaves passkeys made for the old address unusable until it moves back. It needs a sign-in from the last five minutes, or the private local command (`--socket`). Without this the server answers what the change would do and writes nothing. |
 | `--skip-sign-in-address-check` | Move the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command (`--socket`) may skip the check. |
+
+### marfa config set
+
+Change one setting by name. The value is sent as the setting's own kind: a number, `true` or `false`, a comma-separated list or text. A secret setting never takes its value as an argument: it is read from standard input, or asked for with no echo at a terminal. Needs `config.manage`.
+
+```text
+marfa config set [OPTIONS] <NAME> [VALUE]
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The setting's key, as `config settings` lists it. |
+| `[VALUE]` | The new value. Leave it out for a secret setting. |
+
+| Option | Description |
+| --- | --- |
+| `--confirm-address-change` | Confirm a change to the sign-in address, which signs everyone out and can strand passkeys and apps. Without this the server answers what the change would do and writes nothing. |
+
+### marfa config unset
+
+Remove one setting's stored value, so it takes its default. Needs `config.manage`.
+
+```text
+marfa config unset [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The setting's key, as `config settings` lists it. |
 
 ### marfa config settings
 

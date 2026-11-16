@@ -28,6 +28,9 @@ pub struct Request {
     /// to check on it: the call waits as long as the connection holds.
     pub working: Option<String>,
     pub mints: bool,
+    /// Set where the request sends a secret the server judges, so a `401` is
+    /// that secret's refusal and no renewal sends it again.
+    pub proving: bool,
     /// Whether the request can change data, which every method but `GET`
     /// can unless it is marked `reading`.
     pub writes: bool,
@@ -46,6 +49,7 @@ impl Request {
             wait: None,
             working: None,
             mints: false,
+            proving: false,
             writes: method != Method::Get,
         }
     }
@@ -119,6 +123,11 @@ impl Request {
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect(),
         );
+        self
+    }
+
+    pub fn proving(mut self) -> Request {
+        self.proving = true;
         self
     }
 

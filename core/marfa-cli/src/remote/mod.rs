@@ -715,6 +715,11 @@ impl Remote {
             Some(check) => http.working(check),
             None => http,
         };
+        let http = if request.proving {
+            http.without_renewal()
+        } else {
+            http
+        };
         if sends_key && self.bearer().is_none() {
             return Err(self.no_credential());
         }
@@ -861,9 +866,16 @@ impl Remote {
     /// The server's refusal as an error. Direct local authority carries no
     /// key, so a `401` through the socket is not a spent or wrong key, and
     /// signing in again would not help: the message says what is missing.
-    fn refusal(&self, status: u16, text: &str, retry_after_seconds: Option<u64>) -> CliError {
+    fn refusal(
+        &self,
+        request: &Request,
+        status: u16,
+        text: &str,
+        retry_after_seconds: Option<u64>,
+    ) -> CliError {
         let mut error = refused(status, text, retry_after_seconds);
         if self.local
+            && !request.proving
             && let CliError::Refused {
                 status: 401,
                 message,
@@ -891,7 +903,7 @@ impl Remote {
             }
         };
         if !(200..300).contains(&reply.status) {
-            return Err(self.refusal(reply.status, &text, reply.retry_after_seconds));
+            return Err(self.refusal(request, reply.status, &text, reply.retry_after_seconds));
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);
@@ -919,7 +931,7 @@ impl Remote {
                 Ok((reply.content_type, Box::new(Watched::new(reader, idle))))
             }
             ReplyBody::Text(text) => {
-                Err(self.refusal(reply.status, &text, reply.retry_after_seconds))
+                Err(self.refusal(request, reply.status, &text, reply.retry_after_seconds))
             }
         }
     }

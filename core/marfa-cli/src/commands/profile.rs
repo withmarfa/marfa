@@ -2,20 +2,29 @@ use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::{Remote, request::Request};
 use clap::{Args, Subcommand};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum ProfileCommand {
     /// Show the owner's name, email address and avatar, as far as profile read permission reaches.
     Show,
-    /// Change the owner's name or avatar with profile write permission for each field.
+    /// Change the owner's email address, name or avatar with profile write permission for each field.
     Update(ProfileUpdateArgs),
+    /// Fetch the owner's avatar. Needs profile read permission for the avatar.
+    Avatar {
+        /// Where to write the avatar. Omitted, its bytes go to stdout.
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
 #[group(required = true)]
 pub struct ProfileUpdateArgs {
+    /// The email address the owner uses to sign in.
+    #[arg(long)]
+    email: Option<String>,
     /// The owner's new display name.
     #[arg(long)]
     name: Option<String>,
@@ -34,7 +43,7 @@ const AVATAR_LIMIT_BYTES: u64 = 2 * 1024 * 1024;
 /// The request that stores the avatar in `file`, built only once the file
 /// opens, is a regular file and fits the limit, so a bad path fails before
 /// anything is sent.
-pub(super) fn avatar_request(door: &[&str], file: &Path) -> Result<Request, CliError> {
+pub(super) fn avatar_request(file: &Path) -> Result<Request, CliError> {
     let unreadable = |reason: &dyn std::fmt::Display| {
         CliError::Invalid(format!("cannot read {}: {reason}", file.display()))
     };
@@ -50,7 +59,7 @@ pub(super) fn avatar_request(door: &[&str], file: &Path) -> Result<Request, CliE
             file.display()
         )));
     }
-    Ok(Request::put(door).file(file.to_path_buf(), "application/octet-stream"))
+    Ok(Request::put(&["profile", "avatar"]).file(file.to_path_buf(), "application/octet-stream"))
 }
 
 pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -58,10 +67,13 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
         ProfileCommand::Show => out.value(&remote.json(&Request::get(&["profile"]))?),
         ProfileCommand::Update(args) => {
             let avatar = match &args.avatar {
-                Some(file) => Some(avatar_request(&["profile", "avatar"], file)?),
+                Some(file) => Some(avatar_request(file)?),
                 None => None,
             };
             let mut body = Map::new();
+            if let Some(email) = args.email {
+                body.insert("email".into(), Value::String(email));
+            }
             if let Some(name) = args.name {
                 body.insert("name".into(), Value::String(name));
             }
@@ -69,7 +81,7 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
                 body.insert("avatar".into(), Value::Null);
             }
             // The avatar goes first: the server may refuse it, and a refusal
-            // then leaves the name as it was.
+            // then leaves the email and name as they were.
             let mut reply = None;
             if let Some(request) = avatar {
                 reply = Some(remote.json(&request)?);
@@ -81,6 +93,26 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
                 Some(reply) => out.value(&reply),
                 None => Ok(()),
             }
+        }
+        ProfileCommand::Avatar { output } => {
+            let (content_type, mut reader) =
+                remote.stream(&Request::get(&["profile", "avatar"]).streamed())?;
+            let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
+            // Bytes to stdout are the answer; a report there would corrupt it.
+            if let Some(path) = output {
+                out.report(
+                    &json!({ "path": path, "size_bytes": written, "mime_type": content_type }),
+                    |_| {
+                        format!(
+                            "{} byte(s) of {} into {}",
+                            written,
+                            crate::output::printable(&content_type),
+                            path.display()
+                        )
+                    },
+                )?;
+            }
+            Ok(())
         }
     }
 }

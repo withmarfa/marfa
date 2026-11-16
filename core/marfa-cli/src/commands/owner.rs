@@ -4,44 +4,29 @@ use crate::remote::{Remote, request::Request};
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 use std::io::{IsTerminal, Read};
-use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub enum OwnerCommand {
-    /// Show the owner's profile: the name, email and avatar the credential reads.
-    Show,
     /// Manage the owner's registered passkeys.
     Passkeys {
         #[command(subcommand)]
         command: super::owner_passkeys::PasskeysCommand,
     },
+    /// Replace the owner's password. Asks for the current password and the new
+    /// one with no echo, or reads them from standard input with `--stdin`; a
+    /// password is never an argument. Ends every browser sign-in and keeps
+    /// keys and apps. Requires `sign_ins.manage`.
+    Password(PasswordArgs),
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
-    /// Change the owner's email, display name, or avatar. Requires `profile` write on each.
-    Update(OwnerUpdateArgs),
-    /// Fetch the owner's avatar.
-    Avatar {
-        /// Where to write the avatar. Omitted, its bytes go to stdout.
-        #[arg(long, value_name = "PATH")]
-        output: Option<PathBuf>,
-    },
 }
 
 #[derive(Debug, Args)]
-#[group(required = true)]
-pub struct OwnerUpdateArgs {
-    /// The email address the owner uses to sign in.
+pub struct PasswordArgs {
+    /// Read a JSON object holding `current_password` and `new_password` from
+    /// standard input instead of asking for them.
     #[arg(long)]
-    email: Option<String>,
-    /// The owner's display name.
-    #[arg(long)]
-    name: Option<String>,
-    /// A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes.
-    #[arg(long, value_name = "FILE", conflicts_with = "clear_avatar")]
-    avatar: Option<PathBuf>,
-    /// Remove the owner's avatar.
-    #[arg(long)]
-    clear_avatar: bool,
+    pub stdin: bool,
 }
 
 #[derive(Debug, Args)]
@@ -91,22 +76,48 @@ pub struct ClaimArgs {
     pub address: Option<String>,
 }
 
+fn stdin_object() -> Result<Value, CliError> {
+    let mut body = String::new();
+    std::io::stdin().take(65_537).read_to_string(&mut body)?;
+    if body.len() > 65_536 {
+        return Err(CliError::Invalid("input exceeds 64 KiB".into()));
+    }
+    serde_json::from_str(&body)
+        .map_err(|_| CliError::Invalid("expected a JSON object on stdin".into()))
+}
+
+fn terminal_only() -> Result<(), CliError> {
+    if std::io::stdin().is_terminal() {
+        Ok(())
+    } else {
+        Err(CliError::Usage(
+            "use --stdin to supply a JSON object without a terminal".into(),
+        ))
+    }
+}
+
 fn input(stdin: bool) -> Result<Value, CliError> {
     if stdin {
-        let mut body = String::new();
-        std::io::stdin().take(65_537).read_to_string(&mut body)?;
-        if body.len() > 65_536 {
-            return Err(CliError::Invalid("input exceeds 64 KiB".into()));
-        }
-        return serde_json::from_str(&body)
-            .map_err(|_| CliError::Invalid("expected a JSON object on stdin".into()));
+        return stdin_object();
     }
-    if !std::io::stdin().is_terminal() {
+    terminal_only()?;
+    Ok(json!({"password":rpassword::prompt_password("New owner password: ")?}))
+}
+
+/// The current password and the new one, which a person types twice.
+fn passwords(stdin: bool) -> Result<Value, CliError> {
+    if stdin {
+        return stdin_object();
+    }
+    terminal_only()?;
+    let current = rpassword::prompt_password("Current password: ")?;
+    let new = rpassword::prompt_password("New password: ")?;
+    if rpassword::prompt_password("Repeat the new password: ")? != new {
         return Err(CliError::Usage(
-            "use --stdin to supply a JSON object without a terminal".into(),
+            "the two new passwords differ; the password is unchanged".into(),
         ));
     }
-    Ok(json!({"password":rpassword::prompt_password("New owner password: ")?}))
+    Ok(json!({"current_password":current,"new_password":new}))
 }
 
 fn require_local(remote: &Remote) -> Result<(), CliError> {
@@ -141,58 +152,17 @@ fn set_address(remote: &Remote, address: Option<&str>, out: &Printer) -> Result<
 pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
         OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
-        OwnerCommand::Show => out.value(&remote.json(&Request::get(&["profile"]))?),
-        OwnerCommand::Avatar { output } => {
-            let (content_type, mut reader) =
-                remote.stream(&Request::get(&["profile", "avatar"]).streamed())?;
-            let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
-            // Bytes to stdout are the answer; a report there would corrupt it.
-            if let Some(path) = output {
-                out.report(
-                    &json!({ "path": path, "size_bytes": written, "mime_type": content_type }),
-                    |_| {
-                        format!(
-                            "{} byte(s) of {} into {}",
-                            written,
-                            crate::output::printable(&content_type),
-                            path.display()
-                        )
-                    },
-                )?;
+        OwnerCommand::Password(args) => {
+            // Renews an app's token and stops a key without the permission before
+            // anything is typed, so a later `401` is the password's refusal.
+            if !remote.is_local() {
+                remote.json(&Request::get(&["owner", "passkeys"]))?;
             }
-            Ok(())
-        }
-        OwnerCommand::Update(args) => {
-            let avatar = match &args.avatar {
-                Some(file) => Some(super::profile::avatar_request(
-                    &["profile", "avatar"],
-                    file,
-                )?),
-                None => None,
-            };
-            let mut body = serde_json::Map::new();
-            if let Some(email) = args.email {
-                body.insert("email".into(), json!(email));
-            }
-            if let Some(name) = args.name {
-                body.insert("name".into(), json!(name));
-            }
-            if args.clear_avatar {
-                body.insert("avatar".into(), Value::Null);
-            }
-            // The avatar goes first: the server may refuse it, and a refusal
-            // then leaves the email and name as they were.
-            let mut reply = None;
-            if let Some(request) = avatar {
-                reply = Some(remote.json(&request)?);
-            }
-            if !body.is_empty() {
-                reply = Some(remote.json(&Request::patch(&["profile"]).json(Value::Object(body)))?);
-            }
-            match reply {
-                Some(reply) => out.value(&reply),
-                None => Ok(()),
-            }
+            let body = passwords(args.stdin)?;
+            let answer = remote.json(&Request::put(&["owner", "password"]).proving().json(body))?;
+            out.report(&answer, |_| {
+                "replaced the owner's password and ended every browser sign-in".to_string()
+            })
         }
         OwnerCommand::Recover(args) => {
             require_local(remote)?;
@@ -276,6 +246,37 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
                 vec!["owner"]
             };
             out.value(&remote.json(&Request::post(&path).public().json(body))?)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[test]
+    fn a_password_is_never_an_argument() {
+        for words in [
+            &["owner", "password", "hunter2"][..],
+            &["owner", "password", "--current-password", "x"],
+            &["owner", "password", "--new-password", "x"],
+            &["owner", "password", "--password", "x"],
+            &["owner", "recover", "hunter2"],
+        ] {
+            let mut argv = vec!["marfa"];
+            argv.extend(words);
+            assert!(
+                crate::Cli::try_parse_from(&argv).is_err(),
+                "{words:?} was taken"
+            );
+        }
+        for words in [
+            &["owner", "password"][..],
+            &["owner", "password", "--stdin"],
+        ] {
+            let mut argv = vec!["marfa"];
+            argv.extend(words);
+            assert!(crate::Cli::try_parse_from(&argv).is_ok(), "{words:?}");
         }
     }
 }
