@@ -886,7 +886,7 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup the server takes na
 
 ### `instance/backup-folder-part-rehashed`
 
-Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST read and hash the parts in `<MARFA_BACKUP_PATH>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until it has read 536870912 bytes of them.
+Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST read and hash the parts in `<MARFA_BACKUP_PATH>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until their listed sizes reach 536870912 bytes, and always the oldest one, but for a part that backup's clean-up finds no backup names.
 
 **Reason:** a disk can change a file's bytes and keep its size, modified time, inode and birth time, by decay or by a write in place that sets the time back, and `instance/backup-part-stored-again` does not see that change. The server finds such a change at the first backup 7 days or more after the part's last hash, or once it has read the parts due before it, whichever backups name the part and whether or not every backup's manifest reads. A backup runs only when something changed or the owner asks for one. An object store checks its own objects, and reading them again would be billed.
 
@@ -1048,13 +1048,13 @@ Where a destination is set and `backup_interval_seconds` is 0, the server MUST a
 
 **Reason:** the reason stays while a failure or a damaged part makes `backups.status` `failing`, so an owner reads both.
 
-**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`.
+**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`, `› says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them`.
 
 ### `instance/backup-health-turned-off-status`
 
-Where a destination is set and `backup_interval_seconds` is 0, while the last backup run did not fail, the destination answers and `instance/backup-health-parts-damaged` does not hold, the server MUST answer `GET /health` with `backups.status` `off`.
+Where a destination is set and `backup_interval_seconds` is 0, while the last backup run did not fail, the destination takes the copies that wait for it and `instance/backup-health-parts-damaged` does not hold, the server MUST answer `GET /health` with `backups.status` `off`.
 
-**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`.
+**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`, `› says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them`.
 
 ### `instance/backup-health-store-failing`
 
@@ -1062,7 +1062,7 @@ While the object store or the backup folder does not take the copies that wait f
 
 **Reason:** a store that stops answering is the failure an owner learns of only when the next backup fails or a restore needs the files, and an interval of 0 does not stop files waiting for their second copy.
 
-**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `› says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them`.
 
 ### `instance/backup-health-store-named`
 
