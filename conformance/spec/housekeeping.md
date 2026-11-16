@@ -366,7 +366,7 @@ While `MARFA_TEST_HOOKS` is true, if `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_
 
 ### `housekeeping/retention-setting-hours-range`
 
-While `MARFA_TEST_HOOKS` is true, if `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA_DCR_CLIENT_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
+While `MARFA_TEST_HOOKS` is true, if `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA_UNAPPROVED_APP_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Reason:** as for `housekeeping/retention-setting-days-range`.
 

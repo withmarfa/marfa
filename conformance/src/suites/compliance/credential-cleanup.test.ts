@@ -107,7 +107,7 @@ describe("the credential clean-up", () => {
         ...QUIET_SCHEDULE,
         MARFA_REVOKED_GRANT_RETENTION_DAYS: "36500",
         MARFA_GRANT_INACTIVITY_DAYS: "36500",
-        MARFA_DCR_CLIENT_RETENTION_HOURS: "876000",
+        MARFA_UNAPPROVED_APP_RETENTION_HOURS: "876000",
       });
       const run = await runJob(server, "credential-cleanup");
       expect(run.outcome, String(run.error)).toBe("ok");
