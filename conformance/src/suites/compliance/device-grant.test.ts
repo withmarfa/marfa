@@ -67,7 +67,7 @@ describe("the device authorization grant", () => {
 
 describe("a device code", () => {
   async function ask(scope?: string): Promise<Response> {
-    const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registered = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -80,7 +80,7 @@ describe("a device code", () => {
     });
     expect(registered.status).toBe(201);
     const { client_id } = (await registered.json()) as { client_id: string };
-    return fetch(`${server!.apiUrl}/auth/device/code`, {
+    return fetch(`${server!.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -126,7 +126,7 @@ describe("a device code", () => {
   });
 
   it("is refused 400 invalid_scope for a scope under a permission root that is not one of the twelve permissions, and issued for each of the twelve", async () => {
-    const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registered = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -140,7 +140,7 @@ describe("a device code", () => {
     expect(registered.status).toBe(201);
     const { client_id } = (await registered.json()) as { client_id: string };
     const code = (scope: string): Promise<Response> =>
-      fetch(`${server!.apiUrl}/auth/device/code`, {
+      fetch(`${server!.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ client_id, scope }),
@@ -245,7 +245,7 @@ describe("a device code whose grant is revoked", () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     await flow.approve();
     const authorization = { authorization: `Bearer ${server!.workingKey}` };
-    const listed = await fetch(`${server!.apiUrl}/auth/grants`, {
+    const listed = await fetch(`${server!.apiUrl}/grants`, {
       headers: authorization,
     });
     const grant = (
@@ -253,7 +253,7 @@ describe("a device code whose grant is revoked", () => {
     ).data.find((g) => g.client_id === flow.clientId);
     // The witness: the approval made a grant to revoke.
     expect(grant, "the approval made no grant").toBeDefined();
-    const revoked = await fetch(`${server!.apiUrl}/auth/grants/${grant!.id}`, {
+    const revoked = await fetch(`${server!.apiUrl}/grants/${grant!.id}`, {
       method: "DELETE",
       headers: authorization,
     });

@@ -25,7 +25,7 @@ beforeAll(async () => {
     MARFA_RATE_LIMIT_REQUESTS: String(CAP),
   });
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   const { issuer } = (await discovery.json()) as { issuer: string };
   origin = new URL(issuer).origin;
@@ -52,7 +52,7 @@ async function token(
   clientId: string,
   form: Record<string, string>,
 ): Promise<Tokens> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin },
     body: new URLSearchParams({ client_id: clientId, ...form }),
@@ -73,7 +73,7 @@ async function sentTo(response: Response): Promise<URL> {
 
 /** An app registered and approved by the signed-in owner, with its tokens. */
 async function approvedApp(name: string) {
-  const registration = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  const registration = await fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -100,18 +100,18 @@ async function approvedApp(name: string) {
     code_challenge_method: "S256",
   });
   const consent = await sentTo(
-    await fetch(`${server.apiUrl}/auth/oauth2/authorize?${params.toString()}`, {
+    await fetch(`${server.apiUrl}/oauth/authorize?${params.toString()}`, {
       redirect: "manual",
       headers: { cookie },
     }),
   );
-  expect(consent.pathname).toBe("/auth/authorize");
+  expect(consent.pathname).toBe("/auth/consent");
   const form = new URLSearchParams({
-    accept: "true",
-    oauth_query: consent.search.slice(1),
+    decision: "approve",
+    authorization_request: consent.search.slice(1),
   });
   for (const scope of SCOPE.split(" ")) form.append("scopes", scope);
-  const decision = await fetch(`${server.apiUrl}/auth/authorize/decision`, {
+  const decision = await fetch(`${server.apiUrl}/auth/consent`, {
     method: "POST",
     redirect: "manual",
     headers: {

@@ -752,7 +752,7 @@ describe("a body whatever its content type states", () => {
   ];
   const doors = [
     { path: "/items", credential: true },
-    { path: "/auth/oauth2/register", credential: false },
+    { path: "/oauth/register", credential: false },
     { path: "/setup/claim", credential: false },
     { path: "/setup/recover", credential: false },
   ];

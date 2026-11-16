@@ -192,7 +192,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
           created_before: seededBy,
           limit: 100,
         });
-        const grants = await fetch(`${server.apiUrl}/auth/grants`, {
+        const grants = await fetch(`${server.apiUrl}/grants`, {
           headers: { authorization: `Bearer ${server.managementKey}` },
         });
         const keyed = await fetch(`${server.apiUrl}/items?type=core.note`, {

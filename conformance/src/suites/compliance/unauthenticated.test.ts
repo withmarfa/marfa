@@ -19,7 +19,7 @@ afterAll(async () => {
  * by whatever watches the instance, and claim carries its own machine proof.
  */
 const OPEN_DOORS = new Set([
-  "POST /auth/oauth2/register",
+  "POST /oauth/register",
   "GET /",
   "GET /health",
   "POST /owner",

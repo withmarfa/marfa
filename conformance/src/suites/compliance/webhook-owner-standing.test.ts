@@ -185,12 +185,12 @@ describe("a subscription whose credential stops standing", () => {
 
     const operator = client(server!.workingKey);
     const grants = await operator.rawRequest<{ data: { id: string }[] }>(
-      "/auth/grants",
+      "/grants",
     );
     expect(grants.status).toBe(200);
     expect(grants.data.data).toHaveLength(1);
     const revoked = await operator.rawRequest(
-      `/auth/grants/${grants.data.data[0]!.id}`,
+      `/grants/${grants.data.data[0]!.id}`,
       { method: "DELETE" },
     );
     expect(revoked.status).toBe(200);

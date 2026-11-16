@@ -33,16 +33,16 @@ pub enum AppsCommand {
 }
 
 pub fn list_request() -> Request {
-    Request::get(&["auth", "grants"])
+    Request::get(&["grants"])
 }
 
 pub fn narrow_request(id: &str, scopes: &[String], expected: &Value) -> Request {
-    Request::patch(&["auth", "grants", id])
+    Request::patch(&["grants", id])
         .json(json!({ "scopes": scopes, "expected_scopes": expected }))
 }
 
 pub fn disconnect_request(id: &str, revoke_keys: bool) -> Request {
-    Request::delete(&["auth", "grants", id]).query_flag("revoke_keys", revoke_keys)
+    Request::delete(&["grants", id]).query_flag("revoke_keys", revoke_keys)
 }
 
 pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -80,7 +80,7 @@ mod tests {
             &["core.note:read".into()],
             &json!(["core.note:write"]),
         );
-        assert_eq!(req.segments, ["auth", "grants", "app-1"]);
+        assert_eq!(req.segments, ["grants", "app-1"]);
         assert_eq!(
             req.body,
             crate::remote::request::Body::Json(

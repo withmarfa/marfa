@@ -299,9 +299,10 @@ describe("a write that names an instance", () => {
     expect(await codeOf(own400)).toBe("validation_error");
   });
 
-  it("refuses another instance on every write operation the document publishes outside /auth", async () => {
+  it("refuses another instance on every write operation the document publishes outside /auth, /oauth and /grants", async () => {
     const writes = (await publishedOperations()).filter(
-      (op) => op.method !== "GET" && !/^\/auth(\/|$)/.test(op.path),
+      (op) =>
+        op.method !== "GET" && !/^\/(auth|oauth|grants)(\/|$)/.test(op.path),
     );
     // The positive control: an empty walk would pass the loop below.
     expect(writes.length).toBeGreaterThan(50);
@@ -319,7 +320,7 @@ describe("a write that names an instance", () => {
     expect(missed).toEqual([]);
   });
 
-  it("answers a GET, a request under /auth and an inbound delivery as it answers one without the header", async () => {
+  it("answers a GET, a request under /auth, /oauth or /grants and an inbound delivery as it answers one without the header", async () => {
     for (const value of [OTHER, "not-an-instance"]) {
       const read = await fetch(
         `${apiUrl}/items?type=core.note&source=${encodeURIComponent(ctx.source)}`,
@@ -329,7 +330,7 @@ describe("a write that names an instance", () => {
     }
 
     const register = (headers: Record<string, string>) =>
-      fetch(`${apiUrl}/auth/oauth2/register`, {
+      fetch(`${apiUrl}/oauth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ redirect_uris: ["not a uri"] }),
@@ -338,6 +339,17 @@ describe("a write that names an instance", () => {
     const named = await register({ [HEADER]: OTHER });
     expect(named.status).toBe(plain.status);
     expect(named.headers.get("X-Error-Code")).not.toBe("instance_changed");
+
+    const grant = uuidv7();
+    const revoke = (headers: Record<string, string>) =>
+      fetch(`${apiUrl}/grants/${grant}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${apiKey}`, ...headers },
+      });
+    const unnamed = await revoke({});
+    const elsewhere = await revoke({ [HEADER]: OTHER });
+    expect(elsewhere.status).toBe(unnamed.status);
+    expect(elsewhere.headers.get("X-Error-Code")).not.toBe("instance_changed");
 
     const sender = await createSecondClient(ctx, "inbound");
     const registered = await sender.registerConnector({

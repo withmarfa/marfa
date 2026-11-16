@@ -240,7 +240,7 @@ fn field(text: &str, name: &str) -> String {
 
 // Sign-in may use a different origin from the API address.
 fn sign_in_origin(url: &str) -> String {
-    let found = ureq::get(format!("{url}/auth/.well-known/oauth-authorization-server"))
+    let found = ureq::get(format!("{url}/.well-known/oauth-authorization-server"))
         .call()
         .unwrap()
         .into_body()
@@ -258,7 +258,7 @@ fn sign_in_origin(url: &str) -> String {
 fn app_token(url: &str) -> String {
     let form = "application/x-www-form-urlencoded";
     let registered = post(
-        &format!("{url}/auth/oauth2/register"),
+        &format!("{url}/oauth/register"),
         &[],
         "application/json",
         r#"{"client_name":"core-live","application_type":"native","grant_types":["urn:ietf:params:oauth:grant-type:device_code"],"response_types":[],"token_endpoint_auth_method":"none"}"#,
@@ -267,7 +267,7 @@ fn app_token(url: &str) -> String {
     .unwrap();
     let client_id = field(&registered, "client_id");
     let code = post(
-        &format!("{url}/auth/device/code"),
+        &format!("{url}/oauth/device-authorization"),
         &[],
         form,
         &format!("client_id={client_id}&scope=core.note:read"),
@@ -301,7 +301,7 @@ fn app_token(url: &str) -> String {
         ),
     );
     let token = post(
-        &format!("{url}/auth/oauth2/token"),
+        &format!("{url}/oauth/token"),
         &[],
         form,
         &format!(

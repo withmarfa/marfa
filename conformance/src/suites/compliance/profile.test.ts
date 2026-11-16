@@ -259,14 +259,14 @@ it("refuses explicit email-write OAuth scopes", async () => {
     grant_types: ["authorization_code"],
     response_types: ["code"],
   };
-  const good = await fetch(server.apiUrl + "/auth/oauth2/register", {
+  const good = await fetch(server.apiUrl + "/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(registration),
   });
   expect(good.status).toBe(201);
   const client = (await good.json()) as { client_id: string };
-  const refused = await fetch(server.apiUrl + "/auth/oauth2/register", {
+  const refused = await fetch(server.apiUrl + "/oauth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -285,7 +285,7 @@ it("refuses explicit email-write OAuth scopes", async () => {
     code_challenge_method: "S256",
   });
   const authorized = await fetch(
-    server.apiUrl + "/auth/oauth2/authorize?" + query.toString(),
+    server.apiUrl + "/oauth/authorize?" + query.toString(),
     { redirect: "manual" },
   );
   expect(authorized.status).toBe(400);

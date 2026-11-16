@@ -83,7 +83,7 @@ describe("fixture listener ownership", () => {
         const publicRoot = await (await fetch(`${server.url}/`)).json();
         const discovery = await (
           await fetch(
-            `${server.url}/auth/.well-known/oauth-authorization-server`,
+            `${server.url}/.well-known/oauth-authorization-server`,
           )
         ).json();
         expect(new URL(discovery.issuer).origin).toBe(

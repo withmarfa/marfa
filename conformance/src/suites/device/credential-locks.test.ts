@@ -967,12 +967,12 @@ describe("a kept credential", ON_MACOS, () => {
     const at = (path: string) => `${server.url}${prefix}${path}`;
     server.answer(
       "GET",
-      `${prefix}/auth/.well-known/oauth-authorization-server`,
+      `${prefix}/.well-known/oauth-authorization-server`,
       {
         kind: "json",
         status: 200,
         body: {
-          issuer: at("/auth"),
+          issuer: new URL(server.url).origin,
           token_endpoint: at("/token"),
           device_authorization_endpoint: at("/device"),
           registration_endpoint: at("/register"),

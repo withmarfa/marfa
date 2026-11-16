@@ -37,8 +37,7 @@ let cookie: string;
 
 const SCOPE = "core.note:read";
 const DISCOVERY = [
-  "/.well-known/oauth-authorization-server/auth",
-  "/auth/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-protected-resource/mcp/schema",
@@ -63,7 +62,7 @@ async function registerFrom(
   origin: string,
   extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  return fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: {
       origin,
@@ -122,7 +121,7 @@ async function approve(
       cookie,
     ),
   );
-  expect(consent?.pathname).toBe("/auth/authorize");
+  expect(consent?.pathname).toBe("/auth/consent");
   const landed = await decide(server, issuer, cookie, consent!, true, [SCOPE]);
   const code = landed?.searchParams.get("code");
   expect(code, `no code on ${String(landed)}`).toBeTruthy();
@@ -155,7 +154,7 @@ describe("a page that has never been registered", () => {
   it("allows a preflight for registration with POST and Content-Type, and nothing more", async () => {
     const origin = "https://preflighting.web-page-register.test";
     const preflight = (method: string) =>
-      fetch(`${server.apiUrl}/auth/oauth2/register`, {
+      fetch(`${server.apiUrl}/oauth/register`, {
         method: "OPTIONS",
         headers: {
           origin,
@@ -181,8 +180,8 @@ describe("a page that has never been registered", () => {
     expect((await registerFrom(origin)).status).toBe(201);
     for (const [path, method] of [
       ["/items", "GET"],
-      ["/auth/oauth2/token", "POST"],
-      ["/auth/grants", "GET"],
+      ["/oauth/token", "POST"],
+      ["/grants", "GET"],
     ] as const) {
       const asked = await fetch(`${server.apiUrl}${path}`, {
         method: "OPTIONS",
@@ -219,7 +218,7 @@ describe("a page that has never been registered", () => {
   it("completes the flow from a page that was never registered: discover, register, approve, exchange and read", async () => {
     const origin = "https://fresh.web-page-register.test";
     const discovered = await fetch(
-      `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+      `${server.apiUrl}/.well-known/oauth-authorization-server`,
       { headers: { origin } },
     );
     expect(discovered.headers.get("access-control-allow-origin")).toBe("*");
@@ -291,13 +290,13 @@ describe("registrations nobody approves", () => {
     await approve(approvedId, approved);
     await approve(revokedId, revoked);
     const listed = (await (
-      await fetch(`${server.apiUrl}/auth/grants`, {
+      await fetch(`${server.apiUrl}/grants`, {
         headers: { authorization: `Bearer ${server.managementKey}` },
       })
     ).json()) as { data: { id: string; client_id: string }[] };
     const grant = listed.data.find((g) => g.client_id === revokedId);
     expect(grant).toBeDefined();
-    const ended = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+    const ended = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
@@ -307,7 +306,7 @@ describe("registrations nobody approves", () => {
     await server.advanceClock(2 * HOUR_MS);
     // The owner opens the approval for one of them after it aged.
     const consent = await authorizeLandsAt(offeredId, offered);
-    expect(consent?.pathname).toBe("/auth/authorize");
+    expect(consent?.pathname).toBe("/auth/consent");
     const screen = await fetch(consent!, { headers: { cookie } });
     await screen.body?.cancel();
     expect(screen.status).toBe(200);
@@ -323,13 +322,13 @@ describe("registrations nobody approves", () => {
       [offeredId, offered],
     ] as const) {
       expect((await authorizeLandsAt(id, origin))?.pathname, origin).toBe(
-        "/auth/authorize",
+        "/auth/consent",
       );
     }
   });
 
   it("keeps a registration the device approval page offered after it aged", async () => {
-    const registered = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    const registered = await fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -347,7 +346,7 @@ describe("registrations nobody approves", () => {
     // The code lives ten minutes and the retention is an hour, so the code is
     // asked for just short of the hour, and the hour passes while it stands.
     await server.advanceClock(HOUR_MS - 5 * MINUTE_MS);
-    const code = await fetch(`${server.apiUrl}/auth/device/code`, {
+    const code = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: clientId, scope: SCOPE }),
@@ -384,7 +383,7 @@ describe("the size of a registration", () => {
       padding: "x".repeat(padding),
     });
   const register = (text: string) =>
-    fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: text,

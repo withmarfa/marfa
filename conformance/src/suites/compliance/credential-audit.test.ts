@@ -91,7 +91,7 @@ describe("a credential change", () => {
     expect(await logged("auth.grant.created")).toBe(consents + 1);
     expect(await logged("auth.token.issued")).toBeGreaterThan(tokens);
 
-    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+    const listed = await fetch(`${server.apiUrl}/grants`, {
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
     const grant = (
@@ -99,7 +99,7 @@ describe("a credential change", () => {
     ).data.find((g) => g.client_id === app.clientId);
     expect(grant).toBeDefined();
     const revokes = await logged("auth.grant.revoked");
-    const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+    const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
@@ -249,7 +249,7 @@ describe("a grant retired for inactivity", () => {
     const app = await registerApp(server, NOTES);
     await connect(server, origin, cookie, app, NOTES);
     const grantsOf = async (): Promise<string[]> => {
-      const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+      const listed = await fetch(`${server.apiUrl}/grants`, {
         headers: { authorization: `Bearer ${server.managementKey}` },
       });
       expect(listed.status).toBe(200);
@@ -309,14 +309,14 @@ describe("a credential the clean-up removes", () => {
     cookie = await signIn(server, origin);
     const app = await registerApp(server, NOTES);
     await connect(server, origin, cookie, app, NOTES);
-    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+    const listed = await fetch(`${server.apiUrl}/grants`, {
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
     const grant = (
       (await listed.json()) as { data: { id: string; client_id: string }[] }
     ).data.find((g) => g.client_id === app.clientId);
     expect(grant).toBeDefined();
-    const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+    const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${server.managementKey}` },
     });

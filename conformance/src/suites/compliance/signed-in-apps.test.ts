@@ -31,7 +31,7 @@ let tokens: { access_token: string; refresh_token: string; scope: string };
 beforeAll(async () => {
   server = await bootFreshServer("signed-in-apps");
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   const { issuer } = (await discovery.json()) as { issuer: string };
   origin = new URL(issuer).origin;
@@ -56,7 +56,7 @@ function authorizePath(
     code_challenge_method: "S256",
   });
   if (scope !== undefined) params.set("scope", scope);
-  return `/auth/oauth2/authorize?${params.toString()}`;
+  return `/oauth/authorize?${params.toString()}`;
 }
 
 async function get(path: string, withCookie: boolean): Promise<Response> {
@@ -83,7 +83,7 @@ async function sentTo(response: Response): Promise<URL> {
 }
 
 async function token(form: Record<string, string>) {
-  const response = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server!.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin },
     body: new URLSearchParams({ client_id: clientId, ...form }),
@@ -94,7 +94,7 @@ async function token(form: Record<string, string>) {
 
 describe("an app signing in", () => {
   it("is registered at the scope it asked for, which an authorize from nobody signed in leaves as it was", async () => {
-    const registration = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -121,7 +121,7 @@ describe("an app signing in", () => {
     const toSignIn = await sentTo(await get(authorizePath(asked), false));
     expect(toSignIn.pathname).toBe("/auth/sign-in");
     const back = new URL(toSignIn.searchParams.get("return_to") ?? "", origin);
-    expect(back.pathname).toBe("/auth/oauth2/authorize");
+    expect(back.pathname).toBe("/oauth/authorize");
     expect(back.searchParams.get("scope")).toBe(asked);
 
     // And the registration is as it was: a request naming no scope is the
@@ -134,14 +134,14 @@ describe("an app signing in", () => {
   it("is caught up to a published scope once a person is signed in, and the grant carries it", async () => {
     const asked = `${REGISTERED} ${PUBLISHED}`;
     const consent = await sentTo(await get(authorizePath(asked), true));
-    expect(consent.pathname).toBe("/auth/authorize");
+    expect(consent.pathname).toBe("/auth/consent");
     const signedQuery = consent.search.slice(1);
     const form = new URLSearchParams({
-      accept: "true",
-      oauth_query: signedQuery,
+      decision: "approve",
+      authorization_request: signedQuery,
     });
     for (const scope of asked.split(" ")) form.append("scopes", scope);
-    const decision = await fetch(`${server!.apiUrl}/auth/authorize/decision`, {
+    const decision = await fetch(`${server!.apiUrl}/auth/consent`, {
       method: "POST",
       redirect: "manual",
       headers: {
@@ -172,7 +172,7 @@ describe("an app signing in", () => {
   });
 
   it("is answered login_required under prompt=none from nobody signed in, and is not caught up", async () => {
-    const registration = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -213,7 +213,7 @@ describe("a device signing in", () => {
     device_code: string;
     user_code: string;
   }> {
-    const response = await fetch(`${server!.apiUrl}/auth/device/code`, {
+    const response = await fetch(`${server!.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: deviceClient, scope }),
@@ -261,7 +261,7 @@ describe("a device signing in", () => {
   }
 
   it("is issued a code for a published scope it is not registered for, and its registration is as it was", async () => {
-    const registration = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const registration = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -285,7 +285,7 @@ describe("a device signing in", () => {
     expect(await registeredScope()).toEqual([HELD]);
 
     // And until a person decides, the code is pending, as for any client.
-    const pending = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+    const pending = await fetch(`${server!.apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", origin },
       body: new URLSearchParams({
@@ -312,7 +312,7 @@ describe("a device signing in", () => {
     await approve(code.user_code, [HELD, PUBLISHED]);
 
     expect(await registeredScope()).toEqual([HELD, PUBLISHED].sort());
-    const redeemed = await fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+    const redeemed = await fetch(`${server!.apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", origin },
       body: new URLSearchParams({

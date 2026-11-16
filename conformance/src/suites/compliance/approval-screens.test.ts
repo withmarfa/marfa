@@ -94,7 +94,7 @@ async function consentScreen(app: App, scope: string): Promise<Screen> {
     ),
   );
   expect(landed?.pathname, `landed on ${String(landed)}`).toBe(
-    "/auth/authorize",
+    "/auth/consent",
   );
   const page = await fetch(landed!, { headers: { cookie } });
   expect(page.status).toBe(200);
@@ -110,7 +110,7 @@ interface DeviceScreen {
 
 /** The device approval page for a code the app asked for. */
 async function deviceScreen(app: App, scope: string): Promise<DeviceScreen> {
-  const issued = await fetch(`${server.apiUrl}/auth/device/code`, {
+  const issued = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: app.clientId, scope }),
@@ -472,7 +472,7 @@ describe("what the approval pages show of what an app holds", () => {
         cookie,
       ),
     );
-    expect(again?.pathname).toBe("/auth/authorize");
+    expect(again?.pathname).toBe("/auth/consent");
     const approved = await decide(server, origin, cookie, again!, true, [
       "core.note:read",
     ]);
@@ -667,7 +667,7 @@ describe("what an approval with everything newly asked turned off does for an ap
         cookie,
       ),
     );
-    expect(again?.pathname).toBe("/auth/authorize");
+    expect(again?.pathname).toBe("/auth/consent");
     // The witness: the same page with Task left on is a code.
     const approved = await decide(
       server,
@@ -741,14 +741,14 @@ describe("what an approval grants an app whose access ended while the screen was
   /** The person disconnects the app from another tab. */
   async function disconnect(app: App): Promise<void> {
     const authorization = { authorization: `Bearer ${server.managementKey}` };
-    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+    const listed = await fetch(`${server.apiUrl}/grants`, {
       headers: authorization,
     });
     const grant = (
       (await listed.json()) as { data: { id: string; client_id: string }[] }
     ).data.find((g) => g.client_id === app.clientId);
     expect(grant, "the app had no grant to disconnect").toBeDefined();
-    const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+    const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
       method: "DELETE",
       headers: authorization,
     });
@@ -771,7 +771,7 @@ describe("what an approval grants an app whose access ended while the screen was
       client_id: app.clientId,
     });
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-    expect(screen.consent.pathname).toBe("/auth/authorize");
+    expect(screen.consent.pathname).toBe("/auth/consent");
     return (answer.body.scope ?? "").split(" ").sort();
   }
 
@@ -789,7 +789,7 @@ describe("what an approval grants an app whose access ended while the screen was
         cookie,
       ),
     );
-    expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+    expect(landed?.pathname, String(landed)).toBe("/auth/consent");
     const page = await fetch(landed!, { headers: { cookie } });
     return { screen: { html: await page.text(), consent: landed! }, proof };
   }
@@ -991,7 +991,7 @@ describe("what an approval posted to the approval pages grants", () => {
       "core.note:write",
     ]);
     expect(refused, "a refusal sends the browser nowhere").toBeUndefined();
-    const raw = await fetch(`${server.apiUrl}/auth/authorize/decision`, {
+    const raw = await fetch(`${server.apiUrl}/auth/consent`, {
       method: "POST",
       redirect: "manual",
       headers: {
@@ -1000,8 +1000,8 @@ describe("what an approval posted to the approval pages grants", () => {
         "content-type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams([
-        ["accept", "true"],
-        ["oauth_query", screen.consent.search.slice(1)],
+        ["decision", "approve"],
+        ["authorization_request", screen.consent.search.slice(1)],
         ["scopes", "core.note:read"],
         ["scopes", "keys.mint"],
       ]),
@@ -1017,7 +1017,7 @@ describe("what an approval posted to the approval pages grants", () => {
         cookie,
       ),
     );
-    expect(asked?.pathname).toBe("/auth/authorize");
+    expect(asked?.pathname).toBe("/auth/consent");
     // The witness: the same decision without the extra scope is a code.
     const honest = await decide(server, origin, cookie, asked!, true, [
       "core.note:read",
@@ -1086,7 +1086,7 @@ describe("what an approval posted to the approval pages grants", () => {
         cookie,
       ),
     );
-    expect(again?.pathname).toBe("/auth/authorize");
+    expect(again?.pathname).toBe("/auth/consent");
     // The witness: choosing the note as well is a code.
     const approved = await decide(
       server,
@@ -1161,7 +1161,7 @@ async function browserToken(
     server,
     await authorize(server, authorizeQuery(app.clientId, asked, proof), cookie),
   );
-  expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+  expect(landed?.pathname, String(landed)).toBe("/auth/consent");
   const sent = await decide(
     server,
     origin,
@@ -1440,7 +1440,7 @@ describe("what the approval pages keep when an app holds types and asks again fo
         cookie,
       ),
     );
-    expect(again?.pathname).toBe("/auth/authorize");
+    expect(again?.pathname).toBe("/auth/consent");
     const page = await (await fetch(again!, { headers: { cookie } })).text();
     expect(visibleText(page)).toContain("Already allowed");
     // A type held in full is shown as held and offered no more.
@@ -1718,7 +1718,7 @@ describe("what the approval pages say under full access", () => {
         cookie,
       ),
     );
-    expect(again?.pathname).toBe("/auth/authorize");
+    expect(again?.pathname).toBe("/auth/consent");
     const browser = await fetch(again!, { headers: { cookie } });
     const device = await deviceScreen(app, REQUEST);
     for (const [page, html] of [
@@ -1942,7 +1942,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
 
   /** Registers as an MCP client does when it is told no scope: naming none. */
   async function registerNamingNone(): Promise<App> {
-    const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    const response = await fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1969,7 +1969,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
     const query = authorizeQuery(app.clientId, scope ?? "", proof);
     if (scope === undefined) query.delete("scope");
     const landed = await sentTo(server, await authorize(server, query, cookie));
-    expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+    expect(landed?.pathname, String(landed)).toBe("/auth/consent");
     const page = await fetch(landed!, { headers: { cookie } });
     expect(page.status).toBe(200);
     return { html: await page.text(), consent: landed!, proof };

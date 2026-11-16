@@ -64,7 +64,7 @@ async function registerPage(
   redirectUris: string[],
   extra: Record<string, unknown> = {},
 ): Promise<Page> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -95,7 +95,7 @@ async function consentFor(page: Page, scope = SCOPE): Promise<URL> {
       cookie,
     ),
   );
-  expect(consent?.pathname).toBe("/auth/authorize");
+  expect(consent?.pathname).toBe("/auth/consent");
   return consent!;
 }
 
@@ -119,7 +119,7 @@ async function approvedCode(
       cookie,
     ),
   );
-  expect(consent?.pathname).toBe("/auth/authorize");
+  expect(consent?.pathname).toBe("/auth/consent");
   const landed = await decide(server, issuer, cookie, consent!, true, ticked);
   const code = landed?.searchParams.get("code");
   expect(code, `no code on ${String(landed)}`).toBeTruthy();
@@ -154,7 +154,7 @@ interface Grant {
 }
 
 async function grantOf(page: Page): Promise<Grant | undefined> {
-  const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+  const listed = await fetch(`${server.apiUrl}/grants`, {
     headers: { authorization: `Bearer ${server.managementKey}` },
   });
   expect(listed.status).toBe(200);
@@ -166,7 +166,7 @@ async function grantOf(page: Page): Promise<Grant | undefined> {
 async function disconnect(page: Page): Promise<void> {
   const grant = await grantOf(page);
   expect(grant, "the page is not listed").toBeDefined();
-  const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+  const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
     method: "DELETE",
     headers: { authorization: `Bearer ${server.managementKey}` },
   });
@@ -233,7 +233,7 @@ describe("a web page's address", () => {
     const origin = "https://exchange.web-page-origin.test";
     const page = await registerPage([`${origin}/callback`]);
     const { code, verifier } = await approvedCode(page);
-    const asked = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+    const asked = await fetch(`${server.apiUrl}/oauth/token`, {
       method: "OPTIONS",
       headers: {
         origin,
@@ -245,7 +245,7 @@ describe("a web page's address", () => {
     expect(asked.status).toBe(204);
     expect(asked.headers.get("access-control-allow-origin")).toBe(origin);
     expect(asked.headers.get("access-control-allow-credentials")).toBeNull();
-    const exchanged = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+    const exchanged = await fetch(`${server.apiUrl}/oauth/token`, {
       method: "POST",
       headers: {
         origin,
@@ -531,7 +531,7 @@ describe("where the owner reads a page's address", () => {
     expect(consentText).toContain(shown(first));
     expect(consentText).toContain(shown(second));
 
-    const code = await fetch(`${server.apiUrl}/auth/device/code`, {
+    const code = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -555,7 +555,7 @@ describe("where the owner reads a page's address", () => {
 
   it("names the page's origin on the device approval page, and allows it once approved there", async () => {
     const origin = "https://device.web-page-origin.test";
-    const registered = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    const registered = await fetch(`${server.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -570,7 +570,7 @@ describe("where the owner reads a page's address", () => {
     const { client_id: clientId } = (await registered.json()) as {
       client_id: string;
     };
-    const code = await fetch(`${server.apiUrl}/auth/device/code`, {
+    const code = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

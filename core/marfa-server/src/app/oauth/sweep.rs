@@ -16,7 +16,7 @@ use crate::app::refusal::Result;
 use crate::app::{App, stored};
 use crate::db::Write;
 use crate::settings::registry::{
-    DCR_CLIENT_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, Setting,
+    UNAPPROVED_APP_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, Setting,
 };
 
 const BATCH: i64 = 200;
@@ -103,7 +103,7 @@ struct Retention {
 }
 
 const CLIENTS_KEPT: Retention = Retention {
-    setting: DCR_CLIENT_RETENTION_HOURS,
+    setting: UNAPPROVED_APP_RETENTION_HOURS,
     unit_ms: MS_PER_HOUR,
 };
 const IDLE_GRANTS_KEPT: Retention = Retention {

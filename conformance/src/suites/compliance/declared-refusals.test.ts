@@ -633,7 +633,7 @@ describe("client registration given a key", () => {
       redirect_uris: ["https://example.com/callback"],
       client_name: `${ctx.source}-registration`,
     };
-    const refused = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const refused = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -646,13 +646,13 @@ describe("client registration given a key", () => {
     expect(refusedBody.error).toBe("invalid_token");
     await expectMatchesSchema(
       "POST",
-      "/auth/oauth2/register",
+      "/oauth/register",
       401,
       refusedBody,
     );
 
     // The witness: the same body with no credential registers.
-    const accepted = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const accepted = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(registration),
@@ -660,8 +660,8 @@ describe("client registration given a key", () => {
     expect(accepted.status).toBe(201);
   });
 
-  it("is refused 415 in the shape the document declares for a body that is not JSON", async () => {
-    const refused = await fetch(`${apiUrl}/auth/oauth2/register`, {
+  it("is refused 400 in the shape the document declares for a body that is not JSON", async () => {
+    const refused = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -669,13 +669,13 @@ describe("client registration given a key", () => {
         client_name: `${ctx.source}-form-registration`,
       }).toString(),
     });
-    const refusedBody = (await refused.json()) as { code?: string };
-    expect(refused.status, JSON.stringify(refusedBody)).toBe(415);
-    expect(refusedBody.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+    const refusedBody = (await refused.json()) as { error?: string };
+    expect(refused.status, JSON.stringify(refusedBody)).toBe(400);
+    expect(refusedBody.error).toBe("invalid_client_metadata");
     await expectMatchesSchema(
       "POST",
-      "/auth/oauth2/register",
-      415,
+      "/oauth/register",
+      400,
       refusedBody,
     );
   });
@@ -773,8 +773,8 @@ describe("a query key no door declares", () => {
     if (
       template === "/items/summaries" ||
       (method === "GET" && template === "/folders") ||
-      template === "/auth/grants" ||
-      template.startsWith("/auth/grants/") ||
+      template === "/grants" ||
+      template.startsWith("/grants/") ||
       template === "/attention" ||
       template === "/owner" ||
       template.startsWith("/owner/") ||
@@ -1039,7 +1039,7 @@ describe("a query key no door declares", () => {
     for (const path of [
       "/.well-known/oauth-protected-resource",
       "/.well-known/oauth-protected-resource/mcp",
-      "/auth/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server",
       "/auth/sign-in",
       "/auth/device",
       "/auth/error",
@@ -1068,7 +1068,7 @@ describe("a query key no door declares", () => {
     await sent.body?.cancel();
 
     const registration = await fetch(
-      `${apiUrl}/auth/oauth2/register?${STRAY}=1`,
+      `${apiUrl}/oauth/register?${STRAY}=1`,
       {
         method: "POST",
         headers: {
@@ -1160,7 +1160,7 @@ describe("the write contention a door can meet", () => {
           continue;
         }
         const door = `${method.toUpperCase()} ${path}`;
-        if (!takesAuthority(operation) && path !== "/auth/oauth2/register") {
+        if (!takesAuthority(operation) && path !== "/oauth/register") {
           continue;
         }
         takingACredential.push(door);
@@ -1177,7 +1177,7 @@ describe("the write contention a door can meet", () => {
       }
     }
     expect(takingACredential.length).toBeGreaterThan(90);
-    expect(takingACredential).toContain("POST /auth/oauth2/register");
+    expect(takingACredential).toContain("POST /oauth/register");
     expect(missing).toEqual([]);
     expect(wrongShape).toEqual([]);
   });

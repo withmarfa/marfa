@@ -412,7 +412,7 @@ async function waitForHealth(
  */
 async function reachedAt(url: string): Promise<string> {
   const found = await fetch(
-    `${url}/auth/.well-known/oauth-authorization-server`,
+    `${url}/.well-known/oauth-authorization-server`,
     { signal: AbortSignal.timeout(5_000), headers: { Connection: "close" } },
   );
   const issuer = (await found.json()) as { issuer?: unknown };

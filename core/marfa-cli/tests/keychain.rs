@@ -227,12 +227,12 @@ fn the_environment_wins_over_a_kept_key() {
 
 fn discovery(origin: &str) -> String {
     serde_json::json!({
-        "issuer": format!("{origin}/auth"),
-        "token_endpoint": format!("{origin}/auth/oauth2/token"),
-        "device_authorization_endpoint": format!("{origin}/auth/device/code"),
-        "registration_endpoint": format!("{origin}/auth/oauth2/register"),
-        "revocation_endpoint": format!("{origin}/auth/oauth2/revoke"),
-        "userinfo_endpoint": format!("{origin}/auth/oauth2/userinfo"),
+        "issuer": origin,
+        "token_endpoint": format!("{origin}/oauth/token"),
+        "device_authorization_endpoint": format!("{origin}/oauth/device-authorization"),
+        "registration_endpoint": format!("{origin}/oauth/register"),
+        "revocation_endpoint": format!("{origin}/oauth/revoke"),
+        "userinfo_endpoint": format!("{origin}/oauth/userinfo"),
         "scopes_supported": ["openid", "offline_access", "*:read"]
     })
     .to_string()

@@ -39,7 +39,7 @@ const NOT_JSON: Record<string, string> = {
 };
 
 /** A published door that takes JSON, answered by the sign-in library. */
-const SIGN_IN_LIBRARY = "POST /auth/oauth2/register";
+const SIGN_IN_LIBRARY = "POST /oauth/register";
 
 /** One way of sending a body that is not sent as JSON. */
 const WAYS: {
@@ -139,7 +139,7 @@ async function send(
   // keep their own proof.
   if (
     door === "PATCH /owner" ||
-    door === "PATCH /auth/grants/{id}" ||
+    door === "PATCH /grants/{id}" ||
     template.startsWith("/owner/")
   )
     return localFetch(socket(), `${apiUrl}${path}`, {
@@ -364,13 +364,13 @@ describe("a door that does not take its body as JSON", () => {
     expect(res.status).toBe(202);
   });
 
-  it("leaves a registration that is not sent as JSON to the sign-in library, which answers 415 in its own shape", async () => {
+  it("refuses a registration that is not sent as JSON 400 invalid_client_metadata in the shape of RFC 7591", async () => {
     const registration = {
       redirect_uris: ["https://example.com/callback"],
       client_name: `${ctx.source}-not-json-registration`,
     };
     // The witness: the same registration sent as JSON is made.
-    const made = await fetch(`${apiUrl}/auth/oauth2/register`, {
+    const made = await fetch(`${apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(registration),
@@ -381,7 +381,7 @@ describe("a door that does not take its body as JSON", () => {
       { "Content-Type": "text/plain" },
       {} as Record<string, string>,
     ]) {
-      const res = await fetch(`${apiUrl}/auth/oauth2/register`, {
+      const res = await fetch(`${apiUrl}/oauth/register`, {
         method: "POST",
         headers,
         body: new Blob([JSON.stringify(registration)], {
@@ -389,9 +389,10 @@ describe("a door that does not take its body as JSON", () => {
         }),
       });
       const body = (await res.json()) as Record<string, unknown>;
-      expect(res.status, JSON.stringify(headers)).toBe(415);
-      expect(body.code).toBe("UNSUPPORTED_MEDIA_TYPE");
-      expect(body).not.toHaveProperty("error");
+      expect(res.status, JSON.stringify(headers)).toBe(400);
+      expect(body.error).toBe("invalid_client_metadata");
+      expect(typeof body.error_description).toBe("string");
+      expect(Object.keys(body).sort()).toEqual(["error", "error_description"]);
     }
   });
 });

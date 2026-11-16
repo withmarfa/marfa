@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
                 private = json.loads(subprocess.check_output(["curl", "-fsS", "--unix-socket", instance["MARFA_TEST_SOCKET"], "http://localhost/"]))
                 assert private["instance_id"] == expected, "published URL reaches a different instance"
             for url in urls:
-                issuer = get(url + "/auth/.well-known/oauth-authorization-server")["issuer"]
+                issuer = get(url + "/.well-known/oauth-authorization-server")["issuer"]
                 expected_origin = urllib.parse.urlparse(url)
                 actual_origin = urllib.parse.urlparse(issuer)
                 assert (actual_origin.scheme, actual_origin.netloc) == (expected_origin.scheme, expected_origin.netloc), issuer

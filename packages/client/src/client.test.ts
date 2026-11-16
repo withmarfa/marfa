@@ -720,14 +720,14 @@ it("sends the published app grant operations and reads the disconnect answer", a
       );
     },
   });
-  expect((await client.GET("/auth/grants")).data?.next_cursor).toBeNull();
+  expect((await client.GET("/grants")).data?.next_cursor).toBeNull();
   const choice = {
     scopes: ["core.note:read"],
     expected_scopes: ["core.note:write"],
   };
   expect(
     (
-      await client.PATCH("/auth/grants/{id}", {
+      await client.PATCH("/grants/{id}", {
         params: { path: { id: "app-1" } },
         body: choice,
       })
@@ -735,17 +735,17 @@ it("sends the published app grant operations and reads the disconnect answer", a
   ).toEqual(choice.scopes);
   expect(
     (
-      await client.DELETE("/auth/grants/{id}", {
-        params: { path: { id: "app-1" }, query: { revoke_keys: "true" } },
+      await client.DELETE("/grants/{id}", {
+        params: { path: { id: "app-1" }, query: { revoke_keys: true } },
       })
     ).data,
   ).toEqual({ ok: true });
   expect(
     seen.map((r) => [r.method, new URL(r.url).pathname, new URL(r.url).search]),
   ).toEqual([
-    ["GET", "/auth/grants", ""],
-    ["PATCH", "/auth/grants/app-1", ""],
-    ["DELETE", "/auth/grants/app-1", "?revoke_keys=true"],
+    ["GET", "/grants", ""],
+    ["PATCH", "/grants/app-1", ""],
+    ["DELETE", "/grants/app-1", "?revoke_keys=true"],
   ]);
   expect(await seen[1]!.json()).toEqual(choice);
 });

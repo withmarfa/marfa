@@ -137,12 +137,18 @@ describe("the document declares the headers the server sets", () => {
 
   it("declares X-Error-Code on error responses and not on success", () => {
     // Every error response declares the header and every success response
-    // does not, but registration's `401` and `415`, which the sign-in
-    // library answers in its own shape. The item and edge conflicts return
-    // rather than throw, and stamp the header themselves.
+    // does not, but the OAuth doors' own errors, which carry their code in
+    // the RFC shape. The item and edge conflicts return rather than throw,
+    // and stamp the header themselves.
     const KNOWN_UNSTAMPED = new Set<string>([
-      "POST /auth/oauth2/register 401",
-      "POST /auth/oauth2/register 415",
+      "POST /oauth/register 401",
+      "GET /oauth/authorize 400",
+      "POST /oauth/device-authorization 400",
+      "POST /oauth/device-authorization 401",
+      "POST /oauth/token 400",
+      "POST /oauth/token 401",
+      "POST /oauth/revoke 400",
+      "POST /oauth/revoke 401",
     ]);
     const wrong: string[] = [];
     for (const [key, responses] of operations) {

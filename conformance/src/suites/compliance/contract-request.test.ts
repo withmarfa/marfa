@@ -150,7 +150,7 @@ describe("a request that names a contract", () => {
       (await sendRaw(apiUrl, endpoint.data.path, "hello")).status,
       "an inbound endpoint",
     ).toBe(202);
-    const token = await fetch(`${apiUrl}/auth/oauth2/token`, {
+    const token = await fetch(`${apiUrl}/oauth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "grant_type=authorization_code",
@@ -288,15 +288,29 @@ describe("a request that names a contract", () => {
       {
         name: "the OAuth token door",
         method: "POST",
-        path: "/auth/oauth2/token",
+        path: "/oauth/token",
         body: "grant_type=authorization_code",
         headers: form,
         credential: false,
       },
       {
+        name: "the OAuth revocation door",
+        method: "POST",
+        path: "/oauth/revoke",
+        body: "token=none&client_id=none",
+        headers: form,
+        credential: false,
+      },
+      {
+        name: "the OAuth authorization door",
+        method: "GET",
+        path: "/oauth/authorize?client_id=none",
+        credential: false,
+      },
+      {
         name: "the device code door",
         method: "POST",
-        path: "/auth/device/code",
+        path: "/oauth/device-authorization",
         body: "client_id=none",
         headers: form,
         credential: false,
@@ -310,7 +324,7 @@ describe("a request that names a contract", () => {
       {
         name: "an authorization server document",
         method: "GET",
-        path: "/auth/.well-known/oauth-authorization-server",
+        path: "/.well-known/oauth-authorization-server",
         credential: false,
       },
     ];

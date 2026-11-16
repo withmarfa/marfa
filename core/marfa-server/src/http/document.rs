@@ -27,12 +27,8 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /openapi.json", "the document itself"),
     (
-        "GET /.well-known/oauth-authorization-server/auth",
+        "GET /.well-known/oauth-authorization-server",
         "RFC 8414 discovery",
-    ),
-    (
-        "GET /auth/.well-known/oauth-authorization-server",
-        "the issuer-suffixed spelling of the same document",
     ),
     (
         "GET /.well-known/oauth-protected-resource",
@@ -104,19 +100,12 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "GET /auth/error",
         "the OAuth failure page a redirect lands on",
     ),
+    ("GET /auth/consent", "the consent screen"),
+    ("POST /auth/consent", "its decision"),
     (
-        "GET /auth/oauth2/authorize",
-        "an app's authorization request",
-    ),
-    ("GET /auth/authorize", "the consent screen"),
-    ("POST /auth/authorize/decision", "its decision"),
-    ("POST /auth/oauth2/token", "the token exchange, every grant"),
-    ("POST /auth/oauth2/revoke", "RFC 7009 revocation"),
-    (
-        "OPTIONS /auth/oauth2/register",
+        "OPTIONS /oauth/register",
         "the preflight of the published registration",
     ),
-    ("POST /auth/device/code", "RFC 8628 device authorization"),
     ("GET /auth/device", "the device-code entry page"),
     ("POST /auth/device", "its form post"),
     ("GET /auth/device/consent", "the device consent screen"),
@@ -495,7 +484,7 @@ async fn the_mark_is_on_exactly_the_operations_the_socket_takes() {
     let waiting = listed(NOT_YET_SERVED);
     let taken = taken(&served, &published);
     assert!(
-        taken.contains("GET /auth/grants") && !marks.is_empty(),
+        taken.contains("GET /grants") && !marks.is_empty(),
         "the witness is a door that is served and taken"
     );
     // A door the server does not serve yet cannot be asked, so its mark waits for it.

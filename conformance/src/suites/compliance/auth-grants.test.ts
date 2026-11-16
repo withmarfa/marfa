@@ -32,7 +32,7 @@ import {
 } from "../../utils/signed-in.js";
 
 /**
- * The apps a person approved, listed and revoked through `/auth/grants`. A
+ * The apps a person approved, listed and revoked through `/grants`. A
  * grant needs a person's approval, and an instance has one owner, so this
  * file boots a server of its own.
  */
@@ -83,7 +83,7 @@ async function keyHolding(
 }
 
 function grants(credential?: string): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/grants`, {
+  return fetch(`${server.apiUrl}/grants`, {
     headers:
       credential === undefined ? {} : { authorization: `Bearer ${credential}` },
   });
@@ -94,7 +94,7 @@ function revokeGrant(
   credential: string,
   query = "",
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/grants/${id}${query}`, {
+  return fetch(`${server.apiUrl}/grants/${id}${query}`, {
     method: "DELETE",
     headers: { authorization: `Bearer ${credential}` },
   });
@@ -114,7 +114,7 @@ async function approved(): Promise<{
     data: Grant[];
     next_cursor: null;
   };
-  await expectMatchesSchema("GET", "/auth/grants", 200, body);
+  await expectMatchesSchema("GET", "/grants", 200, body);
   const grant = body.data.find((g) => g.client_id === app.clientId);
   expect(grant, "the approved app is not listed").toBeDefined();
   return {
@@ -138,7 +138,7 @@ async function mintedBy(
   return { id: minted.data.id, key: minted.data.key };
 }
 
-describe("GET /auth/grants", () => {
+describe("GET /grants", () => {
   it("classifies registered native, web, command line and other device apps", async () => {
     const cases = [
       { kind: "app", device: false, registration: {} },
@@ -184,7 +184,7 @@ describe("GET /auth/grants", () => {
           cookie,
         ),
       );
-      expect(consent?.pathname).toBe("/auth/authorize");
+      expect(consent?.pathname).toBe("/auth/consent");
       await decide(server, origin, cookie, consent!, true, SCOPE.split(" "));
       const listed = (await (await grants(server.managementKey)).json()) as {
         data: Grant[];
@@ -234,7 +234,7 @@ describe("GET /auth/grants", () => {
   });
 });
 
-describe("DELETE /auth/grants/{id}", () => {
+describe("DELETE /grants/{id}", () => {
   it("ends the app's tokens and the person's consent, and leaves the keys it minted working", async () => {
     const { clientId, access, grant } = await approved();
     const key = await mintedBy(access, "grant-survivor", {
@@ -248,7 +248,7 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(revoked.status).toBe(200);
     await expectMatchesSchema(
       "DELETE",
-      "/auth/grants/{id}",
+      "/grants/{id}",
       200,
       await revoked.json(),
     );
@@ -263,7 +263,7 @@ describe("DELETE /auth/grants/{id}", () => {
       server,
       await authorize(server, authorizeQuery(clientId, SCOPE, pkce()), cookie),
     );
-    expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
+    expect(asked?.pathname, String(asked)).toBe("/auth/consent");
   });
 
   it("with revoke_keys=true also revokes every key the app minted, a key's descendant included", async () => {
@@ -350,7 +350,7 @@ describe("DELETE /auth/grants/{id}", () => {
   it("refuses a caller without grants.manage 403 whatever query it sends, at both doors", async () => {
     const { access, grant } = await approved();
     const without = await keyHolding("grants-query-without", ["audit.read"]);
-    const listed = await fetch(`${server.apiUrl}/auth/grants?stray=1`, {
+    const listed = await fetch(`${server.apiUrl}/grants?stray=1`, {
       headers: { authorization: `Bearer ${without}` },
     });
     expect(listed.status).toBe(403);
@@ -363,7 +363,7 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, access)).toBe(200);
     // The witness: the same queries from a caller holding it are refused 400.
     const holder = await keyHolding("grants-query-holder", ["grants.manage"]);
-    const asHolder = await fetch(`${server.apiUrl}/auth/grants?stray=1`, {
+    const asHolder = await fetch(`${server.apiUrl}/grants?stray=1`, {
       headers: { authorization: `Bearer ${holder}` },
     });
     expect(asHolder.status).toBe(400);
@@ -401,11 +401,11 @@ describe("a code whose grant is revoked", () => {
   });
 });
 
-describe("PATCH /auth/grants/{id}", () => {
+describe("PATCH /grants/{id}", () => {
   const narrow = async (id: string, expected: string[], scopes: string[]) => {
     const answer = await controlRequest(
       server.controlSocket,
-      `/auth/grants/${id}`,
+      `/grants/${id}`,
       { method: "PATCH", body: { expected_scopes: expected, scopes } },
     );
     return Response.json(answer.body, { status: answer.status });
@@ -422,7 +422,7 @@ describe("PATCH /auth/grants/{id}", () => {
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result).toEqual({ scopes });
-    await expectMatchesSchema("PATCH", "/auth/grants/{id}", 200, result);
+    await expectMatchesSchema("PATCH", "/grants/{id}", 200, result);
     expect(await itemsStatus(server, access)).toBe(401);
     expect((await narrow(grant.id, grant.scopes, scopes)).status).toBe(409);
     const listed = (await (await grants(server.managementKey)).json()) as {
@@ -435,7 +435,7 @@ describe("PATCH /auth/grants/{id}", () => {
       server,
       await authorize(server, authorizeQuery(clientId, SCOPE, pkce()), cookie),
     );
-    expect(wider?.pathname).toBe("/auth/authorize");
+    expect(wider?.pathname).toBe("/auth/consent");
     const kept = await codeFor(
       server,
       origin,
@@ -519,7 +519,7 @@ describe("PATCH /auth/grants/{id}", () => {
   it("requires the local command and reports an unknown grant", async () => {
     const { grant } = await approved();
     const sent = (headers: Record<string, string>) =>
-      fetch(`${server.apiUrl}/auth/grants/${grant.id}`, {
+      fetch(`${server.apiUrl}/grants/${grant.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify({ expected_scopes: grant.scopes, scopes: [] }),
@@ -764,7 +764,7 @@ describe("the keys an app minted, when its grant ends another way", () => {
       "refresh-survivor",
     );
 
-    const revoked = await fetch(`${server.apiUrl}/auth/oauth2/revoke`, {
+    const revoked = await fetch(`${server.apiUrl}/oauth/revoke`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

@@ -25,7 +25,7 @@ pub(crate) const RENAMED: &str = "auth.grant.renamed";
 pub(crate) const REVOKED: &str = GRANT_REVOKED;
 
 fn no_such_grant() -> Refusal {
-    Refusal::new(Code::OauthGrantNotFound, "No live app grant has this ID.")
+    Refusal::new(Code::GrantNotFound, "No live app grant has this ID.")
 }
 
 pub(crate) fn of_owner(tx: &Transaction<'_>, id: &str) -> Result<Option<Consent>> {
@@ -69,19 +69,18 @@ pub(crate) fn named(tx: &Connection, consent: &Consent, client: Option<&Client>)
         .to_string())
 }
 
-pub(crate) fn source_of(client_id: &str, owner_id: &str) -> String {
-    format!("{APP_SOURCE_PREFIX}{client_id}:{owner_id}")
+pub(crate) fn source_of(client_id: &str) -> String {
+    format!("{APP_SOURCE_PREFIX}{client_id}")
 }
 
-/// A client's ID can hold a colon; a person's cannot.
-pub(crate) fn name_of_source(tx: &Connection, source: &str) -> Result<Option<String>> {
-    let Some((client_id, owner_id)) = source
-        .strip_prefix(APP_SOURCE_PREFIX)
-        .and_then(|named| named.rsplit_once(':'))
-    else {
+pub(crate) fn name_of_source(tx: &Transaction<'_>, source: &str) -> Result<Option<String>> {
+    let Some(client_id) = source.strip_prefix(APP_SOURCE_PREFIX) else {
         return Ok(None);
     };
-    match store::consent(tx, client_id, owner_id)?.filter(Consent::stands) {
+    let Some(owner_id) = instance::owner_id(tx)? else {
+        return Ok(None);
+    };
+    match store::consent(tx, client_id, &owner_id)?.filter(Consent::stands) {
         Some(consent) => sign_in_name(tx, &consent).map(Some),
         None => Ok(None),
     }

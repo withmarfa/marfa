@@ -22,7 +22,7 @@ const FEATURES: &[(&str, &str)] = &[
     ("types", "GET /types"),
     ("keys", "GET /keys"),
     ("bulk", "POST /items/bulk"),
-    ("oauth", "GET /.well-known/oauth-authorization-server/auth"),
+    ("oauth", "GET /.well-known/oauth-authorization-server"),
     ("owner", "POST /owner"),
     ("extensions", "GET /items/{id}/extensions"),
     ("events", "GET /events"),

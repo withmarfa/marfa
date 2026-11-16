@@ -34,9 +34,9 @@ it("describes the public metadata registration accepts and echoes", async () => 
   const documentResponse = await fetch(`${server!.apiUrl}/openapi.json`);
   expect(documentResponse.status).toBe(200);
   const document = (await documentResponse.json()) as OpenApiDocument;
-  const operation = document.paths["/auth/oauth2/register"]?.post;
+  const operation = document.paths["/oauth/register"]?.post;
   expect(operation).toBeDefined();
-  const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(metadata),
@@ -58,7 +58,7 @@ it("registers a client whose metadata the server does not support, and leaves th
     software_statement: "eyJhbGciOiJub25lIn0.eyJpc3MiOiJ4In0.",
     resources: ["https://resource.example.test/"],
   };
-  const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -82,7 +82,7 @@ it("describes the refusal of a resource that is not an absolute URI", async () =
   expect(documentResponse.status).toBe(200);
   const document = (await documentResponse.json()) as OpenApiDocument;
   const schema =
-    document.paths["/auth/oauth2/register"]?.post.responses?.["400"]?.content?.[
+    document.paths["/oauth/register"]?.post.responses?.["400"]?.content?.[
       "application/json"
     ]?.schema;
   expect(schema).toBeDefined();
@@ -92,7 +92,7 @@ it("describes the refusal of a resource that is not an absolute URI", async () =
     "/relative",
     "https://a.example.test/#part",
   ]) {
-    const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const response = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

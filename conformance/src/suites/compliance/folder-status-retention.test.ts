@@ -117,7 +117,7 @@ describe("how long a sign-in's folder reports are kept", () => {
       (g) => g.sign_in.kind === "app",
     );
     expect(held).toHaveLength(1);
-    const ended = await call("DELETE", `/auth/grants/${held[0]!.sign_in.id}`);
+    const ended = await call("DELETE", `/grants/${held[0]!.sign_in.id}`);
     expect(ended.status).toBe(200);
     const history = (await status(id)).sign_ins.filter(
       (g) => g.sign_in.kind === "app",

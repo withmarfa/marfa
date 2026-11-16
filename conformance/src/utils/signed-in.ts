@@ -16,7 +16,7 @@ export const CALLBACK = "http://127.0.0.1:9/callback";
 /** The origin the issuer names, which the browser operations trust. */
 export async function issuerOrigin(server: FreshServer): Promise<string> {
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   return new URL(((await discovery.json()) as { issuer: string }).issuer)
     .origin;
@@ -40,7 +40,7 @@ export async function registerApp(
   scope: string,
   extra: Record<string, unknown> = {},
 ): Promise<App> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -96,13 +96,13 @@ export function authorizeQuery(
   });
 }
 
-/** `GET /auth/oauth2/authorize` as `cookie`'s browser, or nobody's. */
+/** `GET /oauth/authorize` as `cookie`'s browser, or nobody's. */
 export function authorize(
   server: FreshServer,
   query: URLSearchParams,
   cookie?: string,
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/oauth2/authorize?${query.toString()}`, {
+  return fetch(`${server.apiUrl}/oauth/authorize?${query.toString()}`, {
     redirect: "manual",
     headers: cookie === undefined ? {} : { cookie },
   });
@@ -137,12 +137,12 @@ export function decideResponse(
   origin: string,
   cookie: string,
   consent: URL,
-  accept: boolean,
+  approve: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
   access?: string,
 ): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/authorize/decision`, {
+  return fetch(`${server.apiUrl}/auth/consent`, {
     method: "POST",
     redirect: "manual",
     headers: {
@@ -151,8 +151,8 @@ export function decideResponse(
       "content-type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams([
-      ["accept", String(accept)],
-      ["oauth_query", consent.search.slice(1)],
+      ["decision", approve ? "approve" : "deny"],
+      ["authorization_request", consent.search.slice(1)],
       ...(access === undefined ? [] : [["access", access] as [string, string]]),
       ...scopes.map((s): [string, string] => ["scopes", s]),
       ...types.map((t): [string, string] => ["types", t]),
@@ -169,7 +169,7 @@ export async function decide(
   origin: string,
   cookie: string,
   consent: URL,
-  accept: boolean,
+  approve: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
   access?: string,
@@ -181,7 +181,7 @@ export async function decide(
       origin,
       cookie,
       consent,
-      accept,
+      approve,
       scopes,
       types,
       access,
@@ -194,7 +194,7 @@ export async function token(
   server: FreshServer,
   form: Record<string, string>,
 ): Promise<{ status: number; body: TokenAnswer }> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(form),

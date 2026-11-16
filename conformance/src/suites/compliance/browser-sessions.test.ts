@@ -47,7 +47,7 @@ beforeAll(async () => {
     MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
   });
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   origin = new URL(((await discovery.json()) as { issuer: string }).issuer)
     .origin;
@@ -99,7 +99,7 @@ async function browserLive(cookie: string): Promise<boolean> {
 }
 
 async function register(scope: string): Promise<string> {
-  const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -124,7 +124,7 @@ async function register(scope: string): Promise<string> {
 async function authorize(cookie: string, clientId: string, scope: string) {
   const verifier = randomBytes(32).toString("base64url");
   const response = await fetch(
-    `${server!.apiUrl}/auth/oauth2/authorize?${new URLSearchParams({
+    `${server!.apiUrl}/oauth/authorize?${new URLSearchParams({
       response_type: "code",
       client_id: clientId,
       redirect_uri: CALLBACK,
@@ -138,7 +138,7 @@ async function authorize(cookie: string, clientId: string, scope: string) {
   let landed = await whereTo(response);
   const silent = landed.startsWith(CALLBACK);
   if (!silent) {
-    const decision = await fetch(`${server!.apiUrl}/auth/authorize/decision`, {
+    const decision = await fetch(`${server!.apiUrl}/auth/consent`, {
       method: "POST",
       redirect: "manual",
       headers: {
@@ -147,8 +147,8 @@ async function authorize(cookie: string, clientId: string, scope: string) {
         "content-type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams([
-        ["accept", "true"],
-        ["oauth_query", landed.slice(landed.indexOf("?") + 1)],
+        ["decision", "approve"],
+        ["authorization_request", landed.slice(landed.indexOf("?") + 1)],
         ...scope.split(" ").map((s): [string, string] => ["scopes", s]),
       ]),
     });
@@ -176,7 +176,7 @@ async function whereTo(response: Response): Promise<string> {
 }
 
 function token(form: Record<string, string>): Promise<Response> {
-  return fetch(`${server!.apiUrl}/auth/oauth2/token`, {
+  return fetch(`${server!.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", origin },
     body: new URLSearchParams(form),
@@ -354,7 +354,7 @@ describe("a browser session ending", () => {
       ["POST", "/keys"],
       ["GET", "/owner"],
       ["GET", "/owner/sign-ins"],
-      ["GET", "/auth/grants"],
+      ["GET", "/grants"],
       ["GET", "/trash"],
       ["GET", "/audit"],
       ["GET", "/profile"],
@@ -379,7 +379,7 @@ describe("a browser session ending", () => {
   });
 
   it("registers an app without a back-channel logout address and does not echo one", async () => {
-    const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    const response = await fetch(`${server!.apiUrl}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

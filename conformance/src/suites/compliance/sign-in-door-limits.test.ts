@@ -188,7 +188,7 @@ describe("the limits one address is held to", () => {
   it("answers the eleventh client registration from one address in a minute 429", async () => {
     const address = nextAddress();
     const register = () =>
-      fetch(`${limited.apiUrl}/auth/oauth2/register`, {
+      fetch(`${limited.apiUrl}/oauth/register`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -212,7 +212,7 @@ describe("the limits one address is held to", () => {
     });
     const address = nextAddress();
     const code = () =>
-      fetch(`${limited.apiUrl}/auth/device/code`, {
+      fetch(`${limited.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
@@ -267,7 +267,7 @@ const METADATA = JSON.stringify({
 });
 
 function register(server: FreshServer, address: string): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  return fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json", [CLIENT_HEADER]: address },
     body: METADATA,
@@ -358,7 +358,7 @@ describe("what every address together leaves in the audit log", () => {
       const left = await Promise.all(
         Array.from({ length: 11 }, (_, n) => {
           const request = http.request(
-            `${abandoned.apiUrl}/auth/oauth2/register`,
+            `${abandoned.apiUrl}/oauth/register`,
             {
               method: "POST",
               agent: false,
@@ -414,7 +414,7 @@ describe("what every address together leaves in the audit log", () => {
       grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
     });
     const code = (address: string) =>
-      fetch(`${codes.apiUrl}/auth/device/code`, {
+      fetch(`${codes.apiUrl}/oauth/device-authorization`, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
@@ -447,7 +447,7 @@ const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 /** Registers a device client and answers its ID. */
 async function deviceClient(server: FreshServer): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -463,7 +463,7 @@ async function deviceClient(server: FreshServer): Promise<string> {
 }
 
 function askForCode(server: FreshServer, clientId: string): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/device/code`, {
+  return fetch(`${server.apiUrl}/oauth/device-authorization`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: clientId, scope: "core.note:read" }),
@@ -496,7 +496,7 @@ async function polled(
   clientId: string,
   deviceCode: string,
 ): Promise<string | undefined> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

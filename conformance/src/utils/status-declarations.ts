@@ -77,8 +77,7 @@ const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
 export const SIGN_IN_ROUTE_STATUSES: Readonly<
   Record<string, readonly number[]>
 > = {
-  "GET /.well-known/oauth-authorization-server/auth": [200],
-  "GET /auth/.well-known/oauth-authorization-server": [200],
+  "GET /.well-known/oauth-authorization-server": [200],
   "GET /.well-known/oauth-protected-resource": [200],
   "GET /.well-known/oauth-protected-resource/mcp": [200],
   "GET /.well-known/oauth-protected-resource/mcp/schema": [200],
@@ -91,15 +90,9 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/passkeys/registration": [201, 400, 401, 403, 409, 500],
   "POST /auth/passkeys/sign-in/options": [200, 403, 413, 429],
   "POST /auth/passkeys/sign-in": [200, 400, 401, 403, 413, 500],
-  // Refuses owner-only email writes before redirecting:
-  // instance-claim/profile-email-write-scope.
-  "GET /auth/oauth2/authorize": [200, 302, 400],
-  "GET /auth/authorize": [200, 302, 400, 404],
-  "POST /auth/authorize/decision": [200, 302, 400, 403, 413, 500],
+  "GET /auth/consent": [200, 302, 400, 404],
+  "POST /auth/consent": [200, 302, 400, 403, 413, 500],
   "GET /auth/error": [200],
-  "POST /auth/oauth2/token": [200, 400, 401, 413],
-  "POST /auth/oauth2/revoke": [200, 400, 401, 413],
-  "POST /auth/device/code": [200, 400, 401, 413, 429],
   "GET /auth/device": [200],
   "POST /auth/device": [302, 403, 413],
   "GET /auth/device/consent": [200, 302, 400],
@@ -159,6 +152,8 @@ export const UNREACHED: Readonly<Record<string, string>> = {
     "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
   "PUT /owner/picture 404":
     "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
+  "GET /oauth/authorize 403":
+    "a browser session over a sign-in address that is neither HTTPS nor on this machine, which the run's loopback server never has",
   "PUT /profile/picture 404":
     "an owner is missing only on an unclaimed instance, where no public credential exists yet; `compliance/profile.test.ts` draws it over the private socket",
 };

@@ -150,7 +150,6 @@ describe("a request no door serves", () => {
       "/auth/not-a-door",
       "/auth/sign%2Dout",
       "/auth/sign%2Din",
-      "/auth/oauth2/%74oken",
       "/auth/passkeys/sign%2Din",
     ]) {
       for (const spelling of [path, `${path}/`]) {
@@ -172,6 +171,91 @@ describe("a request no door serves", () => {
           await response.body?.cancel();
         }
       }
+    }
+  });
+
+  it("answers the OAuth doors' former paths 404 not_found, where the same request to the door's own path is served", async () => {
+    const form = { "content-type": "application/x-www-form-urlencoded" };
+    const json = { "content-type": "application/json" };
+    const doors: {
+      method: string;
+      former: string;
+      now: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }[] = [
+      {
+        method: "GET",
+        former: "/auth/oauth2/authorize?client_id=none",
+        now: "/oauth/authorize?client_id=none",
+      },
+      {
+        method: "POST",
+        former: "/auth/oauth2/token",
+        now: "/oauth/token",
+        headers: form,
+        body: "grant_type=authorization_code",
+      },
+      {
+        method: "POST",
+        former: "/auth/oauth2/revoke",
+        now: "/oauth/revoke",
+        headers: form,
+        body: "token=none",
+      },
+      {
+        method: "POST",
+        former: "/auth/oauth2/register",
+        now: "/oauth/register",
+        headers: json,
+        body: "{}",
+      },
+      {
+        method: "POST",
+        former: "/auth/device/code",
+        now: "/oauth/device-authorization",
+        headers: form,
+        body: "client_id=none",
+      },
+      { method: "GET", former: "/auth/authorize", now: "/auth/consent" },
+      {
+        method: "POST",
+        former: "/auth/authorize/decision",
+        now: "/auth/consent",
+        headers: form,
+        body: "decision=deny",
+      },
+      {
+        method: "GET",
+        former: "/auth/grants",
+        now: "/grants",
+        headers: asKey(),
+      },
+      {
+        method: "POST",
+        former: "/oauth/%74oken",
+        now: "/oauth/token",
+        headers: form,
+        body: "grant_type=authorization_code",
+      },
+    ];
+    for (const door of doors) {
+      const ask = (path: string) =>
+        fetch(`${apiUrl}${path}`, {
+          method: door.method,
+          redirect: "manual",
+          headers: door.headers,
+          body: door.body,
+        });
+      // The witness: the door answers the same request at its own path.
+      const served = await ask(door.now);
+      expect(served.status, `${door.method} ${door.now}`).not.toBe(404);
+      await served.body?.cancel();
+      const former = await ask(door.former);
+      const label = `${door.method} ${door.former}`;
+      expect(former.status, label).toBe(404);
+      expect(former.headers.get("x-error-code"), label).toBe("not_found");
+      await former.body?.cancel();
     }
   });
 

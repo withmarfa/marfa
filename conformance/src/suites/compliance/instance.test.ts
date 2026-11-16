@@ -56,9 +56,9 @@ afterAll(async () => {
  *
  * **That predicate is a property of these paths, not of the server.** A
  * served route mostly answers a 404 of its own (`item_not_found`,
- * `blob_not_found`), but the OAuth plugin fence under `/auth/oauth2/*`
- * answers `404 not_found` from a route that exists. Every path below is
- * chosen to avoid it, and a new probe has to be too.
+ * `blob_not_found`), but some answer `404 not_found` from a route that
+ * exists. Every path below is chosen to avoid that, and a new probe has to
+ * be too.
  */
 const FEATURE_DOORS: {
   feature: string;
@@ -79,7 +79,7 @@ const FEATURE_DOORS: {
   // handler deleted.
   {
     feature: "oauth",
-    path: "/.well-known/oauth-authorization-server/auth",
+    path: "/.well-known/oauth-authorization-server",
   },
   { feature: "owner", path: "/owner", method: "POST", body: {} },
   { feature: "extensions", path: "/items/not-an-id/extensions" },

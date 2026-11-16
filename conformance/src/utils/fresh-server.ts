@@ -739,7 +739,7 @@ export async function startDeviceFlow(
   const owner = TEST_OWNER;
 
   const discovery = (await (
-    await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server/auth`)
+    await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
   ).json()) as {
     registration_endpoint: string;
     device_authorization_endpoint: string;
@@ -917,7 +917,7 @@ export async function refreshedAppToken(
   clientId: string,
   refreshToken: string,
 ): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

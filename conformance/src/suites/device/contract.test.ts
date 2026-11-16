@@ -1526,8 +1526,8 @@ describe("every command holds the server to the contract", () => {
           const readRefused = stage === "GET" && contract !== BUILT_FOR;
           expect(socket.asked, label).toEqual(
             readRefused
-              ? ["GET /auth/grants"]
-              : ["GET /auth/grants", `PATCH /auth/grants/${ID}`],
+              ? ["GET /grants"]
+              : ["GET /grants", `PATCH /grants/${ID}`],
           );
           if (!readRefused) {
             expect(JSON.parse(socket.bodies[1]!), label).toEqual({

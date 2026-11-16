@@ -24,11 +24,11 @@ pub fn authorization_server(app: &App) -> Value {
     let issuer = issuer(app);
     json!({
         "issuer": issuer,
-        "authorization_endpoint": format!("{issuer}/oauth2/authorize"),
-        "token_endpoint": format!("{issuer}/oauth2/token"),
-        "registration_endpoint": format!("{issuer}/oauth2/register"),
-        "revocation_endpoint": format!("{issuer}/oauth2/revoke"),
-        "device_authorization_endpoint": format!("{issuer}/device/code"),
+        "authorization_endpoint": format!("{issuer}/oauth/authorize"),
+        "token_endpoint": format!("{issuer}/oauth/token"),
+        "registration_endpoint": format!("{issuer}/oauth/register"),
+        "revocation_endpoint": format!("{issuer}/oauth/revoke"),
+        "device_authorization_endpoint": format!("{issuer}/oauth/device-authorization"),
         "response_types_supported": ["code"],
         "grant_types_supported": [
             GrantType::AuthorizationCode.word(),

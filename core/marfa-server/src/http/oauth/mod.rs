@@ -97,9 +97,9 @@ async fn any_origin(request: Request, next: Next) -> Response {
 
 pub fn grant_doors() -> Routes {
     Doors::new()
-        .route("/auth/grants", get(grants::list))
+        .route("/grants", get(grants::list))
         .route(
-            "/auth/grants/{id}",
+            "/grants/{id}",
             patch(grants::narrow).delete(grants::revoke),
         )
         .route_layer(from_fn(no_store))
@@ -107,12 +107,14 @@ pub fn grant_doors() -> Routes {
 
 pub fn doors() -> Routes {
     let held = Doors::new()
-        .route("/auth/oauth2/authorize", get(authorize::begin))
-        .route("/auth/authorize", get(authorize::screen))
-        .route("/auth/authorize/decision", post(authorize::decide))
-        .route("/auth/oauth2/token", post(token::exchange))
-        .route("/auth/oauth2/revoke", post(token::revoke))
-        .route("/auth/device/code", post(device::code))
+        .route("/oauth/authorize", get(authorize::begin))
+        .route(
+            "/auth/consent",
+            get(authorize::screen).post(authorize::decide),
+        )
+        .route("/oauth/token", post(token::exchange))
+        .route("/oauth/revoke", post(token::revoke))
+        .route("/oauth/device-authorization", post(device::code))
         .route("/auth/device", post(device::enter))
         .route(
             "/auth/device/consent",
@@ -121,17 +123,13 @@ pub fn doors() -> Routes {
         .route_layer(from_fn(no_store));
     let open = Doors::new()
         .route(
-            "/auth/oauth2/register",
+            "/oauth/register",
             post(token::register)
                 .options(token::register_preflight)
                 .layer(from_fn(no_store)),
         )
         .route(
-            "/.well-known/oauth-authorization-server/auth",
-            get(discovery::authorization_server),
-        )
-        .route(
-            "/auth/.well-known/oauth-authorization-server",
+            "/.well-known/oauth-authorization-server",
             get(discovery::authorization_server),
         )
         .route(

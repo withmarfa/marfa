@@ -1643,11 +1643,11 @@ export class MarfaClient {
     return this.request<Owner>("/owner", { method: "POST", body });
   }
 
-  /** `POST /auth/oauth2/register`: dynamic client registration; no credential. */
+  /** `POST /oauth/register`: dynamic client registration; no credential. */
   async registerOAuthClient(
     body: Record<string, unknown>,
   ): Promise<ApiResponse<Record<string, unknown>>> {
-    const url = `${this.baseUrl}/auth/oauth2/register`;
+    const url = `${this.baseUrl}/oauth/register`;
     try {
       const response = await this.http.raw(url, {
         method: "POST",

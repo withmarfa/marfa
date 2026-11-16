@@ -93,13 +93,13 @@ async function connectedApp(): Promise<{
   return {
     token,
     async disconnect() {
-      const listed = await fetch(`${server.apiUrl}/auth/grants`, { headers });
+      const listed = await fetch(`${server.apiUrl}/grants`, { headers });
       const { data } = (await listed.json()) as {
         data: { id: string; client_id: string }[];
       };
       const grant = data.find((one) => one.client_id === clientId);
       expect(grant, "the approved app is not listed").toBeDefined();
-      const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+      const revoked = await fetch(`${server.apiUrl}/grants/${grant!.id}`, {
         method: "DELETE",
         headers,
       });

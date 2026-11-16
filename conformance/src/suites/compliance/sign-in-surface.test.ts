@@ -30,7 +30,7 @@ const FORM_DOORS = [
   "/auth/sign-in",
   "/auth/device",
   "/auth/device/consent",
-  "/auth/authorize/decision",
+  "/auth/consent",
 ];
 
 beforeAll(async () => {
@@ -41,7 +41,7 @@ beforeAll(async () => {
   // The origin the surface trusts is its own, which discovery names as the
   // issuer.
   const discovery = await fetch(
-    `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+    `${server.apiUrl}/.well-known/oauth-authorization-server`,
   );
   const { issuer } = (await discovery.json()) as { issuer: string };
   origin = new URL(issuer).origin;
@@ -417,14 +417,14 @@ function consentLink(signInUrl: URL): URL {
   const signed = new URLSearchParams(signInUrl.search);
   signed.delete("return_to");
   authorize.search = signed.toString();
-  authorize.pathname = "/auth/authorize";
+  authorize.pathname = "/auth/consent";
   return authorize;
 }
 
 /** Register an app the way any program can, and start its authorization:
  *  answered with where the instance sends a person who is not signed in. */
 async function startAuthorization(name: string): Promise<URL> {
-  const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+  const registered = await fetch(`${server!.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json", origin },
     body: JSON.stringify({
@@ -441,7 +441,7 @@ async function startAuthorization(name: string): Promise<URL> {
     client_id: string;
   };
   const authorize = await fetch(
-    `${server!.apiUrl}/auth/oauth2/authorize?${new URLSearchParams({
+    `${server!.apiUrl}/oauth/authorize?${new URLSearchParams({
       response_type: "code",
       client_id: clientId,
       redirect_uri: "http://127.0.0.1/callback",

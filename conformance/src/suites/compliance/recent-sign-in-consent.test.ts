@@ -135,7 +135,7 @@ interface Device {
 }
 
 async function registerDeviceClient(): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+  const response = await fetch(`${server.apiUrl}/oauth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -155,7 +155,7 @@ async function registerDeviceClient(): Promise<string> {
 
 async function deviceCode(scope: string, clientId?: string): Promise<Device> {
   const id = clientId ?? (await registerDeviceClient());
-  const response = await fetch(`${server.apiUrl}/auth/device/code`, {
+  const response = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: id, scope }),
@@ -200,7 +200,7 @@ function deviceApproval(
 async function devicePoll(
   device: Device,
 ): Promise<{ status: number; scope?: string; accessToken?: string }> {
-  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+  const response = await fetch(`${server.apiUrl}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -394,7 +394,7 @@ async function consentFor(
       cookie,
     ),
   );
-  expect(landed?.pathname).toBe("/auth/authorize");
+  expect(landed?.pathname).toBe("/auth/consent");
   return { url: landed!, verifier: proof.verifier };
 }
 
@@ -405,11 +405,11 @@ function decision(
   headers: Record<string, string> = {},
 ): Promise<Response> {
   return ownerPost(
-    "/auth/authorize/decision",
+    "/auth/consent",
     cookie,
     new URLSearchParams([
-      ["accept", "true"],
-      ["oauth_query", consent.search.slice(1)],
+      ["decision", "approve"],
+      ["authorization_request", consent.search.slice(1)],
       ...scopes.map((scope): [string, string] => ["scopes", scope]),
     ]),
     headers,

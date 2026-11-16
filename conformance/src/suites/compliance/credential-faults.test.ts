@@ -167,9 +167,9 @@ describe("a key change", () => {
 
 const NOTES = "core.note:read";
 
-/** The grants `GET /auth/grants` lists, by client. */
+/** The grants `GET /grants` lists, by client. */
 async function grantFor(clientId: string): Promise<string | undefined> {
-  const response = await fetch(`${server.apiUrl}/auth/grants`, {
+  const response = await fetch(`${server.apiUrl}/grants`, {
     headers: { authorization: `Bearer ${server.managementKey}` },
   });
   expect(response.status).toBe(200);
@@ -181,7 +181,7 @@ async function grantFor(clientId: string): Promise<string | undefined> {
 
 /** A person's decision on the consent screen, answered as it came. */
 function accept(cookie: string, consent: URL): Promise<Response> {
-  return fetch(`${server.apiUrl}/auth/authorize/decision`, {
+  return fetch(`${server.apiUrl}/auth/consent`, {
     method: "POST",
     redirect: "manual",
     headers: {
@@ -190,8 +190,8 @@ function accept(cookie: string, consent: URL): Promise<Response> {
       "content-type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams([
-      ["accept", "true"],
-      ["oauth_query", consent.search.slice(1)],
+      ["decision", "approve"],
+      ["authorization_request", consent.search.slice(1)],
       ["scopes", NOTES],
     ]),
   });
@@ -263,7 +263,7 @@ describe("a consent", () => {
             cookie,
           ),
         );
-        expect(consent?.pathname).toBe("/auth/authorize");
+        expect(consent?.pathname).toBe("/auth/consent");
         const refused = await failing("fail:audit", () =>
           accept(cookie, consent!),
         );
@@ -289,7 +289,7 @@ describe("a consent", () => {
           ),
         );
         expect(again?.pathname, "a refused consent stood").toBe(
-          "/auth/authorize",
+          "/auth/consent",
         );
       },
     );
@@ -306,7 +306,7 @@ describe("a grant's withdrawal", () => {
     const grant = await grantFor(app.clientId);
     expect(grant).toBeDefined();
     const withdraw = () =>
-      fetch(`${server.apiUrl}/auth/grants/${grant!}`, {
+      fetch(`${server.apiUrl}/grants/${grant!}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${server.managementKey}` },
       });
@@ -393,7 +393,7 @@ describe("a credential change whose outcome is unknown", () => {
         cookie,
       ),
     );
-    expect(consent?.pathname).toBe("/auth/authorize");
+    expect(consent?.pathname).toBe("/auth/consent");
 
     const unknown = await failing("fail:commit", () =>
       accept(cookie, consent!),
@@ -412,7 +412,7 @@ describe("a credential change whose outcome is unknown", () => {
         cookie,
       ),
     );
-    expect(again?.pathname).toBe("/auth/authorize");
+    expect(again?.pathname).toBe("/auth/consent");
     const accepted = await accept(cookie, again!);
     expect(accepted.status).toBe(302);
     expect(accepted.headers.get("location")).toMatch(/[?&]code=/);

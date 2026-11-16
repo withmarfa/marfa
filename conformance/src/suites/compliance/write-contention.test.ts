@@ -271,7 +271,7 @@ describe("contention on the write lock", () => {
     // own handler rather than a route of this server's, so the refusal has
     // to cross that library to reach the caller as the declared `503`.
     const register = () =>
-      fetch(`${impatient!.apiUrl}/auth/oauth2/register`, {
+      fetch(`${impatient!.apiUrl}/oauth/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
