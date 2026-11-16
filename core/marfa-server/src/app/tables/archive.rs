@@ -45,23 +45,64 @@ impl Types {
     }
 }
 
-/// Rows of carried items in archive order, with unreadable references withheld.
-pub(crate) fn archived(
+/// A table an archive carries, in archive order.
+pub(crate) struct CarriedTable {
+    seq: i64,
+    pub item_id: String,
+    pub table: String,
+    /// The batch that last changed its rows. Every write of a row names a new one.
+    pub last_batch: String,
+    /// Its values' length as the row write prints them.
+    pub bytes: i64,
+    host: (String, String),
+}
+
+/// The tables of carried items that hold rows, in archive order.
+pub(crate) fn carried(
     read: &Reader<'_, '_>,
     carried: impl Fn(i64) -> bool,
-    mut each: impl FnMut(ArchivedRow) -> Result<()>,
-) -> Result<()> {
-    let tx = read.tx;
-    let caller = &read.caller;
-    let mut sight = Sight::of(caller);
-    let mut types = Types::default();
-    store::carried_tables(tx, |table| {
-        if !carried(table.item_seq) {
-            return Ok(());
+) -> Result<Vec<CarriedTable>> {
+    let mut tables = Vec::new();
+    store::carried_tables(read.tx, |table| {
+        if carried(table.item_seq) {
+            tables.push(CarriedTable {
+                seq: table.table_seq,
+                item_id: table.item_id,
+                table: table.table,
+                last_batch: table.last_batch,
+                bytes: table.bytes,
+                host: (table.type_id, table.source),
+            });
         }
+        Ok(())
+    })?;
+    Ok(tables)
+}
+
+/// Reads carried tables' rows in archive order, with unreadable references withheld.
+pub(crate) struct Rows {
+    sight: Sight,
+    types: Types,
+}
+
+impl Rows {
+    pub fn of(read: &Reader<'_, '_>) -> Rows {
+        Rows {
+            sight: Sight::of(&read.caller),
+            types: Types::default(),
+        }
+    }
+
+    pub fn read(
+        &mut self,
+        read: &Reader<'_, '_>,
+        table: &CarriedTable,
+        mut each: impl FnMut(ArchivedRow) -> Result<()>,
+    ) -> Result<()> {
+        let (tx, caller) = (read.tx, &read.caller);
         let mut after = String::new();
         loop {
-            let page = store::rows_after(tx, table.table_seq, &after, PAGE)?;
+            let page = store::rows_after(tx, table.seq, &after, PAGE)?;
             let Some(last) = page.last() else {
                 return Ok(());
             };
@@ -74,20 +115,20 @@ pub(crate) fn archived(
                 ..
             } in page
             {
-                for column in sight.withheld(tx, caller, &refs)? {
+                for column in self.sight.withheld(tx, caller, &refs)? {
                     values.remove(&column);
                     refs.remove(&column);
                 }
                 let mut row = ArchivedRow {
                     line: Value::Null,
-                    host: (table.type_id.clone(), table.source.clone()),
+                    host: table.host.clone(),
                     types: BTreeSet::new(),
                     unheld: false,
                 };
                 let mut marked: Vec<&String> = refs.keys().collect();
                 marked.sort();
                 for target in refs.values().filter_map(Value::as_str) {
-                    match types.of(tx, target)? {
+                    match self.types.of(tx, target)? {
                         Some(type_id) => {
                             row.types.insert(type_id);
                         }
@@ -108,7 +149,7 @@ pub(crate) fn archived(
                 each(row)?;
             }
         }
-    })
+    }
 }
 
 /// One table's rows as a restore writes them, announced a batch at a time.

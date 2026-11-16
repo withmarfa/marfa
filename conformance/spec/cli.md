@@ -582,7 +582,7 @@ When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /
 
 ### `cli/credential-lock-unsafe`
 
-If the CLI's credential lock is not safe to use, then the CLI MUST refuse `invalid`, naming the credential lock, before it sends anything.
+If the file the CLI keeps as a server's credential lock can be read or written by another user, then the CLI MUST refuse `invalid`, naming the credential lock, before it sends anything.
 
 **Tests:** `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`, `› refuses to keep a key under an unsafe credential lock, keeping nothing and sending nothing`, `› refuses a sign-in under an unsafe credential lock before asking for a code`.
 

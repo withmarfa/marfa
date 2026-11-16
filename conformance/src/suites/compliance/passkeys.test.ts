@@ -281,6 +281,13 @@ describe("owner passkeys", () => {
       "last_used_at",
       "name",
     ]);
+    const afterRename = await fetch(base + "/owner/passkeys", {
+      headers: { origin: base, cookie: ownerCookie },
+    });
+    const kept = (
+      (await afterRename.json()) as { data: { id: string; name: string }[] }
+    ).data.find((row) => row.id === secondId);
+    expect(kept?.name, "another passkey was renamed with it").toBe("Second");
     for (const name of [
       " ",
       "x".repeat(201),
@@ -307,6 +314,16 @@ describe("owner passkeys", () => {
       200,
       removed.body,
     );
+    const afterRemoval = await fetch(base + "/owner/passkeys", {
+      headers: { origin: base, cookie: ownerCookie },
+    });
+    const remaining = (
+      (await afterRemoval.json()) as { data: { id: string }[] }
+    ).data.map((row) => row.id);
+    expect(remaining, "the removal took another passkey").toEqual(
+      expect.arrayContaining([firstId, secondId]),
+    );
+    expect(remaining).not.toContain(temporary.id);
     expect(
       (
         await controlRequest(

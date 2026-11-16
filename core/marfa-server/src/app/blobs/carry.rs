@@ -264,6 +264,16 @@ impl App {
             .map_err(|_| Refusal::internal("a scratch file was not made"))?
             .map_err(|error| Refusal::internal(&format!("a scratch file was not made: {error}")))
     }
+
+    /// Makes scratch files as `scratch` does, from blocking work.
+    pub fn scratches(&self) -> impl Fn() -> Result<Scratch> + Send + 'static {
+        let disk = self.blobs.disk.clone();
+        move || {
+            disk.scratch().map_err(|error| {
+                Refusal::internal(&format!("a scratch file was not made: {error}"))
+            })
+        }
+    }
 }
 
 fn gone(blob: &Blob) -> Refusal {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -166,6 +166,58 @@ describe("an archive export on an instance with one disk store", () => {
     expect((await operator.listBlobCopies(hash)).data.data).toEqual([]);
     const { missing } = await archiveOf(working);
     expect(Object.keys(missing)).toContain(hash);
+  });
+
+  it("keeps a copy that hashes to the blob's name when the export reads it again, though its first read did not", async () => {
+    const content = bytesOf("a blob whose copy is put right in between", 140);
+    // A key and a source of its own: the export of that source carries this
+    // blob alone, whatever the earlier tests left, so the second read after
+    // the fault is set is this blob's own second read.
+    const source = `export-missing-blob-reread-${randomUUID()}`;
+    const minted = await ownerOf(server!).createKey({ label: source, source });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const own = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: minted.data.key,
+    });
+    const hash = await upload(own, content);
+    const made = await own.createItem({
+      type: "core.note",
+      properties: { body: `![bytes](${hash})` },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const read = () =>
+      fetch(
+        `${server!.apiUrl}/export?format=archive&source=${encodeURIComponent(source)}`,
+        { headers: { Authorization: `Bearer ${minted.data.key}` } },
+      );
+
+    const sound = await read();
+    expect(sound.status).toBe(200);
+    expect(
+      Object.keys(carriedFiles(new Uint8Array(await sound.arrayBuffer()))),
+    ).toEqual([hash]);
+
+    // The first read of the blob's bytes is damaged, and the export waits
+    // before the second, the read that checks the copy again. The copy is put
+    // right while it waits. The witness is the test before this one: the same
+    // damage left in place for both reads strikes the copy.
+    await damageBlobs(server!, [hash]);
+    await server!.setFault("hold:blob-read=2");
+    const sent = read();
+    await server!.waitForHold("hold:blob-read");
+    await server!.clearFault("damage:blob");
+    await server!.clearFault("hold:blob-read");
+    const res = await sent;
+    expect(res.status).toBe(200);
+    await expect(res.arrayBuffer()).rejects.toThrow();
+
+    expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(1);
+    const after = await read();
+    expect(after.status).toBe(200);
+    const archive = new Uint8Array(await after.arrayBuffer());
+    expect(Object.keys(notCarried(archive))).not.toContain(hash);
+    expect(Object.keys(carriedFiles(archive))).toEqual([hash]);
   });
 
   it("answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob", async () => {

@@ -1553,7 +1553,7 @@
                   "failing",
                   "off"
                 ],
-                "description": "`ok`: on schedule, and the last backup is whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups."
+                "description": "`ok`: on schedule, with the last backup whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, a store refuses copies, or a part is damaged, so overall `status` is at least `degraded`. `off`: none scheduled."
               },
               "reason": {
                 "type": "string",
@@ -1561,7 +1561,7 @@
                   "no_backup_destination",
                   "turned_off"
                 ],
-                "description": "Why backups are `off`: `no_backup_destination` when the instance has nowhere to put them, with neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` set, `turned_off` when `backup_interval_seconds` is 0."
+                "description": "Why backups are `off`: `no_backup_destination` when neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` is set, or `turned_off` when `backup_interval_seconds` is 0, which is also given beside `failing`."
               },
               "destination": {
                 "type": "string",
@@ -1625,6 +1625,14 @@
                   "null"
                 ],
                 "description": "Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set."
+              },
+              "damaged_parts": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "description": "How many parts a check found altered or, in a backup folder, unreadable, and not since stored again or found whole, or `null` when unknown. Present only for a caller that holds `instance.read`, and only when a destination is set."
               }
             },
             "required": [
@@ -7672,11 +7680,11 @@
               "clock",
               "unavailable"
             ],
-            "description": "health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; clock: ahead or behind; unavailable: no answer."
+            "description": "health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off, failing, incomplete, or folder unlocked; clock: ahead or behind; unavailable: no answer."
           },
           "reference": {
             "type": "string",
-            "description": "The component, job, connector, folder, or key ID, the name of the check that could not answer, for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`, or for a clock concern `clock_ahead` or `clock_behind`."
+            "description": "The component, job, connector, folder, or key ID, the check that could not answer, a backup concern such as `no_backup_destination`, `run`, `incomplete`, `parts_damaged`, or `folder_unlocked`, or a clock concern `clock_ahead` or `clock_behind`."
           },
           "title": {
             "type": "string",
@@ -11000,13 +11008,59 @@
         ],
         "description": "An error response."
       },
+      "BackupPartsMissingRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "backup_parts_missing"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "properties": {
+                  "missing_parts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The name of each part the backup's manifest names that the destination lacks, or holds with another size or SHA-256 than the manifest records."
+                  }
+                },
+                "required": [
+                  "missing_parts"
+                ],
+                "description": "Names the parts the restore could not read whole."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "Backup": {
         "type": "object",
         "properties": {
           "name": {
             "type": "string",
-            "description": "The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.tar`.",
-            "example": "20261109T101530.250Z.tar"
+            "description": "The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.json`.",
+            "example": "20261109T101530.250Z.json"
           },
           "instance_id": {
             "type": "string",
@@ -11021,7 +11075,7 @@
           "size_bytes": {
             "type": "integer",
             "minimum": 0,
-            "description": "The backup's size, in bytes."
+            "description": "The bytes the backup takes: its manifest and every part it names, a part another backup shares included."
           }
         },
         "required": [
@@ -60035,7 +60089,7 @@
         "description": "Returns the backups in the instance's backup folder or object store, newest first, including those another instance took there, so a new instance can restore the one it replaces. Requires the private local command.",
         "responses": {
           "200": {
-            "description": "Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds.",
+            "description": "Returns every backup, in one page. A backup is a manifest and the parts it names, which together make an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds. A part an earlier backup stored unchanged is stored once.",
             "content": {
               "application/json": {
                 "schema": {
@@ -60273,7 +60327,7 @@
         "description": "Takes a backup now and puts it in the instance's backup folder or object store, whether or not anything changed since the last one, then deletes this instance's backups that thinning no longer keeps. Requires the private local command.",
         "responses": {
           "200": {
-            "description": "Returns the backup Marfa put, how many old backups it deleted, and the files it lost.",
+            "description": "Returns the backup Marfa put, the bytes it sent, how many old backups it deleted, and the files it lost.",
             "content": {
               "application/json": {
                 "schema": {
@@ -60288,6 +60342,11 @@
                     },
                     "backup": {
                       "$ref": "#/components/schemas/Backup"
+                    },
+                    "sent_bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "How many bytes of parts Marfa stored for the backup that the destination didn't already hold. A backup of an instance that hasn't changed since the last one stores only its manifest, and this is `0`."
                     },
                     "removed": {
                       "type": "integer",
@@ -60315,6 +60374,7 @@
                   "required": [
                     "outcome",
                     "backup",
+                    "sent_bytes",
                     "removed",
                     "unremoved",
                     "blobs_lost",
@@ -61064,7 +61124,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -61148,13 +61208,16 @@
             }
           },
           "409": {
-            "description": "- `backup_files_missing`: neither the destination nor this instance holds files it needs, in `details.missing_blobs`. Nothing was restored.\n- `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.\n- `link_taken`: the archive's type names a `link_field` two items share.\n- `no_backup_destination`: there is nowhere to put backups.",
+            "description": "- `backup_files_missing`, `backup_parts_missing`: files in `details.missing_blobs` or parts in `details.missing_parts` are absent or altered.\n- `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.\n- `link_taken`: the archive's type names a `link_field` two items share.\n- `no_backup_destination`: there is nowhere to put backups.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/BackupFilesMissingRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BackupPartsMissingRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/ConflictOrLinkTakenRefusal"
@@ -61356,6 +61419,17 @@
             "description": "The backup's name, as `GET /backups` lists it.",
             "name": "name",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "description": "`true` to restore without the files that neither the destination nor this instance holds whole, naming them in `blobs_missing`. Absent or `false`, the restore refuses with `backup_files_missing`. Any other value is a `validation_error`."
+            },
+            "required": false,
+            "description": "`true` to restore without the files that neither the destination nor this instance holds whole, naming them in `blobs_missing`. Absent or `false`, the restore refuses with `backup_files_missing`. Any other value is a `validation_error`.",
+            "name": "allow_missing_files",
+            "in": "query"
           }
         ],
         "x-marfa-local-command": true

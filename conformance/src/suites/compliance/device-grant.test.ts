@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   bootFreshServer,
@@ -6,7 +7,6 @@ import {
   type DeviceFlow,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -217,16 +217,26 @@ describe("a device code", () => {
 
   it("is held by the server as something other than the code it issued, and still polls", async () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
-    withInstanceDatabase(server!.sqlitePath, (db) => {
-      // The witness: the code's item is there, found by its client.
-      const rows = db
-        .prepare(
-          "SELECT device_code FROM oauth_device_codes WHERE client_id = ?",
-        )
-        .all(flow.clientId) as { device_code: string }[];
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.device_code).not.toBe(flow.deviceCode);
+    // The server has written the flow's client and code by now, so the
+    // search covers the database file and the log beside it, wherever the
+    // bytes are. The witness: the same search finds the client's ID, which
+    // the server does store as it is.
+    const held = ["", "-wal"].map((suffix) => {
+      try {
+        return readFileSync(`${server!.sqlitePath}${suffix}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return Buffer.alloc(0);
+        }
+        throw error;
+      }
     });
+    const found = (text: string) =>
+      held.some((bytes) => bytes.includes(Buffer.from(text)));
+    expect(found(flow.clientId), "the search cannot see a stored value").toBe(
+      true,
+    );
+    expect(found(flow.deviceCode)).toBe(false);
     expect((await flow.poll()).body.error).toBe("authorization_pending");
   });
 

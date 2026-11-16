@@ -2766,7 +2766,7 @@ When a device takes bytes away to fit the file budget, a device MUST NOT take by
 
 ### `device/file-trim-keeps-read`
 
-While a caller waits for a device to answer where bytes are held, or to answer an open file of them, a device MUST NOT take those bytes away to fit the file budget on any thread or handle in the caller's process.
+When a device answers a caller with the path of bytes, or with an open file of them, a device MUST answer a path or file that holds the bytes whole, whatever the file budget, a budget of zero included.
 
 **Reason:** a budget of zero would otherwise answer a path to nothing. A path is not held once answered, and a trim in another process does not know what this one is reading, so a caller opens the path at once.
 
@@ -3700,7 +3700,7 @@ If a device is asked to open a store to read at a path where no store has been m
 
 ### `device/wrong-schema`
 
-If a store records another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folder-setup/refused-store-replaced`).
+If a store was made at another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folder-setup/refused-store-replaced`).
 
 **Reason:** a store outlives the app that made it, and a build reads only the shape its own version names. A store that records no version is one an earlier build made.
 

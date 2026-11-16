@@ -1060,7 +1060,7 @@ const HASH = `sha256:${"a".repeat(64)}`;
 /** The digest of the bytes the private socket's `/blobs/` answer holds. */
 const STREAMED_HASH = `sha256:${createHash("sha256").update("streamed bytes").digest("hex")}`;
 const WHEN = "2026-01-01T00:00:00Z";
-const BACKUP = "20260101T000000.000Z.tar";
+const BACKUP = "20260101T000000.000Z.json";
 const LATER = "2026-01-02T00:00:00Z";
 const invocations: Record<string, () => string[]> = {
   metrics: () => [],

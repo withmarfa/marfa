@@ -274,6 +274,7 @@ impl Instance {
 
 const DAY_MS: u64 = 24 * 3_600_000;
 const BACKUPS: &str = "/marfa/backups-test/backups/";
+const PARTS: &str = "/marfa/backups-test/backup-parts/";
 
 #[tokio::test]
 async fn a_row_or_a_setting_moves_the_change_count_and_the_health_probe_does_not() {
@@ -355,7 +356,7 @@ async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_re
         (Method::POST, "/backups/folder/adopt"),
         (
             Method::POST,
-            "/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/20261109T101530.250Z.tar/restore",
+            "/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/20261109T101530.250Z.json/restore",
         ),
     ] {
         let (status, body) = instance.local(method, path, None).await;
@@ -494,32 +495,30 @@ async fn a_put_that_runs_out_of_time_aborts_its_multipart_upload() {
         .boxed();
 
     let put = bucket.put_whole(
-        "backups/stalled.tar",
-        "application/x-tar",
+        "backup-parts/stalled.ndjson.gz",
+        "application/gzip",
         stalls,
         Duration::from_secs(2),
     );
     let error = put.await.unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
     assert_eq!(store.unfinished_uploads(), Vec::<String>::new());
-    assert!(
-        store
-            .objects_under("/marfa/backups-test/backups/")
-            .is_empty()
-    );
+    assert!(store.objects_under(PARTS).is_empty());
 
     let part = Bytes::from(vec![7u8; 9 * 1024 * 1024]);
     let ends = futures_util::stream::once(async move { Ok(part) }).boxed();
     let put = bucket.put_whole(
-        "backups/whole.tar",
-        "application/x-tar",
+        "backup-parts/whole.ndjson.gz",
+        "application/gzip",
         ends,
         Duration::from_secs(30),
     );
-    assert_eq!(put.await.unwrap(), 9 * 1024 * 1024);
+    let (size, etag) = put.await.unwrap();
+    assert_eq!(size, 9 * 1024 * 1024);
+    assert!(etag.is_some_and(|etag| !etag.contains('"')));
     assert_eq!(
         store
-            .object("/marfa/backups-test/backups/whole.tar")
+            .object(&format!("{PARTS}whole.ndjson.gz"))
             .map(|bytes| bytes.len()),
         Some(9 * 1024 * 1024)
     );
@@ -733,13 +732,9 @@ async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_
         .into_iter()
         .find(|key| key.ends_with(name))
         .unwrap();
-    let tar = store.object(&key).unwrap();
-    let octal = String::from_utf8_lossy(&tar[124..136]);
-    let size =
-        usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
-    let manifest: Value = serde_json::from_slice(&tar[512..512 + size]).unwrap();
-    assert_eq!(manifest["file_count"], 2, "{manifest}");
-    let files = files_listed(&tar);
+    let backup: Value = serde_json::from_slice(&store.object(&key).unwrap()).unwrap();
+    assert_eq!(backup["archive"]["file_count"], 2, "{backup}");
+    let files = files_listed(&store, &instance.app.instance_id, &backup);
     assert_eq!(listed(&files, &lost)["state"], "lost", "{files:?}");
     assert_eq!(listed(&files, &kept)["state"], "not_carried", "{files:?}");
     let health = instance.backups_health().await;
@@ -766,31 +761,28 @@ async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_
     assert_eq!(health["last_backup_files_waiting"], 0, "{health}");
 }
 
-/// The lines of the archive's `files.ndjson.gz`, which follows its manifest.
-fn files_listed(tar: &[u8]) -> Vec<Value> {
+/// The lines of the files part a backup's manifest names.
+fn files_listed(store: &FakeS3, instance: &str, backup: &Value) -> Vec<Value> {
     use std::io::Read;
-    let mut at = 0;
-    loop {
-        let block = &tar[at..at + 512];
-        let end = block[..100]
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(100);
-        let octal = String::from_utf8_lossy(&block[124..136]);
-        let size =
-            usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
-        if &block[..end] == b"files.ndjson.gz" {
-            let mut text = String::new();
-            flate2::read::GzDecoder::new(&tar[at + 512..at + 512 + size])
-                .read_to_string(&mut text)
-                .unwrap();
-            return text
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect();
-        }
-        at += 512 + size.div_ceil(512) * 512;
-    }
+    let part = backup["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|part| part["entry"] == "files.ndjson.gz")
+        .unwrap();
+    let bytes = store
+        .object(&format!(
+            "{PARTS}{instance}/{}.ndjson.gz",
+            part["sha256"].as_str().unwrap()
+        ))
+        .unwrap();
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(&bytes[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    text.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 fn listed<'a>(files: &'a [Value], hash: &str) -> &'a Value {

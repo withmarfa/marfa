@@ -24,6 +24,10 @@ pub enum BackupsCommand {
         instance_id: String,
         /// The backup's name, as `backups list` shows it.
         name: String,
+        /// Restore without the files the backup needs that neither its destination nor this
+        /// instance holds whole, instead of refusing.
+        #[arg(long)]
+        allow_missing_files: bool,
     },
     /// The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority
     /// (--socket).
@@ -50,9 +54,13 @@ pub fn request(command: &BackupsCommand) -> Request {
     match command {
         BackupsCommand::List => Request::get(&["backups"]),
         BackupsCommand::Run => Request::post(&["backups"]).working(CHECK_BACKUPS),
-        BackupsCommand::Restore { instance_id, name } => {
-            Request::post(&["backups", instance_id, name, "restore"]).working(CHECK_STATUS)
-        }
+        BackupsCommand::Restore {
+            instance_id,
+            name,
+            allow_missing_files,
+        } => Request::post(&["backups", instance_id, name, "restore"])
+            .query_flag("allow_missing_files", *allow_missing_files)
+            .working(CHECK_STATUS),
         BackupsCommand::Folder {
             command: FolderCommand::Adopt,
         } => Request::post(&["backups", "folder", "adopt"]).working(CHECK_BACKUPS),
@@ -155,6 +163,7 @@ mod tests {
         let restore = BackupsCommand::Restore {
             instance_id: "i".into(),
             name: "n".into(),
+            allow_missing_files: false,
         };
         let adopt = BackupsCommand::Folder {
             command: FolderCommand::Adopt,

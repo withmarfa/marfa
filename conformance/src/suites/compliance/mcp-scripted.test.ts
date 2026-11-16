@@ -571,6 +571,55 @@ describe("marfa_delete", () => {
     expect(error.code).toBe("confirmation_stale");
     expect((await owner().getItem(id)).data.item.state).toBe("active");
   });
+  it("leaves every item as it was when the confirmed trash fails, and trashes them all without the fault", async () => {
+    const save = async (body: string): Promise<string> => {
+      const made = await owner().createItem({
+        type: "core.note",
+        properties: { body },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      return made.data.item.id;
+    };
+    const first = await save("first parent of a failed trash");
+    const second = await save("second parent of a failed trash");
+    const child = await save("child of a failed trash");
+    const linked = await owner().createEdge({
+      from_id: second,
+      to_id: child,
+      edge_type: "parent-of",
+    });
+    expect(linked.status, JSON.stringify(linked.error)).toBe(201);
+    const everyone = [first, second, child];
+    const states = async () =>
+      Promise.all(
+        everyone.map(async (id) => (await owner().getItem(id)).data.item.state),
+      );
+    const ids = [first, second];
+    const preview = toolResult(await callTool(mcp, "marfa_delete", { ids }));
+
+    await server.setFault("fail:audit=items.trash");
+    const failed = await callTool(mcp, "marfa_delete", {
+      ids,
+      confirm: preview.confirm,
+    });
+    // The witness that the fault acted on the trash, once.
+    expect(
+      (await server.faults()).find((fault) => fault.name === "fail:audit")
+        ?.fired,
+    ).toBe(1);
+    expect(failed.isError).toBe(true);
+    expect(await states()).toEqual(["active", "active", "active"]);
+
+    // The witness: the same confirmation, with the fault gone, trashes all.
+    await server.clearFault();
+    const done = toolResult(
+      await callTool(mcp, "marfa_delete", { ids, confirm: preview.confirm }),
+    );
+    expect(done.trashed).toEqual(ids);
+    for (const id of everyone) {
+      expect((await owner().getItem(id)).status).toBe(404);
+    }
+  });
   it("trashes none of the items when a child joins one of them between the confirmation's check and the trash", async () => {
     const save = async (body: string): Promise<string> => {
       const made = await owner().createItem({

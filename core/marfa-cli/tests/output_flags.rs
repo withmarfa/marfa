@@ -756,7 +756,7 @@ fn a_backup_run_and_an_adopted_folder_each_say_what_happened_in_a_sentence() {
     let home = scratch("backups");
     let taken = json!({
         "outcome": "put",
-        "backup": {"name": "20261113T100000.000Z.tar", "instance_id": "i1",
+        "backup": {"name": "20261113T100000.000Z.json", "instance_id": "i1",
                    "created_at": "2026-11-13T10:00:00.000Z", "size_bytes": 10},
         "removed": 1,
         "unremoved": 0,
@@ -779,7 +779,7 @@ fn a_backup_run_and_an_adopted_folder_each_say_what_happened_in_a_sentence() {
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
         ran.stdout,
-        "took backup 20261113T100000.000Z.tar; deleted 1 old backup\n\
+        "took backup 20261113T100000.000Z.json; deleted 1 old backup\n\
          2 files lost, which the backup names and no store could give: sha256-aa, sha256-bb\n\
          the backup is incomplete: 3 files it names wait for their copy. A restore needs those \
          files unless the restoring instance holds them or the backup lists them as lost\n"

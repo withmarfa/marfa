@@ -1428,11 +1428,19 @@ When the server answers `POST /items/trash-preview`, the server MUST answer unde
 
 ### `items/trash-several`
 
-When `POST /items/trash` names items, the server MUST move every named item, and every item trashing them together would take (`items/trash-cascade` and `edges/parts-trash-together`), to the bin in one transaction.
+When `POST /items/trash` names items, the server MUST move every named item, and every item trashing them together would take (`items/trash-cascade` and `edges/parts-trash-together`), to the bin.
 
 **Reason:** two named items can share an item beneath them, and trashing them one at a time would change what the second takes once the first has gone.
 
 **Tests:** `compliance/trash-preview.test.ts › trashes every named item and an item they share when what the trash would take is what the preview showed`.
+
+### `items/trash-several-atomic`
+
+If `POST /items/trash` fails after it has begun to move items, then the server MUST leave every named item, and every item trashing them together would take, as it was.
+
+**Reason:** a trash that stopped partway would leave a person with some of the items they named in the bin and some not, and no way to tell which.
+
+**Tests:** `compliance/trash-faults.test.ts › leaves every named item and the children their trash takes as they were when the trash fails, and trashes them all without the fault`.
 
 ### `items/trash-several-refused`
 

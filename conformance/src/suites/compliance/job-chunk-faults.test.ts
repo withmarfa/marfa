@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -199,5 +200,106 @@ describe("a fault that stops a job's write", () => {
     expect(job.error).toEqual(expect.any(String));
     expect(job.result).toMatchObject({ matched: 3, succeeded: 3, errored: 0 });
     expect(await idsWith(client, `${tag}-written`)).toHaveLength(3);
+  });
+});
+
+describe("a fault that stops the last write of a type move", () => {
+  const FINISH = "fail:commit=items.bulk_action.finish";
+
+  /** A type with an item, and a folder, a view and a webhook that name it. */
+  async function named(label: string) {
+    const ns = `moveatomic${label}${randomUUID().slice(-8).replaceAll("-", "")}`;
+    const [from, to] = [`${ns}.deal`, `${ns}.contract`];
+    for (const id of [from, to]) {
+      const registered = await client.registerType({
+        id,
+        fields: { name: { type: "string" } },
+      } as never);
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    }
+    const item = await client.createItem({
+      type: from,
+      properties: { name: "moves" },
+    });
+    expect(item.status, JSON.stringify(item.error)).toBe(201);
+    const folder = await client.createFolder({
+      title: "Moving",
+      query: { types: [from] },
+    });
+    expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+    const view = await client.createView({
+      title: "Moving",
+      query: { types: [from] },
+    });
+    expect(view.status, JSON.stringify(view.error)).toBe(201);
+    const webhook = await client.createWebhook({
+      url: "http://127.0.0.1:9/type-move-atomic",
+      events: ["item.updated"],
+      type_filter: from,
+    });
+    expect(webhook.status, JSON.stringify(webhook.error)).toBe(201);
+    const types = async () => ({
+      folder: (await client.getItem(folder.data.item.id)).data.item.properties
+        .query,
+      view: (await client.getItem(view.data.item.id)).data.item.properties
+        .query,
+      webhook: (await client.getWebhook(webhook.data.id)).data.type_filter,
+    });
+    return { from, to, types };
+  }
+
+  async function move(from: string, to: string) {
+    const queued = await client.moveType(from, { to });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    return client.pollBulkActionToTerminal((queued.data as { id: string }).id);
+  }
+
+  it("rewrites no setting while the last write of a type move fails every time, and every one in the move run after it", async () => {
+    const { from, to, types } = await named("always");
+    const before = await types();
+    expect(before).toEqual({
+      folder: { types: [from] },
+      view: { types: [from] },
+      webhook: from,
+    });
+
+    await server.setFault(`${FINISH}@always`);
+    const failed = await move(from, to);
+    const acted = (await server.faults()).find(
+      (fault) => fault.name === "fail:commit",
+    );
+    expect(acted?.fired).toBeGreaterThan(1);
+    expect(failed.status).toBe("failed");
+    expect(failed.result?.settings_rewritten).not.toBe(true);
+    expect(await types()).toEqual(before);
+
+    // The witness: with the fault gone, the same move rewrites all three.
+    await server.clearFault();
+    const finished = await move(from, to);
+    expect(finished.status, finished.error).toBe("completed");
+    expect(finished.result?.settings_rewritten).toBe(true);
+    expect(await types()).toEqual({
+      folder: { types: [to] },
+      view: { types: [to] },
+      webhook: to,
+    });
+  });
+
+  it("rewrites every setting when a retry of the last write of a type move lands", async () => {
+    const { from, to, types } = await named("once");
+    await server.setFault(FINISH);
+    const job = await move(from, to);
+    const acted = (await server.faults()).find(
+      (fault) => fault.name === "fail:commit",
+    );
+    // The witness that the last write failed once before the job ended.
+    expect(acted?.fired).toBe(1);
+    expect(job.status, job.error).toBe("completed");
+    expect(job.result?.settings_rewritten).toBe(true);
+    expect(await types()).toEqual({
+      folder: { types: [to] },
+      view: { types: [to] },
+      webhook: to,
+    });
   });
 });

@@ -402,6 +402,8 @@ pub(super) struct Carried {
     pub type_id: String,
     pub source: String,
     pub table: String,
+    pub last_batch: String,
+    pub bytes: i64,
 }
 
 /// Each table holding a row, ordered by its item's id and then its name, as one statement reads them.
@@ -410,8 +412,8 @@ pub(super) fn carried_tables(
     mut each: impl FnMut(Carried) -> Result<()>,
 ) -> Result<()> {
     let mut statement = tx.prepare(
-        "SELECT s.seq, i.seq, i.id, i.type, i.source, s.table_name FROM items i \
-         JOIN table_summaries s ON s.item_seq = i.seq WHERE s.row_count > 0 \
+        "SELECT s.seq, i.seq, i.id, i.type, i.source, s.table_name, s.last_batch, s.bytes \
+         FROM items i JOIN table_summaries s ON s.item_seq = i.seq WHERE s.row_count > 0 \
          ORDER BY i.id, s.table_name",
     )?;
     let mut found = statement.query([])?;
@@ -423,6 +425,8 @@ pub(super) fn carried_tables(
             type_id: row.get(3)?,
             source: row.get(4)?,
             table: row.get(5)?,
+            last_batch: row.get(6)?,
+            bytes: row.get(7)?,
         })?;
     }
     Ok(())

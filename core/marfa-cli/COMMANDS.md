@@ -2212,6 +2212,10 @@ marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>
 | `<INSTANCE_ID>` | The id of the instance that took the backup, as `backups list` shows it. |
 | `<NAME>` | The backup's name, as `backups list` shows it. |
 
+| Option | Description |
+| --- | --- |
+| `--allow-missing-files` | Restore without the files the backup needs that neither its destination nor this instance holds whole, instead of refusing. |
+
 ### marfa backups folder
 
 The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority (--socket).

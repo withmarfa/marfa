@@ -43,6 +43,8 @@ struct Upload {
 pub struct Object {
     bytes: Vec<u8>,
     metadata: Vec<(String, String)>,
+    /// Another for each write, as a store's ETag changes when an object is written again.
+    etag: String,
 }
 
 #[derive(Default)]
@@ -63,8 +65,22 @@ struct Held {
     late: Vec<(String, Object)>,
     /// The next this many listings leave out every object whose key starts with the prefix.
     omitted: Option<(String, u32)>,
+    /// The next `GET` of the key finds this object in place of the one there.
+    replaced: Option<(String, Object)>,
     uploads: HashMap<String, Upload>,
     next_upload: u64,
+    writes: u64,
+}
+
+impl Held {
+    fn written(&mut self, bytes: Vec<u8>, metadata: Vec<(String, String)>) -> Object {
+        self.writes += 1;
+        Object {
+            bytes,
+            metadata,
+            etag: format!("\"w{}\"", self.writes),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -167,14 +183,12 @@ async fn multipart(
             let mut held = held.lock().unwrap();
             let upload = held.uploads.remove(&id)?;
             let bytes = upload.parts.into_values().flatten().collect();
-            let object = Object {
-                bytes,
-                metadata: upload.metadata,
-            };
+            let object = held.written(bytes, upload.metadata);
+            let etag = object.etag.clone();
             held.objects.insert(upload.key, object);
             Some(xml(format!(
                 "<CompleteMultipartUploadResult><Bucket>b</Bucket><Key>{key}</Key>\
-                 <ETag>\"e\"</ETag></CompleteMultipartUploadResult>"
+                 <ETag>{etag}</ETag></CompleteMultipartUploadResult>"
             )))
         }
         Method::DELETE => {
@@ -247,8 +261,9 @@ fn listing(held: &mut Held, bucket: &str, prefix: &str) -> Response {
         .map(|(key, object)| {
             format!(
                 "<Contents><Key>{}</Key><LastModified>2026-11-02T10:00:00.000Z</LastModified>\
-                 <ETag>\"e\"</ETag><Size>{}</Size><StorageClass>STANDARD</StorageClass></Contents>",
+                 <ETag>{}</ETag><Size>{}</Size><StorageClass>STANDARD</StorageClass></Contents>",
                 &key[bucket.len() + 1..],
+                object.etag,
                 object.bytes.len()
             )
         })
@@ -342,11 +357,9 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
         let body = axum::body::to_bytes(request.into_body(), usize::MAX)
             .await
             .unwrap();
-        let object = Object {
-            bytes: body.to_vec(),
-            metadata: metadata_of(&headers),
-        };
-        held.lock().unwrap().late.push((key, object));
+        let mut held = held.lock().unwrap();
+        let object = held.written(body.to_vec(), metadata_of(&headers));
+        held.late.push((key, object));
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
             .body(Body::from("<Error><Code>AccessDenied</Code></Error>"))
@@ -376,10 +389,8 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
                 })
                 .collect();
             let mut held = held.lock().unwrap();
-            let object = Object {
-                bytes: body.to_vec(),
-                metadata,
-            };
+            let object = held.written(body.to_vec(), metadata);
+            let etag = object.etag.clone();
             held.objects.insert(key, object);
             if mode == Mode::SwapAfterPut {
                 let held = &mut *held;
@@ -387,21 +398,32 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
                 held.mode = Some(Mode::Normal);
             }
             Response::builder()
-                .header(header::ETAG, "\"e\"")
+                .header(header::ETAG, etag)
                 .body(Body::empty())
                 .unwrap()
         }
         Method::GET | Method::HEAD => {
-            let Some(object) = held.lock().unwrap().objects.get(&key).cloned() else {
+            let found = {
+                let held = &mut *held.lock().unwrap();
+                if method == Method::GET
+                    && held.replaced.as_ref().is_some_and(|(at, _)| *at == key)
+                    && let Some((at, object)) = held.replaced.take()
+                {
+                    held.objects.insert(at, object);
+                }
+                held.objects.get(&key).cloned()
+            };
+            let Some(object) = found else {
                 return not_found();
             };
             let Object {
                 bytes: object,
                 metadata,
+                etag,
             } = object;
             let size = object.len();
             let mut builder = Response::builder()
-                .header(header::ETAG, "\"e\"")
+                .header(header::ETAG, etag)
                 .header(header::LAST_MODIFIED, LAST_MODIFIED);
             for (name, value) in metadata {
                 if mode != Mode::StripMetadata {
@@ -547,15 +569,24 @@ impl FakeS3 {
             .insert(key.to_string(), object);
     }
 
+    /// Puts `object` at `key` just before the next `GET` of it reads it, as a write that lands
+    /// between a listing and a read does.
+    pub fn replace_before_next_get(&self, key: &str, object: Object) {
+        self.held.lock().unwrap().replaced = Some((key.to_string(), object));
+    }
+
     /// Puts bytes at `key` with no metadata, as a write the server did not make.
     pub fn put_object(&self, key: &str, bytes: &[u8]) {
-        self.restore(
-            key,
-            Object {
-                bytes: bytes.to_vec(),
-                metadata: Vec::new(),
-            },
-        );
+        let held = &mut *self.held.lock().unwrap();
+        let object = held.written(bytes.to_vec(), Vec::new());
+        held.objects.insert(key.to_string(), object);
+    }
+
+    /// Puts bytes at `key` under the ETag the object there has, as a store's own rot does.
+    pub fn rot_object(&self, key: &str, bytes: &[u8]) {
+        let held = &mut *self.held.lock().unwrap();
+        let object = held.objects.get_mut(key).unwrap();
+        object.bytes = bytes.to_vec();
     }
 
     /// Refuses with `403` every write of an object whose key starts with `prefix`.

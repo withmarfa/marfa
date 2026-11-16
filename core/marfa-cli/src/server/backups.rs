@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 
 use super::PrivateCommand;
 
+const TURNED_OFF: &str = "Scheduled backups are turned off, because backup_interval_seconds is 0. \
+                          A backup is taken only when you ask for one.";
+
 /// The `backups` object of a public `/health` answer.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Said {
@@ -54,18 +57,22 @@ impl Said {
                     settings.display()
                 ))
             }
-            ("off", Some("turned_off")) => Some(
-                "Scheduled backups are turned off, because backup_interval_seconds is 0. A \
-                 backup is taken only when you ask for one."
-                    .to_string(),
-            ),
-            ("failing", _) => Some(match private {
-                Some(private) => format!(
-                    "Backups are failing. See why with {}.",
-                    private.run_text("attention")
-                ),
-                None => "Backups are failing. The server's attention list says why.".to_string(),
-            }),
+            ("off", Some("turned_off")) => Some(TURNED_OFF.to_string()),
+            ("failing", reason) => {
+                let failing = match private {
+                    Some(private) => format!(
+                        "Backups are failing. See why with {}.",
+                        private.run_text("attention")
+                    ),
+                    None => {
+                        "Backups are failing. The server's attention list says why.".to_string()
+                    }
+                };
+                Some(match reason {
+                    Some("turned_off") => format!("{failing} {TURNED_OFF}"),
+                    _ => failing,
+                })
+            }
             _ => None,
         }
     }
@@ -130,6 +137,16 @@ mod tests {
                 .unwrap()
                 .contains("attention")
         );
+    }
+
+    #[test]
+    fn failing_backups_that_are_turned_off_say_both() {
+        let settings = Path::new("/x/marfa.env");
+        let failing = said(json!({ "status": "failing", "reason": "turned_off" }));
+        let words = failing.words(settings, false, None).unwrap();
+        assert!(words.contains("Backups are failing"), "{words}");
+        assert!(words.contains("turned off"), "{words}");
+        assert!(!words.contains("No backups are kept"), "{words}");
     }
 
     #[test]
