@@ -1,8 +1,9 @@
 //! What the destination holds of this instance's parts, and whether each holds the bytes its name
 //! gives. A part the server stored or hashed is taken as whole while the destination lists it
-//! with the tag it had then: an object store's ETag, or a backup folder's size, modified time and
-//! inode. Any other part is hashed. A folder part is also hashed once its last hash is a week
-//! old, a bounded number of bytes a run, since a change on a disk can keep all three.
+//! with the tag it had then: an object store's ETag, or a backup folder's stamp. Any other part is
+//! hashed. A folder part is also hashed once its last hash is a week old, a bounded number of
+//! bytes a run, since a change on a disk can keep its stamp. A part found damaged is read again
+//! only once its tag changes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -10,16 +11,16 @@ use futures_util::StreamExt;
 use rusqlite::{Transaction, params};
 
 use super::parts::{self, Checked, Part};
-use super::{Destination, Got, Stored};
+use super::{Destination, Got, Stored, blocking};
 use crate::app::App;
 use crate::app::blobs::folder::Area;
 use crate::app::clock::Stamp;
-use crate::app::refusal::Result;
+use crate::app::refusal::{Code, Result};
 use crate::db::Write;
 
 /// How long a folder part goes without being hashed before a run hashes it again.
 const REHASH_AFTER_MS: i64 = 7 * 24 * 3_600_000;
-/// About how many bytes of folder parts a run hashes again because their last hash is old.
+/// About how many bytes of folder parts a run reads because their last hash is old.
 const REHASH_BYTES: u64 = 512 * 1024 * 1024;
 
 /// The parts the destination lists, what the database records of them, and what this run found.
@@ -28,14 +29,18 @@ pub(super) struct Stock {
     listed: HashMap<String, Stored>,
     /// The tag each part had when the server stored or last hashed it.
     tags: HashMap<String, String>,
-    damaged: HashSet<String>,
-    /// The parts this run hashes whatever their tag says.
-    due: HashSet<String>,
+    /// The tag each damaged part had when it was found damaged; none where its read failed.
+    damaged: HashMap<String, Option<String>>,
+    /// The folder parts whose last hash is old, oldest first, until this run reads them.
+    due: Vec<String>,
+    owed: HashSet<String>,
     /// Whether each part looked at in this run holds the bytes its name gives, by the tag it was
     /// listed with then.
     seen: HashMap<String, (Option<String>, bool)>,
     /// The bytes this run read to hash parts.
     hashed: u64,
+    /// The bytes this run read of parts only because their hash was due.
+    rehashed: u64,
 }
 
 struct Recorded {
@@ -76,12 +81,19 @@ fn record_whole(
     Ok(())
 }
 
-fn record_damaged(tx: &Transaction<'_>, store: &str, sha256: &str, at: &Stamp) -> Result<()> {
+fn record_damaged(
+    tx: &Transaction<'_>,
+    store: &str,
+    sha256: &str,
+    tag: Option<&str>,
+    at: &Stamp,
+) -> Result<()> {
     tx.prepare_cached(
-        "INSERT INTO backup_parts (store_id, sha256, hashed_at, damaged) VALUES (?1, ?2, ?3, 1) \
-         ON CONFLICT (store_id, sha256) DO UPDATE SET tag = NULL, hashed_at = ?3, damaged = 1",
+        "INSERT INTO backup_parts (store_id, sha256, tag, hashed_at, damaged) \
+         VALUES (?1, ?2, ?3, ?4, 1) \
+         ON CONFLICT (store_id, sha256) DO UPDATE SET tag = ?3, hashed_at = ?4, damaged = 1",
     )?
-    .execute(params![store, sha256, at])?;
+    .execute(params![store, sha256, tag, at])?;
     Ok(())
 }
 
@@ -100,14 +112,20 @@ pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<()> {
     Ok(())
 }
 
-/// Records that the part `sha256` in the destination does not hold the bytes its name gives. A
-/// failure to record it is logged: the restore or backup that found it says so either way.
-pub(super) async fn found_damaged(app: &App, destination: &Destination, sha256: &str) {
+/// Records that the part `sha256` in the destination, listed or read with `tag`, does not hold
+/// the bytes its name gives. A failure to record it is logged: the restore or backup that found
+/// it says so either way.
+pub(super) async fn found_damaged(
+    app: &App,
+    destination: &Destination,
+    sha256: &str,
+    tag: Option<String>,
+) {
     let (store, sha256, at) = (destination.id(), sha256.to_string(), app.clock.instant());
     let recorded = app
         .db
         .write(Write::own(), move |tx| {
-            record_damaged(tx, &store, &sha256, &at)
+            record_damaged(tx, &store, &sha256, tag.as_deref(), &at)
         })
         .await;
     if let Err(error) = recorded {
@@ -115,71 +133,84 @@ pub(super) async fn found_damaged(app: &App, destination: &Destination, sha256: 
     }
 }
 
-/// What reading a part whole found.
-struct Hashed {
-    whole: bool,
-    /// The tag of the bytes that were read.
-    tag: Option<String>,
-    read: u64,
+/// What looking at a part found.
+enum Found {
+    Whole(Option<String>),
+    Damaged(Option<String>),
+    /// A backup folder that answers could not give the part's bytes.
+    Unreadable(std::io::Error),
+    Absent,
 }
 
-/// Reads the part in the destination whole and hashes it; `None` when it is not there.
-async fn hashed(app: &App, destination: &Destination, part: &Part) -> Result<Option<Hashed>> {
-    let unreachable =
-        |error: std::io::Error| destination.unreachable("checking a part of the backup", &error);
+/// Reads the part `sha256` in the destination whole and hashes it, answering what it found and
+/// how many bytes it read. A read that fails is the part's where the backup folder still answers.
+async fn hashed(
+    app: &App,
+    destination: &Destination,
+    sha256: &str,
+    size: u64,
+) -> Result<(Found, u64)> {
     let got = destination
         .get(
             Area::Parts,
             &app.instance_id,
-            &parts::name_of(&part.sha256),
+            &parts::name_of(sha256),
             app.blob_read_idle(),
         )
-        .await
-        .map_err(unreachable)?;
-    let Some(Got { tag, mut bytes, .. }) = got else {
-        return Ok(None);
+        .await;
+    let Got { tag, mut bytes, .. } = match got {
+        Ok(Some(got)) => got,
+        Ok(None) => return Ok((Found::Absent, 0)),
+        Err(error) => return Ok((unreadable(destination, error).await?, 0)),
     };
     let mut checked = Checked::default();
     while let Some(chunk) = bytes.next().await {
-        checked.update(&chunk.map_err(unreachable)?);
-        if checked.size() > part.size_bytes {
+        match chunk {
+            Ok(chunk) => checked.update(&chunk),
+            Err(error) => return Ok((unreadable(destination, error).await?, checked.size())),
+        }
+        if checked.size() > size {
             break;
         }
     }
-    Ok(Some(Hashed {
-        whole: checked.matches(part),
-        tag,
-        read: checked.size(),
-    }))
+    let found = if checked.holds(sha256, size) {
+        Found::Whole(tag)
+    } else {
+        Found::Damaged(tag)
+    };
+    Ok((found, checked.size()))
+}
+
+/// A failed read of one part, unless the destination is an object store, the read stalled, or the
+/// backup folder no longer answers.
+async fn unreadable(destination: &Destination, error: std::io::Error) -> Result<Found> {
+    if let Destination::Folder(folder) = destination
+        && error.kind() != std::io::ErrorKind::TimedOut
+    {
+        let folder = folder.clone();
+        if blocking(move || Ok(folder.reachable()))
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(Found::Unreadable(error));
+        }
+    }
+    Err(destination.unreachable("checking a part of the backup", &error))
 }
 
 /// The parts whose last hash is older than `after_ms` before `now`, never recorded, or recorded
-/// in the future, oldest first, up to about `cap` bytes: the last one taken may pass it.
-fn due(
-    parts: Vec<(String, Option<Stamp>, u64)>,
-    now: Stamp,
-    after_ms: i64,
-    cap: u64,
-) -> Vec<String> {
+/// in the future, oldest first.
+fn due(parts: Vec<(String, Option<Stamp>)>, now: Stamp, after_ms: i64) -> Vec<String> {
     let stale = now.earlier_by(after_ms);
-    let mut due: Vec<(String, Option<Stamp>, u64)> = parts
+    let mut due: Vec<(String, Option<Stamp>)> = parts
         .into_iter()
-        .filter(|(_, at, _)| match at {
+        .filter(|(_, at)| match at {
             None => true,
             Some(at) => *at > now || stale.is_some_and(|stale| *at <= stale),
         })
         .collect();
     due.sort_by(|a, b| (a.1, &a.0).cmp(&(b.1, &b.0)));
-    let mut taken = Vec::new();
-    let mut total = 0u64;
-    for (sha256, _, size) in due {
-        if total >= cap {
-            break;
-        }
-        total = total.saturating_add(size);
-        taken.push(sha256);
-    }
-    taken
+    due.into_iter().map(|(sha256, _)| sha256).collect()
 }
 
 impl Stock {
@@ -192,10 +223,12 @@ impl Stock {
             store,
             listed: HashMap::new(),
             tags: HashMap::new(),
-            damaged: HashSet::new(),
-            due: HashSet::new(),
+            damaged: HashMap::new(),
+            due: Vec::new(),
+            owed: HashSet::new(),
             seen: HashMap::new(),
             hashed: 0,
+            rehashed: 0,
         };
         stock
             .relist(app, destination, "listing the backup's parts")
@@ -204,7 +237,7 @@ impl Stock {
         let mut unread = 0usize;
         for row in rows {
             if row.damaged {
-                stock.damaged.insert(row.sha256);
+                stock.damaged.insert(row.sha256, row.tag);
                 continue;
             }
             let Some(tag) = row.tag else {
@@ -215,8 +248,8 @@ impl Stock {
                 unread += usize::from(read.is_none());
                 read
             });
-            if let Some(stored) = stock.listed.get(&row.sha256) {
-                aging.push((row.sha256.clone(), hashed_at, stored.size));
+            if stock.listed.contains_key(&row.sha256) {
+                aging.push((row.sha256.clone(), hashed_at));
             }
             stock.tags.insert(row.sha256, tag);
         }
@@ -227,10 +260,8 @@ impl Stock {
             );
         }
         if matches!(destination, Destination::Folder(_)) {
-            let now = app.clock.instant();
-            stock.due = due(aging, now, REHASH_AFTER_MS, REHASH_BYTES)
-                .into_iter()
-                .collect();
+            stock.due = due(aging, app.clock.instant(), REHASH_AFTER_MS);
+            stock.owed = stock.due.iter().cloned().collect();
         }
         Ok(stock)
     }
@@ -253,21 +284,39 @@ impl Stock {
         &self.listed
     }
 
+    /// Takes the part `sha256` as no longer listed, once this run deleted it.
+    pub(super) fn deleted(&mut self, sha256: &str) {
+        self.listed.remove(sha256);
+    }
+
     /// The bytes this run read to hash parts.
     pub(super) fn hashed(&self) -> u64 {
         self.hashed
     }
 
-    /// Whether the destination holds `part` whole. A part listed with the tag recorded for it is
-    /// taken as whole unless its hash is due; any other is hashed. A part there at another size,
-    /// or that a hash shows altered, is recorded as damaged; one not there is not.
+    /// Whether the destination holds `part` whole, as `Stock::check` finds.
     pub(super) async fn whole(
         &mut self,
         app: &App,
         destination: &Destination,
         part: &Part,
     ) -> Result<bool> {
-        let sha256 = &part.sha256;
+        self.check(app, destination, &part.sha256, part.size_bytes)
+            .await
+    }
+
+    /// Whether the destination holds the part `sha256` whole at `size` bytes. A part listed with
+    /// the tag recorded for it is taken as whole unless its hash is due, and one listed with the
+    /// tag it was found damaged with as damaged; any other is hashed. A part there at another
+    /// size, that a hash shows altered, or that a backup folder cannot give is recorded as
+    /// damaged; one not there is not.
+    async fn check(
+        &mut self,
+        app: &App,
+        destination: &Destination,
+        sha256: &str,
+        size: u64,
+    ) -> Result<bool> {
         let Some(stored) = self.listed.get(sha256) else {
             return Ok(false);
         };
@@ -277,35 +326,89 @@ impl Stock {
         {
             return Ok(*known);
         }
-        let found = if stored.size != part.size_bytes {
-            Some((false, None))
-        } else if tag.is_some()
-            && !self.damaged.contains(sha256)
-            && !self.due.contains(sha256)
-            && self.tags.get(sha256) == tag.as_ref()
-        {
-            return Ok(true);
-        } else {
-            let hashed = hashed(app, destination, part).await?;
-            self.hashed += hashed.as_ref().map_or(0, |hashed| hashed.read);
-            hashed.map(|hashed| (hashed.whole, hashed.tag))
+        let found = match self.damaged.get(sha256) {
+            Some(Some(damaged_as)) if tag.as_ref() == Some(damaged_as) => {
+                self.seen.insert(sha256.to_string(), (tag, false));
+                return Ok(false);
+            }
+            _ if stored.size != size => Found::Damaged(tag.clone()),
+            damaged => {
+                let trusted =
+                    tag.is_some() && damaged.is_none() && self.tags.get(sha256) == tag.as_ref();
+                let due = trusted && self.owed.contains(sha256);
+                if trusted && !(due && self.rehashed < REHASH_BYTES) {
+                    return Ok(true);
+                }
+                let (found, read) = hashed(app, destination, sha256, size).await?;
+                self.hashed += read;
+                if due {
+                    self.rehashed += read;
+                }
+                found
+            }
         };
         let whole = match found {
-            Some((true, read_tag)) => {
+            Found::Whole(read_tag) => {
                 self.record(app, sha256, read_tag).await?;
                 true
             }
-            Some((false, _)) => {
-                found_damaged(app, destination, sha256).await;
-                self.damaged.insert(sha256.clone());
-                self.tags.remove(sha256);
+            Found::Damaged(read_tag) => {
+                self.found_damaged(app, destination, sha256, read_tag).await;
                 false
             }
-            None => false,
+            Found::Unreadable(error) => {
+                tracing::warn!(%error, "A part of the backup could not be read, so it counts as damaged");
+                self.found_damaged(app, destination, sha256, None).await;
+                false
+            }
+            Found::Absent => false,
         };
-        self.due.remove(sha256);
-        self.seen.insert(sha256.clone(), (tag, whole));
+        self.owed.remove(sha256);
+        self.seen.insert(sha256.to_string(), (tag, whole));
         Ok(whole)
+    }
+
+    async fn found_damaged(
+        &mut self,
+        app: &App,
+        destination: &Destination,
+        sha256: &str,
+        tag: Option<String>,
+    ) {
+        found_damaged(app, destination, sha256, tag.clone()).await;
+        self.damaged.insert(sha256.to_string(), tag);
+        self.tags.remove(sha256);
+    }
+
+    /// Hashes the folder parts whose hash is due that this run has not read, oldest first, until
+    /// it has read about `REHASH_BYTES` of them, whichever backup names them. A part that cannot
+    /// be read counts as damaged and the next is read; the pass stops where the folder does not
+    /// answer.
+    pub(super) async fn rehash_due(&mut self, app: &App, destination: &Destination) {
+        for sha256 in std::mem::take(&mut self.due) {
+            if self.rehashed >= REHASH_BYTES {
+                break;
+            }
+            if !self.owed.contains(&sha256) {
+                continue;
+            }
+            let Some(size) = self.listed.get(&sha256).map(|stored| stored.size) else {
+                continue;
+            };
+            if let Err(error) = self.check(app, destination, &sha256, size).await {
+                tracing::warn!(error = %error.message, "A folder part whose hash was due was not checked");
+                if error.code == Code::BlobStoreUnavailable {
+                    break;
+                }
+            }
+        }
+        self.owed.clear();
+        if self.rehashed > 0 {
+            tracing::info!(
+                read = self.rehashed,
+                "Folder parts whose last hash was old were hashed again"
+            );
+        }
     }
 
     /// Records the part the server just stored, which is whole while it keeps the tag the
@@ -326,7 +429,7 @@ impl Stock {
         );
         self.record(app, sha256, tag).await?;
         self.seen.remove(sha256);
-        self.due.remove(sha256);
+        self.owed.remove(sha256);
         Ok(())
     }
 
@@ -380,28 +483,16 @@ mod tests {
     fn only_parts_unhashed_for_a_week_or_never_are_due_oldest_first() {
         let now = Stamp::from_ms(100 * DAY_MS).unwrap();
         let parts = vec![
-            ("fresh".to_string(), at(99 * DAY_MS), 10),
-            ("week".to_string(), at(93 * DAY_MS), 10),
-            ("month".to_string(), at(70 * DAY_MS), 10),
-            ("never".to_string(), None, 10),
-            ("ahead".to_string(), at(101 * DAY_MS), 10),
-            ("almost".to_string(), at(93 * DAY_MS + 1), 10),
+            ("fresh".to_string(), at(99 * DAY_MS)),
+            ("week".to_string(), at(93 * DAY_MS)),
+            ("month".to_string(), at(70 * DAY_MS)),
+            ("never".to_string(), None),
+            ("ahead".to_string(), at(101 * DAY_MS)),
+            ("almost".to_string(), at(93 * DAY_MS + 1)),
         ];
         assert_eq!(
-            due(parts, now, 7 * DAY_MS, u64::MAX),
+            due(parts, now, 7 * DAY_MS),
             ["never", "month", "week", "ahead"]
         );
-    }
-
-    #[test]
-    fn a_run_takes_due_parts_until_the_cap_and_always_one() {
-        let now = Stamp::from_ms(100 * DAY_MS).unwrap();
-        let parts: Vec<_> = (0..10)
-            .map(|day| (format!("p{day}"), at(day * DAY_MS), 40))
-            .collect();
-        assert_eq!(due(parts.clone(), now, 7 * DAY_MS, 100), ["p0", "p1", "p2"]);
-        assert_eq!(due(parts, now, 7 * DAY_MS, 1), ["p0"]);
-        let large = vec![("large".to_string(), None, 1_000)];
-        assert_eq!(due(large, now, 7 * DAY_MS, 100), ["large"]);
     }
 }

@@ -850,7 +850,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST NOT store a part that the destination already holds under its name with the bytes whose SHA-256 that name gives.
 
-**Reason:** a backup then costs what changed since the last one, not the whole instance. The server takes a part as held while the destination lists it as it was when the server stored or last hashed it: an object store by its ETag, and a backup folder by the file's size, modified time and inode. It reads and hashes any other part, so a part written since is checked byte for byte.
+**Reason:** a backup then costs what changed since the last one, not the whole instance. The server takes a part as held while the destination lists it as it was when the server stored or last hashed it: an object store by its ETag, and a backup folder by the file's size, modified time, inode and, where the file system records one, birth time. It reads and hashes any other part, so a part written since is checked byte for byte.
 
 **Tests:** `compliance/backup-parts.test.ts › stores none of the parts of a backup that holds what the last one held, and not the rows of a large table that did not change, and answers what it sent`.
 
@@ -878,19 +878,19 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 ### `instance/backup-part-stored-again`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time or inode, than it had when the server last stored or hashed that part, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, then the server MUST store that part there again.
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, if a backup the server takes names a part that `<root>/backup-parts/<instance id>/` lacks, or holds with bytes other than those whose SHA-256 its name gives and lists with another ETag, or in a backup folder another size, modified time, inode or birth time, than it had when the server last stored or hashed that part, or holds in a backup folder that answers but cannot give that part's bytes, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, then the server MUST store that part there again.
 
-**Reason:** each backup restores whole, not only the first one that named a part. A write through the store gives an object another ETag, and a write through the file system gives a file another modified time. An object store that changes an object's bytes and keeps its ETag breaks its own promise of durability, and the server finds that change only when a restore reads the part (`instance/backup-restore-parts-checked`). A disk can change a file's bytes and keep all three, which `instance/backup-folder-part-rehashed` bounds.
+**Reason:** each backup restores whole, not only the first one that named a part. A write through the store gives an object another ETag, and a write through the file system gives a file another modified time. An object store that changes an object's bytes and keeps its ETag breaks its own promise of durability, and the server finds that change only when a restore reads the part (`instance/backup-restore-parts-checked`). A disk can change a file's bytes and keep all four, which `instance/backup-folder-part-rehashed` bounds. A part whose read fails on a bad sector or a permission does not fail the backup: the server counts it as damaged and stores it again where the backup names it.
 
-**Tests:** `compliance/backup-parts.test.ts › stores again a part missing from its instance's parts folder or altered there, sends only those parts, and both backups then restore`.
+**Tests:** `compliance/backup-parts.test.ts › stores again a part missing from its instance's parts folder or altered there, sends only those parts, and both backups then restore`, `› hashes a due folder part only an older backup names while a manifest does not read, and counts a part it cannot read as damaged, storing it again where a backup names it`.
 
 ### `instance/backup-folder-part-rehashed`
 
 Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST read and hash the parts in `<MARFA_BACKUP_PATH>/backup-parts/<instance id>/` that it last stored or hashed 7 days or more before, oldest first, until it has read 536870912 bytes of them.
 
-**Reason:** a disk can change a file's bytes and keep its size, modified time and inode, by decay or by a copy that sets the time back, and `instance/backup-part-stored-again` does not see that change. The server finds such a change at the first backup 7 days or more after the part's last hash, or once it has read the parts due before it. A backup runs only when something changed or the owner asks for one. An object store checks its own objects, and reading them again would be billed.
+**Reason:** a disk can change a file's bytes and keep its size, modified time, inode and birth time, by decay or by a write in place that sets the time back, and `instance/backup-part-stored-again` does not see that change. The server finds such a change at the first backup 7 days or more after the part's last hash, or once it has read the parts due before it, whichever backups name the part and whether or not every backup's manifest reads. A backup runs only when something changed or the owner asks for one. An object store checks its own objects, and reading them again would be billed.
 
-**Tests:** `compliance/backup-parts.test.ts › takes a folder part as held while its size, modified time and inode are unchanged, and hashes it again once 7 days have passed since its last hash`.
+**Tests:** `compliance/backup-parts.test.ts › takes a folder part as held while its size, modified time, inode and birth time are unchanged, and hashes it again once 7 days have passed since its last hash`, `› hashes a due folder part only an older backup names while a manifest does not read, and counts a part it cannot read as damaged, storing it again where a backup names it`.
 
 ### `instance/backup-keeps-files`
 
@@ -1006,11 +1006,11 @@ Where `backup_interval_seconds` is above 0, while the copy record holds no copy 
 
 ### `instance/backup-health-parts-damaged`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, that the server found holding bytes other than those whose SHA-256 its name gives is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, while a part under `<root>/backup-parts/<instance id>/`, where `<root>` is `<S3_PREFIX>` or `<MARFA_BACKUP_PATH>`, that the server found holding bytes other than those whose SHA-256 its name gives, or in a backup folder that answers could not read, is named by a backup it keeps, and the server has neither stored that part again nor found it whole since, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
 
 **Reason:** a restore of a backup that names such a part is refused. The server finds a part damaged when a restore of one of its own backups reads it, and when a backup checks each part a backup it keeps names, as `instance/backup-part-stored-again` and `instance/backup-folder-part-rehashed` say.
 
-**Tests:** `compliance/backup-parts.test.ts › says in health and attention that a part is damaged once a restore of its own backup finds it altered, until a backup stores the part again`.
+**Tests:** `compliance/backup-parts.test.ts › says in health and attention that a part is damaged once a restore of its own backup finds it altered, until a backup stores the part again`, `› hashes a due folder part only an older backup names while a manifest does not read, and counts a part it cannot read as damaged, storing it again where a backup names it`.
 
 ### `instance/backup-health-damaged-count`
 

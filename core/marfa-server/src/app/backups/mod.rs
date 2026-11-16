@@ -1072,7 +1072,10 @@ impl App {
                         .get(&part.sha256)
                         .is_some_and(|stored| stored.size != part.size_bytes)
                     {
-                        stock::found_damaged(self, destination, &part.sha256).await;
+                        let tag = stored
+                            .get(&part.sha256)
+                            .and_then(|stored| stored.tag.clone());
+                        stock::found_damaged(self, destination, &part.sha256, tag).await;
                     }
                 }
             }
@@ -1105,7 +1108,7 @@ impl App {
                         .map_err(|error| {
                             destination.unreachable("reading a part of the backup", &error)
                         })?;
-                    let Some(Got { mut bytes, .. }) = got else {
+                    let Some(Got { tag, mut bytes, .. }) = got else {
                         return Err(parts_missing(name, vec![named]));
                     };
                     let mut checked = Checked::default();
@@ -1123,7 +1126,7 @@ impl App {
                     }
                     if over || !checked.matches(part) {
                         if own {
-                            stock::found_damaged(self, destination, &part.sha256).await;
+                            stock::found_damaged(self, destination, &part.sha256, tag).await;
                         }
                         return Err(parts_missing(name, vec![named]));
                     }
@@ -1613,6 +1616,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                 .unwrap_or(0);
             let (removed, unremoved) = thin(app, &destination, at).await;
             let parts_removed = prune(app, &destination, &manifest, &mut stock).await;
+            stock.rehash_due(app, &destination).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
@@ -1906,8 +1910,10 @@ async fn reusable(
 /// manifest of every backup the folder lists, the database records or the server found, and
 /// deletes nothing if one does not read, a store does not answer, or a manifest whose write failed
 /// may still land. A found backup the folder no longer lists keeps its parts until the server
-/// forgets it. It then checks each part a backup names as `Stock::whole` does, so a part changed
-/// since it was stored or hashed shows in health. Answers how many parts it deleted.
+/// forgets it. Once every manifest reads, it checks each part a backup names as `Stock::whole`
+/// does, so a part changed since it was stored or hashed shows in health. Folder parts whose hash
+/// is due are hashed by `Stock::rehash_due` whether or not this reads every manifest. Answers how
+/// many parts it deleted.
 async fn prune(
     app: &Arc<App>,
     destination: &Destination,
@@ -1986,7 +1992,9 @@ async fn prune(
     for part in named.values() {
         if let Err(error) = stock.whole(app, destination, part).await {
             tracing::warn!(error = %error.message, "A part a backup names was not checked");
-            break;
+            if error.code == Code::BlobStoreUnavailable {
+                break;
+            }
         }
     }
     let kept: HashSet<String> = named
@@ -2005,7 +2013,10 @@ async fn prune(
             .delete(Area::Parts, &own, &parts::name_of(&sha256))
             .await
         {
-            Ok(()) => deleted += 1,
+            Ok(()) => {
+                stock.deleted(&sha256);
+                deleted += 1;
+            }
             Err(error) => {
                 tracing::warn!(%error, "A part no backup names was not deleted");
             }

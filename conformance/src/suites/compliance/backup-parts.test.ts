@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -710,7 +711,7 @@ function partsSuite(make: () => Place, folder: boolean) {
     ).toBe(200);
   });
 
-  it("takes a folder part as held while its size, modified time and inode are unchanged, and hashes it again once 7 days have passed since its last hash", async () => {
+  it("takes a folder part as held while its size, modified time, inode and birth time are unchanged, and hashes it again once 7 days have passed since its last hash", async () => {
     const path = join(
       place.env.MARFA_BACKUP_PATH!,
       "backup-parts",
@@ -759,6 +760,84 @@ function partsSuite(make: () => Place, folder: boolean) {
       due.backup.name,
     );
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+  });
+
+  it("hashes a due folder part only an older backup names while a manifest does not read, and counts a part it cannot read as damaged, storing it again where a backup names it", async () => {
+    const DAY_MS = 24 * 3_600_000;
+    const pathOf = (name: string) =>
+      join(place.env.MARFA_BACKUP_PATH!, "backup-parts", originId, name);
+    await smallRow(0, 30);
+    const older = await backUp();
+    await origin.advanceClock(DAY_MS);
+    await smallRow(0, 31);
+    const newer = await backUp();
+    const [olderParts, newerParts] = [
+      (await place.backup(originId, older.backup.name)).manifest.parts,
+      (await place.backup(originId, newer.backup.name)).manifest.parts,
+    ];
+    const [olderNames, newerNames] = [
+      new Set(olderParts.map(partName)),
+      new Set(newerParts.map(partName)),
+    ];
+    const onlyOlders = [...olderNames].filter((name) => !newerNames.has(name));
+    expect(onlyOlders).toHaveLength(1);
+    const onlyOlder = onlyOlders[0]!;
+    const shared = newerParts
+      .filter((part) => olderNames.has(partName(part)))
+      .sort((a, b) => a.size_bytes - b.size_bytes)[0]!;
+    expect(shared).toBeDefined();
+
+    // A change in place that keeps the part's size, modified time, inode and birth time.
+    const path = pathOf(onlyOlder);
+    const before = statSync(path);
+    writeFileSync(path, altered(readFileSync(path)));
+    utimesSync(path, before.atime, before.mtime);
+    const after = statSync(path);
+    expect([after.ino, after.size, after.mtimeMs, after.birthtimeMs]).toEqual([
+      before.ino,
+      before.size,
+      before.mtimeMs,
+      before.birthtimeMs,
+    ]);
+    const unread = backupName(new Date("2020-01-03T00:00:00.000Z"));
+    await place.writeManifest(originId, unread, "not a manifest");
+    const loose = stray();
+    await place.writePart(originId, loose.name, loose.body);
+    chmodSync(pathOf(partName(shared)), 0);
+    // The witness: the shared part cannot be read.
+    expect(() => readFileSync(pathOf(partName(shared)))).toThrow();
+
+    await origin.advanceClock(8 * DAY_MS);
+    const run = await backUp();
+    // The witness: a manifest that does not read kept every part, so the
+    // altered one was reached by its due hash, not by reading the backups.
+    expect(await place.parts(originId)).toContain(loose.name);
+    expect(run.sent_bytes).toBe(shared.size_bytes);
+    expect(`${sha256Of(readFileSync(pathOf(partName(shared))))}.ndjson.gz`).toBe(
+      partName(shared),
+    );
+    const damaged = await healthDetail(origin);
+    expect(damaged.backups).toMatchObject({
+      status: "failing",
+      damaged_parts: 1,
+    });
+    expect(
+      (await backupConcerns(origin)).map((concern) => concern.reference),
+    ).toContain("parts_damaged");
+    const restored = await ownerOf(refuser!).restoreBackup(
+      originId,
+      run.backup.name,
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const refused = await ownerOf(refuser!).restoreBackup(
+      originId,
+      older.backup.name,
+    );
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error.details).toEqual({
+      missing_parts: [onlyOlder],
+    });
+    await place.deleteManifest(originId, unread);
   });
 }
 

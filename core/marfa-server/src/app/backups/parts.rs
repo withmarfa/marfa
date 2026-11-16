@@ -210,7 +210,12 @@ impl Checked {
     }
 
     pub fn matches(&self, part: &Part) -> bool {
-        self.size == part.size_bytes && hex::encode(self.digest.clone().finalize()) == part.sha256
+        self.holds(&part.sha256, part.size_bytes)
+    }
+
+    /// Whether the bytes are `size` long and their SHA-256 is `sha256`.
+    pub fn holds(&self, sha256: &str, size: u64) -> bool {
+        self.size == size && hex::encode(self.digest.clone().finalize()) == sha256
     }
 }
 

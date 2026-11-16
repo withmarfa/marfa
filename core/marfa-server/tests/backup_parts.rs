@@ -371,6 +371,25 @@ impl Instance {
             .unwrap()
     }
 
+    /// When the server last read the part `sha256` whole or found it damaged.
+    async fn hashed_at(&self, sha256: &str) -> Option<String> {
+        let sha256 = sha256.to_string();
+        self.app
+            .db
+            .read(move |tx| {
+                Ok(tx
+                    .query_row(
+                        "SELECT hashed_at FROM backup_parts WHERE sha256 = ?1",
+                        [&sha256],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .ok()
+                    .flatten())
+            })
+            .await
+            .unwrap()
+    }
+
     /// The rows and items an archive export holds now, each as its lines.
     async fn exported(&self) -> BTreeMap<String, Vec<Value>> {
         let exported = self
@@ -1746,6 +1765,143 @@ async fn a_part_only_an_older_backup_names_in_a_folder_shows_in_health_once_rewr
 #[tokio::test]
 async fn a_part_only_an_older_backup_names_in_an_object_store_shows_in_health_once_rewritten() {
     a_part_only_an_older_backup_names_shows_in_health_once_rewritten(Place::bucket().await).await;
+}
+
+/// Two backups a day apart, the second after a note is added. Answers the manifest of each.
+async fn two_days(origin: &Instance, place: &Place) -> (Value, Value) {
+    let id = origin.id();
+    origin.app.clock.pause(true);
+    origin.item("core.note", json!({ "title": "first" })).await;
+    let first = origin.back_up().await;
+    let first = place.manifest(&id, first["backup"]["name"].as_str().unwrap());
+    origin.item("core.note", json!({ "title": "second" })).await;
+    origin.app.clock.advance(DAY_MS).unwrap();
+    let second = origin.back_up().await;
+    let second = place.manifest(&id, second["backup"]["name"].as_str().unwrap());
+    (first, second)
+}
+
+#[tokio::test]
+async fn a_due_folder_part_only_an_older_backup_names_is_hashed_though_a_manifest_does_not_read() {
+    let place = Place::folder().await;
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    let (first, second) = two_days(&origin, &place).await;
+    let (old_items, _) = entry_part(&first, "items.ndjson.gz");
+    assert_ne!(old_items, entry_part(&second, "items.ndjson.gz").0);
+
+    place.write("backups", &id, FOUND, b"not a manifest");
+    let stray = b"a part no backup names";
+    place.write("backup-parts", &id, &part_name(&sha_of(stray)), stray);
+    let old_path = place.path("backup-parts", &id, &part_name(&old_items));
+    rewrite_keeping_time(&old_path, &altered(place.part(&id, &old_items)));
+    origin.app.clock.advance(8 * DAY_MS).unwrap();
+    origin.back_up().await;
+    assert!(
+        place
+            .names("backup-parts", &id)
+            .contains(&part_name(&sha_of(stray))),
+        "clean-up read every manifest"
+    );
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 1, "{health}");
+    assert_eq!(health["status"], "failing", "{health}");
+}
+
+async fn a_damaged_part_is_not_read_again_while_it_keeps_the_tag_it_was_found_with(place: Place) {
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    let (first, _) = two_days(&origin, &place).await;
+    let (old_items, _) = entry_part(&first, "items.ndjson.gz");
+    let gets = || match &place {
+        Place::Bucket(store) => store.requests(
+            &Method::GET,
+            &Place::key("backup-parts", &id, &part_name(&old_items)),
+        ),
+        Place::Folder(_) => 0,
+    };
+    let whole = place.part(&id, &old_items);
+    place.write(
+        "backup-parts",
+        &id,
+        &part_name(&old_items),
+        &altered(whole.clone()),
+    );
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    assert_eq!(origin.backups_health().await["damaged_parts"], 1);
+    let found = origin.hashed_at(&old_items).await;
+    assert!(found.is_some());
+    let read = gets();
+
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    assert_eq!(origin.backups_health().await["damaged_parts"], 1);
+    assert_eq!(origin.hashed_at(&old_items).await, found);
+    assert_eq!(gets(), read);
+
+    place.write("backup-parts", &id, &part_name(&old_items), &whole);
+    origin.app.clock.advance(1000).unwrap();
+    origin.back_up().await;
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 0, "{health}");
+    assert_ne!(origin.hashed_at(&old_items).await, found);
+}
+
+#[tokio::test]
+async fn a_damaged_folder_part_is_not_read_again_while_it_keeps_its_stamp() {
+    a_damaged_part_is_not_read_again_while_it_keeps_the_tag_it_was_found_with(
+        Place::folder().await,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_damaged_object_store_part_is_not_read_again_while_it_keeps_its_etag() {
+    a_damaged_part_is_not_read_again_while_it_keeps_the_tag_it_was_found_with(
+        Place::bucket().await,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_folder_part_that_cannot_be_read_is_damaged_and_stored_again_where_a_backup_needs_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let place = Place::folder().await;
+    let origin = Instance::start(&place).await;
+    let id = origin.id();
+    let (first, second) = two_days(&origin, &place).await;
+    let (old_items, _) = entry_part(&first, "items.ndjson.gz");
+    let (_, shared, shared_size) = named(&second)
+        .into_iter()
+        .find(|(_, sha256, _)| named(&first).iter().any(|(_, old, _)| old == sha256))
+        .expect("a part both backups name");
+    for sha256 in [&old_items, &shared] {
+        let path = place.path("backup-parts", &id, &part_name(sha256));
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(fs::read(&path).is_err(), "a part without permissions read");
+    }
+
+    origin.app.clock.advance(8 * DAY_MS).unwrap();
+    let third = origin.back_up().await;
+    assert_eq!(third["sent_bytes"], shared_size, "{third}");
+    assert_eq!(sha_of(&place.part(&id, &shared)), shared);
+    let health = origin.backups_health().await;
+    assert_eq!(health["damaged_parts"], 1, "{health}");
+    assert_eq!(health["status"], "failing", "{health}");
+    assert!(
+        origin
+            .backup_concerns()
+            .await
+            .contains(&"parts_damaged".to_string())
+    );
+    let third_name = third["backup"]["name"].as_str().unwrap().to_string();
+    let restored = Instance::start(&place)
+        .await
+        .restore(&id, &third_name, "")
+        .await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
 }
 
 const FOUND: &str = "20200101T000000.000Z.json";
