@@ -33241,7 +33241,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /** @description `unauthorized`: the request has no credential, its credential is not valid, or `current_password` is wrong. Nothing changes. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
