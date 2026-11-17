@@ -1,9 +1,8 @@
 import { controlRequest } from "../../utils/control-request.js";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -22,6 +21,7 @@ import {
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * What an instance does when it starts and when it stops: the instance
@@ -398,7 +398,7 @@ it(
   "exits with status 1, not 78, when the port it was given is already taken",
   async () => {
     const held = await holdPort();
-    const root = mkdtempSync(join(realpathSync(tmpdir()), "marfa-port-taken-"));
+    const root = tempFolder("marfa-port-taken-");
     const socket = join(root, "control.sock");
     try {
       const refused = await bootRefused("lifecycle-port-taken", {

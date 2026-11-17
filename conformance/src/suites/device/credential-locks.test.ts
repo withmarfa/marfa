@@ -3,13 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
-  mkdtempSync,
-  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +28,7 @@ import {
   SCRIPTED_TYPES,
 } from "../../device/marfa-answers.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 const run = promisify(execFile);
 
@@ -49,7 +47,7 @@ it("refuses an unsafe credential lock across environment overrides before contac
   const server = await ScriptedServer.start();
   const prefix = `/credential-${randomUUID()}`;
   const origin = `${server.url}${prefix}`;
-  const folder = mkdtempSync(join(tmpdir(), "marfa-credential-environment-"));
+  const folder = tempFolder("marfa-credential-environment-");
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
   );
@@ -139,7 +137,7 @@ async function withUnsafeLock(
   args: string[],
   input?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const environment = mkdtempSync(join(tmpdir(), "marfa-credential-unsafe-"));
+  const environment = tempFolder("marfa-credential-unsafe-");
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
   );
@@ -228,7 +226,7 @@ it("refuses a sign-in under an unsafe credential lock before asking for a code",
  * must not be left holding while other files run.
  */
 function ownKeychain(): { path: string; remove: () => void } {
-  const folder = mkdtempSync(join(tmpdir(), "marfa-credential-keychain-"));
+  const folder = tempFolder("marfa-credential-keychain-");
   const path = join(folder, "credentials.keychain-db");
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);
@@ -282,9 +280,7 @@ function marfaAt(
   args: string[],
   extraEnv: Record<string, string> = {},
 ): Running {
-  const home = mkdtempSync(
-    join(realpathSync(tmpdir()), "marfa-credential-home-"),
-  );
+  const home = tempFolder("marfa-credential-home-");
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("MARFA_")),
   );
@@ -418,9 +414,7 @@ describe("a kept credential", ON_MACOS, () => {
     keychain.remove();
   });
   it("renews an expired stored token before folder binding completes", async () => {
-    const dir = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-folder-renewal-"),
-    );
+    const dir = tempFolder("marfa-folder-renewal-");
     const folder = {
       id: randomUUID(),
       version: 1,

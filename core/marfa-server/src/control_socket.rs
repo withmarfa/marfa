@@ -660,6 +660,7 @@ mod tests {
         let (_dir, root) = private_root();
         let folder = root.join("control");
         std::fs::create_dir(&folder).unwrap();
+        let _unlocked = marfa_acl::testing::unlocked_after(&folder);
         set_mode(&folder, 0o700);
         let deny = spawning(|| {
             std::process::Command::new("/bin/chmod")

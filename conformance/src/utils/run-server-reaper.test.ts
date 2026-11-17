@@ -3,16 +3,15 @@ import {
   appendFileSync,
   closeSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   rmSync,
   readFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { processAlive, signalGroup } from "./server-process.js";
+import { tempFolder } from "./temp-folder.js";
 
 const supervisor = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -41,7 +40,7 @@ interface Booted {
  * to the state directory's log) around a stand-in server that only waits.
  */
 async function boot(settings: Record<string, string>): Promise<Booted> {
-  const root = mkdtempSync(join(tmpdir(), "marfa-reaper-"));
+  const root = tempFolder("marfa-reaper-");
   folders.push(root);
   const state = join(root, "state");
   const work = join(root, "work");

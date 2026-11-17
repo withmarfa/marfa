@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import {
   bootUnclaimedServer,
   stopServer,
@@ -13,6 +11,7 @@ import {
   serverOutput,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let state: string;
 let server: { url: string; controlSocket: string };
@@ -26,7 +25,7 @@ const OWNER = {
 };
 
 beforeAll(async () => {
-  state = await mkdtemp(join(tmpdir(), "marfa-owner-conformance-"));
+  state = tempFolder("marfa-owner-conformance-");
   vi.stubEnv("MARFA_TRUSTED_PROXY_HEADER", "x-conformance-client");
   vi.stubEnv("MARFA_TRUSTED_PROXY_CIDRS", "127.0.0.0/8");
   server = await bootUnclaimedServer({ state });
@@ -589,7 +588,7 @@ async function withFreshInstance(
     ticket: () => Promise<string>;
   }) => Promise<void>,
 ): Promise<void> {
-  const freshState = await mkdtemp(join(tmpdir(), "marfa-owner-session-"));
+  const freshState = tempFolder("marfa-owner-session-");
   let booted = false;
   try {
     const fresh = await bootUnclaimedServer({ state: freshState });
@@ -825,9 +824,7 @@ describe("claiming through the private socket", () => {
   it(
     "answers the setup routes in snake_case and the claim as the public claim does",
     async () => {
-      const socketState = await mkdtemp(
-        join(tmpdir(), "marfa-owner-socket-conformance-"),
-      );
+      const socketState = tempFolder("marfa-owner-socket-conformance-");
       let booted = false;
       try {
         const socketServer = await bootUnclaimedServer({ state: socketState });

@@ -1,14 +1,12 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { signInOwnerWithPassword } from "../client/owner-session.js";
@@ -24,6 +22,7 @@ import {
   type ServerExit,
   type StopSignal,
 } from "./server-process.js";
+import { onCleanup, tempFolder } from "./temp-folder.js";
 
 export type { ServerExit, StopSignal };
 
@@ -353,7 +352,7 @@ export async function bootFreshServer(
   extraEnv: Record<string, string> = {},
 ): Promise<FreshServer> {
   const tsx = tsxBinary();
-  const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
+  const state = tempFolder(`marfa-${label}-`);
   const run = (
     command: "up" | "down" | "restart",
     more: Record<string, string> = {},
@@ -399,6 +398,17 @@ export async function bootFreshServer(
     return stopping;
   };
   unstopped.add(stop);
+  // A fixture that failed, or a run that was interrupted, did not get to
+  // `stop`; `down` ends the server and removes its control folder, which
+  // lies outside the run folder.
+  onCleanup(() => {
+    if (!unstopped.has(stop)) return;
+    spawnSync(
+      tsx,
+      [SERVER_SCRIPT, "down", "--state", state, ...envArgs(extraEnv)],
+      { cwd: conformanceRoot, env: serverEnv(), timeout: BOOT_BUDGET_MS },
+    );
+  });
 
   const up = await booting;
   if (up.status !== 0) {
@@ -543,7 +553,7 @@ export async function bootFreshServer(
       return moved.output;
     },
     async image() {
-      const to = mkdtempSync(join(tmpdir(), "marfa-image-"));
+      const to = tempFolder("marfa-image-");
       const taken = await adapter("image", "--to", to);
       if (taken.status !== 0) {
         rmSync(to, { recursive: true, force: true });
@@ -636,7 +646,7 @@ export async function bootRefused(
   options: RefusedBootOptions = {},
 ): Promise<RefusedBoot> {
   const tsx = tsxBinary();
-  const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
+  const state = tempFolder(`marfa-${label}-`);
   const sqlitePath = join(state, "marfa.db");
   let stopping: Promise<void> | undefined;
   const stop = (): Promise<void> => {

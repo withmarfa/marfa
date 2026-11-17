@@ -1,11 +1,4 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -24,6 +17,7 @@ import {
   type VitestReport,
 } from "./rust-score.js";
 import { RUN_APART } from "./shard-weights.js";
+import { tempFolder } from "./temp-folder.js";
 
 const A = "src/suites/compliance/a.test.ts";
 const B = "src/suites/compliance/b.test.ts";
@@ -317,7 +311,7 @@ describe("the excuses the contract makes", () => {
 
 describe("the files of the contract", () => {
   const ROOT = join(import.meta.dirname, "..", "..");
-  const directory = mkdtempSync(join(tmpdir(), "marfa-rust-score-"));
+  const directory = tempFolder("marfa-rust-score-");
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
   for (const path of [
     A,
@@ -587,7 +581,7 @@ describe("a test that passed only on a retry", () => {
   });
 
   it("is read from what Vitest writes: a test failed once, passed on retry, and one failed twice", () => {
-    const directory = mkdtempSync(join(tmpdir(), "marfa-retry-report-"));
+    const directory = tempFolder("marfa-retry-report-");
     try {
       writeFileSync(
         join(directory, "retry.test.ts"),

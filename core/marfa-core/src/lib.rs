@@ -82,6 +82,8 @@ mod telemetry;
 #[cfg(all(test, feature = "telemetry"))]
 mod telemetry_tests;
 #[cfg(test)]
+mod test_folders;
+#[cfg(test)]
 mod tier_tests;
 #[cfg(test)]
 mod trashed_at_tests;
@@ -9356,7 +9358,7 @@ mod tests {
             .hash;
         assert_eq!(core.file_cache().unwrap().held, Some(12));
         let folder = dir.path().join("core.sqlite.blobs");
-        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _shut = crate::test_folders::locked(&folder, 0o000);
         let sealed = std::fs::read_dir(&folder).is_err();
         let report = core.file_cache();
         let taken = core.set_file_budget(FileBudget::Bytes(0));

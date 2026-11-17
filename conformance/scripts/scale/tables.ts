@@ -1,5 +1,5 @@
-import { createWriteStream, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { loadavg, tmpdir } from "node:os";
+import { createWriteStream, readFileSync, rmSync } from "node:fs";
+import { loadavg } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -43,6 +43,7 @@ import {
   upTo,
   whole,
 } from "./standalone.js";
+import { tempFolder } from "../../src/utils/temp-folder.js";
 
 const TABLE = "readings";
 const POLL_GAP_MS = 20;
@@ -295,7 +296,7 @@ export async function tables(): Promise<void> {
   const board = new Scoreboard(recorder);
   const add = (figure: Figure, goal: Goal) => board.add(figure, goal);
 
-  const work = opts.state ?? mkdtempSync(join(tmpdir(), "marfa-scale-tables-"));
+  const work = opts.state ?? tempFolder("marfa-scale-tables-");
   const stateA = join(work, "a");
   const stateB = join(work, "b");
   const started = new StartedServers();

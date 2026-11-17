@@ -1,5 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BindingDevice } from "../../device/binding-adapter.js";
@@ -13,6 +12,7 @@ import {
   startBindingHarness,
   type BindingHarness,
 } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * "An app can remove downloaded files without changing the file budget."
@@ -105,7 +105,7 @@ async function holdingThree(label: string): Promise<BindingHarness> {
   expect(fetchedKept.ok, JSON.stringify(fetchedKept)).toBe(true);
   const fetched = await device.call("blob", hashOf(FETCHED));
   expect(fetched.ok, JSON.stringify(fetched)).toBe(true);
-  const source = join(mkdtempSync(join(tmpdir(), "marfa-remove-")), "unsent");
+  const source = join(tempFolder("marfa-remove-"), "unsent");
   writeFileSync(source, UNSENT);
   const queued = await device.call("putBlob", source, "text/plain");
   expect(queued.ok, JSON.stringify(queued)).toBe(true);

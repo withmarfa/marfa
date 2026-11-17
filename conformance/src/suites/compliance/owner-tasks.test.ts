@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   approvedApp,
@@ -11,6 +9,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The owner's tasks, open to any credential that holds the permission each
@@ -20,7 +19,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
  * backup folder so the backup doors answer past their access check.
  */
 let server: FreshServer;
-const backups = mkdtempSync(join(tmpdir(), "marfa-owner-tasks-"));
+const backups = tempFolder("marfa-owner-tasks-");
 const SOURCE = "owner-tasks";
 let minted = 0;
 

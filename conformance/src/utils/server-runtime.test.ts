@@ -2,17 +2,16 @@ import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { tempFolder } from "./temp-folder.js";
 
 const supervisor = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -35,7 +34,7 @@ describe("the supervised server runtime", () => {
   it.each(["SIGINT", "SIGTERM"] as const)(
     "records the server's clean exit when %s arrives during synchronous work",
     async (signal) => {
-      const state = mkdtempSync(join(tmpdir(), "marfa-runtime-stop-"));
+      const state = tempFolder("marfa-runtime-stop-");
       const script = join(state, "busy.mjs");
       const entered = join(state, "entered");
       const finished = join(state, "finished");

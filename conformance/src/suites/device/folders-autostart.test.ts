@@ -5,10 +5,8 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   renameSync,
   readFileSync,
-  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -18,7 +16,6 @@ import {
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { keychainEnv } from "../../utils/keychain.js";
@@ -27,6 +24,7 @@ import type { FolderHarness } from "./harness.js";
 import type { HeldCommand } from "../../device/cli-adapter.js";
 import { put, scriptFolderWrites, sentTitles } from "./folders.shared.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Folder syncing from login. No fixture installs a real login agent or
@@ -234,9 +232,7 @@ interface ManagerState {
 
 /** A stand-in home with its fake service manager. */
 function standIn(label: string): string {
-  const root = mkdtempSync(
-    join(realpathSync(tmpdir()), `marfa-autostart-${label}-`),
-  );
+  const root = tempFolder(`marfa-autostart-${label}-`);
   roots.push(root);
   mkdirSync(join(root, "bin"));
   for (const tool of ["launchctl", "systemctl"]) {
@@ -1826,9 +1822,7 @@ describe("the watch run by a service manager", () => {
   it("moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one", async () => {
     const harness = await folderHarness("autostart-log-start");
     made.push(harness);
-    const dir = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-autostart-log-"),
-    );
+    const dir = tempFolder("marfa-autostart-log-");
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     const log = join(dir, "logs", "folder-watch.log");
     mkdirSync(dirname(log));
@@ -1853,9 +1847,7 @@ describe("the watch run by a service manager", () => {
   it("moves the log aside once it reaches 1 MiB while the watch runs", async () => {
     const harness = await folderHarness("autostart-log-running");
     made.push(harness);
-    const dir = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-autostart-log-"),
-    );
+    const dir = tempFolder("marfa-autostart-log-");
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
     const log = join(dir, "folder-watch.log");
     const watch = harness.folder
@@ -1895,9 +1887,7 @@ function threadPriorities(pid: number): string[] {
 
 /** A log path in a directory of the test's own. */
 function logIn(label: string): string {
-  const dir = mkdtempSync(
-    join(realpathSync(tmpdir()), `marfa-autostart-${label}-`),
-  );
+  const dir = tempFolder(`marfa-autostart-${label}-`);
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   return join(dir, "folder-watch.log");
 }
@@ -1923,7 +1913,7 @@ function stopAgent(root: string): void {
  * application read it, which is set as the item is made, never changed later.
  */
 function ownKeychain(): { path: string; remove: () => void } {
-  const folder = mkdtempSync(join(tmpdir(), "marfa-autostart-keychain-"));
+  const folder = tempFolder("marfa-autostart-keychain-");
   const path = join(folder, "credentials.keychain-db");
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);

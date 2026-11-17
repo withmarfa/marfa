@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
 import { connect } from "node:net";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { serverProgram } from "../../../scripts/marfa-server.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -45,7 +45,7 @@ async function holdRequest(socketPath: string): Promise<() => Promise<number>> {
 
 async function fixture() {
   const program = serverProgram();
-  const root = await mkdtemp(join(await realpath(tmpdir()), "marfa-restart-"));
+  const root = tempFolder("restart-");
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const socket = join(root, "control.sock");
   const env = {

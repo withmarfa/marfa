@@ -2153,7 +2153,7 @@ mod tests {
             "witness: the unbound file is present when readable"
         );
         folder.health_observe(false, true, None, None, false);
-        std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _shut = crate::test_folders::locked(&child, 0o000);
         let scan = folder.scan().unwrap();
         assert!(
             scan.directories

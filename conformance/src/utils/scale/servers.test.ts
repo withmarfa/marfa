@@ -1,12 +1,12 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { liveServerIn, StartedServers } from "./servers.js";
+import { tempFolder } from "../temp-folder.js";
 
 let state: string;
 beforeEach(() => {
-  state = mkdtempSync(join(tmpdir(), "marfa-scale-servers-"));
+  state = tempFolder("marfa-scale-servers-");
 });
 afterEach(() => {
   rmSync(state, { recursive: true, force: true });
@@ -37,7 +37,7 @@ describe("StartedServers", () => {
   });
 
   it("stops the servers it started, whether or not one fails to stop", async () => {
-    const other = mkdtempSync(join(tmpdir(), "marfa-scale-servers-"));
+    const other = tempFolder("marfa-scale-servers-");
     try {
       const started = new StartedServers();
       started.starting(state);

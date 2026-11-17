@@ -1,13 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -20,6 +12,7 @@ import {
   trackItem,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -41,7 +34,7 @@ function value<T>(result: Outcome<T>): T {
 }
 
 it("resolves body links through real server lookup and keeps their removal after pull", async () => {
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-body-links-"));
+  const dir = tempFolder("marfa-body-links-");
   const folder = new CliFolder(dir, {
     binary: requireBinary(),
     url: apiUrl,

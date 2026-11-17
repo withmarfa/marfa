@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackFolder } from "../../utils/setup.js";
@@ -10,6 +9,7 @@ import { keychainEnv } from "../../utils/keychain.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import { answers } from "../../device/marfa-answers.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The exit codes `marfa --help` documents but Ctrl-C's 130, which
@@ -24,7 +24,7 @@ let dir: string;
 
 beforeAll(async () => {
   c = await cliContext("exits");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-exits-"));
+  dir = tempFolder("marfa-cli-exits-");
 });
 
 afterAll(async () => {

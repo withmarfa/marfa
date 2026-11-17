@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readLineFile } from "../../utils/archive.js";
 import { cleanup, trackItem } from "../../utils/setup.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /** An instance's archive from the terminal: written to a file, and taken back. */
 
@@ -14,7 +14,7 @@ let dir: string;
 
 beforeAll(async () => {
   c = await cliContext("instance-archive");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-instance-archive-"));
+  dir = tempFolder("marfa-cli-instance-archive-");
 });
 
 afterAll(async () => {

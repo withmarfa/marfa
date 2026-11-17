@@ -77,13 +77,9 @@ impl Registry {
     /// otherwise list its folders in the machine's own.
     #[cfg(test)]
     fn unnamed() -> Option<Registry> {
-        static OWN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-        let dir = OWN.get_or_init(|| {
-            tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap())
-                .expect("a temporary directory for the tests' folder registry")
-                .keep()
-        });
-        Some(Registry::at(dir.join(FILE_NAME)))
+        Some(Registry::at(
+            crate::test_folders::process_folder().join(FILE_NAME),
+        ))
     }
 
     pub fn path(&self) -> &Path {
@@ -2115,7 +2111,7 @@ pub(crate) mod tests {
         use std::os::unix::fs::PermissionsExt;
         let shut = Registry::at(root.path().join("shut.json"));
         std::fs::write(shut.path(), b"").unwrap();
-        std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _sealed = crate::test_folders::locked(shut.path(), 0o000);
         assert!(add(&shut, &one, "f1", None).is_err());
         std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read(shut.path()).unwrap(), b"");

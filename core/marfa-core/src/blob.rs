@@ -3309,7 +3309,7 @@ pub(crate) mod tests {
             let folder = path.parent().unwrap().to_path_buf();
             // The witness: it counts and trims while the folder is readable.
             assert_eq!(total(&cache), Ok(16));
-            fs::set_permissions(&folder, fs::Permissions::from_mode(0o000)).unwrap();
+            let _shut = crate::test_folders::locked(&folder, 0o000);
             let sealed = fs::read_dir(&folder).is_err() && File::open(&path).is_err();
             let counted = total(&cache);
             let taken = cache.trim(&HashSet::new(), &HashSet::new(), |_| Some(0));
@@ -3367,7 +3367,6 @@ pub(crate) mod tests {
     #[cfg(unix)]
     #[test]
     fn the_bytes_held_are_read_without_opening_each_file() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("anchored");
         fs::create_dir(&root).unwrap();
@@ -3381,7 +3380,7 @@ pub(crate) mod tests {
             let (_, sealed) = kept(&cache, b"sealed....", 100);
             // The witness: both count while both can be opened.
             assert_eq!(total(&cache), Ok(20));
-            fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+            let _shut = crate::test_folders::locked(&sealed, 0o000);
             assert!(
                 File::open(&sealed).is_err(),
                 "the file could still be opened"

@@ -4,17 +4,14 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,6 +34,7 @@ import {
   startHarness,
   type Harness,
 } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A store SQLite cannot read, damaged here by overwriting the page that
@@ -490,10 +488,7 @@ describe("setting a damaged store aside", () => {
   it("sets aside a device's own store kept in a folder named like a folder's state", async () => {
     const { harness } = await storeWith("set-aside-in-state", 1);
     damageTable(harness.device.store, "items");
-    const state = join(
-      mkdtempSync(join(realpathSync(tmpdir()), "marfa-device-state-")),
-      ".marfa",
-    );
+    const state = join(tempFolder("marfa-device-state-"), ".marfa");
     mkdirSync(state);
     const at = (name: string) => {
       const store = join(state, name);
@@ -627,7 +622,7 @@ describe("setting a damaged store aside", () => {
         0,
       );
       const { device } = made;
-      const file = join(realpathSync(tmpdir()), `marfa-offline-${damaged}.txt`);
+      const file = join(tempFolder("marfa-offline-"), `${damaged}.txt`);
       writeFileSync(file, `offline bytes ${damaged}`);
       expect((await device.addFile(file)).ok).toBe(true);
       expect((await device.fileBudget("0")).ok).toBe(true);

@@ -1,7 +1,6 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -10,7 +9,6 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -41,6 +39,7 @@ import {
   sentUpdates,
 } from "./folders.shared.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * `folders watch` with no directory: one process keeping every folder the
@@ -363,9 +362,7 @@ describe("a watch of every folder", () => {
     const a = await folderHarness("every-missing", { settings: tagged("a") });
     made.push(a);
     scriptFolderWrites(a);
-    const root = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-every-missing-"),
-    );
+    const root = tempFolder("marfa-every-missing-");
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     // Folders deleted long ago, as test runs leave behind.
     const gone = Array.from({ length: 40 }, (_, n) =>
@@ -516,7 +513,7 @@ describe("a watch of every folder", () => {
     const { a, others } = await twoFolders("every-joins-server", {
       others: [tagged("c"), tagged("d")],
     });
-    const root = mkdtempSync(join(realpathSync(tmpdir()), "marfa-every-"));
+    const root = tempFolder("marfa-every-");
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     const registry = join(root, "registry", "folders.json");
     const watch = hold(
@@ -890,7 +887,7 @@ describe("a watch of every folder", () => {
  * application read it, which is set as the item is made, never changed later.
  */
 function ownKeychain(): { path: string; remove: () => void } {
-  const folder = mkdtempSync(join(tmpdir(), "marfa-every-keychain-"));
+  const folder = tempFolder("marfa-every-keychain-");
   const path = join(folder, "credentials.keychain-db");
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);

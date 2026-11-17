@@ -3,15 +3,12 @@ import {
   closeSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
-  realpathSync,
   readdirSync,
   statSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +44,7 @@ import {
   type WireEdgeOptions,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A device and the server it talks to, both under the fixture's control.
@@ -1058,9 +1056,7 @@ export async function folderHarness(
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
-  const root = mkdtempSync(
-    join(realpathSync(tmpdir()), `marfa-folder-${label}-`),
-  );
+  const root = tempFolder(`marfa-folder-${label}-`);
   const dir = join(root, "notes");
   const registry = options.registry ?? join(root, "registry", "folders.json");
   const folder = new CliFolder(dir, {
@@ -1185,10 +1181,7 @@ export function scriptBlob(
 
 /** A file on disk, for a fixture that uploads or attaches one. */
 export function fileOf(name: string, contents: string | Buffer): string {
-  const path = join(
-    mkdtempSync(join(realpathSync(tmpdir()), "marfa-file-")),
-    name,
-  );
+  const path = join(tempFolder("marfa-file-"), name);
   writeFileSync(path, contents);
   return path;
 }

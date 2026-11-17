@@ -10,15 +10,18 @@ import {
   statSync,
   realpathSync,
   cpSync,
-  mkdtempSync,
 } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { CliFolder } from "../../device/cli-adapter.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import {
+  detachImage,
+  detachImageAtCleanup,
+  tempFolder,
+} from "../../utils/temp-folder.js";
 const execute = promisify(execFile);
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -963,9 +966,7 @@ it("keeps a file's permissions when a permission change is refused and continues
 
 it("chooses a bound path before path order when names compare equal", async () => {
   harness = await folderHarness("contract-b-case-sensitive");
-  const scratch = mkdtempSync(
-    join(realpathSync(tmpdir()), "marfa-case-sensitive-"),
-  );
+  const scratch = tempFolder("marfa-case-sensitive-");
   const mount = join(scratch, "volume");
   mkdirSync(mount);
   let attached = false;
@@ -993,6 +994,7 @@ it("chooses a bound path before path order when names compare equal", async () =
         "-noautoopen",
       ]);
       attached = true;
+      detachImageAtCleanup(mount);
     }
     const dir = join(mount, "notes");
     cpSync(harness.dir, dir, { recursive: true });
@@ -1024,7 +1026,7 @@ it("chooses a bound path before path order when names compare equal", async () =
     const renamed = await harness.folder.scan();
     expect(renamed.ok && renamed.value.created).toBe(1);
   } finally {
-    if (attached) await execute("hdiutil", ["detach", mount]);
+    if (attached) detachImage(mount);
     rmSync(scratch, { recursive: true, force: true });
   }
 });
@@ -1264,7 +1266,7 @@ describe("exFAT permissions", ON_MACOS, () => {
   it("leaves file and item executable values alone on an exFAT volume", async () => {
     harness = await fileHarness("contract-b-exfat");
     expect((await harness.folder.pull()).ok).toBe(true);
-    const scratch = mkdtempSync(join(realpathSync(tmpdir()), "marfa-exfat-"));
+    const scratch = tempFolder("marfa-exfat-");
     const mount = join(scratch, "volume");
     mkdirSync(mount);
     const image = join(scratch, "volume.sparseimage");
@@ -1291,6 +1293,7 @@ describe("exFAT permissions", ON_MACOS, () => {
         "-noautoopen",
       ]);
       attached = true;
+      detachImageAtCleanup(mount);
       const dir = join(mount, "notes");
       cpSync(harness.dir, dir, { recursive: true });
       rmSync(harness.dir, { recursive: true });
@@ -1318,7 +1321,7 @@ describe("exFAT permissions", ON_MACOS, () => {
       expect(statSync(path).mode & 0o777).toBe(originalMode);
       expect(readFileSync(path, "utf8")).toBe("file bytes");
     } finally {
-      if (attached) await execute("hdiutil", ["detach", mount]);
+      if (attached) detachImage(mount);
       rmSync(scratch, { recursive: true, force: true });
     }
   });

@@ -1,12 +1,4 @@
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -47,6 +39,7 @@ import {
 import { waitFor } from "../../utils/wait.js";
 import { beatReceiver } from "../../utils/beat-receiver.js";
 import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * What a restore leaves when it does not finish, and what other requests see
@@ -834,7 +827,7 @@ describe("a writer while a restore writes", () => {
 });
 
 describe("a backup asked for while a restore runs", () => {
-  const folder = mkdtempSync(join(tmpdir(), "marfa-restore-faults-backup-"));
+  const folder = tempFolder("marfa-restore-faults-backup-");
   let backingUp: FreshServer;
 
   beforeAll(async () => {

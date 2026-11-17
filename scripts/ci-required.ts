@@ -428,7 +428,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // each set from the import graph and fails when a helper is in the wrong
   // rule, so a new import moves a helper here.
   [
-    /^conformance\/src\/utils\/(approval-form|control-request|fresh-server|server-process|target)\.ts$/,
+    /^conformance\/src\/utils\/(approval-form|control-request|fresh-server|server-process|target|temp-folder)\.ts$/,
     [...FIXTURES, "restore-drill", "mcp-conformance", RELEASE],
   ],
   [
@@ -445,7 +445,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [...FIXTURES, "mcp-conformance"],
   ],
   [
-    /^conformance\/src\/utils\/(platform|fresh-server-teardown|rust-score)\.ts$/,
+    /^conformance\/src\/utils\/(platform|fresh-server-teardown|temp-folder-teardown|rust-score)\.ts$/,
     [...FIXTURES, RELEASE],
   ],
   [/^conformance\/src\/utils\//, FIXTURES],
@@ -705,7 +705,7 @@ const LINT_SETTINGS =
  * from the import graph and fails when this list is not exactly them.
  */
 const LINT_IMPORTED =
-  /^(conformance\/(vitest\.config\.ts|scripts\/(catalogue-sources|mcp-conformance)\.ts|src\/utils\/(catalogue-tables|rust-score|shard-sequencer|shard-weights|target)\.ts)|packages\/client\/src\/generated\/.+|packages\/types\/generated\/icon-set-[\w-]+\.json)$/;
+  /^(conformance\/(vitest\.config\.ts|scripts\/(catalogue-sources|mcp-conformance)\.ts|src\/utils\/(catalogue-tables|rust-score|shard-sequencer|shard-weights|target|temp-folder)\.ts)|packages\/client\/src\/generated\/.+|packages\/types\/generated\/icon-set-[\w-]+\.json)$/;
 
 /** Whether a change to the path can change what `Lint` reports. */
 function lintReads(path: string): boolean {

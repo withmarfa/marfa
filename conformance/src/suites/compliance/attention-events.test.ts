@@ -1,9 +1,7 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, renameSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { renameSync, rmSync } from "node:fs";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -13,6 +11,7 @@ import { controlRequest } from "../../utils/control-request.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { waitFor } from "../../utils/wait.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Each new entry in what needs the owner's attention is an event, on
@@ -23,7 +22,7 @@ import { waitFor } from "../../utils/wait.js";
  */
 let server: FreshServer;
 let writer: string;
-const backups = mkdtempSync(join(tmpdir(), "marfa-attention-events-"));
+const backups = tempFolder("marfa-attention-events-");
 
 beforeAll(async () => {
   server = await bootFreshServer("attention-events", {

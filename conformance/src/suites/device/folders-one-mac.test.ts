@@ -5,7 +5,6 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   realpathSync,
   readFileSync,
   readlinkSync,
@@ -17,7 +16,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -27,6 +25,7 @@ import {
   wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 import {
   KEY,
   acceptUploads,
@@ -3017,7 +3016,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   });
 
   it("keeps its registry under the home by default", async () => {
-    const home = mkdtempSync(join(realpathSync(tmpdir()), "marfa-home-"));
+    const home = tempFolder("marfa-home-");
     harness = await folderHarness("home-registry", { home });
     const registry =
       process.platform === "darwin"

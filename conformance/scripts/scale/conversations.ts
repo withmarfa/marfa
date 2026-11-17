@@ -1,5 +1,5 @@
-import { createWriteStream, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { loadavg, tmpdir } from "node:os";
+import { createWriteStream, readFileSync, rmSync } from "node:fs";
+import { loadavg } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -39,6 +39,7 @@ import {
   upTo,
   whole,
 } from "./standalone.js";
+import { tempFolder } from "../../src/utils/temp-folder.js";
 
 const TABLE = "messages";
 /** Messages that arrive last but were sent before every other, as an offline device's do. */
@@ -122,8 +123,7 @@ export async function conversations(): Promise<void> {
   const add = (figure: Figure, goal: Parameters<Scoreboard["add"]>[1]) =>
     board.add(figure, goal);
 
-  const work =
-    opts.state ?? mkdtempSync(join(tmpdir(), "marfa-scale-conversations-"));
+  const work = opts.state ?? tempFolder("marfa-scale-conversations-");
   const stateA = join(work, "a");
   const stateB = join(work, "b");
   const started = new StartedServers();

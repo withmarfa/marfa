@@ -8,7 +8,6 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MarfaClient } from "../../client/api.js";
 import {
@@ -20,6 +19,7 @@ import { bytesOf, clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { damageBlobs, loseBlobs } from "../../utils/store-faults.js";
 import { carriedFiles, notCarried, tar } from "../../utils/archive.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * An archive the server writes whole but for blobs no store could read, as
@@ -39,7 +39,7 @@ beforeAll(async () => {
   server = await bootFreshServer("cli-archive-blobs", DISK_ONLY);
   ({ working } = clientsFor(server));
   cli = new Cli(requireBinary(), server.apiUrl, server.workingKey);
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-archive-blobs-"));
+  dir = tempFolder("marfa-cli-archive-blobs-");
 
   const upload = await working.uploadBlob(
     bytesOf("a blob whose file leaves the disk", 120),

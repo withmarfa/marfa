@@ -698,6 +698,10 @@ mod tests {
         fs::create_dir_all(real.join("blobs")).unwrap();
         let link = holder.join("via");
         std::os::unix::fs::symlink(&real, &link).unwrap();
+        let _unlocked = (
+            marfa_acl::testing::unlocked_after(&link),
+            marfa_acl::testing::unlocked_after(&holder),
+        );
         let blobs = link.join("blobs");
         let chmod_acl = |args: &[&std::ffi::OsStr]| {
             let done = std::process::Command::new("/bin/chmod").args(args).status();

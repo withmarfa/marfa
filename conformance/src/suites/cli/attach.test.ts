@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackItem, trackKey } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope, Refusal } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A file attached to a note: its bytes stored by hash, a file item carrying
@@ -17,7 +17,7 @@ let dir: string;
 
 beforeAll(async () => {
   c = await cliContext("attach");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-attach-"));
+  dir = tempFolder("marfa-cli-attach-");
 });
 
 afterAll(async () => {

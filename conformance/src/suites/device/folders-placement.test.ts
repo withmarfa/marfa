@@ -3,8 +3,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
-  realpathSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -15,7 +13,6 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -70,6 +67,7 @@ import {
   sentUpdates,
   withFault,
 } from "./folders.shared.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /** Document names in the three extensions and more than one letter case. */
 const DOC_NAMES = ["notes.md", "NOTES.MD", "Notes.Markdown", "Notes.TXT"];
@@ -813,9 +811,7 @@ describe("where a file sits", () => {
   });
 
   it("places a file whose placement another item holds beside it, and writes none where its placement is unsafe", async () => {
-    const outside = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-folder-elsewhere-"),
-    );
+    const outside = tempFolder("marfa-folder-elsewhere-");
     // Placed in this order, so each edge is older than the next.
     const notes: Placed[] = [
       {
@@ -2414,9 +2410,7 @@ describe("where a file sits", () => {
       const row = scriptFolderItem(server, {
         query: { types: ["core.note"] },
       });
-      const parent = mkdtempSync(
-        join(realpathSync(tmpdir()), "marfa-folder-no-placement-"),
-      );
+      const parent = tempFolder("marfa-folder-no-placement-");
       const dir = join(parent, "notes");
       const folder = new CliFolder(dir, {
         binary: requireBinary(),

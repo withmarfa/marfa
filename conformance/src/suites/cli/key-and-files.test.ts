@@ -4,14 +4,13 @@ import type { IncomingMessage, Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   existsSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { networkInterfaces, tmpdir } from "node:os";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -24,6 +23,7 @@ import {
 } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let c: CliContext;
 let dir: string;
@@ -32,7 +32,7 @@ const servers: Server[] = [];
 
 beforeAll(async () => {
   c = await cliContext("key-and-files");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-key-and-files-"));
+  dir = tempFolder("marfa-cli-key-and-files-");
   const current = await fetch(`${c.apiUrl}/keys/current`, {
     headers: { authorization: `Bearer ${c.apiKey}` },
   });

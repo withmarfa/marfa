@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   chapterNames,
@@ -12,6 +11,7 @@ import {
   statementText,
   withoutDefinitions,
 } from "./spec-statements.js";
+import { tempFolder } from "./temp-folder.js";
 
 // The chapters below are called `sample`, which no chapter is, so the IDs
 // written in this file are not read as references by the checks that walk
@@ -192,7 +192,7 @@ describe("the citations in a text", () => {
 });
 
 describe("the chapters in a directory", () => {
-  const directory = mkdtempSync(join(tmpdir(), "marfa-spec-statements-"));
+  const directory = tempFolder("marfa-spec-statements-");
   const write = (name: string, text: string) =>
     writeFileSync(join(directory, name), text);
   write("README.md", "### `sample/a`\n");

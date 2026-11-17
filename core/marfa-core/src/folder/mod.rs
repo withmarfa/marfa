@@ -7954,7 +7954,7 @@ mod tests {
         changed_elsewhere(&folder, &item_id, "from b");
         let path = dir.path().join("a.md");
         let before = std::fs::read(&path).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _sealed = crate::test_folders::locked(&path, 0o000);
         if std::fs::read(&path).is_ok() {
             // Run as a user every file is readable to.
             return;

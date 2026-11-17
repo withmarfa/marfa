@@ -1,13 +1,11 @@
 import {
   cpSync,
   existsSync,
-  mkdtempSync,
   openSync,
   rmSync,
   writeSync,
   closeSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -20,6 +18,7 @@ import {
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 const NOTE = "core.note";
 const SOURCE = "durability";
@@ -96,7 +95,7 @@ function writers(confirmed: Confirmed, running: () => boolean) {
 
 /** `PRAGMA integrity_check` of the files as a kill left them, read from a copy. */
 function integrityOfCopy(sqlitePath: string): string[] {
-  const copy = mkdtempSync(join(tmpdir(), "marfa-durability-"));
+  const copy = tempFolder("marfa-durability-");
   try {
     cpSync(sqlitePath, join(copy, "marfa.db"));
     if (existsSync(`${sqlitePath}-wal`))

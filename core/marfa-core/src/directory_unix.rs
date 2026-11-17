@@ -538,7 +538,7 @@ mod tests {
         let root = Directory::open(&path).unwrap();
         std::fs::write(path.join("file"), b"original").unwrap();
         let expected = std::fs::metadata(path.join("file")).unwrap().ino();
-        std::fs::set_permissions(path.join("file"), std::fs::Permissions::from_mode(0o0)).unwrap();
+        let _sealed = crate::test_folders::locked(path.join("file"), 0o0);
         assert!(root.read(Path::new("file")).is_err());
         #[cfg(target_vendor = "apple")]
         assert_eq!(

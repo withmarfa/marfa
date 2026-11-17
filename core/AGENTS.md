@@ -42,6 +42,11 @@ These rules add to the root `AGENTS.md` for work under `core/`. Under `core/marf
 - An integration test that needs a keychain uses `marfa-cli/tests/isolated/mod.rs`, which gives it a keychain file of its own. CI runs the macOS tests under `scripts/login-keychain-unchanged.sh`, which fails a run that changed the login keychain's `marfa` entries.
 - Never run `marfa login` or `marfa keys keep` against the login keychain.
 
+## Tests remove what they make
+
+- A test that locks a folder (a mode with no write or no read, an ACL entry) holds it with a guard that unlocks it when dropped, declared after the `TempDir`: `crate::test_folders::locked` in `marfa-core`, `marfa_acl::testing::locked` or `unlocked_after` elsewhere. A test that fails while a folder is locked would otherwise leave a `.tmp*` folder behind.
+- A folder that lasts the whole test process comes from `crate::test_folders::process_folder`, which removes it when the process exits, not from `TempDir::keep`.
+
 ## What telemetry may record
 
 - The core records only an operation's name, a count, an outcome word, a write's kind, an HTTP status and an error code. Never an item's content, title, tag, id or key, a credential, an address, a header, a path, a query or an error message. `marfa-core/src/telemetry_tests.rs` fails if a recognizable secret reaches a span or an event.

@@ -3,7 +3,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -12,7 +11,6 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -44,6 +42,7 @@ import {
 } from "../../utils/own-blob-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Backups in parts: each backup is a manifest naming parts stored under
@@ -104,7 +103,7 @@ function bucketPlace(): Place {
 }
 
 function folderPlace(): Place {
-  const root = mkdtempSync(join(tmpdir(), "marfa-backup-parts-"));
+  const root = tempFolder("marfa-backup-parts-");
   const parts = (instance: string) => join(root, "backup-parts", instance);
   const backups = (instance: string) => join(root, "backups", instance);
   return {
