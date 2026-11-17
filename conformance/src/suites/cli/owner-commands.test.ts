@@ -397,14 +397,32 @@ it("refuses a mint through the private socket that names no access, and mints ev
   expect(bare.code).toBe(2);
   expect(bare.envelope.error.code).toBe("usage");
   expect(bare.envelope.error.server).toBeNull();
-  for (const flag of ["--permission", "--no-permissions", "--all-access"]) {
+  for (const flag of [
+    "--permission",
+    "--type-permission",
+    "--extension-permission",
+    "--edge-permission",
+    "--metadata-permission",
+    "--profile-permission",
+    "--claim",
+    "--no-permissions",
+    "--all-access",
+  ]) {
     expect(bare.envelope.error.message).toContain(flag);
   }
-  const conflicting = await local.refused(
-    mint("--all-access", "--permission", "audit.read"),
-  );
-  expect(conflicting.code).toBe(2);
-  expect(conflicting.envelope.error.code).toBe("usage");
+  for (const narrower of [
+    ["--permission", "audit.read"],
+    ["--type-permission", "core.note=read"],
+    ["--extension-permission", "*=read"],
+    ["--edge-permission", "*=read"],
+    ["--metadata-permission", "*=read"],
+    ["--profile-permission", "*=read"],
+    ["--no-permissions"],
+  ]) {
+    const conflicting = await local.refused(mint("--all-access", ...narrower));
+    expect(conflicting.code, narrower.join(" ")).toBe(2);
+    expect(conflicting.envelope.error.code, narrower.join(" ")).toBe("usage");
+  }
   expect(
     (await local.json<{ data: Array<{ id: string }> }>(["keys", "list"])).data,
     "a refused mint made a key",
