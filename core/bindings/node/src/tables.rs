@@ -35,6 +35,22 @@ impl From<marfa_core::FillReport> for TableFill {
     }
 }
 
+/// A table the copy holds, or held, whose state or rows changed.
+#[napi(object)]
+pub struct ChangedTable {
+    pub item: String,
+    pub table: String,
+}
+
+impl From<marfa_core::ChangedTable> for ChangedTable {
+    fn from(changed: marfa_core::ChangedTable) -> Self {
+        ChangedTable {
+            item: changed.item,
+            table: changed.table,
+        }
+    }
+}
+
 /// A read of a table's rows, as `GET /items/{id}/tables/{table}/rows` takes it.
 #[napi(object)]
 pub struct RowsAsked {

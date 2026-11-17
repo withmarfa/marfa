@@ -1478,6 +1478,61 @@ describe("telling an app which tables changed", () => {
   }, 60_000);
 });
 
+describe("telling an app which tables a catch-up filled", () => {
+  it("names a table that only a catch-up filled, though no row of it was written", async () => {
+    const type = await tableType();
+    const held = await itemOf(type);
+    await write(held, [{ op: "put", values: { count: 1 } }]);
+    const device = await hydrated([type], "changed-by-catch-up");
+    value(await device.holdTable(type, "steps"));
+    value(await device.catchUp());
+
+    const arrived = await itemOf(type);
+    const caught = value(await device.catchUp());
+    expect(
+      caught.tables.whole,
+      "the catch-up did not fill the table of the item that arrived, so it proves nothing about naming a fill",
+    ).toBe(1);
+    expect(
+      caught.changed_tables,
+      "a table made whole by the catch-up's fill alone, with no event for a row, was not named",
+    ).toEqual([{ item: arrived, table: "steps" }]);
+
+    const again = value(await device.catchUp());
+    expect(
+      [again.tables.whole, again.changed_tables],
+      "a catch-up that filled nothing named a table",
+    ).toEqual([0, []]);
+  }, 60_000);
+});
+
+describe("telling an app more tables changed than it would take", () => {
+  it("answers everything when more tables changed than it would take, though few items changed", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const other = await itemOf(type);
+    for (const held of [item, other]) {
+      await write(held, [{ op: "put", values: { count: 1 } }]);
+    }
+    const device = await hydrated([type], "changed-tables-most");
+    const start = value(await device.changed());
+    value(await device.holdTable(type, "steps"));
+
+    const wide = value(await device.changed({ since: start.cursor, most: 2 }));
+    expect(
+      [wide.everything, wide.items, wide.tables.length],
+      "the witness failed: two tables changed, and a limit of two did not name them with no item",
+    ).toEqual([false, [], 2]);
+    const narrow = value(
+      await device.changed({ since: start.cursor, most: 1 }),
+    );
+    expect(
+      [narrow.everything, narrow.tables],
+      "more tables changed than the limit, with items under it, and the device named them",
+    ).toEqual([true, []]);
+  }, 60_000);
+});
+
 describe("a gap in the stream", () => {
   it("fills its tables again when its cursor ages out, with the rows changed meanwhile", async () => {
     const type = await tableType();

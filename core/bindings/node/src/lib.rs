@@ -318,6 +318,9 @@ pub struct CatchUpReport {
     pub catalog_changed: bool,
     /// The fill of the tables the copy holds that were not whole.
     pub tables: tables::TableFill,
+    /// The tables whose state or rows the catch-up changed, its fill and the
+    /// events it applied included.
+    pub changed_tables: Vec<tables::ChangedTable>,
 }
 
 impl From<marfa_core::CatchUpReport> for CatchUpReport {
@@ -329,6 +332,7 @@ impl From<marfa_core::CatchUpReport> for CatchUpReport {
             cursor: report.cursor,
             catalog_changed: report.catalog_changed,
             tables: report.tables.into(),
+            changed_tables: report.changed_tables.into_iter().map(Into::into).collect(),
         }
     }
 }

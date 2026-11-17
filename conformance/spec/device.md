@@ -2244,7 +2244,7 @@ When a caller asks what changed in its copy since a cursor the same store answer
 
 When a catch-up ends on its live marker, a device MUST report in `changed_tables` each table whose state or rows the catch-up changed, its fill and the events it applied included, by its item and its name.
 
-**Tests:** `device/tables-live.test.ts › names the table a fill filled and a later change to it, and no table when none changed`.
+**Tests:** `device/tables-live.test.ts › names the table a fill filled and a later change to it, and no table when none changed`, `› names a table that only a catch-up filled, though no row of it was written`.
 
 ### `device/changed-edge-ends`
 
@@ -2276,7 +2276,7 @@ If more items, more edges or more tables changed since a cursor than the caller 
 
 **Reason:** past some number of changes a whole read is cheaper than a reread of each, and the caller says where that is. The CLI takes it as `--most`, 1000 unless named.
 
-**Tests:** `device/batch-reads.test.ts › answers everything for a cursor it cannot follow one by one`.
+**Tests:** `device/batch-reads.test.ts › answers everything for a cursor it cannot follow one by one`, `device/tables-live.test.ts › answers everything when more tables changed than it would take, though few items changed`.
 
 ### `device/changed-partial-refused`
 
