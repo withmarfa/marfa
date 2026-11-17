@@ -399,19 +399,7 @@ describe("password sign-in", () => {
           expect([401, 429]).toContain(response.status);
         }
       }
-      console.log(
-        "DBG59",
-        (await signIn(ownersCount, OWNER.password, "10.8.90.1")).status,
-      );
       await ownersCount.advanceClock(2 * 60 * 1000);
-      console.log(
-        "DBG61w",
-        (await signIn(ownersCount, "x", "10.8.91.1")).status,
-      );
-      console.log(
-        "DBG61r",
-        (await signIn(ownersCount, OWNER.password, "10.8.92.1")).status,
-      );
       const control: number[] = [];
       for (let i = 0; i < 11; i++) {
         control.push(

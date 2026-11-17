@@ -228,7 +228,7 @@ If the attempt windows `authentication/confirm-lanes` names are spent, then the 
 
 If a hundred passwords for the owner without a known device cookie have been counted in an hour, counting password sign-in attempts at the owner's email and passwords sent to `POST /auth/confirm`, `POST /auth/owner/password` and `PUT /owner/password`, then the server MUST answer the next password sent to one of those three doors without a known device cookie `429 rate_limited` with `Retry-After`, without judging the password.
 
-**Reason:** Every password tried for the owner from a browser the server does not know stays within one hundred an hour, whichever door it comes by, so a wrong current password spends the count a wrong password at sign-in spends. A right password that acts is taken back, so the owner's own confirmations and changes spend nothing while the count has room.
+**Reason:** Every password tried for the owner from a browser the server does not know stays within one hundred an hour, whichever door it comes by, so a wrong current password spends the count a wrong password at sign-in spends. A right password that acts is taken back, so the owner's own confirmations and changes spend nothing while the count has room. While it is spent, a known device and a passkey still confirm the owner.
 
 **Tests:** `compliance/owner-password.test.ts › counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's email`.
 
