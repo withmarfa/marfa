@@ -2835,7 +2835,7 @@ If every address together has made a hundred counted password sign-in attempts i
 
 While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in without a known device cookie names the owner's email and the right password, and fewer than a hundred attempts at the owner's email without a known device cookie have been counted in the hour, the server MUST sign the owner in.
 
-**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. While that limit is spent, an attempt that cannot sign the owner in has no password checked: it waits in its email's own queue (`keys-and-oauth/sign-in-decoy-queue`) about as long as a check takes and is answered as a wrong password is, so it takes no place from an attempt at the owner's email.
+**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. While that limit is spent, an attempt that cannot sign the owner in has no password checked: it waits in its email's own queue (`keys-and-oauth/sign-in-decoy-queue`) as long as a checked attempt does and is answered as a wrong password is, so it takes no place from an attempt at the owner's email.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
 
@@ -2923,9 +2923,9 @@ When a password sign-in that carries no known device cookie names an email that 
 
 If the queue a password sign-in that carries no known device cookie waits in for its password check is full, then the server MUST answer the sign-in `429` with `Retry-After`, whatever email it names.
 
-**Reason:** Such sign-ins share one queue while the limit every address shares (`keys-and-oauth/sign-in-account-limit`) has room, and after that each email has a queue of its own of the same size. A sign-in at an email with no account still does the work of a password check, and one whose password is not checked still holds its place and its turn in its queue as long as a check takes, so neither its time nor its queue tells it from a wrong password, and sign-ins at other emails take no place from the owner's. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
+**Reason:** Such sign-ins share one queue while the limit every address shares (`keys-and-oauth/sign-in-account-limit`) has room, and after that each email has a queue of its own of the same size. A sign-in at an email with no account still does the work of a password check. Each turn in these queues, whether its password is checked or not, lasts and is answered at the same length of time from when it began, longer than a check almost always takes, or when its check ends if that is later. So neither its time nor its queue tells it from a wrong password, and sign-ins at other emails take no place from the owner's. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
 
-**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any email, and answers one alone 401`.
+**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any email, and answers one alone 401`, `› answers sign-ins at one email 429 with Retry-After past the hour every address shares, and turns away at once those its queue has no place for`.
 
 ### `keys-and-oauth/register-address-limit`
 
