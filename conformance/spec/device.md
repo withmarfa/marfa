@@ -2316,7 +2316,7 @@ When a caller asks a device to count the links of an id, a device MUST answer th
 
 When a caller asks a device to count linked items, a device MUST NOT count an item that the server did not list to the credential, including an item the copy holds only because it is pinned.
 
-**Reason:** a pin keeps an item the credential's source filter or type reach leaves out of listings, and the server's count is the number a listing gives, which does not take that item in.
+**Reason:** a pin can keep an item that the credential can read by ID but its source filter excludes from listings (`reach/listed-by-id`).
 
 **Tests:** `device/counts-live.test.ts › does not count a pinned child the source filter hides, as the server does not`.
 

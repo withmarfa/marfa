@@ -1564,7 +1564,6 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     ));
                 }
             };
-            // The copy answers what it can; a session is needed only to ask the server.
             let local = {
                 let core = store.open(None)?;
                 core.counts(&ids, &counted)

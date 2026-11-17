@@ -82,10 +82,7 @@ fn distinct(ids: &[String]) -> Result<Vec<String>> {
     Ok(distinct)
 }
 
-/// Whether the copy holds every item the server could count: every tier and
-/// type, the active state, no narrowing by a filter or a place in the tree.
-/// An item such a copy lacks is one the credential does not list, which the
-/// server does not count either.
+/// A full slice can exclude an absent endpoint because the server's listing excludes it too.
 fn holds_every_listed_item(conn: &Connection) -> Result<bool> {
     let Some((types, tier)) = store::slice(conn)? else {
         return Ok(false);
@@ -105,16 +102,7 @@ fn holds_every_listed_item(conn: &Connection) -> Result<bool> {
     })
 }
 
-/// The server counts an item it lists to the credential that is active and
-/// not `system.*`. The copy applies the local list's own active-state
-/// clause, leaves out a row the server did not list (a pin it holds for a
-/// read by id), and refuses where an edge of the counted type reaches an
-/// item it lacks that the server might count.
-///
-/// An anchor needs no item here: an edge the copy holds was shown to the
-/// credential only because the server reads its from item, source filter
-/// included (`edges/read-source-filter`), so a `backref` anchor with an edge
-/// is one the server reads, and an `edge` anchor is not read at all.
+/// The server lists an edge only if its source item is visible (`edges/read-source-filter`).
 fn linked(
     conn: &Connection,
     catalog: &Catalog,
@@ -216,16 +204,10 @@ fn linked(
 }
 
 impl Core {
-    /// For each of up to `MOST_IDS` ids, once each in the order they first
-    /// appear, how many items an edge of the type links to it, or how many
-    /// rows it holds in a table. A count equals what a local list anchored
-    /// by the same `backref` or `edge` filter, with no `state`, lists: active
-    /// items only, none in the bin, archived or `system.*`. Links are counted
-    /// from the copy, and refused `Invalid` where it does not hold the edge
-    /// type whole or may lack an item the server counts that an edge reaches.
-    /// Rows are counted from the copy for a table it holds whole and by the
-    /// server for the rest, and the whole call is refused where the server
-    /// leaves an id out of its answer.
+    /// Counts linked items or table rows for up to [`MOST_IDS`] IDs, once per distinct ID in request order.
+    /// Link counts follow the server's anchored listing with its default state.
+    /// A link count returns `Invalid` if the copy lacks edges or items needed for the count.
+    /// The server counts rows for tables the copy does not hold whole. An omitted ID fails the call.
     pub fn counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
         let ids = distinct(ids)?;
         match counted {

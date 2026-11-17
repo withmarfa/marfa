@@ -64,14 +64,10 @@ impl From<marfa_core::ItemCount> for ItemCount {
 
 #[uniffi::export]
 impl Core {
-    /// For each of up to 100 ids, once each in the order they first appear,
-    /// how many active items an edge type links to it, by status group, or
-    /// how many rows it holds in a table: what a list anchored on the item
-    /// by the same `backref` or `edge` filter, naming no state, would list.
-    /// Links are counted from the copy and throw `Invalid` where it does not
-    /// hold the edge type whole or may lack an item the server counts that an
-    /// edge reaches, so ask the server then. Rows come from the copy for a table held whole and from
-    /// the server otherwise; `held` says which.
+    /// Counts linked items or table rows for up to 100 IDs, once per distinct ID in request order.
+    /// Link counts use the anchored listing's default state and include status groups.
+    /// They throw `Invalid` if the copy lacks edges or items needed for the count.
+    /// For row counts, `held` is true when the copy answered and false when the server answered.
     pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
         Ok(self
             .inner

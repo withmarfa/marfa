@@ -547,16 +547,28 @@ describe("a device counts as the server does", () => {
   });
 
   it("does not count a pinned child the source filter hides, as the server does not", async () => {
-    const device = await hydrated("unlisted", ["*"], EDGES, shownOnly, "all");
     const asked = [ids.sourceParent];
-    const before = value(await device.counts(asked, { backref: "parent-of" }));
+    const counted = { backref: "parent-of" };
+    const unfiltered = await hydrated(
+      "listed-pin",
+      ["*"],
+      EDGES,
+      server.workingKey,
+      "all",
+    );
+    value(await unfiltered.pin(ids.hiddenChild));
+    expect(
+      value(await unfiltered.counts(asked, counted)).counts[0]?.total,
+    ).toBe(2);
+    const device = await hydrated("unlisted", ["*"], EDGES, shownOnly, "all");
+    const before = value(await device.counts(asked, counted));
     expect(before.counts[0]?.total).toBe(1);
     // The witness: the pin brings the hidden child into the copy.
     value(await device.pin(ids.hiddenChild));
     expect(value(await device.get(ids.hiddenChild)).id).toBe(ids.hiddenChild);
-    const after = value(await device.counts(asked, { backref: "parent-of" }));
+    const after = value(await device.counts(asked, counted));
     expect(after.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
-      await served(asked, { backref: "parent-of" }, clientOf(shownOnly)),
+      await served(asked, counted, clientOf(shownOnly)),
     );
     expect(after.counts[0]?.total).toBe(1);
   });
@@ -587,10 +599,13 @@ describe("a device counts as the server does", () => {
       await served(asked, { backref: "parent-of" }, clientOf(shownOnly)),
     );
     expect(local.counts[0]?.total).toBe(1);
-    // The witness: the edge to the hidden child is in the copy, which lacks the child,
-    // and a copy of one type, which may lack a child the server counts, refuses.
     const edges = value(await whole.edgesFrom(ids.sourceParent));
     expect(edges.map((edge) => edge.to_id)).toContain(ids.hiddenChild);
+    expect(value(await whole.get(ids.shownChild)).id).toBe(ids.shownChild);
+    expect(await whole.get(ids.hiddenChild)).toMatchObject({
+      ok: false,
+      refusal: { code: "not_found", local: "not_held" },
+    });
     const narrow = await hydrated(
       "every-listed-narrow",
       [taskType],
