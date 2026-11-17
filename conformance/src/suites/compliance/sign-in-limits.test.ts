@@ -24,48 +24,62 @@ let known: FreshServer;
 let noted: FreshServer;
 let uncertain: FreshServer;
 let ownersEmail: FreshServer;
+let ownersCount: FreshServer;
 
 const DAY = 24 * 60 * 60 * 1000;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [shared, account, every, timed, known, noted, uncertain, ownersEmail] =
-    await Promise.all([
-      bootFreshServer("sign-in-limits", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-account", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-every-email", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-timed", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-known-device", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-noted", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-uncertain", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-      bootFreshServer("sign-in-limits-owners-email", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      }),
-    ]);
-}, 8 * FRESH_SERVER_TIMEOUT_MS);
+  [
+    shared,
+    account,
+    every,
+    timed,
+    known,
+    noted,
+    uncertain,
+    ownersEmail,
+    ownersCount,
+  ] = await Promise.all([
+    bootFreshServer("sign-in-limits", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-account", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-every-email", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-timed", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-known-device", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-noted", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-uncertain", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-owners-email", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-owners-count", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+  ]);
+}, 9 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled([
@@ -77,8 +91,9 @@ afterAll(async () => {
     noted.stop(),
     uncertain.stop(),
     ownersEmail.stop(),
+    ownersCount.stop(),
   ]);
-}, 8 * FRESH_SERVER_TIMEOUT_MS);
+}, 9 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(
   server: FreshServer,
@@ -352,6 +367,70 @@ describe("password sign-in", () => {
     expect(waits[0]).toBeGreaterThan(15 * 60);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
   }, 120_000);
+
+  // A failed try leaves the clock moved, which the retry would start from.
+  it(
+    "counts the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour",
+    { retry: 0, timeout: 120_000 },
+    async () => {
+      // Past every window the server's start opened, the hour every address
+      // shares opens first, so it ends while the owner's email still has its
+      // hundred counted.
+      await ownersCount.advanceClock(61 * 60 * 1000);
+      expect(
+        (
+          await signIn(
+            ownersCount,
+            "not the password",
+            "10.8.0.1",
+            undefined,
+            "stranger@example.test",
+          )
+        ).status,
+      ).toBe(401);
+      await ownersCount.advanceClock(59 * 60 * 1000);
+      for (let a = 1; a <= 10; a++) {
+        for (let i = 0; i < 10; i++) {
+          const response = await signIn(
+            ownersCount,
+            "not the password",
+            `10.8.${String(a)}.1`,
+          );
+          expect([401, 429]).toContain(response.status);
+        }
+      }
+      console.log(
+        "DBG59",
+        (await signIn(ownersCount, OWNER.password, "10.8.90.1")).status,
+      );
+      await ownersCount.advanceClock(2 * 60 * 1000);
+      console.log(
+        "DBG61w",
+        (await signIn(ownersCount, "x", "10.8.91.1")).status,
+      );
+      console.log(
+        "DBG61r",
+        (await signIn(ownersCount, OWNER.password, "10.8.92.1")).status,
+      );
+      const control: number[] = [];
+      for (let i = 0; i < 11; i++) {
+        control.push(
+          (await signIn(ownersCount, "not the password", "10.8.50.1")).status,
+        );
+      }
+      // The witness: the address's own ten show in the answers.
+      expect(control).toEqual([...Array<number>(10).fill(401), 429]);
+      const right = await signIn(ownersCount, OWNER.password, "10.8.51.1");
+      expect(right.headers.getSetCookie()).toEqual([]);
+      const probe = [right.status];
+      for (let i = 0; i < 10; i++) {
+        probe.push(
+          (await signIn(ownersCount, "not the password", "10.8.51.1")).status,
+        );
+      }
+      expect(probe).toEqual(control);
+    },
+  );
 
   it("records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses", async () => {
     // The witness: each wrong password that fills the window is recorded,

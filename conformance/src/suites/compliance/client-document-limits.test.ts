@@ -25,6 +25,7 @@ let cookie: string;
 
 const CLIENT_HEADER = "x-conformance-client";
 const HOST = "app.client-documents.example";
+const STALLED = "stalled.client-documents.example";
 const MINUTE = 60_000;
 let clients = 0;
 
@@ -51,6 +52,12 @@ beforeEach(async () => {
 function clientId(): string {
   clients++;
   return `https://${HOST}/clients/${String(clients)}.json`;
+}
+
+/** How many lookups of the stalled host have begun. */
+async function stalls(): Promise<number> {
+  const armed = await server.faults();
+  return armed.find((fault) => fault.name === `resolve:${STALLED}`)?.fired ?? 0;
 }
 
 /** How many lookups of the document's host the server has made. */
@@ -197,5 +204,32 @@ describe("client ID metadata documents", () => {
       { redirect: "manual", headers: { [CLIENT_HEADER]: "203.0.113.3" } },
     );
     expect(await refused(silent)).toBe("temporarily_unavailable");
+  });
+
+  it("answers a signed-out browser as before when the client's host does not answer or every fetch is in use", async () => {
+    await server.setFault(`resolve:${STALLED}=stall:4000`);
+    try {
+      // Four fetches whose host does not answer hold every fetch there is.
+      const stalled = [1, 2, 3, 4].map((a) =>
+        authorizing(
+          `https://${STALLED}/clients/${String(a)}.json`,
+          `192.0.2.${String(100 + a)}`,
+        ),
+      );
+      while ((await stalls()) < 4) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const busy = await authorizing(clientId(), "192.0.2.110");
+      expect(await refused(busy)).toBe("temporarily_unavailable");
+      for (const answer of await Promise.all(stalled)) {
+        expect(await refused(answer)).toBe("temporarily_unavailable");
+      }
+      // The witness: with fetches free, the same request is fetched.
+      expect(await refused(await authorizing(clientId(), "192.0.2.111"))).toBe(
+        "invalid_client",
+      );
+    } finally {
+      await server.clearFault(`resolve:${STALLED}`);
+    }
   });
 });
