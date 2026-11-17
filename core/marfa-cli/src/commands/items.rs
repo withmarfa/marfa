@@ -154,6 +154,25 @@ pub enum ItemsCommand {
         #[arg(long, value_name = "NAME")]
         include: Vec<String>,
     },
+    /// Count, for each item, the active items an edge type links to it or the
+    /// rows it holds in a table, in one request.
+    #[command(group(clap::ArgGroup::new("counted").required(true).args(["backref", "edge", "table"])))]
+    Counts {
+        /// The item ids, at most 100.
+        #[arg(required = true, value_name = "ID")]
+        ids: Vec<String>,
+        /// Count the items an edge of this type leaves each item for, such as
+        /// `parent-of` for children.
+        #[arg(long, value_name = "EDGE_TYPE")]
+        backref: Option<String>,
+        /// Count the items with an edge of this type to each item, such as
+        /// `in-collection` for a collection's members.
+        #[arg(long, value_name = "EDGE_TYPE")]
+        edge: Option<String>,
+        /// Count the rows each item holds in this table.
+        #[arg(long, value_name = "TABLE")]
+        table: Option<String>,
+    },
     /// Find the items titled by each name, in one request.
     Titles {
         /// The titles to look for, at most 200.
@@ -887,6 +906,21 @@ pub fn bulk_get_request(ids: &[String], include: &[String]) -> Request {
     Request::post(&["items", "bulk-get"]).json(body).reading()
 }
 
+pub fn counts_request(
+    ids: &[String],
+    backref: Option<&str>,
+    edge: Option<&str>,
+    table: Option<&str>,
+) -> Request {
+    let mut body = json!({ "ids": ids });
+    for (key, value) in [("backref", backref), ("edge", edge), ("table", table)] {
+        if let Some(value) = value {
+            body[key] = json!(value);
+        }
+    }
+    Request::post(&["items", "counts"]).json(body).reading()
+}
+
 pub fn titles_request(names: &[String]) -> Request {
     Request::post(&["items", "titles"])
         .json(json!({ "names": names }))
@@ -1221,6 +1255,12 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         ItemsCommand::Bulk(args) => bulk_request(args)?,
         ItemsCommand::BulkGet { ids, include } => bulk_get_request(ids, include),
+        ItemsCommand::Counts {
+            ids,
+            backref,
+            edge,
+            table,
+        } => counts_request(ids, backref.as_deref(), edge.as_deref(), table.as_deref()),
         ItemsCommand::Titles { names } => titles_request(names),
         ItemsCommand::Lookup {
             type_,

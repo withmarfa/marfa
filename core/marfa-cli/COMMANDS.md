@@ -923,6 +923,24 @@ marfa items bulk-get [OPTIONS] <ID>...
 | --- | --- |
 | `--include <NAME>` | Extra to hydrate onto each item: `edges`, `metadata`. |
 
+### marfa items counts
+
+Count, for each item, the active items an edge type links to it or the rows it holds in a table, in one request.
+
+```text
+marfa items counts [OPTIONS] <--backref <EDGE_TYPE>|--edge <EDGE_TYPE>|--table <TABLE>> <ID>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>...` | The item ids, at most 100. |
+
+| Option | Description |
+| --- | --- |
+| `--backref <EDGE_TYPE>` | Count the items an edge of this type leaves each item for, such as `parent-of` for children. |
+| `--edge <EDGE_TYPE>` | Count the items with an edge of this type to each item, such as `in-collection` for a collection's members. |
+| `--table <TABLE>` | Count the rows each item holds in this table. |
+
 ### marfa items titles
 
 Find the items titled by each name, in one request.
