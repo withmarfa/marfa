@@ -6,24 +6,18 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
-use super::{Body, EDGE_PAGE, Sender, channel, reads_row};
+use super::{Body, EDGE_PAGE, Sender, channel, page, reads_row};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::edges;
 use crate::app::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_CHECK, HOLD_EXPORT_PAGE};
 use crate::app::items::{self, reading};
-use crate::app::query::{self, Ask};
+use crate::app::query::Ask;
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
 
 /// The most items one credential check selects.
 const PAGE: i64 = 100;
-
-/// A page takes items while their stored size is under this, and always at least one.
-const PAGE_BYTES: usize = 256 * 1024;
-
-/// What an item's line takes beyond its stored properties and extensions.
-const LINE_BYTES: usize = 1024;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
 struct Page {
@@ -49,17 +43,7 @@ async fn item_page(
         }
         let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
-        let chosen = query::selected(&selecting, &ask, after, PAGE)?;
-        let mut held = 0;
-        let taken = chosen
-            .iter()
-            .position(|next| {
-                let full = held >= PAGE_BYTES;
-                held += next.stored + LINE_BYTES;
-                full
-            })
-            .unwrap_or(chosen.len());
-        let seqs: Vec<i64> = chosen[..taken].iter().map(|next| next.seq).collect();
+        let seqs = page(&selecting, &ask, after, PAGE)?;
         let mut whole = true;
         let mut text = String::new();
         read.hydrating();

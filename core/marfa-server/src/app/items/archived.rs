@@ -41,20 +41,20 @@ pub struct Version {
     pub file_refs: BTreeSet<String>,
 }
 
-/// Each earlier version of `item` whose type the caller reads, oldest first.
+/// Hands `each` every earlier version of `item` whose type the caller reads, oldest first.
 pub fn versions(
     tx: &Transaction<'_>,
     caller: &Caller,
     catalog: &Catalog,
     item: &Archived,
-) -> Result<Vec<Version>> {
-    let mut versions = Vec::new();
-    for snapshot in rows::snapshots_below(tx, item.seq, item.version)? {
+    mut each: impl FnMut(Version) -> Result<()>,
+) -> Result<()> {
+    rows::snapshots_below(tx, item.seq, item.version, |snapshot| {
         if !caller.may_read_type(&snapshot.type_id) {
-            continue;
+            return Ok(());
         }
         let held = parsed(&snapshot.properties)?;
-        versions.push(Version {
+        each(Version {
             version: snapshot.version,
             line: snapshot.answered()?,
             digests: references::digests(&held),
@@ -62,9 +62,8 @@ pub fn versions(
                 .into_iter()
                 .collect(),
             type_id: snapshot.type_id,
-        });
-    }
-    Ok(versions)
+        })
+    })
 }
 
 /// With writer and lending when written as an archive, not as an NDJSON export.

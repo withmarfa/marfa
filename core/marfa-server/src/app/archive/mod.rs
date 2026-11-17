@@ -52,6 +52,10 @@ pub const ROWS: &str = "rows.ndjson.gz";
 pub const BLOBS: &str = "blobs/";
 const PAGE: i64 = 500;
 const EDGE_PAGE: i64 = 1000;
+/// A page takes items while their stored size is under this, and always at least one.
+const PAGE_BYTES: usize = 256 * 1024;
+/// What an item's line takes beyond its stored properties and extensions.
+const LINE_BYTES: usize = 1024;
 const QUEUED: usize = 4;
 
 /// An export's body. It ends cleanly only once the sender has said it finished.
@@ -314,6 +318,26 @@ pub fn writer() -> String {
 
 fn print(value: &impl serde::Serialize) -> Result<String> {
     serde_json::to_string(value).map_err(|_| Refusal::internal("an export line did not print"))
+}
+
+/// The items of the page after `after`: at most `limit`, ending once they store `PAGE_BYTES`.
+fn page(read: &Reader<'_, '_>, ask: &Ask, after: i64, limit: i64) -> Result<Vec<i64>> {
+    let chosen = query::selected(read, ask, after, limit)?;
+    let taken = cut(chosen.iter().map(|next| next.stored));
+    Ok(chosen.into_iter().take(taken).map(|next| next.seq).collect())
+}
+
+/// How many of the items, of these stored sizes, one page takes.
+fn cut(sizes: impl IntoIterator<Item = usize>) -> usize {
+    let mut held = 0usize;
+    sizes
+        .into_iter()
+        .take_while(|size| {
+            let room = held < PAGE_BYTES;
+            held = held.saturating_add(size.saturating_add(LINE_BYTES));
+            room
+        })
+        .count()
 }
 
 fn line_value(line: &str) -> Result<Value> {
@@ -607,10 +631,7 @@ fn select<W: RowSink>(
         if read.faults().fail(FAIL_EXPORT_READ, None) {
             return Err(io_refusal());
         }
-        let seqs: Vec<i64> = query::selected(read, ask, after, PAGE)?
-            .into_iter()
-            .map(|chosen| chosen.seq)
-            .collect();
+        let seqs = page(read, ask, after, PAGE)?;
         let Some(last) = seqs.last() else {
             break;
         };
@@ -632,7 +653,7 @@ fn select<W: RowSink>(
                 need.namespaces.extend(row.namespaces.iter().cloned());
                 need.types.extend(row.mark_type.iter().cloned());
             })?;
-            for version in items::versions(read.tx, caller, catalog, &row)? {
+            items::versions(read.tx, caller, catalog, &row, |version| {
                 let value = line_value(&version.line)?;
                 checks::version(cap, &value, versions.lines as usize + 1)
                     .map_err(|refused| unrestorable(&refused))?;
@@ -654,7 +675,8 @@ fn select<W: RowSink>(
                 })?;
                 digests.extend(version.digests);
                 file_refs.extend(version.file_refs);
-            }
+                Ok(())
+            })?;
             if agreed.contains(row.id.as_str()) {
                 carried_ids.insert(row.id.clone(), (row.type_id.clone(), row.source.clone()));
             }
@@ -1046,5 +1068,65 @@ impl RowSink for PartedRows {
             });
         }
         Ok((out, count))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LINE_BYTES, PAGE_BYTES, cut};
+
+    #[test]
+    fn a_page_ends_once_its_items_store_the_bound() {
+        let small = 10 * 1024;
+        let fit = PAGE_BYTES.div_ceil(small + LINE_BYTES);
+        assert_eq!(cut(vec![small; 100]), fit);
+        assert_eq!(cut([] as [usize; 0]), 0);
+    }
+
+    #[test]
+    fn an_item_larger_than_a_page_takes_one_of_its_own() {
+        let large = 4 * PAGE_BYTES;
+        assert_eq!(cut([large, 10, 10]), 1);
+        assert_eq!(cut([10, large, 10]), 2);
+    }
+
+    /// Pages each item once, in order, whatever the sizes and the cursor's place.
+    #[test]
+    fn paging_by_bytes_neither_skips_nor_repeats_an_item() {
+        let mut state = 0x9e37_79b9_u64;
+        let sizes: Vec<usize> = (0..5_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                match state % 10 {
+                    0 => 2 * PAGE_BYTES + (state % 4096) as usize,
+                    1 => PAGE_BYTES - LINE_BYTES,
+                    _ => (state % 20_000) as usize,
+                }
+            })
+            .collect();
+        for limit in [1, 7, 100, 500] {
+            let mut read = Vec::new();
+            let mut after = 0;
+            loop {
+                let chosen: Vec<usize> = (after..sizes.len()).take(limit).collect();
+                let taken = cut(chosen.iter().map(|&at| sizes[at]));
+                let Some(&last) = chosen[..taken].last() else {
+                    break;
+                };
+                let before_last: usize = chosen[..taken - 1]
+                    .iter()
+                    .map(|&at| sizes[at] + LINE_BYTES)
+                    .sum();
+                assert!(before_last < PAGE_BYTES, "page held {before_last} before its last");
+                if taken < chosen.len() {
+                    assert!(before_last + sizes[last] + LINE_BYTES >= PAGE_BYTES);
+                }
+                read.extend_from_slice(&chosen[..taken]);
+                after = last + 1;
+            }
+            assert_eq!(read, (0..sizes.len()).collect::<Vec<_>>());
+        }
     }
 }

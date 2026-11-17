@@ -673,16 +673,20 @@ pub(super) fn snapshots_after(
 }
 
 /// Every snapshot of the item below `version`, oldest first.
+/// Hands each snapshot to `each` as it is read, so one is held at a time.
 pub(super) fn snapshots_below(
     tx: &Transaction<'_>,
     seq: i64,
     version: i64,
-) -> Result<Vec<Snapshot>> {
+    mut each: impl FnMut(Snapshot) -> Result<()>,
+) -> Result<()> {
     let mut statement = tx.prepare_cached(&format!(
         "{SNAPSHOT} WHERE v.item_seq = ?1 AND v.version < ?2 ORDER BY v.version"
     ))?;
-    let found = statement.query_map([seq, version], snapshot_of)?;
-    Ok(found.collect::<rusqlite::Result<_>>()?)
+    for snapshot in statement.query_map([seq, version], snapshot_of)? {
+        each(snapshot?)?;
+    }
+    Ok(())
 }
 
 /// Who wrote the item's current version, and when it last left the bin.
