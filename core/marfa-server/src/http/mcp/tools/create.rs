@@ -9,8 +9,8 @@ use super::{Definition, item_id, parsed, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::edges::write::{Create, Op};
-use crate::app::items::captions;
 use crate::app::items::write::{self, Change};
+use crate::app::items::{captions, file_fields};
 use crate::app::mcp::fetch::{self, Failed, Reason};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::items::put_from;
@@ -226,8 +226,11 @@ pub async fn run(
         let mut whole = Map::new();
         whole.insert("title".into(), title.into());
         whole.extend(properties);
-        whole.insert("blob_ref".into(), fetched.blob.hash.as_str().into());
-        whole.insert("mime_type".into(), mime_type.clone().into());
+        whole.insert(
+            file_fields::BLOB_REF.into(),
+            fetched.blob.hash.as_str().into(),
+        );
+        whole.insert(file_fields::MIME_TYPE.into(), mime_type.clone().into());
         if let Some(address) = &url {
             whole.insert("source_url".into(), address.clone().into());
         }
@@ -320,7 +323,7 @@ pub async fn run(
     if let Some(file) = file {
         let stored_here = item
             .get("properties")
-            .and_then(|properties| properties.get("blob_ref"))
+            .and_then(|properties| properties.get(file_fields::BLOB_REF))
             == file.get("hash");
         if !acknowledged || stored_here {
             answer.insert("file".into(), file);

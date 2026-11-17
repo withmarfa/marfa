@@ -196,7 +196,7 @@ pub fn restore(
             id,
             type_id,
             state,
-            tier: Some(text(item, "tier").unwrap_or("library")),
+            tier: text(item, "tier").unwrap_or("library"),
             source: &source,
             source_id,
             properties: &number::object(&properties),
@@ -324,7 +324,8 @@ pub fn restore_version(
             id,
             properties: &number::object(&properties),
             type_id: text(snapshot, "type").unwrap_or_default(),
-            tier: text(snapshot, "tier"),
+            tier: text(snapshot, "tier")
+                .ok_or_else(|| Refusal::internal("a checked snapshot has no tier"))?,
             occurred_at: &occurred_at,
             source_id: text(snapshot, "source_id"),
             writer: writer_of(snapshot.get("writer")).as_ref(),

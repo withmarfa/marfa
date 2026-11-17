@@ -3,6 +3,7 @@
 mod archived;
 pub mod bulk;
 pub mod expiry;
+pub mod file_fields;
 mod index;
 mod plan;
 mod read;
@@ -76,7 +77,7 @@ pub struct Item {
     pub id: String,
     pub type_id: String,
     pub state: String,
-    pub tier: Option<String>,
+    pub tier: String,
     pub source: String,
     pub source_id: Option<String>,
     pub properties: String,
@@ -116,7 +117,7 @@ pub struct Snapshot {
     pub version: i64,
     pub properties: String,
     pub type_id: String,
-    pub tier: Option<String>,
+    pub tier: String,
     pub occurred_at: String,
     pub source_id: Option<String>,
     pub writer: Option<Writer>,
@@ -143,8 +144,7 @@ struct ItemHead<'a> {
     #[serde(rename = "type")]
     type_id: &'a str,
     state: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tier: Option<&'a str>,
+    tier: &'a str,
     created_at: &'a str,
     updated_at: &'a str,
     last_activity_at: &'a str,
@@ -178,7 +178,7 @@ struct SnapshotHead<'a> {
     version: i64,
     #[serde(rename = "type")]
     type_id: &'a str,
-    tier: Option<&'a str>,
+    tier: &'a str,
     occurred_at: &'a str,
     source_id: Option<&'a str>,
     writer: Option<&'a Writer>,
@@ -214,7 +214,7 @@ impl Item {
             id: &self.id,
             type_id: &self.type_id,
             state: &self.state,
-            tier: self.tier.as_deref(),
+            tier: &self.tier,
             created_at: &self.created_at,
             updated_at: &self.updated_at,
             last_activity_at: &self.last_activity_at,
@@ -274,7 +274,7 @@ impl Item {
 
     fn fields(&self) -> ItemFields {
         ItemFields {
-            tier: self.tier.clone(),
+            tier: Some(self.tier.clone()),
             occurred_at: Some(self.occurred_at.clone()),
             source_id: self.source_id.clone(),
         }
@@ -288,7 +288,7 @@ impl Snapshot {
             item_id: &self.item_id,
             version: self.version,
             type_id: &self.type_id,
-            tier: self.tier.as_deref(),
+            tier: &self.tier,
             occurred_at: &self.occurred_at,
             source_id: self.source_id.as_deref(),
             writer: self.writer.as_ref(),
@@ -311,7 +311,7 @@ impl Snapshot {
 
     fn fields(&self) -> ItemFields {
         ItemFields {
-            tier: self.tier.clone(),
+            tier: Some(self.tier.clone()),
             occurred_at: Some(self.occurred_at.clone()),
             source_id: self.source_id.clone(),
         }

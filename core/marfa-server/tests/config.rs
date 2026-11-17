@@ -78,10 +78,10 @@ impl Instance {
                 };
                 let consent = |id: String, withdrawn_at: Option<&str>| {
                     tx.execute(
-                        "INSERT INTO oauth_clients (client_id, auth_method, \
+                        "INSERT INTO oauth_clients (client_id, \
                          application_type, redirect_uris, grant_types, response_types, scopes, \
                          contacts, created_at) \
-                         VALUES (?1, 'none', 'native', '[]', '[]', '[]', '[]', '[]', ?2)",
+                         VALUES (?1, 'native', '[]', '[]', '[]', '[]', '[]', ?2)",
                         [id.as_str(), old],
                     )?;
                     tx.execute(

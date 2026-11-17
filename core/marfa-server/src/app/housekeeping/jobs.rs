@@ -32,7 +32,8 @@ pub(super) const JOBS: &[Job] = &[
     .switched_by(updates::checking),
     Job::new("enrichment-sweep", 30_000, 30_000, HOUR, |app, run| {
         Box::pin(enrichment::sweep(app, run))
-    }),
+    })
+    .waking_on_files(),
     Job::new("audit-cleanup", DAY_MS, 5_000, HOUR, |app, run| {
         Box::pin(cleanups::audit(app, run))
     })

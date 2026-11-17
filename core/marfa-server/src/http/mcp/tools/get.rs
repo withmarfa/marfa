@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use super::{Definition, item_id, parsed, text, texts};
 use crate::app::access::Caller;
 use crate::app::blobs::Hash;
-use crate::app::items::{self, Detail, Door, Many};
+use crate::app::items::{self, Detail, Door, Many, file_fields};
 use crate::app::{App, tables, types};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, cut_text, json_length};
 
@@ -480,7 +480,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         if wants_link
             && let Some(hash) = item
                 .get("properties")
-                .and_then(|properties| properties.get("blob_ref"))
+                .and_then(|properties| properties.get(file_fields::BLOB_REF))
                 .and_then(Value::as_str)
             && let Ok(hash) = Hash::parse(hash)
             && let Ok(link) = app.mint_link(caller, &hash, FILE_LINK_TTL_SECONDS).await

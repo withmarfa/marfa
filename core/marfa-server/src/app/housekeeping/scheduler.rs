@@ -36,6 +36,7 @@ pub fn wanted(app: &App) -> Vec<Wanted> {
             name: job.name,
             interval_ms: i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX),
             first_run_ms: i64::try_from(job.first_run_ms).unwrap_or(i64::MAX),
+            wakes_on_files: job.wakes_on_files,
         })
         .collect()
 }

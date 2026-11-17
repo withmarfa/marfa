@@ -16,6 +16,7 @@ use uuid::Uuid;
 mod enrichment;
 
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
+use super::file_fields;
 use super::index;
 use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
@@ -42,7 +43,6 @@ use crate::app::views;
 
 const COPY_TAG: &str = "conflicted-copy";
 const FILE_TYPE: &str = "core.file";
-const FILE_BYTES: &str = "blob_ref";
 const FILE_SIZE: &str = "size_bytes";
 
 #[derive(Debug, Default)]
@@ -467,7 +467,7 @@ pub(super) fn refuse_undeclared(
 
 fn file_bytes(properties: &Map<String, Value>) -> Option<Hash> {
     properties
-        .get(FILE_BYTES)
+        .get(file_fields::BLOB_REF)
         .and_then(Value::as_str)
         .and_then(|text| Hash::parse(text).ok())
 }
@@ -1277,7 +1277,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 id: &id,
                 type_id: &put.type_id,
                 state,
-                tier: Some(tier),
+                tier,
                 source,
                 source_id: put.source_id.as_deref(),
                 properties: &number::object(&properties),
@@ -1540,10 +1540,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             && settled.copy.is_none()
             && same_properties
             && same_tags
-            && fields
-                .tier
-                .as_deref()
-                .is_none_or(|tier| Some(tier) == row.tier.as_deref())
+            && fields.tier.as_deref().is_none_or(|tier| tier == row.tier)
             && fields
                 .source_id
                 .as_deref()
@@ -1744,7 +1741,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 id: &id,
                 type_id: &row.type_id,
                 state: "active",
-                tier: row.tier.as_deref(),
+                tier: &row.tier,
                 source: &row.source,
                 source_id: None,
                 properties: &number::object(&properties),
@@ -1890,7 +1887,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             &Uuid::now_v7().to_string(),
             &Landed {
                 type_id: resulting,
-                tier: fields.tier.as_deref().or(row.tier.as_deref()),
+                tier: fields.tier.as_deref().unwrap_or(&row.tier),
                 source_id: fields.source_id.as_deref().or(row.source_id.as_deref()),
                 link: link.as_deref(),
                 properties: &number::object(&settled.properties),

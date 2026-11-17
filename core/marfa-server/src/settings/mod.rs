@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn a_row_with_no_entry_is_left_alone() {
         let settings = opened(&[]);
-        settings.apply_stored(&row("health_probe", "2026-11-07T12:00:00Z"));
+        settings.apply_stored(&row("enforcement", "{}"));
         assert!(settings.live().unreadable().is_empty());
     }
 

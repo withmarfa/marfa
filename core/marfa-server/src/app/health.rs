@@ -13,12 +13,11 @@ use super::backups::BackupHealth;
 use super::blobs::{MARKER, bytes_in_words};
 use super::clock::Standing;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
+use super::instance;
 use super::refusal::{Code, Refusal};
 use super::restore_running;
-use super::stored;
 use crate::db::{Write, volume};
 
-pub(super) const PROBE_KEY: &str = "health_probe";
 const PROBE_WAIT: Duration = Duration::from_secs(2);
 const WRITE_REUSE: Duration = Duration::from_secs(10);
 const DISK_DOWN_BELOW: u64 = 1024 * 1024;
@@ -217,7 +216,9 @@ async fn attempt_write(app: Arc<App>, result: watch::Sender<Option<Component>>) 
         Err(crate::db::io_refusal())
     } else {
         app.db
-            .write(Write::own(), move |tx| stored::put(tx, PROBE_KEY, &stamp))
+            .write(Write::own(), move |tx| {
+                instance::note_health_probe(tx, &stamp)
+            })
             .await
     };
     let component = match written {

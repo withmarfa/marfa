@@ -34,6 +34,12 @@ pub fn job_names() -> Vec<&'static str> {
         .collect()
 }
 
+/// The name of every job, for the test that ties the baseline to them.
+#[cfg(test)]
+pub fn every_job_name() -> Vec<&'static str> {
+    JOBS.iter().map(|job| job.name).collect()
+}
+
 pub const HOUR_MS: i64 = 3_600_000;
 pub const DAY_MS: i64 = 86_400_000;
 
@@ -68,6 +74,8 @@ pub struct Job {
     statements: bool,
     /// Whether a run deletes by age, so that a clock far ahead of the trusted time holds it.
     deletes: bool,
+    /// Whether a change to a file's record asks this job to run soon.
+    wakes_on_files: bool,
     run: Body,
 }
 
@@ -119,6 +127,7 @@ impl Job {
             switch: None,
             statements: true,
             deletes: false,
+            wakes_on_files: false,
             run,
         }
     }
@@ -130,6 +139,11 @@ impl Job {
 
     const fn deleting(mut self) -> Job {
         self.deletes = true;
+        self
+    }
+
+    const fn waking_on_files(mut self) -> Job {
+        self.wakes_on_files = true;
         self
     }
 

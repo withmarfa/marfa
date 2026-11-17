@@ -3,7 +3,7 @@
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 
-use super::client::{AuthMethod, GrantType, Registration, ResponseType};
+use super::client::{GrantType, Registration, ResponseType};
 use super::redirect::{AppKind, web_origins};
 use super::scope::ScopeSet;
 use crate::app::access::printable;
@@ -80,7 +80,6 @@ fn client_of(row: &Row<'_>) -> rusqlite::Result<Client> {
             } else {
                 AppKind::Web
             },
-            token_endpoint_auth_method: AuthMethod::None,
             grant_types: grants
                 .iter()
                 .filter_map(|word| GrantType::from_word(word))
@@ -123,12 +122,12 @@ pub fn put_client(
 ) -> Result<()> {
     let words = |list: Vec<&'static str>| Value::from(list).to_string();
     tx.execute(
-        "INSERT INTO oauth_clients (client_id, auth_method, application_type, redirect_uris, \
-         grant_types, response_types, scopes, client_name, client_uri, logo_uri, tos_uri, \
-         policy_uri, contacts, software_id, software_version, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) \
+        "INSERT INTO oauth_clients (client_id, application_type, redirect_uris, grant_types, \
+         response_types, scopes, client_name, client_uri, logo_uri, tos_uri, policy_uri, \
+         contacts, software_id, software_version, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
          ON CONFLICT (client_id) DO UPDATE SET \
-         auth_method = excluded.auth_method, application_type = excluded.application_type, \
+         application_type = excluded.application_type, \
          redirect_uris = excluded.redirect_uris, grant_types = excluded.grant_types, \
          response_types = excluded.response_types, scopes = excluded.scopes, \
          client_name = excluded.client_name, client_uri = excluded.client_uri, \
@@ -137,7 +136,6 @@ pub fn put_client(
          software_id = excluded.software_id, software_version = excluded.software_version",
         params![
             id,
-            registration.token_endpoint_auth_method.word(),
             registration.application_type.word(),
             list_text(&registration.redirect_uris),
             words(

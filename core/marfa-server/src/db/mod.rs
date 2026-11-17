@@ -9,6 +9,8 @@ pub mod rank;
 mod reader;
 mod schema;
 #[cfg(test)]
+mod shared_names;
+#[cfg(test)]
 mod tests;
 pub mod volume;
 mod writer;

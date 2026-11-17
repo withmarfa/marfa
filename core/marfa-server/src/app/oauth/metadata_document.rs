@@ -332,7 +332,7 @@ mod tests {
     use serde_json::json;
     use ureq::tls::{Certificate, RootCerts};
 
-    use super::super::client::{AuthMethod, GrantType, ResponseType};
+    use super::super::client::{GrantType, ResponseType};
     use super::super::redirect::AppKind;
     use super::*;
 
@@ -942,10 +942,8 @@ mod tests {
             json!(["tls_client_auth", "none"]),
         );
         assert_eq!(
-            parse(&public)
-                .expect("registered")
-                .token_endpoint_auth_method,
-            AuthMethod::None
+            parse(&public).expect("registered").to_json()["token_endpoint_auth_method"],
+            "none"
         );
     }
 
@@ -969,7 +967,7 @@ mod tests {
             "jwks_uri": "https://chatgpt.com/jwks.json",
         });
         let registered = parse(&published).expect("registered");
-        assert_eq!(registered.token_endpoint_auth_method, AuthMethod::None);
+        assert_eq!(registered.to_json()["token_endpoint_auth_method"], "none");
         let without_none = with(
             published,
             "token_endpoint_auth_methods_supported",

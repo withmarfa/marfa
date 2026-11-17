@@ -453,9 +453,9 @@ pub fn version(cap: usize, line: &Value, row: usize) -> Result<VersionKey, Box<R
     }
     if !snapshot
         .get("tier")
-        .is_some_and(|tier| tier.is_null() || tier.as_str().is_some_and(|t| TIERS.contains(&t)))
+        .is_some_and(|tier| tier.as_str().is_some_and(|t| TIERS.contains(&t)))
     {
-        return Err(at.invalid(&field("tier"), "library, feed or null"));
+        return Err(at.invalid(&field("tier"), "library or feed"));
     }
     for name in ["created_at", "occurred_at"] {
         if !snapshot.get(name).is_some_and(is_instant) {
@@ -720,7 +720,7 @@ mod tests {
             "version": version,
             "properties": {},
             "type": "core.note",
-            "tier": null,
+            "tier": "library",
             "created_at": "2026-11-09T00:00:00.000Z",
             "occurred_at": "2026-11-09T00:00:00.000Z",
             "source_id": null,
@@ -814,6 +814,19 @@ mod tests {
         let details = refused.refusal.details.unwrap();
         assert_eq!(details["item_id"], "01a1bdba-8640-72ba-b7d6-9e27d94e7540");
         assert_eq!(details["line"], 4);
+    }
+
+    #[test]
+    fn a_version_line_with_no_tier_is_refused_where_the_database_would_hold_none() {
+        for tier in [json!(null), json!("other")] {
+            let mut line = snapshot(2);
+            line["tier"] = tier;
+            let refused = version(CAP, &line, 1).unwrap_err();
+            assert_eq!(refused.field.as_deref(), Some("versions.2.tier"));
+        }
+        let mut feed = snapshot(2);
+        feed["tier"] = json!("feed");
+        assert!(version(CAP, &feed, 1).is_ok());
     }
 
     #[test]

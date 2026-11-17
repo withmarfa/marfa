@@ -10,6 +10,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use libtest_mimic::{Arguments, Trial};
 use marfa_server::app::access::Caller;
+use marfa_server::app::clock::Stamp;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -240,6 +241,45 @@ async fn reads_text_and_announces_it() {
                    AND kind = 'housekeeping'";
     assert_eq!(one.count(audited, &id), 1);
     assert_eq!(one.sweep().await, counts(0, 0, 0));
+}
+
+async fn reads_a_new_file_soon_after_it_arrives_by_the_servers_clock() {
+    let one = Instance::start(&[]).await;
+    housekeeping::start(&one.app);
+    let id = one
+        .file(b"the numbat ledger, page one", "text/plain", json!({}))
+        .await;
+    let soon = Stamp::from_ms(one.app.clock.now_ms() + 10_000)
+        .unwrap()
+        .text();
+    let woken = async {
+        while one.next_run() > soon {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), woken)
+        .await
+        .expect("the file asked the sweep to run within seconds of the server's clock");
+    assert!(
+        one.item(&id).await["properties"]
+            .get("extracted_text")
+            .is_none()
+    );
+
+    one.app.clock.advance(6_000).unwrap();
+    let read = async {
+        loop {
+            let item = one.item(&id).await;
+            if let Some(text) = item["properties"]["extracted_text"].as_str() {
+                return text.to_string();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    let text = tokio::time::timeout(std::time::Duration::from_secs(20), read)
+        .await
+        .expect("the sweep read the file once the server's clock reached its wake");
+    assert_eq!(text, "the numbat ledger, page one");
 }
 
 async fn leaves_what_the_client_wrote() {
@@ -899,6 +939,10 @@ fn main() {
         trial("reads_text_and_announces_it", || {
             Box::pin(reads_text_and_announces_it())
         }),
+        trial(
+            "reads_a_new_file_soon_after_it_arrives_by_the_servers_clock",
+            || Box::pin(reads_a_new_file_soon_after_it_arrives_by_the_servers_clock()),
+        ),
         trial("leaves_what_the_client_wrote", || {
             Box::pin(leaves_what_the_client_wrote())
         }),

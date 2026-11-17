@@ -25,18 +25,8 @@ const _: () = assert!(MOST_STORED_CHARS < MAX_REGISTRATION_BYTES);
 
 const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AuthMethod {
-    None,
-}
-
-impl AuthMethod {
-    pub const fn word(self) -> &'static str {
-        match self {
-            AuthMethod::None => "none",
-        }
-    }
-}
+/// Every client is public, so this is the one method a registration may name.
+const AUTH_METHOD: &str = "none";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GrantType {
@@ -85,7 +75,6 @@ impl ResponseType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Registration {
     pub application_type: AppKind,
-    pub token_endpoint_auth_method: AuthMethod,
     pub grant_types: Vec<GrantType>,
     pub response_types: Vec<ResponseType>,
     pub redirect_uris: Vec<String>,
@@ -119,10 +108,7 @@ impl Registration {
             "application_type".to_string(),
             json!(self.application_type.word()),
         );
-        out.insert(
-            "token_endpoint_auth_method".to_string(),
-            json!(self.token_endpoint_auth_method.word()),
-        );
+        out.insert("token_endpoint_auth_method".to_string(), json!(AUTH_METHOD));
         out.insert(
             "grant_types".to_string(),
             words(self.grant_types.iter().map(|grant| grant.word()).collect()),
@@ -281,9 +267,9 @@ pub(super) fn texts<'a>(
         .transpose()
 }
 
-fn auth_method(object: &Map<String, Value>) -> Reading<AuthMethod> {
+fn check_auth_method(object: &Map<String, Value>) -> Reading<()> {
     match text(object, "token_endpoint_auth_method")? {
-        None | Some("none") => Ok(AuthMethod::None),
+        None | Some(AUTH_METHOD) => Ok(()),
         Some(method) => Err(RegistrationError::metadata(format!(
             "token_endpoint_auth_method {method} is not available: this server registers public \
              clients only, with none."
@@ -492,7 +478,7 @@ fn check_resources(object: &Map<String, Value>) -> Reading<()> {
 
 /// RFC 7591 section 2 requires ignoring unsupported metadata.
 pub(super) fn read(object: &Map<String, Value>, source: Source) -> Reading<Registration> {
-    let token_endpoint_auth_method = auth_method(object)?;
+    check_auth_method(object)?;
     if source == Source::Registration {
         check_resources(object)?;
     }
@@ -511,7 +497,6 @@ pub(super) fn read(object: &Map<String, Value>, source: Source) -> Reading<Regis
     }
     Ok(Registration {
         application_type: kind,
-        token_endpoint_auth_method,
         scope: scope(object, source, &grants)?,
         grant_types: grants,
         response_types,
@@ -575,7 +560,7 @@ mod tests {
     fn a_web_client_is_the_default_with_the_authorization_code_grant() {
         let registered = register(web()).expect("registered");
         assert_eq!(registered.application_type, AppKind::Web);
-        assert_eq!(registered.token_endpoint_auth_method, AuthMethod::None);
+        assert_eq!(registered.to_json()["token_endpoint_auth_method"], "none");
         assert_eq!(registered.grant_types, [GrantType::AuthorizationCode]);
         assert_eq!(registered.response_types, [ResponseType::Code]);
         assert_eq!(registered.scope, data_alone());
@@ -607,8 +592,8 @@ mod tests {
         for method in [json!(null), json!("none")] {
             let registered = register(with(web(), "token_endpoint_auth_method", method));
             assert_eq!(
-                registered.expect("registered").token_endpoint_auth_method,
-                AuthMethod::None
+                registered.expect("registered").to_json()["token_endpoint_auth_method"],
+                "none"
             );
         }
         for (method, named) in [
@@ -1026,7 +1011,10 @@ mod tests {
         #[test]
         fn what_registers_keeps_every_rule(body in metadata_body()) {
             if let Ok(registered) = register(body) {
-                prop_assert_eq!(registered.token_endpoint_auth_method, AuthMethod::None);
+                prop_assert_eq!(
+                    registered.to_json()["token_endpoint_auth_method"].clone(),
+                    json!("none")
+                );
                 prop_assert!(registered.redirect_uris.len() <= MAX_REDIRECT_URIS);
                 for uri in &registered.redirect_uris {
                     prop_assert_eq!(
