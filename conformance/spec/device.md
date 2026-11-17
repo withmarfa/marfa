@@ -2292,6 +2292,98 @@ If a caller asks what changed since text that is not a cursor a device answered,
 
 **Tests:** `device/batch-reads.test.ts › answers everything for a cursor it cannot follow one by one`.
 
+## Counting on a device
+
+A device counts what is linked to an item, or what a table of an item holds, as `POST /items/counts` does (`search-and-filters/counts-linked`), for the screen that shows a number beside each item without opening it. Every count is an active item the key may read, and no `system.*` item, so it equals a local list of the same anchored filter with no `state`.
+
+### `device/counts-linked`
+
+Where the copy holds the named edge type whole, when a caller asks for the items linked to up to 100 ids, a device MUST answer each id with the same `total` that `POST /items/counts` gives, from the edges and items the copy holds.
+
+**Reason:** an app shows a count beside each row of a list, and a count that changed between a screen on a device and a screen on the server would be two numbers for one thing. A count never takes in an archived item or one in the bin, as the server's does not.
+
+**Tests:** `device/counts-live.test.ts › answers each count of links as the server does, across every group, the bin, archived, an undeclared word, no status and both directions`.
+
+### `device/counts-status-groups`
+
+When a caller asks a device to count the links of an id, a device MUST answer the four `status_groups` the server answers, each resolved by the code that resolves the local `status_group` filter.
+
+**Reason:** an item whose status word its type no longer declares, an item with no status and an item of a type with no status field are in no group, and an app that sums the groups must find them in `total` only.
+
+**Tests:** `device/counts-live.test.ts › answers each count of links as the server does, across every group, the bin, archived, an undeclared word, no status and both directions`.
+
+### `device/counts-unknown-anchor`
+
+When a caller asks a device to count the links of an id that no item the copy holds has, a device MUST answer it with a `total` of 0 and every group 0.
+
+**Reason:** the server answers an id it cannot read as zero, so a count never tells a key whether an item exists.
+
+**Tests:** `device/counts-live.test.ts › answers a count of an id the copy does not hold as the server answers one no item holds`.
+
+### `device/counts-order-ids`
+
+When a caller names ids to a device to count, a device MUST answer each id once, in the order the ids first appear.
+
+**Reason:** an app lines the answers up with its rows by position.
+
+**Tests:** `device/counts-live.test.ts › answers each id once, in the order they first appear, and refuses more than 100 ids and an id that is no id`.
+
+### `device/counts-ids-refused`
+
+If a caller asks a device to count more than 100 ids, or an id that is not an id, then a device MUST refuse it `validation`, as the server refuses it.
+
+**Reason:** a count of a few ids stays cheap, and a malformed id never reaches the copy.
+
+**Tests:** `device/counts-live.test.ts › answers each id once, in the order they first appear, and refuses more than 100 ids and an id that is no id`.
+
+### `device/counts-rows-held`
+
+Where the copy holds a table whole, when a caller asks a device to count that table's rows of an item, a device MUST answer the `total` from the rows the copy holds and mark the answer `held`.
+
+**Reason:** an app tells an answer that needed no server from one that did.
+
+**Tests:** `device/counts-live.test.ts › counts a table's rows from the copy where it holds the table whole and from the server otherwise, and says which`.
+
+### `device/counts-rows-served`
+
+Where the copy does not hold a table whole, when a caller asks a device to count that table's rows of an item, a device MUST ask the server and mark the answer not `held`.
+
+**Reason:** a partial table has fewer rows than the item has, so a count from it would undercount.
+
+**Tests:** `device/counts-live.test.ts › counts a table's rows from the copy where it holds the table whole and from the server otherwise, and says which`.
+
+### `device/counts-offline`
+
+While the server cannot be reached, when a caller asks a device to count the links of an edge type the copy holds whole, a device MUST answer from the copy.
+
+**Reason:** a count of links needs no server once the copy holds the edge type, and a screen that counts must not wait on a network.
+
+**Tests:** `device/counts-live.test.ts › answers a count of an edge type it holds whole while the server cannot be reached`.
+
+### `device/counts-refused`
+
+If a caller asks a device to count the links of an edge type the copy does not hold whole, then a device MUST refuse it `invalid` with no server code, as it refuses a `backref` term (`device/filter-backref`).
+
+**Reason:** a copy that holds some of an edge type's edges gives a number lower than the server's, and a wrong number is worse than none. The refusal is the device's own: it asks no server, so it carries none of a server's codes.
+
+**Tests:** `device/counts-live.test.ts › refuses a count of an edge type the copy does not hold whole, carrying no server code`.
+
+### `device/counts-refused-gap`
+
+If a count of links reaches an edge whose counted item the copy does not hold, then a device MUST refuse it `invalid` with no server code.
+
+**Reason:** holding every edge of a type does not mean holding every item it reaches, because a slice may name fewer types than the edges link. The copy cannot tell an item it lacks from one the server counts, so it refuses rather than undercount. A slice that leaves out archived items is refused too, which is more refusal than a count needs and is accepted for a count that is never wrong.
+
+**Tests:** `device/counts-live.test.ts › refuses a count of links that reaches an item the copy does not hold, carrying no server code`.
+
+### `device/counts-agree`
+
+When a copy has caught up and a caller asks a device for a count, a device MUST answer the count the server answers for the same ids and the same data.
+
+**Reason:** the copy follows the server, so it may count fewer items than the server for as long as it has not read what changed, and the two agree again from the moment it has. Nothing here says they agree at every instant.
+
+**Tests:** `device/counts-live.test.ts › gives the server's counts once the copy has caught up, and not before`.
+
 ## Edges a copy holds
 
 A copy holds the edges its items draw, and every edge of a type the slice holds whole. The replies in a thread point at the thread they are in and a file points at what it is attached to, so what points at the item on screen is a question an app asks of it.
