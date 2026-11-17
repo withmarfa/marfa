@@ -54,6 +54,8 @@ export interface CopyChanges {
   removed_items: string[];
   edges: string[];
   removed_edges: string[];
+  /** Each table whose state or rows changed (`device/changed-tables`). */
+  tables: Array<{ item: string; table: string }>;
 }
 
 /**

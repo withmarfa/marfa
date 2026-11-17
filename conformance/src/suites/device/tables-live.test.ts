@@ -1430,6 +1430,54 @@ describe("reading a table on a device", () => {
   });
 });
 
+describe("telling an app which tables changed", () => {
+  it("names the table a fill filled and a later change to it, and no table when none changed", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const other = await itemOf(type);
+    for (const held of [item, other]) {
+      await write(held, [
+        { op: "put", values: { count: 1 } },
+        { op: "put", values: { count: 2 } },
+      ]);
+    }
+    const device = await hydrated([type], "changed-tables");
+    const start = value(await device.changed());
+
+    const hold = value(await device.holdTable(type, "steps"));
+    expect(hold.fill?.whole).toBe(2);
+    const filledBy = value(await device.changed({ since: start.cursor }));
+    expect(
+      [filledBy.everything, filledBy.tables.map((table) => table.table)],
+      "a fill that made two tables whole did not name them",
+    ).toEqual([false, ["steps", "steps"]]);
+    expect(filledBy.tables.map((table) => table.item).sort()).toEqual(
+      [item, other].sort(),
+    );
+
+    const quiet = value(await device.changed({ since: filledBy.cursor }));
+    expect(
+      [quiet.everything, quiet.tables],
+      "a table was named though nothing had changed it",
+    ).toEqual([false, []]);
+
+    await write(item, [{ op: "put", values: { count: 3 } }]);
+    const caught = value(await device.catchUp());
+    expect(
+      caught.changed_tables,
+      "a catch-up that brought a row to one table named no table, or another",
+    ).toEqual([{ item, table: "steps" }]);
+    const later = value(await device.changed({ since: quiet.cursor }));
+    expect(later.tables).toEqual([{ item, table: "steps" }]);
+
+    expect(value(await device.catchUp()).changed_tables).toEqual([]);
+    expect(
+      value(await device.changed({ since: later.cursor })).tables,
+      "a table was named again once it was read",
+    ).toEqual([]);
+  }, 60_000);
+});
+
 describe("a gap in the stream", () => {
   it("fills its tables again when its cursor ages out, with the rows changed meanwhile", async () => {
     const type = await tableType();

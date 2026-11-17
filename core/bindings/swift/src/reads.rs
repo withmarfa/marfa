@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::tables::ChangedTable;
 use crate::{BodyLinks, Core, Edge, Listing, MarfaError, edge, listing};
 
 /// What changed in the copy since a cursor `changes_since` gave.
@@ -9,7 +10,7 @@ use crate::{BodyLinks, Core, Edge, Listing, MarfaError, edge, listing};
 pub struct CopyChanges {
     /// Where the next call starts from.
     pub cursor: String,
-    /// True where the changes cannot be named one by one, and the four lists
+    /// True where the changes cannot be named one by one, and the five lists
     /// are empty: read the whole copy again.
     pub everything: bool,
     /// Each changed item the copy holds, in the bin or out.
@@ -20,6 +21,9 @@ pub struct CopyChanges {
     pub edges: Vec<String>,
     /// Each changed edge the copy no longer holds.
     pub removed_edges: Vec<String>,
+    /// Each table the copy holds, or held, whose state or rows changed, from
+    /// a fill or from an event.
+    pub tables: Vec<ChangedTable>,
 }
 
 impl From<marfa_core::CopyChanges> for CopyChanges {
@@ -31,6 +35,7 @@ impl From<marfa_core::CopyChanges> for CopyChanges {
             removed_items: changes.removed_items,
             edges: changes.edges,
             removed_edges: changes.removed_edges,
+            tables: changes.tables.into_iter().map(Into::into).collect(),
         }
     }
 }

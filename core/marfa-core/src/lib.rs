@@ -138,8 +138,8 @@ pub use marfa_rules::contract;
 pub use marfa_rules::display::ItemDisplay;
 pub use marfa_rules::thumbnail::Thumbnail;
 pub use tables::{
-    BYTE_CAP as TABLE_BYTE_CAP, FillReport, HeldTable, HeldTables, ROW_CAP as TABLE_ROW_CAP,
-    RowsAsked, TableChoice, TableHold,
+    BYTE_CAP as TABLE_BYTE_CAP, ChangedTable, FillReport, HeldTable, HeldTables,
+    ROW_CAP as TABLE_ROW_CAP, RowsAsked, TableChoice, TableHold,
 };
 /// Refuses the first whole number in `text`, a JSON object of properties,
 /// that a float would change, read as written.

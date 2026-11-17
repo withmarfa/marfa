@@ -328,6 +328,7 @@ fn none() -> CopyChanges {
         removed_items: Vec::new(),
         edges: Vec::new(),
         removed_edges: Vec::new(),
+        tables: Vec::new(),
     }
 }
 
@@ -451,9 +452,21 @@ fn changes_since_answers_everything_for_a_cursor_it_cannot_follow_one_by_one() {
             .everything
     );
     let (store_id, _) = since.split_once('.').unwrap();
-    let ahead = format!("{store_id}.999.0");
-    assert!(core.changes_since(Some(&ahead), 100).unwrap().everything);
-    for malformed in ["", "x", "x.1", "x.1.2.3", "x.-1.0", ".1.0", "x.one.0"] {
+    for ahead in [format!("{store_id}.999.0.0"), format!("{store_id}.0.0.999")] {
+        assert!(core.changes_since(Some(&ahead), 100).unwrap().everything);
+    }
+    for malformed in [
+        "",
+        "x",
+        "x.1",
+        "x.1.2",
+        "x.1.2.3.4",
+        "x.-1.0.0",
+        "x.0.0.-1",
+        ".1.0.0",
+        "x.one.0.0",
+        "x.0.0.one",
+    ] {
         assert!(
             matches!(
                 core.changes_since(Some(malformed), 100),
@@ -968,4 +981,87 @@ fn an_in_list_takes_one_of_a_few_shapes_and_names_each_id() {
         }
         assert_eq!(seen, &named[..count], "{count}");
     }
+}
+
+fn named(item: &str, table: &str) -> crate::ChangedTable {
+    crate::ChangedTable {
+        item: item.into(),
+        table: table.into(),
+    }
+}
+
+#[test]
+fn changes_since_names_each_table_a_fill_or_a_later_row_changed_and_no_other() {
+    let server = Scripted::start();
+    let core = notes(&server);
+    let since = core.changes_since(None, 100).unwrap().cursor;
+    let held = |core: &Core, sql: &str| core.conn().unwrap().execute_batch(sql).unwrap();
+    let row = |core: &Core, item: &str, count: i64| {
+        let values = json!({ "count": count });
+        crate::tables::hold_row(
+            &core.conn().unwrap(),
+            item,
+            "steps",
+            "r1",
+            values.as_object().unwrap(),
+            &[],
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap()
+    };
+
+    held(
+        &core,
+        "INSERT INTO item_tables (item_id, name, state) VALUES ('a', 'steps', 'owed'), ('b', 'steps', 'owed')",
+    );
+    let owed = core.changes_since(Some(&since), 100).unwrap();
+    assert_eq!(
+        owed.tables,
+        vec![named("a", "steps"), named("b", "steps")],
+        "a table held was not named"
+    );
+
+    row(&core, "a", 1);
+    held(
+        &core,
+        "UPDATE item_tables SET state = 'whole' WHERE item_id = 'a'",
+    );
+    let filled = core.changes_since(Some(&owed.cursor), 100).unwrap();
+    assert_eq!(
+        filled.tables,
+        vec![named("a", "steps")],
+        "a fill was not named, or a table it left alone was"
+    );
+
+    // The witness: nothing changed, or only the fill's place, names no table.
+    held(
+        &core,
+        "UPDATE item_tables SET cursor = 'page' WHERE item_id = 'b'",
+    );
+    assert!(!row(&core, "a", 1));
+    let quiet = core.changes_since(Some(&filled.cursor), 100).unwrap();
+    assert_eq!(quiet.tables, Vec::new());
+
+    // A row changed to one of the same size is a change.
+    assert!(row(&core, "a", 2));
+    let later = core.changes_since(Some(&quiet.cursor), 100).unwrap();
+    assert_eq!(later.tables, vec![named("a", "steps")]);
+
+    held(&core, "DELETE FROM item_tables WHERE item_id = 'b'");
+    let gone = core.changes_since(Some(&later.cursor), 100).unwrap();
+    assert_eq!(gone.tables, vec![named("b", "steps")]);
+    assert!(
+        !core
+            .changes_since(Some(&gone.cursor), 0)
+            .unwrap()
+            .everything,
+        "no change is no more than none"
+    );
+    held(&core, "DELETE FROM item_tables WHERE item_id = 'a'");
+    assert!(
+        core.changes_since(Some(&gone.cursor), 0)
+            .unwrap()
+            .everything,
+        "more tables changed than the caller takes"
+    );
 }

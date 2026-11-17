@@ -2232,6 +2232,20 @@ When a caller asks what changed in its copy since a cursor the same store answer
 
 **Tests:** `device/batch-reads.test.ts › names the items and edges a catch-up changed, moved and purged`, `› names what a hydration that replaces the copy holds, and what it took out`.
 
+### `device/changed-tables`
+
+When a caller asks what changed in its copy since a cursor the same store answered, a device MUST name each table it holds or held, by its item and its name, whose state or rows changed since that cursor, whether a fill or an event moved it, and no table whose state and rows did not change.
+
+**Reason:** a table is read apart from its item, so an app that held a table while offline has no other signal to read it again once a fill has made it whole. A table named may show nothing different, as a fill that read no row still moves a table from owed to whole.
+
+**Tests:** `device/tables-live.test.ts › names the table a fill filled and a later change to it, and no table when none changed`.
+
+### `device/changed-tables-catch-up`
+
+When a catch-up ends on its live marker, a device MUST report in `changed_tables` each table whose state or rows the catch-up changed, its fill and the events it applied included, by its item and its name.
+
+**Tests:** `device/tables-live.test.ts › names the table a fill filled and a later change to it, and no table when none changed`.
+
 ### `device/changed-edge-ends`
 
 When an edge in a copy is added, changed or removed, a device MUST name as changed each item at either end of the edge, before and after the change, in its next answer to what changed.
@@ -2258,7 +2272,7 @@ If a caller asks what changed with no cursor, with a cursor from another store o
 
 ### `device/changed-most`
 
-If more items or more edges changed since a cursor than the caller would take, then a device MUST answer `everything` and name no item.
+If more items, more edges or more tables changed since a cursor than the caller would take, then a device MUST answer `everything` and name none.
 
 **Reason:** past some number of changes a whole read is cheaper than a reread of each, and the caller says where that is. The CLI takes it as `--most`, 1000 unless named.
 

@@ -12,6 +12,7 @@ use crate::catalog::CatalogExt;
 use crate::error::CoreError;
 use crate::model::{Edge, Item, ItemState, Rows, Shown};
 use crate::store::Changes;
+use crate::tables::ChangedTable;
 use crate::{BodyLinks, Core, Result, store};
 
 /// What changed in the copy since a cursor `Core::changes_since` gave.
@@ -19,7 +20,7 @@ use crate::{BodyLinks, Core, Result, store};
 pub struct CopyChanges {
     /// Where the next call starts from.
     pub cursor: String,
-    /// True where the changes cannot be named one by one, and the four lists
+    /// True where the changes cannot be named one by one, and the five lists
     /// are empty: the caller reads the whole copy again.
     pub everything: bool,
     /// Each changed item the copy holds, in the bin or out, by id.
@@ -30,19 +31,26 @@ pub struct CopyChanges {
     pub edges: Vec<String>,
     /// Each changed edge the copy no longer holds.
     pub removed_edges: Vec<String>,
+    /// Each table the copy holds, or held, whose state or rows changed,
+    /// whether a fill or an event moved it.
+    pub tables: Vec<ChangedTable>,
 }
 
 /// Where a cursor stands: the store it was taken from, and the latest
-/// change of items and of edges it had seen.
+/// change of items, of edges and of tables it had seen.
 struct Mark {
     store: String,
     items: i64,
     edges: i64,
+    tables: i64,
 }
 
 impl Mark {
     fn render(&self) -> String {
-        format!("{}.{}.{}", self.store, self.items, self.edges)
+        format!(
+            "{}.{}.{}.{}",
+            self.store, self.items, self.edges, self.tables
+        )
     }
 
     fn parse(cursor: &str) -> Result<Mark> {
@@ -52,9 +60,13 @@ impl Mark {
             ))
         };
         let mut parts = cursor.split('.');
-        let (Some(store), Some(items), Some(edges), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
+        let (Some(store), Some(items), Some(edges), Some(tables), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
             return Err(refuse());
         };
         let count = |text: &str| {
@@ -70,6 +82,7 @@ impl Mark {
             store: store.to_string(),
             items: count(items)?,
             edges: count(edges)?,
+            tables: count(tables)?,
         })
     }
 }
@@ -196,12 +209,13 @@ impl Core {
         })
     }
 
-    /// The items and edges that changed since `cursor`, a cursor an earlier
+    /// The items, edges and tables that changed since `cursor`, a cursor an earlier
     /// call gave, with the cursor to pass next. Without a cursor, or with
     /// one from another store, from beyond what this copy has recorded, from
     /// before a change to the types or from before a removed edge it no
     /// longer records (`store::prune_edge_changes`), or where more than
-    /// `most` items or `most` edges changed, the answer is `everything`.
+    /// `most` items, `most` edges or `most` tables changed, the answer is
+    /// `everything`. A table is named when its state or its rows changed.
     ///
     /// An item is named when its row, its tags, an edge at it, its pin or a
     /// write queued for it changed, so a name may change nothing the caller
@@ -227,6 +241,7 @@ fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<Cop
         store: store::store_id(conn)?,
         items: store::last_change(conn, Changes::Items)?,
         edges: store::last_change(conn, Changes::Edges)?,
+        tables: store::last_table_change(conn)?,
     };
     let everything = || CopyChanges {
         cursor: now.render(),
@@ -235,11 +250,13 @@ fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<Cop
         removed_items: Vec::new(),
         edges: Vec::new(),
         removed_edges: Vec::new(),
+        tables: Vec::new(),
     };
     let floor = store::edge_changes_floor(conn)?;
     let Some(since) = since.filter(|since| {
         since.store == now.store
             && since.items <= now.items
+            && since.tables <= now.tables
             && (floor..=now.edges).contains(&since.edges)
     }) else {
         return Ok(everything());
@@ -248,6 +265,9 @@ fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<Cop
         return Ok(everything());
     };
     let Some(edges) = store::changed_since(conn, Changes::Edges, since.edges, most)? else {
+        return Ok(everything());
+    };
+    let Some(tables) = store::tables_changed_since(conn, since.tables, most)? else {
         return Ok(everything());
     };
     let (items, removed_items) = split_held(conn, "items", items)?;
@@ -259,6 +279,7 @@ fn changes_in(conn: &Connection, since: Option<Mark>, most: usize) -> Result<Cop
         removed_items,
         edges,
         removed_edges,
+        tables: ChangedTable::of(tables),
     })
 }
 

@@ -35,6 +35,22 @@ impl From<marfa_core::FillReport> for TableFill {
     }
 }
 
+/// A table the copy holds, or held, whose state or rows changed.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ChangedTable {
+    pub item_id: String,
+    pub table: String,
+}
+
+impl From<marfa_core::ChangedTable> for ChangedTable {
+    fn from(changed: marfa_core::ChangedTable) -> Self {
+        ChangedTable {
+            item_id: changed.item,
+            table: changed.table,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct TableHold {
     pub r#type: String,
@@ -83,7 +99,7 @@ pub struct RowsAsked {
     pub cursor: Option<String>,
     #[uniffi(default = None)]
     pub filter: Option<String>,
-    /// `id`, `updated_at` or a column's name.
+    /// `id`, `updated_at` or `values.<column>`.
     #[uniffi(default = None)]
     pub sort: Option<String>,
     #[uniffi(default = None)]
@@ -460,6 +476,7 @@ mod tests {
         let asked = core.table_rows(ITEM.into(), "steps".into(), None).unwrap();
         assert_eq!(held(&asked), json!(false));
 
+        let since = core.changes_since(None, 100).unwrap().cursor;
         let hold = core
             .hold_table("test.steps".into(), "steps".into(), None)
             .unwrap();
@@ -479,6 +496,25 @@ mod tests {
         assert_eq!(tables.tables[0].state, TableState::Whole);
         assert_eq!(tables.tables[0].rows, 1);
         assert_eq!(core.fill_tables(None).unwrap().whole, 0);
+
+        let changes = core.changes_since(Some(since), 100).unwrap();
+        assert_eq!(
+            (changes.everything, changes.tables),
+            (
+                false,
+                vec![ChangedTable {
+                    item_id: ITEM.into(),
+                    table: "steps".into()
+                }]
+            ),
+            "the fill was not named to the app"
+        );
+        let quiet = core.changes_since(Some(changes.cursor), 100).unwrap();
+        assert_eq!(
+            quiet.tables,
+            Vec::new(),
+            "a table nothing changed was named"
+        );
 
         let page = core
             .table_rows(

@@ -397,15 +397,16 @@ describe("what changed since a cursor", () => {
       value(await device.changed({ since: elsewhere })).everything,
       "a cursor from another store was followed as this store's",
     ).toBe(true);
-    const [store, items, edges] = here.split(".");
-    expect(
-      value(
-        await device.changed({
-          since: `${store}.${String(Number(items) + 5)}.${edges}`,
-        }),
-      ).everything,
-      "a cursor from beyond what the copy has recorded was followed",
-    ).toBe(true);
+    const [store, items, edges, tables] = here.split(".");
+    for (const ahead of [
+      `${store}.${String(Number(items) + 5)}.${edges}.${tables}`,
+      `${store}.${items}.${edges}.${String(Number(tables) + 5)}`,
+    ]) {
+      expect(
+        value(await device.changed({ since: ahead })).everything,
+        "a cursor from beyond what the copy has recorded was followed",
+      ).toBe(true);
+    }
     expect(code(await device.changed({ since: "not a cursor" }))).toBe(
       "invalid",
     );

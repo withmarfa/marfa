@@ -2089,10 +2089,11 @@ describe("catch-up replays from the cursor", () => {
     ).toMatchObject({ applied: 1, skipped: 0, cursor: "12" });
     expect(
       complete.ok ? Object.keys(complete.value).sort() : undefined,
-      "the report carried a field beyond the counts, the cursor, the catalog flag and the tables' fill, which a caller would read as a promise the contract does not make",
+      "the report carried a field beyond the counts, the cursor, the catalog flag, the tables' fill and the tables it changed, which a caller would read as a promise the contract does not make",
     ).toEqual([
       "applied",
       "catalog_changed",
+      "changed_tables",
       "cursor",
       "read_only_held",
       "skipped",
@@ -2107,6 +2108,7 @@ describe("catch-up replays from the cursor", () => {
       failed: 0,
       failure: null,
     });
+    expect(complete.ok ? complete.value.changed_tables : undefined).toEqual([]);
   });
 });
 

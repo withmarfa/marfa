@@ -671,6 +671,7 @@ pub(crate) fn catch_up(
 ) -> Result<CatchUpReport> {
     refuse_if_stopped(stop)?;
     start(core)?;
+    let tables_before = store::last_table_change(&*core.conn()?)?;
     let context = Context::capture(&*core.conn()?)?;
     let scoped = context.http(http);
     let result = replay_build(core, &scoped, &context, idle, stop, catalog_changed)
@@ -688,6 +689,9 @@ pub(crate) fn catch_up(
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
     report.tables = crate::tables::fill(core, &context, stop)?;
+    report.changed_tables = crate::tables::ChangedTable::of(
+        store::tables_changed_since(&*core.conn()?, tables_before, usize::MAX)?.unwrap_or_default(),
+    );
     Ok(report)
 }
 
@@ -758,6 +762,7 @@ fn replay(
         cursor: cursor.clone(),
         catalog_changed: false,
         tables: crate::tables::FillReport::default(),
+        changed_tables: Vec::new(),
     };
     let mut reached_head = false;
     let mut head: Option<u64> = None;

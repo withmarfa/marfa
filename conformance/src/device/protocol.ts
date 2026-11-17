@@ -132,6 +132,9 @@ export interface CatchUpReport {
   catalog_changed: boolean;
   /** The fill of the tables not yet whole (`device/table-fill-when`). */
   tables: TableFill;
+  /** Each table whose state or rows the catch-up changed, its fill included
+   *  (`device/changed-tables-catch-up`). */
+  changed_tables: Array<{ item: string; table: string }>;
 }
 
 /** One pass over the tables a copy holds that are not whole. */

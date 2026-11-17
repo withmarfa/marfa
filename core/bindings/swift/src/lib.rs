@@ -25,6 +25,7 @@ mod views;
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError};
+use tables::ChangedTable;
 
 /// The tier an item is in: `library` for lasting material, `feed` for an
 /// incoming stream.
@@ -376,6 +377,9 @@ pub struct CatchUpReport {
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
+    /// Each table whose state or rows the catch-up changed, its fill and the
+    /// events it applied included.
+    pub changed_tables: Vec<ChangedTable>,
 }
 
 /// A catch-up that failed. The copy keeps the catalog a catch-up took
@@ -2664,6 +2668,7 @@ impl Core {
             read_only_held: report.read_only_held,
             cursor: report.cursor,
             catalog_changed: report.catalog_changed,
+            changed_tables: report.changed_tables.into_iter().map(Into::into).collect(),
         })
     }
 
