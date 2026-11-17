@@ -422,6 +422,25 @@ fn a_path_with_no_store_is_removed_with_what_is_left_there() {
     assert!(!dir.path().join("absent").exists());
 }
 
+/// No lock is made at a path with no store, so a folder the app cannot write
+/// to still lists no writes.
+#[cfg(unix)]
+#[test]
+fn a_path_with_no_store_in_a_folder_that_cannot_be_written_lists_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("copy.sqlite");
+    let _locked = crate::test_folders::locked(dir.path(), 0o500);
+    if std::fs::write(dir.path().join("probe"), b"").is_ok() {
+        // Permissions do not bind this user, so the folder cannot be locked.
+        return;
+    }
+
+    let listed = Core::read_unsent(&path).unwrap();
+    assert!(listed.writes.is_empty());
+    assert_eq!(listed.confirmation, nothing());
+    assert!(!beside(&path, ".writer-lock").exists());
+}
+
 #[test]
 fn a_folders_store_is_refused() {
     let (_dir, path) = store_with_one_unsent();

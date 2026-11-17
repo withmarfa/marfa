@@ -1245,6 +1245,20 @@ fn every_open_refuses_an_empty_file_whose_log_holds_writes_and_a_set_aside_carri
     assert!(left.is_empty(), "{left:?}");
 }
 
+#[test]
+fn an_emptied_store_is_shown_damaged_by_read_unsent_and_removed_losing_all() {
+    let (_dir, path, _) = emptied_with_log(2);
+    let log = bytes(&beside(&path, "-wal"));
+    let (named, _, said) = damaged(Core::read_unsent(&path).err().unwrap());
+    assert_eq!(named, path.display().to_string());
+    assert!(said.contains("log holds committed writes"), "{said}");
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    assert_eq!(bytes(&path), Some(Vec::new()));
+
+    Core::remove_store_losing_all(&path).unwrap();
+    assert!(!path.exists() && !beside(&path, "-wal").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn a_folders_store_whose_file_is_empty_and_whose_log_holds_writes_is_refused_and_kept() {

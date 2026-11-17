@@ -138,21 +138,25 @@ impl Core {
     /// The writes the store at `path` holds that the server has not taken,
     /// whatever build made it, with the confirmation `remove_store` takes to
     /// lose exactly these. A path with no store holds none, as a removal
-    /// counts it. Refuses with `ReadingHandle` while another process holds
-    /// the writer role, with `StoreDamaged` while a set-aside of the store is
-    /// unfinished, and with `Store` where the queue cannot be read.
+    /// counts it, and is read without making a writer lock there. Refuses
+    /// with `ReadingHandle` while another process holds the writer role, with
+    /// `StoreDamaged` while a set-aside of the store is unfinished or where
+    /// its file is empty while its log holds committed writes, and with
+    /// `Store` where the queue cannot be read.
     pub fn read_unsent(path: impl AsRef<Path>) -> Result<UnsentWrites> {
         let path = path.as_ref();
-        let lock_name = lock::lock_path(path);
-        let lock_was_there = lock_name.symlink_metadata().is_ok();
+        // A store made after this check is still guarded by the confirmation.
+        if path.symlink_metadata().is_err() && lock::lock_path(path).symlink_metadata().is_err() {
+            damage::refuse_unfinished(path)?;
+            return Ok(UnsentWrites {
+                confirmation: store::confirmation(&[]),
+                writes: Vec::new(),
+            });
+        }
+        // Here, not in `claim_unsent`, so a removal losing all still takes it.
+        damage::refuse_emptied(path)?;
         let writes = match Self::claim_unsent(path, false)? {
-            Unsent::Held(lock, writes) => {
-                if !lock_was_there && path.symlink_metadata().is_err() {
-                    remove_name(&lock_name)?;
-                }
-                drop(lock);
-                writes
-            }
+            Unsent::Held(_, writes) => writes,
             Unsent::NoFolder => Some(Vec::new()),
         };
         let writes = writes.ok_or_else(|| {
