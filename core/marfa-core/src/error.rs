@@ -643,9 +643,7 @@ fn unsent_differs(path: &str, unsent: Option<&[String]>, agreed: &[String]) -> S
                 ));
             }
             if gone > 0 {
-                changes.push(format!(
-                    "it no longer holds {gone} of the writes agreed to"
-                ));
+                changes.push(format!("it no longer holds {gone} of the writes agreed to"));
             }
             format!(
                 "{path} was not removed: {}; read its unsent writes again, show them to the person and remove it with their ids once they agree",

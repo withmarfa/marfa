@@ -186,7 +186,10 @@ fn a_write_queued_after_the_writes_were_shown_refuses_the_removal() {
     );
     assert_eq!(held(&path), before, "the store changed when refused");
     let kept = Core::open(&path, None).unwrap().queue().unwrap();
-    assert!(kept.iter().any(|write| write.id == "q2" && write.verdict.is_none()));
+    assert!(
+        kept.iter()
+            .any(|write| write.id == "q2" && write.verdict.is_none())
+    );
 }
 
 #[test]

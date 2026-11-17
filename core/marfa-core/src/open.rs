@@ -293,7 +293,11 @@ impl Core {
     fn remove_agreed(path: &Path, agreed: Option<&[String]>) -> Result<()> {
         let differs = |held: Option<Vec<String>>| match agreed {
             None => Ok(()),
-            Some(agreed) if held.as_deref().is_some_and(|held| same_writes(held, agreed)) => {
+            Some(agreed)
+                if held
+                    .as_deref()
+                    .is_some_and(|held| same_writes(held, agreed)) =>
+            {
                 Ok(())
             }
             Some(agreed) => Err(CoreError::UnsentDiffers {
