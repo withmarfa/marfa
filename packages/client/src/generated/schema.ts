@@ -236,6 +236,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Count linked items and rows
+         * @description Returns, for each of up to 100 items, how many active items an edge type links to it, by status group, or how many rows it holds in one table. Name exactly one of `backref`, `edge` and `table`.
+         */
+        post: operations["countItemLinks"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/items/bulk": {
         parameters: {
             query?: never;
@@ -11587,6 +11607,248 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReachChangedRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    countItemLinks: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description The IDs of the items to count for, at most 100. An ID named twice is answered once.
+                     * @example [
+                     *       "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *       "01a1011c-2f86-76b6-9594-050c109f4957"
+                     *     ]
+                     */
+                    ids: string[];
+                    /**
+                     * @description An edge type. Counts the active items that edges of this type leave each item for, as `backref[<edge type>]` selects them: `parent-of` counts children.
+                     * @example parent-of
+                     */
+                    backref?: string;
+                    /**
+                     * @description An edge type. Counts the active items that have an edge of this type to each item, as `edge[<edge type>]` selects them: `in-collection` counts a collection's members.
+                     * @example in-collection
+                     */
+                    edge?: string;
+                    /**
+                     * @description A table name. Counts the rows each item holds in that table. An item whose type declares no such table counts 0.
+                     * @example messages
+                     */
+                    table?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns one count for each ID, in the order `ids` named them. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "counts": [
+                     *         {
+                     *           "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d",
+                     *           "total": 7,
+                     *           "status_groups": {
+                     *             "not_started": 2,
+                     *             "in_progress": 1,
+                     *             "completed": 3,
+                     *             "canceled": 1
+                     *           }
+                     *         },
+                     *         {
+                     *           "id": "01a1011c-2f86-76b6-9594-050c109f4957",
+                     *           "total": 0,
+                     *           "status_groups": {
+                     *             "not_started": 0,
+                     *             "in_progress": 0,
+                     *             "completed": 0,
+                     *             "canceled": 0
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        /** @description The counts, in the order `ids` named them, each ID once. */
+                        counts: {
+                            /**
+                             * @description The ID of the item counted for.
+                             * @example 01a1011a-4902-76cf-a4a9-88e99c038c8d
+                             */
+                            id: string;
+                            /** @description How many items, or rows, the item links to or holds. 0 for an item that doesn't exist or that you can't read. */
+                            total: number;
+                            /** @description How many of the counted items are in each status group. Items with no status, or a status word their type doesn't declare, are in none. Absent for a table's rows. */
+                            status_groups?: {
+                                /** @description Items in the `not_started` group. */
+                                not_started: number;
+                                /** @description Items in the `in_progress` group. */
+                                in_progress: number;
+                                /** @description Items in the `completed` group. */
+                                completed: number;
+                                /** @description Items in the `canceled` group. */
+                                canceled: number;
+                            };
+                        }[];
+                    };
+                };
+            };
+            /**
+             * @description - `missing_required_field`: `ids` is missing.
+             *     - `validation_error`: `ids` is not a list or has more than 100 IDs, none or more than one of `backref`, `edge` and `table` is named, an edge type or a table name is blank or malformed, or the body has a field this endpoint doesn't take.
+             *     - `invalid_id`: an ID in `ids` is not a valid item ID.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `type_not_permitted`: your credential reaches no type. If it reaches some types, items of the others are left out instead.
+             *     - `edge_type_not_permitted`: you can't read the edge type.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

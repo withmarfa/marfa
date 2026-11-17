@@ -40,6 +40,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getBulkActionJob", "items bulk-action job"),
     reached("cancelBulkActionJob", "items bulk-action cancel"),
     reached("bulkGetItems", "items bulk-get"),
+    reached("countItemLinks", "items counts"),
     reached("findItemsByTitle", "items titles"),
     reached("lookupItems", "items lookup"),
     reached("settleTombstones", "items tombstones"),

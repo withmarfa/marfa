@@ -1586,7 +1586,7 @@ When a request carries only private local authority to `GET /items/stats` or `GE
 
 ## Counting
 
-`GET /items/stats` counts the items a listing matches.
+`GET /items/stats` breaks one filtered set of items down by state, type or source. `POST /items/counts` counts, for each of up to 100 items, what the item links to or holds.
 
 ### `search-and-filters/stats-counts-listing`
 
@@ -1645,6 +1645,118 @@ When `GET /items/stats` names neither `include=system` nor a `type` in the `syst
 If `GET /items/stats` names an `include` other than `system`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+
+### `search-and-filters/counts-linked`
+
+When `POST /items/counts` names `backref` or `edge` with an edge type, the server MUST answer, for each item in `ids`, `total` as the number of items that a `GET /items` listing with the filter `backref[<edge type>]` or `edge[<edge type>]` anchored on that item and no `state` lists, and `status_groups` as how many of them fall in each of `not_started`, `in_progress`, `completed` and `canceled`.
+
+**Reason:** a count that differs from the list a person opens next is wrong, so the listing's own default decides what counts: only `active` items, never an archived item, an item in the bin or a `system.*` item.
+
+**Tests:** `compliance/item-counts.test.ts › counts what each anchor links, by status group, and equals the listing`, `› counts the items that link to an anchor as well as the items it links to`.
+
+### `search-and-filters/counts-status-groups`
+
+When `POST /items/counts` counts linked items, the server MUST answer `status_groups` with all four groups, `0` included.
+
+**Tests:** `compliance/item-counts.test.ts › counts what each anchor links, by status group, and equals the listing`.
+
+### `search-and-filters/counts-ungrouped`
+
+When `POST /items/counts` counts an item with no status field, no status value or a status word its type no longer declares, the server MUST add it to `total` only.
+
+**Tests:** `compliance/item-counts.test.ts › counts what each anchor links, by status group, and equals the listing`.
+
+### `search-and-filters/counts-reading`
+
+When `POST /items/counts` counts linked items, the server MUST count only the items of the types the credential reads, only through edges whose from item the credential reads, and only the items the credential's source filter shows.
+
+**Tests:** `compliance/item-counts.test.ts › counts only what the credential reads, through the edges it reads, under its source filter`.
+
+### `search-and-filters/counts-edge-anchor`
+
+When an id in `ids` of a `POST /items/counts` that names `edge` is an item the credential does not read, the server MUST count the readable items that link to it, as the `GET /items` listing with the filter `edge[<edge type>]` anchored on it lists them.
+
+**Reason:** `GET /edges` already shows a readable edge's to item to the credential that reads the edge, so the count tells it nothing the listing does not.
+
+**Tests:** `compliance/item-counts.test.ts › counts the readable items that link to an anchor the credential cannot read, as the listing does`.
+
+### `search-and-filters/counts-edge-anchor-source-filter`
+
+Where a source filter applies to the key, when an id in `ids` of a `POST /items/counts` that names `edge` is an item the filter leaves out, the server MUST NOT leave out the readable items that link to it, as the listing does not.
+
+**Reason:** the source filter narrows the items counted, and the listing with the `edge` filter applies it to those and not to the anchor.
+
+**Tests:** `compliance/item-counts.test.ts › counts through an anchor the source filter hides exactly as the listing does`.
+
+### `search-and-filters/counts-backref-anchor`
+
+When an id in `ids` of a `POST /items/counts` that names `backref` is no item or an item the credential does not read, the server MUST answer `total` as `0` and every group as `0`, exactly as for an item with nothing linked.
+
+**Reason:** edges from an item the credential cannot read are never counted (`edges/filter-backref`), so the answer for such an item is the answer for an id no item holds, and tells the credential nothing of whether the item exists.
+
+**Tests:** `compliance/item-counts.test.ts › answers a missing and an unreadable anchor alike for backref and for tables`.
+
+### `search-and-filters/counts-rows-anchor`
+
+When an id in `ids` of a `POST /items/counts` that names `table` is no item or an item the credential does not read, the server MUST answer `total` as `0`, exactly as for an item that holds no row.
+
+**Reason:** the tables door answers a host the credential cannot read as it answers one that does not exist, so a count that differed would tell the credential the item exists.
+
+**Tests:** `compliance/item-counts.test.ts › answers a missing and an unreadable anchor alike for backref and for tables`.
+
+### `search-and-filters/counts-rows`
+
+When `POST /items/counts` names `table`, the server MUST answer, for each item in `ids` whose type the credential reads and that is not in the bin, `total` as the number of rows the item holds in that table, with no `status_groups`.
+
+**Tests:** `compliance/item-counts.test.ts › counts a table's rows, and answers 0 for a table the type does not declare`.
+
+### `search-and-filters/counts-rows-none`
+
+When `POST /items/counts` names a `table` that the type of an item in `ids` does not declare, or that holds no row of the item, or the item is in the bin, the server MUST answer `total` as `0`.
+
+**Tests:** `compliance/item-counts.test.ts › counts a table's rows, and answers 0 for a table the type does not declare`.
+
+### `search-and-filters/counts-order`
+
+The server MUST answer `POST /items/counts` with `counts` holding one entry for each distinct id in `ids`, in the order the ids first appear.
+
+**Tests:** `compliance/item-counts.test.ts › answers in request order, once for a repeated id, and refuses more than 100 ids`.
+
+### `search-and-filters/counts-id-rules`
+
+The server MUST refuse the `ids` of `POST /items/counts` by the rules `POST /items/bulk-get` applies to its own: more than 100 ids, `ids` that is not a list, a malformed id and no `ids`.
+
+**Tests:** `compliance/item-counts.test.ts › answers in request order, once for a repeated id, and refuses more than 100 ids`, `› refuses a request that does not name what to count, with the codes the other doors use`.
+
+### `search-and-filters/counts-one-counted`
+
+If `POST /items/counts` names none or more than one of `backref`, `edge` and `table`, a `backref` or `edge` that is not an edge type, a `table` that is not a table name, or a body key it does not declare, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/item-counts.test.ts › refuses a request that does not name what to count, with the codes the other doors use`.
+
+### `search-and-filters/counts-no-type`
+
+If the credential of a `POST /items/counts` request reads no type, then the server MUST answer `403 type_not_permitted`.
+
+**Tests:** `compliance/item-counts.test.ts › refuses a request that does not name what to count, with the codes the other doors use`.
+
+### `search-and-filters/counts-no-edge-type`
+
+If a `POST /items/counts` request names an edge type that its credential does not read, then the server MUST answer `403 edge_type_not_permitted`.
+
+**Tests:** `compliance/item-counts.test.ts › refuses a request that does not name what to count, with the codes the other doors use`.
+
+### `search-and-filters/counts-is-a-read`
+
+The server MUST answer `POST /items/counts` to a read-only key and to an app token that reads the types and edges it counts.
+
+**Tests:** `compliance/item-counts.test.ts › is a read, open to a read-only key and to an app token for chosen types, and takes no reach header`.
+
+### `search-and-filters/counts-no-reach`
+
+If a `POST /items/counts` request carries `X-Marfa-Reach`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/item-counts.test.ts › is a read, open to a read-only key and to an app token for chosen types, and takes no reach header`.
 
 ## Lookup
 

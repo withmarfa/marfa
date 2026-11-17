@@ -393,6 +393,12 @@ pub(crate) fn readable_host(read: &Reader<'_, '_>, id: &str) -> Result<Host> {
     Ok(read.row(id)?.host())
 }
 
+pub(crate) fn host_read(read: &Reader<'_, '_>, id: &str) -> Result<Option<Host>> {
+    Ok(rows::by_id(read.tx, id)?
+        .filter(|row| row.state != "trashed" && read.caller.may_read_type(&row.type_id))
+        .map(Item::host))
+}
+
 /// The item holding `id`, whatever its state, for a restore writing its rows.
 pub(crate) fn host_of(tx: &Transaction<'_>, id: &str) -> Result<Option<Host>> {
     Ok(rows::by_id(tx, id)?.map(Item::host))

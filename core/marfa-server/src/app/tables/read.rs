@@ -206,6 +206,26 @@ pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String>
     .await
 }
 
+pub(crate) fn row_counts(read: &Reader<'_, '_>, ids: &[String], name: &str) -> Result<Vec<i64>> {
+    ids.iter()
+        .map(|id| {
+            let Some(host) = items::host_read(read, id)? else {
+                return Ok(0);
+            };
+            if !tables_of_host(&read.catalog, &host)?
+                .iter()
+                .any(|table| table.name == name)
+            {
+                return Ok(0);
+            }
+            Ok(store::summaries(read.tx, host.seq)?
+                .into_iter()
+                .find(|summary| summary.table == name)
+                .map_or(0, |summary| summary.row_count))
+        })
+        .collect()
+}
+
 fn expression(filter: &str, table: &Table) -> Result<Expression> {
     sql::table_filter(filter, |name| table.columns.contains_key(name))
         .map_err(|error| invalid("filter", error.message))

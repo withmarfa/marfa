@@ -1210,6 +1210,31 @@ fn record_columns(record: &Value) -> Cols {
             vec![owned("tag"), scalar_text(&record["count"])],
         );
     }
+    if record.get("total").is_some() && record.get("id").is_some() {
+        let group = |name: &str| {
+            record
+                .pointer(&format!("/status_groups/{name}"))
+                .map_or_else(|| "-".to_string(), scalar_text)
+        };
+        return Cols::new(
+            &[
+                "id",
+                "total",
+                "not started",
+                "in progress",
+                "completed",
+                "canceled",
+            ],
+            vec![
+                owned("id"),
+                scalar_text(&record["total"]),
+                group("not_started"),
+                group("in_progress"),
+                group("completed"),
+                group("canceled"),
+            ],
+        );
+    }
     if record.get("name_from").is_some() && record.get("source").is_some() {
         return Cols::new(
             &["source", "name", "named by"],
@@ -1593,6 +1618,34 @@ pub(crate) mod tests {
         let text = describe(&json!({"data":[row], "next_cursor":null})).unwrap();
         assert!(text.contains("Shopping list"));
         assert!(text.contains("v3"));
+    }
+
+    #[test]
+    fn counts_are_drawn_with_a_column_for_each_status_group() {
+        let text = describe(&json!({"counts":[
+            {"id":"one","total":3,"status_groups":{"not_started":1,"in_progress":0,"completed":2,"canceled":0}},
+            {"id":"two","total":4}
+        ]}))
+        .unwrap();
+        let rows: Vec<Vec<&str>> = text
+            .lines()
+            .map(|l| l.split_whitespace().collect())
+            .collect();
+        assert_eq!(
+            rows[0],
+            [
+                "id",
+                "total",
+                "not",
+                "started",
+                "in",
+                "progress",
+                "completed",
+                "canceled"
+            ]
+        );
+        assert_eq!(rows[1], ["one", "3", "1", "0", "2", "0"]);
+        assert_eq!(rows[2], ["two", "4", "-", "-", "-", "-"]);
     }
 
     #[test]
