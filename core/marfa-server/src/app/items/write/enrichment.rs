@@ -2,17 +2,15 @@ use arc_swap::ArcSwap;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
-use super::{FILE_BYTES, FILE_TYPE, Job, Referencing, Writing, parsed};
+use super::{FILE_TYPE, Job, Referencing, Writing, parsed};
 use crate::app::blobs::{Hash, references};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
+use crate::app::items::file_fields::{
+    BLOB_REF, DURATION, EXTRACTED_TEXT, HEIGHT, MIME_TYPE, WIDTH,
+};
 use crate::app::items::{index, rows};
 use crate::app::refusal::Result;
 use crate::app::unit::Unit;
-
-const TEXT: &str = "extracted_text";
-const WIDTH: &str = "width";
-const HEIGHT: &str = "height";
-const DURATION: &str = "duration";
 
 /// What a reading is made from, so that its result is kept only while the item still names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,7 +42,7 @@ pub fn offer(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, hash: &Hash) -> 
         return Ok(Offer::Dropped);
     };
     let properties = parsed(&item.properties)?;
-    let names = properties.get(FILE_BYTES).and_then(Value::as_str) == Some(hash.as_str());
+    let names = properties.get(BLOB_REF).and_then(Value::as_str) == Some(hash.as_str());
     let lends =
         references::held(tx, Referencing::Item(item.seq))?.get(hash.as_str()) == Some(&true);
     if !names || !lends || !catalog.rules.matches(FILE_TYPE, &item.type_id) {
@@ -57,14 +55,14 @@ pub fn offer(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, hash: &Hash) -> 
         .rules
         .resolved(&item.type_id)
         .map_err(super::ruled)?;
-    let wanted = [TEXT, WIDTH, HEIGHT, DURATION]
+    let wanted = [EXTRACTED_TEXT, WIDTH, HEIGHT, DURATION]
         .iter()
         .any(|name| declared.contains_key(*name) && lacks(&properties, name));
     if !wanted {
         return Ok(Offer::Complete);
     }
     let mime_type = properties
-        .get("mime_type")
+        .get(MIME_TYPE)
         .and_then(Value::as_str)
         .filter(|mime| !mime.trim().is_empty())
         .map(str::to_string);
@@ -142,7 +140,7 @@ impl Job<'_, '_, '_> {
             return Ok(Written::Changed);
         };
         let current = parsed(&row.properties)?;
-        let names = current.get(FILE_BYTES).and_then(Value::as_str) == Some(enriched.hash.as_str());
+        let names = current.get(BLOB_REF).and_then(Value::as_str) == Some(enriched.hash.as_str());
         let lends = references::held(tx, Referencing::Item(row.seq))?.get(enriched.hash.as_str())
             == Some(&true);
         if !names || !lends || row.state == "trashed" || !self.is_file(&row.type_id) {
@@ -162,7 +160,7 @@ impl Job<'_, '_, '_> {
                 fill.insert(name.to_string(), value);
             }
         };
-        give(TEXT, enriched.text.map(Value::from));
+        give(EXTRACTED_TEXT, enriched.text.map(Value::from));
         give(WIDTH, enriched.size.map(|(width, _)| Value::from(width)));
         give(HEIGHT, enriched.size.map(|(_, height)| Value::from(height)));
         give(DURATION, enriched.duration.map(Value::from));

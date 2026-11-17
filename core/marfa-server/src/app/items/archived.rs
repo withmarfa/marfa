@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::Transaction;
 use serde_json::{Map, Value};
 
-use super::{Item, Marks, Writer, metadata_for, parsed, rows, with_properties};
+use super::{Item, Marks, Writer, file_fields, metadata_for, parsed, rows, with_properties};
 use crate::app::access::Caller;
 use crate::app::blobs::references::{self, Row};
 use crate::app::catalog::Catalog;
@@ -13,7 +13,6 @@ use crate::app::connectors::ReadOnly;
 use crate::app::refusal::{Refusal, Result};
 
 const FILE_TYPE: &str = "core.file";
-const BLOB_REF: &str = "blob_ref";
 
 /// One item as an export writes it, and what the export checks and collects of it.
 pub struct Archived {
@@ -92,7 +91,7 @@ fn file_ref(catalog: &Catalog, type_id: &str, properties: &Map<String, Value>) -
         return None;
     }
     properties
-        .get(BLOB_REF)
+        .get(file_fields::BLOB_REF)
         .and_then(Value::as_str)
         .filter(|text| crate::app::blobs::Hash::parse(text).is_ok())
         .map(str::to_string)

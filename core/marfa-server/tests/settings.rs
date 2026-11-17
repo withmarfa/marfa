@@ -428,7 +428,7 @@ async fn a_refused_change_writes_nothing_of_itself() {
         set("max_request_bytes", 0),
         set("sign_in_address", "marfa.example"),
         set("no_such_setting", 1),
-        set("health_probe", "a note is not a setting"),
+        set("enforcement", "a note is not a setting"),
     ] {
         let key = doomed.key.clone();
         let changes = vec![set("rate_limit_window_seconds", 1000), doomed];

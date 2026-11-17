@@ -194,7 +194,7 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
 }
 
 /// Rows of the `settings` table that are no setting: the server's own notes.
-const NOTES: [&str; 2] = [super::config::ENFORCEMENT_ROW, super::health::PROBE_KEY];
+const NOTES: [&str; 1] = [super::config::ENFORCEMENT_ROW];
 
 /// Logs the stored settings this server does not have; their rows are left alone.
 pub fn report_unknown(rows: &[(String, String)]) {
@@ -499,7 +499,7 @@ mod tests {
         for entry in ENTRIES {
             assert!(put(&tx, entry.key, "note").is_err(), "{}", entry.key);
         }
-        put(&tx, "health_probe", "note").unwrap();
+        put(&tx, crate::app::config::ENFORCEMENT_ROW, "note").unwrap();
         assert_eq!(rows(&tx).unwrap().len(), 1);
     }
 }

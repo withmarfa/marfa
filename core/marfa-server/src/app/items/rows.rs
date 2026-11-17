@@ -191,7 +191,7 @@ pub(super) struct NewRow<'a> {
     pub id: &'a str,
     pub type_id: &'a str,
     pub state: &'a str,
-    pub tier: Option<&'a str>,
+    pub tier: &'a str,
     pub source: &'a str,
     pub source_id: Option<&'a str>,
     pub properties: &'a str,
@@ -269,7 +269,7 @@ fn stored(tx: &Transaction<'_>, id: &str) -> Result<Item> {
 
 pub(super) struct Landed<'a> {
     pub type_id: &'a str,
-    pub tier: Option<&'a str>,
+    pub tier: &'a str,
     pub source_id: Option<&'a str>,
     pub link: Option<&'a str>,
     pub properties: &'a str,
@@ -925,7 +925,7 @@ pub(super) struct NewSnapshot<'a> {
     pub id: &'a str,
     pub properties: &'a str,
     pub type_id: &'a str,
-    pub tier: Option<&'a str>,
+    pub tier: &'a str,
     pub occurred_at: &'a str,
     pub source_id: Option<&'a str>,
     pub writer: Option<&'a Writer>,
@@ -996,8 +996,8 @@ mod tests {
         let id = |at: u32| format!("01a1bdba-8640-72ba-b7d6-{at:012x}");
         for at in 0..5_000u32 {
             tx.execute(
-                "INSERT INTO item_versions (item_seq, version, id, properties, type, occurred_at, \
-                 created_at) VALUES (?1, 1, ?2, X'', 'core.note', '', '')",
+                "INSERT INTO item_versions (item_seq, version, id, properties, type, tier, \
+                 occurred_at, created_at) VALUES (?1, 1, ?2, X'', 'core.note', 'library', '', '')",
                 params![at, id(at)],
             )
             .unwrap();

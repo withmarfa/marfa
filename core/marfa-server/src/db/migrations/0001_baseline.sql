@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS items (
     id TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'archived', 'trashed', 'revoked')),
-    tier TEXT CHECK (tier IS NULL OR tier IN ('library', 'feed')),
+    tier TEXT NOT NULL CHECK (tier IN ('library', 'feed')),
     source TEXT NOT NULL CHECK (length(source) > 0),
     source_id TEXT,
     title_key TEXT,
@@ -309,7 +309,7 @@ CREATE TABLE IF NOT EXISTS item_versions (
     id TEXT NOT NULL,
     properties BLOB NOT NULL,
     type TEXT NOT NULL,
-    tier TEXT,
+    tier TEXT NOT NULL CHECK (tier IN ('library', 'feed')),
     occurred_at TEXT NOT NULL,
     source_id TEXT,
     writer_kind TEXT,
@@ -375,10 +375,12 @@ CREATE TABLE IF NOT EXISTS attention_announced (
     PRIMARY KEY (kind, reference)
 ) STRICT;
 
+-- A job with `wakes_on_files` is asked to run soon when a file's record changes.
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,
     wake_requested INTEGER NOT NULL DEFAULT 0 CHECK (wake_requested IN (0, 1)),
+    wakes_on_files INTEGER NOT NULL DEFAULT 0 CHECK (wakes_on_files IN (0, 1)),
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,
@@ -630,12 +632,10 @@ CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
 CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
     ON mcp_spent_confirmations (expires_at);
 
--- What the OAuth server keeps. A secret is held only as a digest.
+-- What the OAuth server keeps. Every client is public, so no client secret is held.
 
 CREATE TABLE IF NOT EXISTS oauth_clients (
     client_id TEXT PRIMARY KEY NOT NULL,
-    auth_method TEXT NOT NULL,
-    secret_digest TEXT,
     application_type TEXT NOT NULL CHECK (application_type IN ('web', 'native')),
     redirect_uris TEXT NOT NULL,
     grant_types TEXT NOT NULL,
@@ -979,8 +979,7 @@ CREATE TABLE IF NOT EXISTS owner_avatar (
     updated_at TEXT NOT NULL
 ) STRICT;
 
--- Physical backups keep reports; portable archives exclude them. A report goes
--- with the key or app grant that made it.
+-- Archives exclude reports. A report goes with the key or app grant that made it.
 CREATE TABLE IF NOT EXISTS folder_status (
     folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
@@ -1135,17 +1134,13 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
 
 CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);
 
--- Delay the wake to group a burst of writes into one run.
+-- A change to a file's record asks the jobs that read files to run soon; the scheduler decides when.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_referenced AFTER INSERT ON blob_references
 WHEN NEW.kind = 'item' AND NEW.lends = 1
 BEGIN
     INSERT OR REPLACE INTO enrichment_files (item_seq, hash, updated_at)
     VALUES (NEW.seq, NEW.hash, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-    UPDATE housekeeping_jobs
-    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
-    WHERE name = 'enrichment-sweep'
-      AND (running_since IS NOT NULL
-           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+    UPDATE housekeeping_jobs SET wake_requested = 1 WHERE wakes_on_files = 1 AND wake_requested = 0;
 END;
 
 -- Requeue files after their type, `mime_type` or `blob_ref` changes, or a fillable field is cleared.
@@ -1172,11 +1167,7 @@ BEGIN
        OR (enrichment_files.state = 'waiting' AND enrichment_files.attempts > 0
            AND (NEW.type IS NOT OLD.type
                 OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'));
-    UPDATE housekeeping_jobs
-    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
-    WHERE name = 'enrichment-sweep'
-      AND (running_since IS NOT NULL
-           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+    UPDATE housekeeping_jobs SET wake_requested = 1 WHERE wakes_on_files = 1 AND wake_requested = 0;
 END;
 
 CREATE INDEX IF NOT EXISTS enrichment_files_missing ON enrichment_files (hash) WHERE reason = 'missing';
@@ -1188,11 +1179,7 @@ BEGIN
     UPDATE enrichment_files
     SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE hash = NEW.hash AND reason = 'missing';
-    UPDATE housekeeping_jobs
-    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
-    WHERE name = 'enrichment-sweep'
-      AND (running_since IS NOT NULL
-           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+    UPDATE housekeeping_jobs SET wake_requested = 1 WHERE wakes_on_files = 1 AND wake_requested = 0;
 END;
 
 CREATE TRIGGER IF NOT EXISTS enrichment_files_store_attached AFTER UPDATE OF detached_at ON stores
@@ -1202,11 +1189,7 @@ BEGIN
     SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE reason = 'missing'
       AND hash IN (SELECT hash FROM blob_copies WHERE store_id = NEW.id);
-    UPDATE housekeeping_jobs
-    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
-    WHERE name = 'enrichment-sweep'
-      AND (running_since IS NOT NULL
-           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+    UPDATE housekeeping_jobs SET wake_requested = 1 WHERE wakes_on_files = 1 AND wake_requested = 0;
 END;
 
 CREATE TRIGGER IF NOT EXISTS enrichment_files_unreferenced AFTER DELETE ON blob_references
@@ -1412,19 +1395,16 @@ CREATE TRIGGER IF NOT EXISTS backup_connector_agreements_deleted AFTER DELETE ON
 END;
 
 CREATE TRIGGER IF NOT EXISTS backup_settings_inserted AFTER INSERT ON settings
-WHEN NEW.key <> 'health_probe'
 BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS backup_settings_updated AFTER UPDATE ON settings
-WHEN NEW.key <> 'health_probe'
 BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS backup_settings_deleted AFTER DELETE ON settings
-WHEN OLD.key <> 'health_probe'
 BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;

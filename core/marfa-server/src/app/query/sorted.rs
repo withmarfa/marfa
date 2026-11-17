@@ -222,9 +222,9 @@ mod tests {
 
     fn put(conn: &Connection, n: usize, type_id: &str, properties: &str) {
         conn.execute(
-            "INSERT INTO items (id, type, state, source, version, schema_version, occurred_at, \
-             created_at, updated_at, last_activity_at, properties) \
-             VALUES (?1, ?2, 'active', 's', 1, 0, 't', 't', 't', 't', jsonb(?3))",
+            "INSERT INTO items (id, type, state, tier, source, version, schema_version, \
+             occurred_at, created_at, updated_at, last_activity_at, properties) \
+             VALUES (?1, ?2, 'active', 'library', 's', 1, 0, 't', 't', 't', 't', jsonb(?3))",
             params![format!("id-{n:03}"), type_id, properties],
         )
         .unwrap();

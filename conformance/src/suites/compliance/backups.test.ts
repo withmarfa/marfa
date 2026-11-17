@@ -666,6 +666,7 @@ describe("the backup schedule", () => {
       await afterFirstScheduledBackup(server);
       expect((await mine.backupKeys()).length).toBe(1);
 
+      expect((await health(server, operator)).status).toBe("ok");
       const again = await runJob<{ outcome: string }>(operator, "backup");
       expect(again.result.outcome).toBe("unchanged");
       expect((await mine.backupKeys()).length).toBe(1);

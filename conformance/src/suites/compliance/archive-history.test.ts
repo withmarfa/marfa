@@ -632,6 +632,9 @@ describe("an archive's dates and history, refused before anything is written", (
   field("versions.1.tier", ({ secondVersions }) => {
     secondVersions[0]!.tier = "other";
   });
+  add("versions.1.tier left null", "versions.1.tier", ({ secondVersions }) => {
+    secondVersions[0]!.tier = null;
+  });
   field("versions.1.occurred_at", ({ secondVersions }) => {
     secondVersions[0]!.occurred_at = invalidInstant;
   });

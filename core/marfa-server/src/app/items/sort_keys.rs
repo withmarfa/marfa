@@ -197,9 +197,9 @@ mod tests {
     fn items(conn: &Connection, type_id: &str, count: i64) {
         conn.execute(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?2) \
-             INSERT INTO items (id, type, state, source, version, schema_version, occurred_at, \
-             created_at, updated_at, last_activity_at, properties) \
-             SELECT ?1 || i, ?1, 'active', 's', 1, 0, 't', 't', 't', 't', jsonb('{\"p\":\"x\"}') FROM n",
+             INSERT INTO items (id, type, state, tier, source, version, schema_version, \
+             occurred_at, created_at, updated_at, last_activity_at, properties) \
+             SELECT ?1 || i, ?1, 'active', 'library', 's', 1, 0, 't', 't', 't', 't', jsonb('{\"p\":\"x\"}') FROM n",
             params![type_id, count],
         )
         .unwrap();

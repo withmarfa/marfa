@@ -568,7 +568,7 @@ fn in_request_order(scopes: &ScopeSet, named: &ScopeSet, offered: &[&str]) -> Sc
 
 #[cfg(test)]
 mod tests {
-    use super::super::client::{AuthMethod, GrantType, Registration, ResponseType};
+    use super::super::client::{GrantType, Registration, ResponseType};
     use super::super::redirect::AppKind;
     use super::super::scope::{Narrowed, Registries, combined, first_uncovered, narrow};
     use super::*;
@@ -585,7 +585,6 @@ mod tests {
             created_at: crate::app::clock::Stamp::from_ms(0).unwrap(),
             registration: Registration {
                 application_type: kind,
-                token_endpoint_auth_method: AuthMethod::None,
                 grant_types: vec![GrantType::AuthorizationCode],
                 response_types: vec![ResponseType::Code],
                 redirect_uris: redirects.iter().map(|uri| (*uri).to_string()).collect(),

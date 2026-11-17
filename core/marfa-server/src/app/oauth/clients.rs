@@ -279,7 +279,7 @@ pub(super) fn destinations_digest(app: &App, client: &Client) -> Result<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::super::client::{AuthMethod, GrantType, ResponseType};
+    use super::super::client::{GrantType, ResponseType};
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Barrier, mpsc};
@@ -298,7 +298,6 @@ mod tests {
     fn registration(scope: &str, grants: Vec<GrantType>) -> Registration {
         Registration {
             application_type: AppKind::Native,
-            token_endpoint_auth_method: AuthMethod::None,
             grant_types: grants,
             response_types: vec![ResponseType::Code],
             redirect_uris: Vec::new(),

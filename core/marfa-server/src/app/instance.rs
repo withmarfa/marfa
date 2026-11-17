@@ -10,6 +10,7 @@ const NAME: &str = "name";
 const CLAIMED_AT: &str = "claimed_at";
 const REACH_COUNTER: &str = "reach_counter";
 const OWNER_ID: &str = "owner_id";
+const HEALTH_PROBE: &str = "health_probe";
 pub const DEFAULT_NAME: &str = "Marfa";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -87,6 +88,16 @@ pub fn raise_reach(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Kept here because no backup trigger watches this table.
+pub fn note_health_probe(tx: &Transaction<'_>, stamp: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO instance (key, value) VALUES (?1, ?2) \
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        params![HEALTH_PROBE, stamp],
+    )?;
+    Ok(())
+}
+
 pub async fn name(app: &App) -> Result<String> {
     let name = app.db.read(|tx| get(tx, NAME)).await?;
     Ok(name.unwrap_or_else(|| DEFAULT_NAME.to_string()))
@@ -127,4 +138,39 @@ pub fn mark_claimed(tx: &Transaction<'_>, at: &str, owner_id: &str) -> Result<bo
         return Ok(false);
     }
     insert(tx, OWNER_ID, owner_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    fn changes(db: &Connection) -> i64 {
+        db.query_row(
+            "SELECT coalesce((SELECT changes FROM backup_state), 0)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_health_probe_write_is_no_change_to_back_up() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        let tx = db.transaction().unwrap();
+        tx.execute("INSERT INTO settings (key, value) VALUES ('a', 'b')", [])
+            .unwrap();
+        assert_eq!(changes(&tx), 1, "a settings write counts as a change");
+        for stamp in ["2026-01-01T00:00:00.000Z", "2026-01-01T00:00:10.000Z"] {
+            note_health_probe(&tx, stamp).unwrap();
+        }
+        assert_eq!(changes(&tx), 1);
+        assert_eq!(
+            get(&tx, HEALTH_PROBE).unwrap().as_deref(),
+            Some("2026-01-01T00:00:10.000Z")
+        );
+    }
 }
