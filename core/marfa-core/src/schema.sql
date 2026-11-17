@@ -833,8 +833,7 @@ END;
 -- Each edge a change to the copy touched, numbered by its latest change, so
 -- an app rereads only the edges changed since it last read
 -- (`Core::changes_since`). `copy_changes` names an edge's ends, not the edge,
--- and so cannot name an edge that has gone. A table of its own because a
--- store already holds `copy_changes` in its present shape. One row an edge;
+-- and so cannot name an edge that has gone. One row an edge;
 -- the writer, as it opens the store, deletes the rows of edges it no longer
 -- holds past the latest changes it keeps once there are twice that many, and
 -- records where (`store::prune_edge_changes`).

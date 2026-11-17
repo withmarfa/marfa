@@ -51,9 +51,6 @@ function cliPairs(name: string): Pairs {
   );
 }
 
-/** Rows the server titles that neither the glossary nor the CLI names yet. */
-const NOT_YET_IN_GLOSSARY = ["core.*"];
-
 /**
  * The words the server's approval pages use, read from the source that holds
  * them: the title of each level, of each named power and of each row that is
@@ -129,6 +126,6 @@ describe("the words access is read in", () => {
     const named = new Set(glossary.rows.map(([pattern]) => pattern));
     expect(
       [...serverWords().rows.keys()].filter((pattern) => !named.has(pattern)),
-    ).toEqual(NOT_YET_IN_GLOSSARY);
+    ).toEqual([]);
   });
 });

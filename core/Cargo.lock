@@ -2847,6 +2847,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "hmac",
+ "http",
  "http-body",
  "http-body-util",
  "httpdate",

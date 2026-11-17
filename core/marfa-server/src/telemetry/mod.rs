@@ -11,7 +11,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use axum::http::HeaderMap;
+use http::HeaderMap;
 use opentelemetry::propagation::TextMapPropagator;
 use opentelemetry::trace::{Span as _, SpanKind, Status, Tracer};
 use opentelemetry::{Context, KeyValue};

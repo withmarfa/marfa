@@ -1,4 +1,6 @@
-//! Every write goes through [`write::apply`]; only `rows` holds the SQL of the item tables.
+//! Only `rows` holds the SQL that writes the `items` table. A request's write goes through
+//! [`write::apply`]; a restore, a bulk page, the server's own changes and enrichment enter
+//! by their own functions.
 
 mod archived;
 pub mod bulk;

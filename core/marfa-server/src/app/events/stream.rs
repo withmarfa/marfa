@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use axum::body::Bytes;
+use bytes::Bytes;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
