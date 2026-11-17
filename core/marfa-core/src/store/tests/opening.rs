@@ -1,0 +1,561 @@
+use super::testing::*;
+use super::*;
+
+#[test]
+fn admitted_store_does_not_reopen_replacement_sidecars() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("owned");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("core.sqlite");
+    let conn = super::open(&path).unwrap();
+    super::meta_set(&conn, "witness", "original").unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .unwrap();
+    std::fs::rename(&root, temp.path().join("original")).unwrap();
+    std::fs::create_dir(&root).unwrap();
+    let replacement = super::open(&path).unwrap();
+    super::meta_set(&replacement, "witness", "replacement").unwrap();
+    let before = std::fs::read(root.join("core.sqlite-wal")).unwrap();
+    super::meta_set(&conn, "witness", "updated original").unwrap();
+    assert_eq!(
+        super::meta_get(&conn, "witness").unwrap().as_deref(),
+        Some("updated original")
+    );
+    drop(conn);
+    assert!(
+        std::fs::read(root.join("core.sqlite-wal")).unwrap() == before,
+        "replacement WAL changed"
+    );
+    assert_eq!(
+        super::meta_get(&replacement, "witness").unwrap().as_deref(),
+        Some("replacement")
+    );
+}
+
+#[test]
+fn closing_admitted_store_preserves_replacement_sidecars() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("owned");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("core.sqlite");
+    let conn = super::open(&path).unwrap();
+    super::meta_set(&conn, "witness", "original").unwrap();
+    assert!(root.join("core.sqlite-wal").exists());
+    assert!(root.join("core.sqlite-shm").exists());
+    std::fs::rename(&root, temp.path().join("original")).unwrap();
+    std::fs::create_dir(&root).unwrap();
+    let replacement = super::open(&path).unwrap();
+    super::meta_set(&replacement, "witness", "replacement").unwrap();
+    let wal = std::fs::read(root.join("core.sqlite-wal")).unwrap();
+    let shm = std::fs::read(root.join("core.sqlite-shm")).unwrap();
+    drop(conn);
+    assert_eq!(std::fs::read(root.join("core.sqlite-wal")).unwrap(), wal);
+    assert_eq!(std::fs::read(root.join("core.sqlite-shm")).unwrap(), shm);
+    assert_eq!(
+        super::meta_get(&replacement, "witness").unwrap().as_deref(),
+        Some("replacement")
+    );
+}
+
+#[test]
+fn the_queue_refuses_what_the_contract_closes() {
+    let conn = conn();
+    let insert = |id: &str, verdict: &str, refusals: i64, key: &str| {
+        conn.execute(
+            "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, refusals, queued_at)
+                 VALUES (?1, 'create_item', ?2, '{}', ?3, ?4, '2026-01-01T00:00:00Z')",
+            rusqlite::params![id, key, verdict, refusals],
+        )
+    };
+
+    insert("ok", "accepted", 0, "key-ok").unwrap();
+
+    assert!(insert("bad-verdict", "maybe", 0, "key-a").is_err());
+
+    assert!(insert("over-ceiling", "dead", 6, "key-b").is_err());
+
+    assert!(insert("duplicate-key", "accepted", 0, "key-ok").is_err());
+}
+
+fn refusal_of(path: &Path) -> (String, Option<u64>, String) {
+    match open(path) {
+        Err(error @ CoreError::WrongSchema { .. }) => {
+            let said = error.to_string();
+            let CoreError::WrongSchema { reason, unsent, .. } = error else {
+                unreachable!()
+            };
+            (reason, unsent, said)
+        }
+        other => panic!("{} opened as {other:?}", path.display()),
+    }
+}
+
+pub(super) fn queue_one(conn: &Connection) {
+    conn.execute(
+        "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at)
+             VALUES ('q1', 'create_item', 'k1', '{}', '2026-01-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+}
+
+/// Sets the version SQLite records for the store at `path`, as another
+/// build of the core would have left it.
+fn at_version(path: &Path, version: i64) {
+    Connection::open(path)
+        .unwrap()
+        .pragma_update(None, "user_version", version)
+        .unwrap();
+}
+
+fn queued(path: &Path) -> Vec<(String, String)> {
+    let conn = Connection::open(path).unwrap();
+    let mut statement = conn
+        .prepare("SELECT id, idempotency_key FROM queue ORDER BY id")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[test]
+fn a_store_counts_every_write_the_server_has_not_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let refused_with = |verdict: Option<&str>| {
+        {
+            let conn = open(&path).unwrap();
+            conn.execute_batch("DELETE FROM queue").unwrap();
+            queue_one(&conn);
+            conn.execute("UPDATE queue SET verdict = ?1, sent = 1", [verdict])
+                .unwrap();
+        }
+        at_version(&path, SCHEMA_VERSION + 1);
+        let refused = refusal_of(&path);
+        at_version(&path, SCHEMA_VERSION);
+        refused
+    };
+    for verdict in [None, Some("blocked"), Some("refused"), Some("dead")] {
+        let (_, unsent, said) = refused_with(verdict);
+        assert_eq!(unsent, Some(1), "a {verdict:?} write was not counted");
+        assert!(!said.contains("loses nothing"), "{said}");
+    }
+    // A refused write that carried nothing, sent, is one clearing drops.
+    {
+        let conn = open(&path).unwrap();
+        conn.execute_batch("DELETE FROM queue").unwrap();
+        conn.execute(
+            "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at, verdict, sent)
+                 VALUES ('d1', 'delete_item', 'kd', '{}', '2026-01-01T00:00:00Z', 'refused', 1)",
+            [],
+        )
+        .unwrap();
+    }
+    at_version(&path, SCHEMA_VERSION + 1);
+    let (_, unsent, said) = refusal_of(&path);
+    assert_eq!(
+        unsent,
+        Some(0),
+        "a refused delete that clearing drops was counted"
+    );
+    assert!(said.contains("loses nothing"), "{said}");
+    at_version(&path, SCHEMA_VERSION);
+    assert!(
+        open_to_read(&path).is_ok(),
+        "counting left the reader's temporary queue in place"
+    );
+
+    // The witness: a write the server took is no loss.
+    let (_, unsent, said) = refused_with(Some("accepted"));
+    assert_eq!(unsent, Some(0));
+    assert!(said.contains("loses nothing"), "{said}");
+}
+
+#[test]
+fn an_empty_file_is_made_a_store_at_this_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    // As a make that never committed leaves it.
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("PRAGMA journal_mode = WAL;")
+        .unwrap();
+    let conn = open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+    assert!(held_shape(&conn).unwrap().contains_key("queue"));
+}
+
+#[test]
+fn two_programs_making_one_store_at_once_both_open_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let late = Connection::open(&path).unwrap();
+    // It read the file empty before the other made the store.
+    assert_eq!(version(&late).unwrap(), 0);
+    assert!(!holds_tables(&late).unwrap());
+    drop(open(&path).unwrap());
+    make(&late).unwrap();
+    assert_eq!(version(&late).unwrap(), SCHEMA_VERSION);
+    assert!(open(&path).is_ok());
+}
+
+/// The meta an earlier build of the core wrote, beside a version it
+/// never set.
+fn as_an_earlier_build_left_it(path: &Path) {
+    Connection::open(path)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '0');
+                 PRAGMA user_version = 0;",
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_store_at_another_version_is_refused_with_its_writes_kept() {
+    for (found, older) in [(0, true), (0, false), (SCHEMA_VERSION + 1, false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            meta_set(&conn, "kept", "as it was").unwrap();
+        }
+        if older {
+            as_an_earlier_build_left_it(&path);
+        } else {
+            at_version(&path, found);
+        }
+        let before = queued(&path);
+        let (reason, unsent, said) = refusal_of(&path);
+        assert!(
+            reason.contains(&format!(
+                "schema version {found}, and this build reads schema version {SCHEMA_VERSION}"
+            )),
+            "{reason}"
+        );
+        assert_eq!(unsent, Some(1));
+        assert!(
+            said.contains(&path.display().to_string()),
+            "the refusal does not say which file, which a person may know only by the variable that named it: {said}"
+        );
+        assert!(
+            said.contains(
+                "1 write the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store"
+            ),
+            "{said}"
+        );
+        assert!(!said.to_lowercase().contains("delete"), "{said}");
+        assert!(matches!(
+            open_to_read(&path),
+            Err(CoreError::WrongSchema {
+                unsent: Some(1),
+                ..
+            })
+        ));
+        // A replacement would lose the write, so it is refused too.
+        assert!(matches!(
+            refusal(&path).unwrap(),
+            Some(CoreError::WrongSchema {
+                unsent: Some(1),
+                ..
+            })
+        ));
+        assert_eq!(
+            queued(&path),
+            before,
+            "refusing the store changed its queue"
+        );
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(version(&conn).unwrap(), found);
+        assert_eq!(
+            meta_get(&conn, "kept").unwrap().as_deref(),
+            Some("as it was")
+        );
+
+        // The witness: the same store at this version opens, write and all.
+        drop(conn);
+        at_version(&path, SCHEMA_VERSION);
+        let conn = open(&path).unwrap();
+        assert_eq!(untaken_count(&conn), Some(1));
+    }
+}
+
+#[test]
+fn a_store_the_previous_shape_made_is_refused_with_its_writes_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        queue_one(&conn);
+        conn.execute_batch("ALTER TABLE tags DROP COLUMN position")
+            .unwrap();
+    }
+    at_version(&path, 1);
+    let before = queued(&path);
+    let (reason, unsent, _) = refusal_of(&path);
+    assert!(
+        reason.contains(&format!(
+            "schema version 1, and this build reads schema version {SCHEMA_VERSION}"
+        )),
+        "{reason}"
+    );
+    assert_eq!(unsent, Some(1));
+    assert!(matches!(
+        open_to_read(&path),
+        Err(CoreError::WrongSchema {
+            unsent: Some(1),
+            ..
+        })
+    ));
+    assert_eq!(
+        queued(&path),
+        before,
+        "refusing the store changed its queue"
+    );
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), 1);
+    assert!(
+        conn.prepare("SELECT position FROM tags").is_err(),
+        "refusing the store changed its tags"
+    );
+}
+
+#[test]
+fn a_store_at_another_version_whose_queue_cannot_be_read_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        queue_one(&conn);
+        conn.execute_batch("ALTER TABLE queue RENAME COLUMN verdict TO answer_kind")
+            .unwrap();
+    }
+    at_version(&path, 0);
+    let (_, unsent, said) = refusal_of(&path);
+    assert_eq!(unsent, None);
+    assert!(said.contains("cannot be read"), "{said}");
+}
+
+#[test]
+fn a_queued_write_of_a_kind_this_build_does_not_send_is_refused_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let hold = |verdict: Option<&str>| {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("DELETE FROM queue").unwrap();
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict, sent)
+                 VALUES ('q1', 'merge_metadata', 'n1', 'k1', '{\"tags\":[\"a\"]}',
+                         '2026-01-01T00:00:00Z', ?1, ?2)",
+            params![verdict, verdict.is_some()],
+        )
+        .unwrap();
+    };
+    queue_admitting(&open(&path).unwrap(), "merge_metadata");
+    at_version(&path, 0);
+    // A refused write that carried content stays until discarded, so it
+    // is counted with the waiting one.
+    for verdict in [None, Some("refused"), Some("dead")] {
+        hold(verdict);
+        let (reason, unsent, said) = refusal_of(&path);
+        assert!(
+            reason.contains("1 write of kind merge_metadata, which this build cannot send"),
+            "{verdict:?}: {reason}"
+        );
+        assert_eq!(unsent, Some(1), "{verdict:?}");
+        assert!(said.contains("1 write the server has not taken"), "{said}");
+        assert!(
+            matches!(open_to_read(&path), Err(CoreError::WrongSchema { reason, .. })
+                if reason.contains("merge_metadata")),
+            "a reader opened it"
+        );
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT kind FROM queue", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "merge_metadata",
+            "refusing the store took the write"
+        );
+    }
+    // The witness: the same earlier queue with the write answered names
+    // no kind, and is refused only for its version.
+    hold(Some("accepted"));
+    let (reason, unsent, _) = refusal_of(&path);
+    assert!(!reason.contains("merge_metadata"), "{reason}");
+    assert!(reason.contains("schema version 0"), "{reason}");
+    assert_eq!(unsent, Some(0));
+}
+
+#[test]
+fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_write_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        queue_admitting(&conn, "replace_metadata");
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at)
+                 VALUES ('q1', 'replace_metadata', 'n1', 'k1', '{\"tags\":[\"a\"]}',
+                         '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+    at_version(&path, SCHEMA_VERSION - 1);
+    let (reason, unsent, _) = refusal_of(&path);
+    assert!(
+        reason.contains("1 write of kind replace_metadata, which this build cannot send"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains(&format!("schema version {}", SCHEMA_VERSION - 1)),
+        "{reason}"
+    );
+    assert_eq!(unsent, Some(1));
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT kind FROM queue", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "replace_metadata",
+        "refusing the store took the write"
+    );
+}
+
+/// Append one hash per schema version; never change an existing entry.
+const SHAPES: [&str; 6] = [
+    "9a505dc1b14cecc6",
+    "115c1d4def4a3d91",
+    "2d4e4e1e76ec61dc",
+    "c2b64b3a6428a46c",
+    "e5029183e86b7c37",
+    "195bcf17d74301ef",
+];
+
+#[test]
+fn the_shape_this_build_makes_is_the_one_its_version_names() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+    let mut query = conn
+        .prepare(
+            "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name",
+        )
+        .unwrap();
+    let named: String = query
+        .query_map([], |row| {
+            Ok(format!(
+                "{}:{}:{}\n",
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                statement(&row.get::<_, String>(2)?)
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        SHAPES.len() as i64,
+        SCHEMA_VERSION,
+        "SHAPES holds one entry for each version"
+    );
+    assert_eq!(
+        crate::folder::state::hash(named.as_bytes()),
+        SHAPES[SHAPES.len() - 1],
+        "the shape schema.sql makes is not the one its version names: raise SCHEMA_VERSION and add the new hash to SHAPES, leaving every entry before it as it is"
+    );
+    assert_eq!(
+        OLDEST_UPGRADED + UPGRADES.len() as i64,
+        SCHEMA_VERSION,
+        "UPGRADES holds a step from each version since OLDEST_UPGRADED"
+    );
+}
+
+#[test]
+fn a_store_at_an_earlier_version_is_upgraded_in_place_with_its_queue_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        queue_one(&conn);
+        conn.execute_batch("ALTER TABLE meta RENAME TO meta_before")
+            .unwrap();
+    }
+    let conn = Connection::open(&path).unwrap();
+    conn.pragma_update(None, "user_version", 7).unwrap();
+    let before = queued(&path);
+    // A step that fails leaves the store at its version.
+    let steps = [
+        "ALTER TABLE meta_before RENAME TO meta",
+        "SELECT * FROM absent",
+    ];
+    assert!(upgrade(&conn, 7, &steps).is_err());
+    assert_eq!(version(&conn).unwrap(), 7);
+    assert!(held_shape(&conn).unwrap().contains_key("meta_before"));
+
+    let steps = ["ALTER TABLE meta_before RENAME TO meta", "SELECT 1"];
+    upgrade(&conn, 7, &steps).unwrap();
+    assert_eq!(version(&conn).unwrap(), 9);
+    assert!(held_shape(&conn).unwrap().contains_key("meta"));
+    assert_eq!(queued(&path), before, "the upgrade changed the queue");
+    // Upgraded already: nothing runs again.
+    upgrade(&conn, 7, &["SELECT * FROM absent", "SELECT * FROM absent"]).unwrap();
+    // A version before the oldest is refused, unchanged.
+    conn.pragma_update(None, "user_version", 3).unwrap();
+    assert!(matches!(
+        upgrade(&conn, 7, &steps),
+        Err(CoreError::WrongSchema { .. })
+    ));
+    assert_eq!(version(&conn).unwrap(), 3);
+}
+
+#[test]
+fn a_comment_or_a_line_break_is_no_change_of_shape() {
+    assert_eq!(
+        statement(
+            "CREATE TABLE t (\n  -- why's\n  a TEXT, /* more\n \"here\" */ b INTEGER -- end\n)"
+        ),
+        statement("CREATE TABLE t (a TEXT, b INTEGER)")
+    );
+    assert_ne!(
+        statement("CREATE TABLE t (a TEXT)"),
+        statement("CREATE TABLE t (a INTEGER)")
+    );
+}
+
+#[test]
+fn what_a_string_or_a_quoted_name_holds_is_a_change_of_shape() {
+    for (one, other) in [
+        ("'porter unicode61'", "'porter  unicode61'"),
+        ("'a -- b'", "'a'"),
+        ("'it''s here'", "'it''shere'"),
+        ("\"a b\"", "\"ab\""),
+        ("`a b`", "`ab`"),
+        ("[a b]", "[ab]"),
+    ] {
+        assert_ne!(
+            statement(&format!("CREATE TABLE t (a TEXT DEFAULT {one})")),
+            statement(&format!("CREATE TABLE t (a TEXT DEFAULT {other})")),
+            "{one}"
+        );
+    }
+}
+
+#[test]
+fn the_file_schema_reopens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        upsert_item(
+            &conn,
+            &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
+            None,
+            &Indexing::default(),
+        )
+        .unwrap();
+    }
+    let conn = open(&path).unwrap();
+    assert!(item_held(&conn, "n1").unwrap());
+}

@@ -254,7 +254,7 @@ describe("what a change runs", () => {
     ],
     [
       "a Rust-only change",
-      ["core/marfa-core/src/store.rs"],
+      ["core/marfa-core/src/store/mod.rs"],
       [...DEVICE_LINUX, "core", "quick-checks"],
     ],
     [
@@ -2040,7 +2040,7 @@ describe("the build without test hooks and its fixture", () => {
       }
     }
     // The device's group alone does not owe the build or the fixture.
-    const device = classify(["core/marfa-core/src/store.rs"]);
+    const device = classify(["core/marfa-core/src/store/mod.rs"]);
     expect(device["rust-contract-device"]).toBe(true);
     expect(device["rust-contract-release"]).toBe(false);
   });
@@ -2250,7 +2250,7 @@ describe("the classifier as CI runs it", () => {
       "conformance/src/suites/compliance/owner.test.ts": "export {};\n",
     });
     // One commit for each kind of change the shards are chosen by.
-    commit("core", { "core/marfa-core/src/store.rs": "// store\n" });
+    commit("core", { "core/marfa-core/src/store/mod.rs": "// store\n" });
     commit("cli", { "core/marfa-cli/src/main.rs": "// main\n" });
     commit("serverRs", { "core/marfa-server/src/lib.rs": "// lib\n" });
     commit("rules", { "core/marfa-rules/src/lib.rs": "// lib\n" });
@@ -2399,7 +2399,7 @@ describe("the classifier as CI runs it", () => {
       expect(new Set(names(SHARDS)).size).toBe(SHARDS.length);
       // An answer names the shards of the groups it runs, in list order.
       expect(
-        names(shardsFor(classify(["core/marfa-core/src/store.rs"]))),
+        names(shardsFor(classify(["core/marfa-core/src/store/mod.rs"]))),
       ).toEqual(device);
       expect(names(shardsFor(classify([])))).toEqual(names(SHARDS));
     });
