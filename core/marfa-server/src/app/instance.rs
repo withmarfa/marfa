@@ -88,8 +88,7 @@ pub fn raise_reach(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-/// When a health check last wrote, to prove the database takes a write. Backups do not watch
-/// this table, so the check never makes an instance look changed.
+/// Kept here because no backup trigger watches this table.
 pub fn note_health_probe(tx: &Transaction<'_>, stamp: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO instance (key, value) VALUES (?1, ?2) \

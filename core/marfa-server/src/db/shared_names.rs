@@ -1,5 +1,4 @@
-//! A trigger repeats no name that Rust owns, except a file field path, and that path is tied to
-//! its Rust constant, so a rename on either side fails here and not in a running server.
+//! Fails when a trigger names what Rust owns or reads a file field Rust does not name.
 
 use std::collections::BTreeSet;
 

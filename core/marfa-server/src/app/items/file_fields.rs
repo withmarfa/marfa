@@ -1,5 +1,4 @@
-//! The properties of a file item that the server reads by name. The baseline's triggers read the
-//! same names as JSON paths, and `db::tests` fails when the two differ.
+//! File properties the server reads by name; `db::shared_names` ties the triggers' paths to them.
 
 pub const BLOB_REF: &str = "blob_ref";
 pub const MIME_TYPE: &str = "mime_type";
