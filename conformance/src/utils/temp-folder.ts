@@ -22,7 +22,8 @@ import { join, sep } from "node:path";
  * `onCleanup`, and runs before the folders go.
  *
  * Removal runs after each file (`temp-folder-teardown.ts`), when the process
- * exits, and on `SIGINT`, `SIGTERM` and `SIGHUP`.
+ * exits, and on `SIGINT`, `SIGTERM` and `SIGHUP`, except that the run's own
+ * process leaves a signal Vitest handles to the run's last teardown or to exit.
  */
 
 /**
@@ -38,6 +39,8 @@ interface TempFolders {
   elsewhere: string[];
   actions: (() => void)[];
   handlersInstalled: boolean;
+  /** The run's list, and how many project setups are using it. */
+  runList: { path: string; setups: number } | undefined;
 }
 
 const KEY = Symbol.for("marfa.conformance.temp-folders");
@@ -49,6 +52,7 @@ const state = ((globalThis as Record<symbol, unknown>)[KEY] ??= {
   elsewhere: [],
   actions: [],
   handlersInstalled: false,
+  runList: undefined,
 } satisfies TempFolders) as TempFolders;
 
 // A socket path is limited to about a hundred characters on a Mac, and the
@@ -82,6 +86,36 @@ function runFolder(): string {
   const list = process.env[RUN_LIST_VARIABLE];
   if (list !== undefined && existsSync(list)) appendFileSync(list, `${made}\n`);
   return made;
+}
+
+/**
+ * Joins the run's list: the first setup in this process makes it and names it
+ * in `MARFA_TEST_RUN_LIST`, and each later one uses the same. Vitest runs a
+ * project's setup once per project in one process, so every project shares
+ * the list and only the last to tear down may check it.
+ */
+export function joinRunList(make: () => string): string {
+  if (state.runList === undefined) {
+    const path = make();
+    state.runList = { path, setups: 0 };
+    process.env[RUN_LIST_VARIABLE] = path;
+  }
+  state.runList.setups += 1;
+  return state.runList.path;
+}
+
+/**
+ * Leaves the run's list. Returns its path when this was the last setup using
+ * it, and nothing before that.
+ */
+export function leaveRunList(): string | undefined {
+  const list = state.runList;
+  if (list === undefined) return undefined;
+  list.setups -= 1;
+  if (list.setups > 0) return undefined;
+  state.runList = undefined;
+  delete process.env[RUN_LIST_VARIABLE];
+  return list.path;
 }
 
 /**
@@ -265,6 +299,12 @@ function install(): void {
     ["SIGHUP", 1],
   ] as const) {
     process.once(signal, () => {
+      // While the run's setups are active, Vitest tears them down after its
+      // own handler, and the last teardown checks the folders this would
+      // remove. Exit removes them if that never comes.
+      if (state.runList !== undefined && process.listenerCount(signal) > 0) {
+        return;
+      }
       removeQuietly();
       if (process.listenerCount(signal) === 0) process.exit(128 + number);
     });

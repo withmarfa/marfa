@@ -216,6 +216,34 @@ setInterval(() => undefined, 1000);`,
   );
 });
 
+describe("a run's own process that is interrupted", () => {
+  /** Whether the run folder still existed when a handler of the process's own ran after the helper's. */
+  async function keptAtSignal(joined: boolean): Promise<boolean> {
+    const marker = join(bare(), "seen");
+    const folder = await run(
+      `import { joinRunList } from ${JSON.stringify(helper)};
+import { existsSync } from "node:fs";
+${joined ? 'joinRunList(() => folder + "/list");' : ""}
+process.on("SIGINT", () => {
+  writeFileSync(${JSON.stringify(marker)}, String(existsSync(folder)));
+  process.exit(130);
+});
+process.stdout.write("ready\\n");
+setInterval(() => undefined, 1000);`,
+      "SIGINT",
+    );
+    const seen = readFileSync(marker, "utf8");
+    rmSync(dirname(marker), { recursive: true, force: true });
+    expect(existsSync(folder)).toBe(false);
+    return seen === "true";
+  }
+
+  it("leaves its folders to the last teardown while the run is set up", async () => {
+    expect(await keptAtSignal(false)).toBe(false);
+    expect(await keptAtSignal(true)).toBe(true);
+  }, 30_000);
+});
+
 describe("the run's check that nothing is left", () => {
   /** Runs the run's setup and teardown as the runner does, apart from this run's own. */
   function runOnce(leave: boolean): () => void {
@@ -249,6 +277,40 @@ describe("the run's check that nothing is left", () => {
   it("fails a run that left a folder behind, and removes it", () => {
     const finish = runOnce(true);
     expect(finish).toThrow("left behind");
+  });
+
+  it("checks the list once, at the last teardown, when several projects share a run", () => {
+    const own = process.env[RUN_LIST_VARIABLE];
+    const first = listRunFolders();
+    const list = process.env[RUN_LIST_VARIABLE]!;
+    const second = listRunFolders();
+    const left = bare();
+    try {
+      expect(process.env[RUN_LIST_VARIABLE]).toBe(list);
+      writeFileSync(list, `${left}\n`);
+      expect(first).not.toThrow();
+      expect(existsSync(list)).toBe(true);
+      expect(existsSync(left)).toBe(true);
+      expect(second).toThrow("left behind");
+      expect(existsSync(left)).toBe(false);
+      expect(existsSync(list)).toBe(false);
+      expect(process.env[RUN_LIST_VARIABLE]).toBeUndefined();
+    } finally {
+      rmSync(left, { recursive: true, force: true });
+      if (own === undefined) delete process.env[RUN_LIST_VARIABLE];
+      else process.env[RUN_LIST_VARIABLE] = own;
+    }
+  });
+
+  it("ends a run whose setups tear down in either order, each only once", () => {
+    const first = listRunFolders();
+    const list = process.env[RUN_LIST_VARIABLE]!;
+    const second = listRunFolders();
+    second();
+    second();
+    expect(existsSync(list)).toBe(true);
+    expect(first).not.toThrow();
+    expect(existsSync(list)).toBe(false);
   });
 
   it("lists the run folder a process makes in the file the run named", async () => {

@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  joinRunList,
+  leaveRunList,
   removeTempFolders,
-  RUN_LIST_VARIABLE,
   tempFolder,
   unlockAndRemove,
 } from "./temp-folder.js";
@@ -15,14 +16,22 @@ import {
  * attached. A leftover is removed, so the next run starts clean, and fails the
  * run, so the test that missed it is found. Every project that makes folders
  * lists it first in its `globalSetup`, which makes it the last to tear down.
+ * Vitest runs that setup once per project, so the projects of one run share one
+ * list and the last teardown checks it.
  */
 export default function listRunFolders(): () => void {
-  const list = join(tempFolder("marfa-run-list-"), "folders");
-  writeFileSync(list, "");
-  process.env[RUN_LIST_VARIABLE] = list;
+  joinRunList(() => {
+    const made = join(tempFolder("marfa-run-list-"), "folders");
+    writeFileSync(made, "");
+    return made;
+  });
+  let left = false;
   return () => {
-    delete process.env[RUN_LIST_VARIABLE];
-    const listed = readFileSync(list, "utf8").split("\n").filter(Boolean);
+    if (left) return;
+    left = true;
+    const last = leaveRunList();
+    if (last === undefined) return;
+    const listed = readFileSync(last, "utf8").split("\n").filter(Boolean);
     const problems: string[] = [];
     for (const folder of listed.filter((one) => existsSync(one))) {
       problems.push(`left behind: ${folder}`);
