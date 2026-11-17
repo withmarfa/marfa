@@ -3,11 +3,11 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::Semaphore;
 
+use super::Problem;
 use super::client::Registration;
 use super::metadata_document::{self, Failure, Fetcher};
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, covers, narrow};
 use super::store::{self, Client};
-use super::{Answered, Problem};
 use crate::app::App;
 use crate::app::audit::{self, Entry};
 use crate::app::auth::limits::{admit, document_lanes, owner_document_lanes};
@@ -60,21 +60,32 @@ fn no_such_client() -> Problem {
     Problem::new("invalid_client", "No client has this client_id.")
 }
 
-pub(super) const BUSY: &str = "temporarily_unavailable";
-
 fn busy() -> Problem {
     Problem::new(
-        BUSY,
+        "temporarily_unavailable",
         "The client's metadata document cannot be read just now.",
     )
 }
 
-pub async fn resolve(
-    app: &Arc<App>,
-    id: &str,
-    visit: &Visit,
-    asking: Asking,
-) -> Result<Answered<Client>> {
+/// Why no client was found, and whether a client document limit kept the document from being fetched.
+#[derive(Debug)]
+pub struct Unresolved {
+    pub problem: Problem,
+    pub limited: bool,
+}
+
+impl From<Problem> for Unresolved {
+    fn from(problem: Problem) -> Unresolved {
+        Unresolved {
+            problem,
+            limited: false,
+        }
+    }
+}
+
+pub type Resolved = std::result::Result<Client, Unresolved>;
+
+pub async fn resolve(app: &Arc<App>, id: &str, visit: &Visit, asking: Asking) -> Result<Resolved> {
     let fetcher = Fetcher::new(app.faults.clone(), asking.asker());
     resolve_by(app, id, visit, asking, move |id| fetcher.fetch(id)).await
 }
@@ -85,7 +96,7 @@ async fn resolve_by<F>(
     visit: &Visit,
     asking: Asking,
     fetch: F,
-) -> Result<Answered<Client>>
+) -> Result<Resolved>
 where
     F: FnOnce(&str) -> std::result::Result<Vec<u8>, Failure> + Send + 'static,
 {
@@ -100,16 +111,21 @@ where
         })
         .await?;
     if !metadata_document::is_url(id) {
-        return Ok(stored.ok_or_else(no_such_client));
+        return Ok(stored.ok_or_else(|| no_such_client().into()));
     }
     let now = app.clock.instant();
     if let (Some(client), true) = (&stored, fresh_until.is_some_and(|until| until > now)) {
         return Ok(Ok(client.clone()));
     }
     if is_own_origin(app, id) || metadata_document::check_url(id).is_err() {
-        return Ok(Err(refused_document()));
+        return Ok(Err(refused_document().into()));
     }
-    let keep_or_busy = |stored: Option<Client>| Ok(stored.ok_or_else(busy));
+    let keep_or_busy = |stored: Option<Client>, limited: bool| {
+        Ok(stored.ok_or_else(|| Unresolved {
+            problem: busy(),
+            limited,
+        }))
+    };
     let (wait, permits) = match asking {
         Asking::Owner => (
             admit(app, &owner_document_lanes()),
@@ -120,9 +136,11 @@ where
             &app.documents.permits,
         ),
     };
-    let permit = permits.clone().try_acquire_owned();
-    let (None, Ok(permit)) = (wait, permit) else {
-        return keep_or_busy(stored);
+    if wait.is_some() {
+        return keep_or_busy(stored, true);
+    }
+    let Ok(permit) = permits.clone().try_acquire_owned() else {
+        return keep_or_busy(stored, false);
     };
     let owned = id.to_string();
     let fetched = tokio::task::spawn_blocking(move || {
@@ -133,11 +151,11 @@ where
     .map_err(|_| Refusal::internal("a metadata document's fetch ended early"))?;
     let body = match fetched {
         Ok(body) => body,
-        Err(Failure::Unavailable(_)) => return keep_or_busy(stored),
-        Err(Failure::Refused(_)) => return Ok(Err(refused_document())),
+        Err(Failure::Unavailable(_)) => return keep_or_busy(stored, false),
+        Err(Failure::Refused(_)) => return Ok(Err(refused_document().into())),
     };
     let Ok(registration) = metadata_document::parse_document(id, &body) else {
-        return Ok(Err(refused_document()));
+        return Ok(Err(refused_document().into()));
     };
     keep_document(app, id, registration, visit).await.map(Ok)
 }
@@ -459,8 +477,8 @@ mod tests {
         move |_| Ok(body)
     }
 
-    fn error_of(answer: Answered<Client>) -> &'static str {
-        answer.unwrap_err().error
+    fn error_of(answer: Resolved) -> &'static str {
+        answer.unwrap_err().problem.error
     }
 
     async fn refreshed(app: &Arc<App>, id: &str, uris: &[&str]) -> Client {

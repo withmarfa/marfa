@@ -16,7 +16,6 @@ const ADDRESS: &str = "sign-in-address";
 const EMAIL_ADDRESS: &str = "sign-in-email-address";
 const UNKNOWN_DEVICES: &str = "sign-in-unknown-devices";
 const OWNERS_EMAIL: &str = "sign-in-owners-email";
-const SESSIONS: &str = "sign-in-sessions";
 const DEVICE: &str = "sign-in-device";
 const KNOWN_DEVICES: &str = "sign-in-known-devices";
 const SETUP_ADDRESS: &str = "instance-claim-address";
@@ -32,12 +31,11 @@ const DEVICE_CODE_ADDRESS: &str = "device-code-address";
 const PASSKEY_ADDRESS: &str = "passkey-challenge-address";
 const ALL: &str = "all";
 const NO_ADDRESS: &str = "unknown";
-const PASSWORD_FAMILIES: [&str; 7] = [
+const PASSWORD_FAMILIES: [&str; 6] = [
     ADDRESS,
     EMAIL_ADDRESS,
     UNKNOWN_DEVICES,
     OWNERS_EMAIL,
-    SESSIONS,
     DEVICE,
     KNOWN_DEVICES,
 ];
@@ -67,7 +65,7 @@ pub enum Sender<'a> {
     /// A browser the server signed in before.
     Known(&'a Known),
     /// A caller that already holds the owner's credential, from a browser the server does not know.
-    Credential(&'a str),
+    Credential,
     /// Anyone else; `owners_email` when the email named is the owner's.
     Stranger { owners_email: bool },
 }
@@ -79,7 +77,7 @@ pub struct PasswordLanes {
     pub before: Vec<Lane>,
     /// Spent, this answers the attempt `429`, but its password is still judged.
     pub shared: Option<Lane>,
-    /// Spent, this answers a right password as a wrong one.
+    /// Spent, this counts and answers a right password as a wrong one.
     pub owner: Option<Lane>,
 }
 
@@ -91,7 +89,8 @@ impl PasswordLanes {
     }
 }
 
-/// A stranger's attempt past the shared hour is still judged, so the owner's right password keeps a share.
+/// Past the shared hour, an attempt at the owner's email keeps a share; every password sent for
+/// the owner from anywhere but a known device counts in that one hundred an hour.
 pub fn password_lanes(email: &str, address: Option<IpAddr>, sender: Sender<'_>) -> PasswordLanes {
     let mut before = vec![
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
@@ -118,13 +117,8 @@ pub fn password_lanes(email: &str, address: Option<IpAddr>, sender: Sender<'_>) 
                 owner: None,
             }
         }
-        Sender::Credential(owner_id) => {
-            before.push(Lane::pinned(
-                SESSIONS,
-                owner_id.to_string(),
-                100,
-                60 * MINUTE_MS,
-            ));
+        Sender::Credential => {
+            before.push(hour(OWNERS_EMAIL));
             PasswordLanes {
                 before,
                 shared: None,
@@ -219,13 +213,7 @@ pub fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Result<()>
 
 /// Preserve every email's address counts so password changes affect them equally.
 pub fn clear_for_new_password(limiter: &Limiter) {
-    for family in [
-        UNKNOWN_DEVICES,
-        OWNERS_EMAIL,
-        SESSIONS,
-        DEVICE,
-        KNOWN_DEVICES,
-    ] {
+    for family in [UNKNOWN_DEVICES, OWNERS_EMAIL, DEVICE, KNOWN_DEVICES] {
         limiter.forget(family, |_| true);
     }
 }
@@ -519,7 +507,7 @@ mod tests {
             Sender::Stranger { owners_email: true },
         );
         assert_eq!(pinned(&owners_email.all()), [false, false, true, true]);
-        let credential = password_lanes("a@example.test", address, Sender::Credential("owner"));
+        let credential = password_lanes("a@example.test", address, Sender::Credential);
         assert_eq!(pinned(&credential.all()), [false, false, true]);
         assert_eq!(pinned(&owner_document_lanes()), [true]);
         assert_eq!(pinned(&device_lookup_lanes(address)), [false, true]);
@@ -588,17 +576,28 @@ mod tests {
     }
 
     #[test]
-    fn the_owners_credential_counts_in_a_lane_strangers_never_spend() {
+    fn the_owners_credential_counts_with_every_attempt_at_the_owners_email() {
         let limiter = Limiter::default();
         fill_shared_hour(&limiter);
-        for n in 0..100 {
+        let share = password_lanes(
+            "a@example.test",
+            "198.51.100.1".parse().ok(),
+            Sender::Stranger { owners_email: true },
+        )
+        .owner
+        .unwrap();
+        for _ in 0..50 {
+            assert_eq!(attempt(&limiter, 2, std::slice::from_ref(&share)), None);
+        }
+        for n in 0..50 {
             let address = format!("192.0.2.{}", n / 10).parse().ok();
-            let lanes = password_lanes("a@example.test", address, Sender::Credential("owner"));
+            let lanes = password_lanes("a@example.test", address, Sender::Credential);
             assert_eq!(attempt(&limiter, 2, &lanes.all()), None, "attempt {n}");
         }
         let address = "198.51.100.2".parse().ok();
-        let next = password_lanes("a@example.test", address, Sender::Credential("owner"));
+        let next = password_lanes("a@example.test", address, Sender::Credential);
         assert_eq!(attempt(&limiter, 3, &next.all()), Some(60 * MINUTE_MS - 1));
+        assert!(attempt(&limiter, 3, std::slice::from_ref(&share)).is_some());
     }
 
     #[test]
@@ -612,17 +611,12 @@ mod tests {
         )
         .owner
         .unwrap();
-        let credential = Lane::pinned(SESSIONS, "owner".into(), 100, 60 * MINUTE_MS);
-        for lane in [&share, &credential] {
-            for _ in 0..100 {
-                attempt(&limiter, 0, std::slice::from_ref(lane));
-            }
-            assert!(attempt(&limiter, 0, std::slice::from_ref(lane)).is_some());
+        for _ in 0..100 {
+            attempt(&limiter, 0, std::slice::from_ref(&share));
         }
+        assert!(attempt(&limiter, 0, std::slice::from_ref(&share)).is_some());
         clear_for_new_password(&limiter);
-        for lane in [&share, &credential] {
-            assert_eq!(attempt(&limiter, 1, std::slice::from_ref(lane)), None);
-        }
+        assert_eq!(attempt(&limiter, 1, std::slice::from_ref(&share)), None);
     }
 
     #[test]

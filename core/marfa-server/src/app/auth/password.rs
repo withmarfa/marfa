@@ -2,6 +2,8 @@
 //! since each one takes real memory and time.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
@@ -41,6 +43,11 @@ fn hashed(password: &str) -> Result<String> {
         .map_err(|_| Refusal::internal("a password could not be hashed"))
 }
 
+fn timed<T>(job: impl FnOnce() -> Result<T>) -> Result<(T, Duration)> {
+    let started = Instant::now();
+    job().map(|done| (done, started.elapsed()))
+}
+
 fn verified(password: &str, hash: &str) -> bool {
     Argon2::default()
         .verify_password(password.as_bytes(), hash)
@@ -66,6 +73,7 @@ pub struct Passwords {
     open: Arc<Semaphore>,
     open_places: Arc<Semaphore>,
     decoy: OnceCell<String>,
+    check_ms: AtomicU64,
 }
 
 impl Default for Passwords {
@@ -75,6 +83,7 @@ impl Default for Passwords {
             open: Arc::new(Semaphore::new(OPEN_AT_ONCE)),
             open_places: Arc::new(Semaphore::new(OPEN_PLACES)),
             decoy: OnceCell::new(),
+            check_ms: AtomicU64::new(0),
         }
     }
 }
@@ -110,10 +119,45 @@ impl Passwords {
                 let mut bytes = [0u8; 32];
                 getrandom::fill(&mut bytes)
                     .map_err(|_| Refusal::internal("no randomness was available"))?;
-                self.hash(hex::encode(bytes)).await
+                let password = hex::encode(bytes);
+                let (hash, took) = self
+                    .off_thread(&self.owner, move || timed(|| hashed(&password)))
+                    .await?;
+                self.note_check(took);
+                Ok::<_, Refusal>(hash)
             })
             .await?;
         Ok(decoy)
+    }
+
+    fn note_check(&self, took: Duration) {
+        let ms = u64::try_from(took.as_millis()).unwrap_or(u64::MAX);
+        let _ = self
+            .check_ms
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
+                Some(match held {
+                    0 => ms,
+                    held => held.saturating_mul(3).saturating_add(ms) / 4,
+                })
+            });
+    }
+
+    /// Waits about as long as a check takes, holding no place in either queue.
+    pub async fn wait_as_a_check(&self) -> Result<()> {
+        self.decoy().await?;
+        let ms = self.check_ms.load(Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn open_places_left(&self) -> usize {
+        self.open_places.available_permits()
+    }
+
+    #[cfg(test)]
+    pub async fn hold_the_open_lane(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.open.clone().acquire_owned().await.unwrap()
     }
 
     /// Missing hashes still require a password check to hide account existence.
@@ -138,12 +182,13 @@ impl Passwords {
         let dated = stored.is_some_and(|stored| shape(stored) != shape(&today));
         let against = stored.map_or(today, str::to_string);
         let held = stored.is_some();
-        let matched = self
+        let (matched, took) = self
             .off_thread(lane, move || {
                 let _place = place;
-                Ok(verified(&password, &against))
+                timed(|| Ok(verified(&password, &against)))
             })
             .await?;
+        self.note_check(took);
         Ok(match (held && matched, dated) {
             (false, _) => Checked::Wrong,
             (true, false) => Checked::Right,

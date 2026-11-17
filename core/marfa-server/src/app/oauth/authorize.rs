@@ -4,9 +4,7 @@ use rusqlite::{Connection, Transaction};
 use serde_json::json;
 
 use super::client::GrantType;
-use super::clients::{
-    self, Asking, BUSY, ceiling_lacks, destinations_digest, judge, registries_in,
-};
+use super::clients::{self, Asking, ceiling_lacks, destinations_digest, judge, registries_in};
 use super::grant::{self, CONSENT_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::metadata_document;
 use super::offer::{self, Decision, Offer, Post, Request};
@@ -146,14 +144,14 @@ pub async fn begin(
         Ok(client) => client,
         Err(_) if !metadata_document::is_url(client_id) => return Ok(Ok(NO_CLIENT.to_string())),
         // Signed in, the browser asks again with the owner's own share of fetches.
-        Err(problem)
-            if problem.error == BUSY
+        Err(unresolved)
+            if unresolved.limited
                 && session.is_none()
                 && !reprompt::asks_none(only(&pairs, "prompt")) =>
         {
             return Ok(Ok(sign_in_then(app, &format!("{REQUEST_PATH}?{query}"))));
         }
-        Err(problem) => return Ok(Err(problem)),
+        Err(unresolved) => return Ok(Err(unresolved.problem)),
     };
     let origin = app.addresses().sign_in().origin().to_string();
     let values: Vec<String> = pairs

@@ -44,7 +44,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
     };
     let client = match clients::resolve(app, client_id, visit, Asking::Anyone).await? {
         Ok(client) => client,
-        Err(problem) => return Ok(Err(problem)),
+        Err(unresolved) => return Ok(Err(unresolved.problem)),
     };
     if !client.registration.names_grant(GrantType::DeviceCode) {
         return Ok(Err(Problem::new(

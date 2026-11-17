@@ -1,6 +1,6 @@
 //! Everything that checks the owner's password. Each counts the attempt, checks the hash off the
 //! writer, then acts in one transaction that finds the password as it was checked. Only an
-//! attempt whose password proved right is taken back.
+//! attempt whose right password was let act is taken back.
 
 use std::sync::Arc;
 
@@ -53,9 +53,12 @@ struct Gate {
     spent: Option<i64>,
     /// Whether a right password may act.
     opens: bool,
+    /// Whether the password is checked: once every stranger's hour is spent, only an attempt
+    /// that could open a session takes a place in the queue.
+    judged: bool,
 }
 
-/// Counts the attempt before `attempt` runs, and takes it back once its password proved right.
+/// Counts the attempt before `attempt` runs, and takes it back once its right password acted.
 async fn counted<T, F>(
     app: &App,
     lanes: &PasswordLanes,
@@ -70,9 +73,12 @@ where
         return Ok(Err(shared.map_or(wait, |shared| shared.max(wait))));
     }
     let one = |lane: &Lane| app.limiter.admit(admitted_ms, std::slice::from_ref(lane));
+    let spent = lanes.shared.as_ref().and_then(one);
+    let owner = lanes.owner.as_ref().map(|lane| one(lane).is_none());
     let gate = Gate {
-        spent: lanes.shared.as_ref().and_then(one),
-        opens: lanes.owner.as_ref().is_none_or(|lane| one(lane).is_none()),
+        spent,
+        opens: owner != Some(false),
+        judged: spent.is_none() || owner == Some(true),
     };
     let tried = attempt(gate).await;
     if tried.proven {
@@ -344,16 +350,21 @@ async fn open_with_password(
     visit: &Visit,
     gate: Gate,
 ) -> Tried<Opening> {
+    if !gate.judged {
+        let outcome = match app.passwords.wait_as_a_check().await {
+            Ok(()) => answered_wrong(app, email, visit, gate, false).await,
+            Err(refusal) => Err(refusal),
+        };
+        return Tried::unproven(outcome);
+    }
     let proven = match prove(app, email, password, gate.opens, queue).await {
         Ok(Some(proven)) if gate.opens => proven,
         Ok(found) => {
             let right = found.is_some();
-            return Tried {
-                proven: right,
-                outcome: answered_wrong(app, email, visit, gate, right).await,
-            };
+            return Tried::unproven(answered_wrong(app, email, visit, gate, right).await);
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
+            let refusal = gate.spent.map_or(refusal, too_many_passwords);
             return Tried::unproven(
                 limited(app, None, email, SIGN_IN_REFUSED, visit, refusal).await,
             );
@@ -366,7 +377,7 @@ async fn open_with_password(
     }
 }
 
-/// A right password the owner's share cannot take is answered as a wrong one.
+/// A right password the owner's share cannot take is answered, and counted, as a wrong one.
 async fn answered_wrong<T>(
     app: &Arc<App>,
     email: &str,
@@ -386,7 +397,7 @@ async fn answered_wrong<T>(
 fn owner_lanes(current: &Current, known: Option<&Known>, visit: &Visit) -> PasswordLanes {
     let sender = match known {
         Some(known) => Sender::Known(known),
-        None => Sender::Credential(&current.owner.id),
+        None => Sender::Credential,
     };
     limits::password_lanes(&current.owner.email, visit.address, sender)
 }
@@ -677,4 +688,94 @@ async fn replaced(
         Ok(Some((owner_id.clone(), proven.credentials(tx)?)))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::IpAddr;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    use super::super::claim::{self, Proof};
+    use super::super::owner::Details;
+    use super::*;
+    use crate::settings::{Environment, Settings};
+
+    const EMAIL: &str = "owner@example.test";
+    const PASSWORD: &str = "a good long password";
+
+    async fn claimed() -> (TempDir, Arc<App>) {
+        let dir = TempDir::new().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        let app = App::start(settings).await.unwrap();
+        let details = Details::new(EMAIL, None, PASSWORD.into()).unwrap();
+        claim::claim(&app, details, Proof::Local, Visit::default())
+            .await
+            .unwrap();
+        (dir, app)
+    }
+
+    fn from(n: u8) -> Visit {
+        let address = Some(IpAddr::from([198, 51, n / 100, n % 100]));
+        Visit {
+            peer: address,
+            address,
+            user_agent: None,
+        }
+    }
+
+    fn spend_the_shared_hour(app: &App) {
+        let now = app.clock.now_ms();
+        for n in 0..100u8 {
+            let sender = Sender::Stranger {
+                owners_email: false,
+            };
+            let lanes = limits::password_lanes(
+                &format!("{n}@example.test"),
+                Some(IpAddr::from([203, 0, 113, n / 10])),
+                sender,
+            );
+            assert_eq!(app.limiter.admit(now, &lanes.all()), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn strangers_past_the_shared_hour_leave_a_queue_place_for_the_owners_email() {
+        let (_dir, app) = claimed().await;
+        spend_the_shared_hour(&app);
+        let places = app.passwords.open_places_left();
+        let held = app.passwords.hold_the_open_lane().await;
+        let mut strangers = tokio::task::JoinSet::new();
+        for n in 0..4 * places {
+            let app = app.clone();
+            let n = u8::try_from(n).unwrap();
+            strangers.spawn(async move {
+                let email = format!("stranger-{n}@example.test");
+                with_password(&app, email, "a guess".into(), None, from(n)).await
+            });
+        }
+        let answered = async {
+            while let Some(answer) = strangers.join_next().await {
+                let refusal = answer.unwrap().err().unwrap();
+                assert_eq!(refusal.code, Code::RateLimited);
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), answered)
+            .await
+            .expect("an attempt past the shared hour waited for the queue");
+        assert_eq!(app.passwords.open_places_left(), places);
+        drop(held);
+        let owner = with_password(&app, EMAIL.into(), PASSWORD.into(), None, from(200)).await;
+        assert!(owner.is_ok());
+    }
 }
