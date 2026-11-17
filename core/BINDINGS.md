@@ -93,13 +93,23 @@ A writer upgrades in place a store an earlier build made, from the first version
 
 `readUnsent` does not open a core or upgrade the store. It holds the writer lock and reads the database through a read-only connection. It refuses with `reading_handle` while another core holds that lock, or `store` if it cannot read the queue. The kind and verdict are raw strings and can include values this build does not recognize. A waiting write has no verdict: Node omits the field, and Swift returns `nil`.
 
+To remove the store, pass `removeStore` the ids `readUnsent` listed, which are the writes the person agreed to lose. The removal holds the writer lock while it reads the store's unsent writes again and removes the store, so no write can be queued between the two. If the writes are not exactly those ids, in any order, it refuses with `unsent_differs` and leaves the store as it was. The refusal's `unsent` holds the ids of the writes the store holds, or none if it cannot read them, and `agreed` holds the ids passed. Show the person the writes again and ask before you call it with the new ids. A path with no store holds no unsent writes, so pass an empty list to finish a removal that stopped part way.
+
 ## A store that cannot be read
 
 A store SQLite cannot read, whole or in part, is refused with the error code `store_damaged`. A refusal at open names its `path` and gives `unsent`, the number of writes its queue holds that the server has not taken, or none if the queue cannot be read in full.
 
 A refusal during a later call has an empty `path`. Close every handle on the store, then call `checkStore` to read its pages, check its indexes against their rows and obtain a refusal with the path and count. `setAsideDamaged` keeps the damaged file under `<store>.damaged-<n>` beside it and creates a store at the original path with each write it can read. Its result gives the number of carried and unread writes, the unread IDs it could identify, and whether it read the whole queue, every record that decides how a carried write is sent and every record of the bytes an earlier set-aside keeps. If it could not read every write and record, every byte the cache held at that point stays, whatever the file budget, until the store set aside is removed or moved from where the set-aside put it. Hydrate the new store before draining it. If `held` is nonzero, writes whose original instance could not be read remain blocked `instance_changed` until released. If `recordUnread` is nonzero, writes whose record of how they are sent could not be read remain blocked `record_unread` until released. If the store is now built from another instance than the one such a write was made against, or the set-aside could not tell which that was, releasing it blocks it `instance_changed` and answers that nothing was released; release it again to send it. While a set-aside is unfinished, `removeStore`, `removeStoreLosingAll` and `replaceRefused` refuse `store_damaged`; call `setAsideDamaged` again to finish it.
 
-Use `removeStoreLosingAll` only when the person agrees to lose every write, including writes that cannot be counted.
+Use `removeStoreLosingAll` only when the person agrees to lose every write, including writes that cannot be read.
+
+## Hold and write tables
+
+`holdTable`, `letGoTable`, `heldTables`, `fillTables`, `tableRows`, `tableRow`, `tableTotals`, `writeRows` and `undoRows` on `Core` hold a type's tables in the copy, read their rows and queue row writes, as the sections of `device.md` from "Tables a device holds" to "Writing a table on a device", and "Row writes" in `queue-and-verdicts.md`, say.
+
+- `tableRows`, `tableRow` and `tableTotals` answer in the server's shapes, with `held` set where the copy answered from a table it holds whole and unset where it asked the server. Node answers a plain object, and Swift a `JsonObject`.
+- `writeRows` queues one write of kind `write_rows` for each call, and `undoRows` one of kind `undo_rows` for the batch named. A drain sends consecutive row writes to the same table in one request and gives each write its own verdict.
+- A hold's and a fill's counts cross as numbers. In Swift, a held table's `state` is the enum `TableState` (`owed`, `filling`, `whole` and `online` in Node), its item is `itemId` (`item` in Node), and a read's options are the record `RowsAsked`, whose `direction` is `SortDirection` and whose `limit` is a `UInt32`.
 
 ## Folders in an app
 

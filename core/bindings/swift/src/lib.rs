@@ -19,6 +19,7 @@ mod json;
 mod packed;
 mod reads;
 mod renewal;
+mod tables;
 mod views;
 
 pub use instance::{InstanceDescription, instance_description};
@@ -1515,14 +1516,15 @@ pub enum MarfaError {
         message: String,
     },
     /// A removal of a store was refused, leaving it as it was, because the
-    /// writes it holds that the server has not taken are not the number the
-    /// caller agreed to lose. Carried so an app can show the person the
-    /// store's own count and ask again.
+    /// writes it holds that the server has not taken are not exactly the
+    /// ones the caller agreed to lose. Carried so an app can show the person
+    /// the store's own writes and ask again.
     UnsentDiffers {
         path: String,
-        /// The store's own count; `None` where it cannot be read.
-        unsent: Option<u64>,
-        agreed: u64,
+        /// The ids of the store's own unsent writes; `None` where they
+        /// cannot be read.
+        unsent: Option<Vec<String>>,
+        agreed: Vec<String>,
         message: String,
     },
     /// The copy can no longer be kept current from its cursor: a hydration
@@ -3275,24 +3277,25 @@ impl Core {
 /// removed, including one `open` refuses with `WrongSchema`. Drop every `Core`
 /// on the store first.
 ///
-/// `unsent` is the number of writes the server has not taken that the person
-/// agreed to lose. Throws `UnsentDiffers` with the store's own count, leaving
-/// it as it was, unless that count equals `unsent`; the count is `nil` where
-/// it cannot be read, and such a store is never removed. Throws
+/// `unsent` names, by id as `readUnsent` lists them, the writes the server
+/// has not taken that the person agreed to lose, in any order. Throws
+/// `UnsentDiffers` with the ids of the store's own unsent writes, leaving it
+/// as it was, unless they are exactly those; they are `nil` where they
+/// cannot be read, and such a store is never removed. Throws
 /// `ReadingHandle` while another process, or another `Core` in this one,
 /// writes the store, and `Invalid` for a folder's store. With nothing at
 /// `path`, removes what a removal stopped part way left there when `unsent`
-/// is 0. A process that only reads the store does not stop the removal and
+/// is empty. A process that only reads the store does not stop the removal and
 /// keeps showing the old copy until it reopens.
 #[uniffi::export]
-pub fn remove_store(path: String, unsent: u64) -> Result<(), MarfaError> {
-    Ok(marfa_core::Core::remove_store(path, unsent)?)
+pub fn remove_store(path: String, unsent: Vec<String>) -> Result<(), MarfaError> {
+    Ok(marfa_core::Core::remove_store(path, &unsent)?)
 }
 
 /// Removes the store at `path` as `removeStore` does, agreeing to lose every
-/// write it holds that the server has not taken, however many there are and
-/// whether or not they can be counted, as for a store `open` refuses with
-/// `StoreDamaged`. Throws as `removeStore` does but for the count.
+/// write it holds that the server has not taken, whatever they are and
+/// whether or not they can be read, as for a store `open` refuses with
+/// `StoreDamaged`. Throws as `removeStore` does but for the writes.
 #[uniffi::export]
 pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store_losing_all(path)?)
@@ -3485,7 +3488,7 @@ mod tests {
             E::UnsentDiffers {
                 path: text(),
                 unsent: None,
-                agreed: 0,
+                agreed: Vec::new(),
             },
             E::CopyExpired {
                 reason: text(),
@@ -3927,8 +3930,8 @@ mod tests {
             (
                 E::UnsentDiffers {
                     path: text(),
-                    unsent: Some(2),
-                    agreed: 1,
+                    unsent: Some(vec![text(), text()]),
+                    agreed: vec![text()],
                 }
                 .into(),
                 "UnsentDiffers",
@@ -6299,5 +6302,62 @@ mod tests {
             before,
             "the writer saved and the reader was not told"
         );
+    }
+
+    fn queue_note(path: &str, title: &str) -> String {
+        let core = Core::open(path.to_string(), None, None, None).unwrap();
+        core.create_item(Draft {
+            state: None,
+            capture_latitude: None,
+            capture_longitude: None,
+            edges: HashMap::new(),
+            r#type: "core.note".into(),
+            properties: object(serde_json::json!({ "title": title })),
+            id: None,
+            tags: Vec::new(),
+            tier: None,
+            source: None,
+            source_id: None,
+            occurred_at: None,
+            base_version: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn a_store_is_removed_only_with_the_ids_of_the_unsent_writes_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let first = queue_note(&path, "first");
+        let shown: Vec<String> = read_unsent(path.clone())
+            .unwrap()
+            .into_iter()
+            .map(|write| write.id)
+            .collect();
+        assert_eq!(shown, vec![first.clone()]);
+        let late = queue_note(&path, "late");
+
+        for agreed in [shown.clone(), vec![late.clone()], Vec::new()] {
+            match remove_store(path.clone(), agreed.clone()) {
+                Err(MarfaError::UnsentDiffers {
+                    unsent: Some(mut unsent),
+                    agreed: echoed,
+                    ..
+                }) => {
+                    unsent.sort();
+                    let mut both = vec![first.clone(), late.clone()];
+                    both.sort();
+                    assert_eq!(unsent, both);
+                    assert_eq!(echoed, agreed);
+                }
+                other => panic!("the removal was not refused: {other:?}"),
+            }
+            assert_eq!(read_unsent(path.clone()).unwrap().len(), 2);
+        }
+
+        remove_store(path.clone(), vec![late, first]).unwrap();
+        assert!(!std::path::Path::new(&path).exists());
+        remove_store(path.clone(), Vec::new()).unwrap();
     }
 }
