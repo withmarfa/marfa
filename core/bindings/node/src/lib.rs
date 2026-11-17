@@ -2497,36 +2497,27 @@ impl MarfaCore {
     /// any schema is removed, including one `open` refuses with
     /// `wrong_schema`. Close every `MarfaCore` on the store first.
     ///
-    /// `unsent` is the number of writes the server has not taken that the
-    /// person agreed to lose. Refuses with `unsent_differs` and the store's
-    /// own count as `unsent`, leaving it as it was, unless that count equals
-    /// `unsent`; the count is `null` where it cannot be read, and such a store
+    /// `unsent` names, by id, the writes the server has not taken that the
+    /// person agreed to lose, as `readUnsent` lists them. Refuses with
+    /// `unsent_differs`, the store's own ids as `unsent` and the ids given as
+    /// `agreed`, leaving it as it was, unless the store holds exactly those
+    /// writes; `unsent` is `null` where they cannot be read, and such a store
     /// is never removed. Refuses with `reading_handle` while another process,
     /// or another `MarfaCore` in this one, writes the store, and with
     /// `invalid` for a folder's store. With nothing at `path`, removes what a
-    /// removal stopped part way left there when `unsent` is 0. A process that
-    /// only reads the store does not stop the removal and keeps showing the
-    /// old copy until it reopens.
+    /// removal stopped part way left there when `unsent` is empty. A process
+    /// that only reads the store does not stop the removal and keeps showing
+    /// the old copy until it reopens.
     #[napi]
-    pub fn remove_store(env: Env, path: String, unsent: f64) -> Result<()> {
-        // Checked as a number first: napi's integer conversion truncates a
-        // fraction and reads NaN as zero, which would agree to lose writes.
-        if unsent.fract() != 0.0 || !(0.0..=MAX_SAFE_INTEGER).contains(&unsent) {
-            return Err(failure(
-                env,
-                marfa_core::CoreError::Invalid(
-                    "unsent is a whole count from 0 to Number.MAX_SAFE_INTEGER".to_string(),
-                ),
-            ));
-        }
-        marfa_core::Core::remove_store(path, unsent as u64).map_err(|error| failure(env, error))
+    pub fn remove_store(env: Env, path: String, unsent: Vec<String>) -> Result<()> {
+        marfa_core::Core::remove_store(path, &unsent).map_err(|error| failure(env, error))
     }
 
     /// Removes the store at `path` as `removeStore` does, agreeing to lose
     /// every write it holds that the server has not taken, however many there
     /// are and whether or not they can be counted, as for a store `open`
     /// refuses with `store_damaged`. Refuses as `removeStore` does but for
-    /// the count.
+    /// the writes.
     #[napi]
     pub fn remove_store_losing_all(env: Env, path: String) -> Result<()> {
         marfa_core::Core::remove_store_losing_all(path).map_err(|error| failure(env, error))

@@ -39,33 +39,32 @@ function refusal(call) {
   try {
     call();
   } catch (error) {
-    return /** @type {{ code?: string, unsent?: number | null, agreed?: number }} */ (
+    return /** @type {{ code?: string, unsent?: string[] | null, agreed?: string[] }} */ (
       error
     );
   }
   assert.fail("the call was not refused");
 }
 
-test("a store is removed only with the count of unsent writes it holds", () => {
+test("a store is removed only with the ids of the unsent writes it holds", () => {
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-remove-"));
   try {
     const path = join(dir, "copy.sqlite");
     storeWithOneUnsent(path);
     writeFileSync(join(dir, "notes.txt"), "kept");
     const before = readdirSync(dir).sort();
+    const shown = MarfaCore.readUnsent(path).map((write) => write.id);
+    assert.deepEqual(shown, ["q1"]);
 
-    const differs = refusal(() => MarfaCore.removeStore(path, 0));
-    assert.equal(differs.code, "unsent_differs");
-    assert.equal(differs.unsent, 1);
-    assert.equal(differs.agreed, 0);
-    assert.deepEqual(readdirSync(dir).sort(), before);
-
-    for (const unsent of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      assert.equal(refusal(() => MarfaCore.removeStore(path, unsent)).code, "invalid");
+    for (const agreed of [[], ["q2"], ["q1", "q2"]]) {
+      const differs = refusal(() => MarfaCore.removeStore(path, agreed));
+      assert.equal(differs.code, "unsent_differs");
+      assert.deepEqual(differs.unsent, ["q1"]);
+      assert.deepEqual(differs.agreed, agreed);
+      assert.deepEqual(readdirSync(dir).sort(), before);
     }
-    assert.deepEqual(readdirSync(dir).sort(), before);
 
-    MarfaCore.removeStore(path, 1);
+    MarfaCore.removeStore(path, shown);
     assert.deepEqual(readdirSync(dir), ["notes.txt"]);
     assert.equal(existsSync(`${path}.blobs`), false);
   } finally {

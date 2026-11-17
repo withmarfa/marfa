@@ -608,10 +608,21 @@ export class BindingDevice {
   }
 
   /**
-   * Removes the store, agreeing to lose `unsent` writes the server has not
-   * taken. Call `forget` first, or the binding's own core holds the store.
+   * The writes the store holds that the server has not taken. Call `forget`
+   * first, or the binding's own core holds the store.
    */
-  async removeStore(unsent: number): Promise<Outcome<null>> {
+  async readUnsent(): Promise<Outcome<{ id: string; kind: string }[]>> {
+    const reply = await this.request({ op: "read-unsent", path: this.store });
+    return reply.ok
+      ? { ok: true, value: reply.value as { id: string; kind: string }[] }
+      : { ok: false, refusal: refusalOf(reply.error) };
+  }
+
+  /**
+   * Removes the store, agreeing to lose the writes `unsent` names by id.
+   * Call `forget` first, or the binding's own core holds the store.
+   */
+  async removeStore(unsent: string[]): Promise<Outcome<null>> {
     const reply = await this.request({
       op: "remove-store",
       path: this.store,

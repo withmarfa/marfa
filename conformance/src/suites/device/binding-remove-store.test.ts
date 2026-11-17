@@ -99,7 +99,9 @@ function edit(store: string, sql: string): void {
  * A store holding one note, its create not taken by the server, and one
  * file of fetched bytes. The binding has let go of it.
  */
-async function storeWithOneUnsent(label: string): Promise<BindingHarness> {
+async function storeWithOneUnsent(
+  label: string,
+): Promise<BindingHarness & { written: string[] }> {
   const started = await startBindingHarness(label, { server: false });
   harness = started;
   const created = await started.device.createItem({
@@ -110,30 +112,31 @@ async function storeWithOneUnsent(label: string): Promise<BindingHarness> {
   // The witness: the store holds the write unsent.
   const queue = await started.device.queue();
   expect(queue.ok && queue.value.length).toBe(1);
+  const written = queue.ok ? queue.value.map((write) => write.id) : [];
   await started.device.forget();
   const blobs = `${started.device.store}.blobs`;
   mkdirSync(blobs, { recursive: true });
   writeFileSync(join(blobs, "fetched"), "bytes");
-  return started;
+  return { ...started, written };
 }
 
 function refusalOf(
   outcome: Awaited<ReturnType<BindingHarness["device"]["removeStore"]>>,
-): { code: string; unsent?: number | null; agreed?: number } {
+): { code: string; unsent?: string[] | null; agreed?: string[] } {
   expect(outcome.ok, "the removal was not refused").toBe(false);
   if (outcome.ok) throw new Error("unreachable");
   return {
     code: outcome.refusal.code,
     ...(JSON.parse(outcome.refusal.raw) as {
-      unsent?: number | null;
-      agreed?: number;
+      unsent?: string[] | null;
+      agreed?: string[];
     }),
   };
 }
 
 describe("removing a store", () => {
-  it("removes a store holding the agreed number of unsent writes, with its log, fetched bytes and lock", async () => {
-    const { device } = await storeWithOneUnsent("remove-store");
+  it("removes a store holding exactly the unsent writes agreed, with its log, fetched bytes and lock", async () => {
+    const { device, written } = await storeWithOneUnsent("remove-store");
     const dir = dirname(device.store);
     // Not the store's own names, so they stay.
     const neighbors = [
@@ -144,8 +147,10 @@ describe("removing a store", () => {
     for (const neighbor of neighbors)
       writeFileSync(join(dir, neighbor), "kept");
     expect(Object.keys(held(device.store))).toContain(".blobs");
+    const shown = await device.readUnsent();
+    expect(shown.ok && shown.value.map((write) => write.id)).toEqual(written);
 
-    const removed = await device.removeStore(1);
+    const removed = await device.removeStore(written);
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
 
     expect(held(device.store)).toEqual({});
@@ -159,14 +164,14 @@ describe("removing a store", () => {
   });
 
   it("refuses to remove a store while another process holds its writer role", async () => {
-    const { device } = await storeWithOneUnsent("remove-held");
+    const { device, written } = await storeWithOneUnsent("remove-held");
     const before = kept(device.store);
 
     // Another app's writer, as the core takes the role.
     const holder = new DatabaseSync(`${device.store}.writer-lock`);
     try {
       holder.exec("BEGIN EXCLUSIVE");
-      expect(refusalOf(await device.removeStore(1)).code).toBe(
+      expect(refusalOf(await device.removeStore(written)).code).toBe(
         "reading_handle",
       );
       expect(kept(device.store)).toEqual(before);
@@ -175,22 +180,27 @@ describe("removing a store", () => {
     }
 
     // The witness: once the other writer lets go, the same call removes it.
-    const removed = await device.removeStore(1);
+    const removed = await device.removeStore(written);
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
     expect(held(device.store)).toEqual({});
   });
 
-  it("refuses to remove a store holding another number of unsent writes, with its own count", async () => {
-    const { device } = await storeWithOneUnsent("remove-unsent");
+  it("refuses to remove a store holding other unsent writes than those agreed, naming its own", async () => {
+    const { device, written } = await storeWithOneUnsent("remove-unsent");
     const before = kept(device.store);
 
-    for (const agreed of [0, 2]) {
+    for (const agreed of [
+      [],
+      ["another-write"],
+      [...written, "another-write"],
+    ]) {
       const refused = refusalOf(await device.removeStore(agreed));
       expect(refused.code).toBe("unsent_differs");
-      expect(refused.unsent, "the refusal did not give the store's count").toBe(
-        1,
-      );
-      expect(refused.agreed).toBe(agreed);
+      expect(
+        refused.unsent,
+        "the refusal did not name the store's writes",
+      ).toEqual(written);
+      expect(refused.agreed).toEqual(agreed);
       expect(
         kept(device.store),
         "the refused removal changed the store",
@@ -198,34 +208,69 @@ describe("removing a store", () => {
     }
   });
 
-  it("refuses to remove a store whose unsent writes it cannot count", async () => {
-    const { device } = await storeWithOneUnsent("remove-uncounted");
-    // A queue whose shape hides its count: what the store holds is unknown.
+  it("refuses to remove a store a write reached after its unsent writes were read", async () => {
+    const { device, written } = await storeWithOneUnsent("remove-late");
+    const shown = await device.readUnsent();
+    expect(shown.ok && shown.value.map((write) => write.id)).toEqual(written);
+    const agreed = shown.ok ? shown.value.map((write) => write.id) : [];
+
+    // Another app on the same store queues a write after the list was read.
+    other = await BindingDevice.start({
+      module: requireModule(),
+      store: device.store,
+    });
+    const late = await other.createItem({
+      type: "core.note",
+      properties: { title: "late", body: "late" },
+    });
+    expect(late.ok, JSON.stringify(late)).toBe(true);
+    const lateId = late.ok ? late.value.id : "";
+    await other.forget();
+    const before = kept(device.store);
+
+    const refused = refusalOf(await device.removeStore(agreed));
+    expect(refused.code).toBe("unsent_differs");
+    expect([...(refused.unsent ?? [])].sort()).toEqual(
+      [...written, lateId].sort(),
+    );
+    expect(refused.agreed).toEqual(agreed);
+    expect(kept(device.store), "the refused removal changed the store").toEqual(
+      before,
+    );
+    const still = await device.readUnsent();
+    expect(still.ok && still.value.map((write) => write.id).sort()).toEqual(
+      [...written, lateId].sort(),
+    );
+  });
+
+  it("refuses to remove a store whose unsent writes it cannot read", async () => {
+    const { device, written } = await storeWithOneUnsent("remove-uncounted");
+    // A queue whose shape hides its writes: what the store holds is unknown.
     edit(
       device.store,
       "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
     );
     const before = kept(device.store);
 
-    for (const agreed of [0, 1]) {
+    for (const agreed of [[], written]) {
       const refused = refusalOf(await device.removeStore(agreed));
       expect(refused.code).toBe("unsent_differs");
       expect(
         refused.unsent,
-        "the refusal gave a count it cannot read",
+        "the refusal named writes it cannot read",
       ).toBeNull();
       expect(kept(device.store)).toEqual(before);
     }
   });
 
-  it("removes a store whose unsent writes it cannot count when every write is agreed lost", async () => {
-    const { device } = await storeWithOneUnsent("remove-all");
+  it("removes a store whose unsent writes it cannot read when every write is agreed lost", async () => {
+    const { device, written } = await storeWithOneUnsent("remove-all");
     edit(
       device.store,
       "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
     );
-    // The witness: no count removes it.
-    expect(refusalOf(await device.removeStore(1)).unsent).toBeNull();
+    // The witness: no list of writes removes it.
+    expect(refusalOf(await device.removeStore(written)).unsent).toBeNull();
     expect(Object.keys(held(device.store))).toContain("");
 
     const removed = await device.removeStoreLosingAll();
@@ -233,19 +278,19 @@ describe("removing a store", () => {
     expect(held(device.store)).toEqual({});
   });
 
-  it("removes a store the writer refuses wrong_schema under its own count", async () => {
-    const { device } = await storeWithOneUnsent("remove-schema");
+  it("removes a store the writer refuses wrong_schema with the unsent writes it lists", async () => {
+    const { device, written } = await storeWithOneUnsent("remove-schema");
     edit(device.store, "PRAGMA user_version = 0");
     const opened = await device.tryOpen();
     expect(
       opened.error?.code,
       "the store at another version was not refused, so it cannot stand for another build's",
     ).toBe("wrong_schema");
-    const shown = (opened.error as { unsent?: number } | undefined)?.unsent;
-    expect(shown).toBe(1);
+    const shown = await device.readUnsent();
+    expect(shown.ok && shown.value.map((write) => write.id)).toEqual(written);
 
-    expect(refusalOf(await device.removeStore(0)).unsent).toBe(1);
-    const removed = await device.removeStore(1);
+    expect(refusalOf(await device.removeStore([])).unsent).toEqual(written);
+    const removed = await device.removeStore(written);
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
     expect(held(device.store)).toEqual({});
   });
@@ -258,7 +303,7 @@ describe("removing a store", () => {
     const { device } = started;
     await device.forget();
     // A store holding nothing unsent goes with nothing agreed to be lost.
-    expect((await device.removeStore(0)).ok).toBe(true);
+    expect((await device.removeStore([])).ok).toBe(true);
     expect(held(device.store)).toEqual({});
     // What a removal stopped part way leaves: the fetched bytes and the lock.
     const blobs = `${device.store}.blobs`;
@@ -272,20 +317,20 @@ describe("removing a store", () => {
       ".writer-lock",
     ]);
 
-    const refused = refusalOf(await device.removeStore(1));
+    const refused = refusalOf(await device.removeStore(["a-write"]));
     expect(refused.code).toBe("unsent_differs");
-    expect(refused.unsent).toBe(0);
+    expect(refused.unsent).toEqual([]);
     expect(kept(device.store)).toEqual(before);
 
-    const removed = await device.removeStore(0);
+    const removed = await device.removeStore([]);
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
     expect(held(device.store)).toEqual({});
     // Removed again: there is nothing left, and nothing to refuse.
-    expect((await device.removeStore(0)).ok).toBe(true);
+    expect((await device.removeStore([])).ok).toBe(true);
   });
 
   it("removes a symbolic link at a store's name and keeps what it leads to", async () => {
-    const { device } = await storeWithOneUnsent("remove-link");
+    const { device, written } = await storeWithOneUnsent("remove-link");
     const elsewhere = tempFolder("marfa-device-elsewhere-");
     const outside = join(elsewhere, "outside.txt");
     writeFileSync(outside, "kept");
@@ -296,7 +341,7 @@ describe("removing a store", () => {
     symlinkSync(outside, join(`${device.store}.blobs`, "link"));
     symlinkSync(bytes, join(`${device.store}.blobs`, "folder"));
 
-    const removed = await device.removeStore(1);
+    const removed = await device.removeStore(written);
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
     expect(held(device.store)).toEqual({});
     expect(readFileSync(outside, "utf8")).toBe("kept");
@@ -306,7 +351,7 @@ describe("removing a store", () => {
     symlinkSync(outside, `${device.store}-wal`);
     symlinkSync(bytes, `${device.store}.blobs`);
     expect(isLink(`${device.store}.blobs`)).toBe(true);
-    const again = await device.removeStore(0);
+    const again = await device.removeStore([]);
     expect(again.ok, JSON.stringify(again)).toBe(true);
     expect(held(device.store)).toEqual({});
     expect(readFileSync(outside, "utf8")).toBe("kept");
@@ -314,14 +359,14 @@ describe("removing a store", () => {
   });
 
   it("refuses to remove a folder's store", async () => {
-    const { device } = await storeWithOneUnsent("remove-folder");
+    const { device, written } = await storeWithOneUnsent("remove-folder");
     edit(
       device.store,
       "INSERT INTO meta (key, value) VALUES ('folder_id', 'a-folder')",
     );
     const before = kept(device.store);
 
-    expect(refusalOf(await device.removeStore(1)).code).toBe("invalid");
+    expect(refusalOf(await device.removeStore(written)).code).toBe("invalid");
     expect(kept(device.store)).toEqual(before);
   });
 
@@ -339,7 +384,7 @@ describe("removing a store", () => {
     const before = kept(store);
 
     expect(refusalOf(await other.removeStoreLosingAll()).code).toBe("invalid");
-    expect(refusalOf(await other.removeStore(0)).code).toBe("invalid");
+    expect(refusalOf(await other.removeStore([])).code).toBe("invalid");
     expect(kept(store)).toEqual(before);
   });
 
@@ -363,7 +408,7 @@ describe("removing a store", () => {
     expect(Object.keys(before)).toContain(".blobs/fetched");
 
     for (const refused of [
-      await device.removeStore(0),
+      await device.removeStore([]),
       await device.removeStoreLosingAll(),
       await device.replaceRefused(),
     ]) {
