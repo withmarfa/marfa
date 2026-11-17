@@ -144,6 +144,8 @@ beforeAll(async () => {
   ids.hiddenAnchor = await item(taskType, { stage: "done" }, hiddenWriter);
   ids.pointerToHidden = await item(taskType, { stage: "doing" });
   await link("references", ids.pointerToHidden, ids.hiddenAnchor);
+  ids.hiddenTarget = await item(taskType, { stage: "todo" });
+  await link("references", ids.hiddenAnchor, ids.hiddenTarget);
   await link("parent-of", ids.secretParent, ids.orphan);
 
   ids.ledger = await item(ledgerType, { title: "three rows" });
@@ -373,13 +375,25 @@ describe("POST /items/counts", () => {
       await listed(`edge[references] eq "${ids.hiddenAnchor}"`, shownOnly),
     ).toBe(linked?.total);
 
+    // The witness: without the source filter the anchor's own edge counts.
+    const leavingFilter = `backref[references] eq "${ids.hiddenAnchor}"`;
+    const [leavingByOwner] = await counts(owner, {
+      ids: [ids.hiddenAnchor],
+      backref: "references",
+    });
+    expect(leavingByOwner?.total).toBe(1);
+    expect(await listed(leavingFilter)).toBe(1);
+
     const [leaving] = await counts(shownOnly, {
       ids: [ids.hiddenAnchor],
       backref: "references",
     });
-    expect(leaving?.total).toBe(
-      await listed(`backref[references] eq "${ids.hiddenAnchor}"`, shownOnly),
-    );
+    expect(leaving).toEqual({
+      id: ids.hiddenAnchor,
+      total: 0,
+      status_groups: NO_GROUPS,
+    });
+    expect(await listed(leavingFilter, shownOnly)).toBe(0);
   });
 
   it("answers a missing and an unreadable anchor alike for backref and for tables", async () => {
@@ -412,6 +426,10 @@ describe("POST /items/counts", () => {
         id: "",
       });
       expect(unreadable?.total, JSON.stringify(body)).toBe(0);
+      if ("backref" in body) {
+        expect(unreadable?.status_groups).toEqual(NO_GROUPS);
+        expect(missing?.status_groups).toEqual(NO_GROUPS);
+      }
     }
   });
 
