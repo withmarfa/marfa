@@ -201,7 +201,7 @@ mod tests {
 
     /// Names in the command line's sources that no process environment hands the server: the
     /// install record's own keys, and the stand-ins and benchmarks that tests use.
-    const NOT_SETTINGS: [&str; 20] = [
+    const NOT_SETTINGS: [&str; 21] = [
         "MARFA_ACCESS",
         "MARFA_ADDRESS",
         "MARFA_APPLIED",
@@ -217,6 +217,7 @@ mod tests {
         "MARFA_DIRECTORY_VFS_CHILD",
         "MARFA_DIRECTORY_VFS_CHILD_MODE",
         "MARFA_READ_BENCH_ROWS",
+        "MARFA_READ_BENCH_TABLE_ROWS",
         "MARFA_READ_ONLY_PAGE",
         "MARFA_WRITE_COMMANDS",
         "MARFA_EXPECT_SQLITE_MAX_VARIABLE_NUMBER",
