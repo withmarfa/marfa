@@ -520,9 +520,10 @@ pub enum ItemsCommand {
     /// rows it holds in a table, as `marfa items counts` does.
     ///
     /// Links are counted from the copy, and refused `invalid` where it does
-    /// not hold the edge type whole or lacks an item an edge reaches. Rows
-    /// are counted from the copy for a table it holds whole and by the
-    /// server for any other; `held` says which.
+    /// not hold the edge type whole or may lack an item the server counts
+    /// that an edge reaches. Rows are counted from the copy for a table it
+    /// holds whole and by the server for any other; `held` says which. A
+    /// count the copy answers needs no server and no credential.
     #[command(group(clap::ArgGroup::new("counted").required(true).args(["backref", "edge", "table"])))]
     Counts {
         /// The item ids, at most 100.
@@ -1563,7 +1564,17 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     ));
                 }
             };
-            let counts = store.open_with_server(named)?.counts(&ids, &counted)?;
+            // The copy answers what it can; a session is needed only to ask the server.
+            let local = {
+                let core = store.open(None)?;
+                core.counts(&ids, &counted)
+            };
+            let counts = match local {
+                Err(marfa_core::CoreError::NoServer) if !store.reader => {
+                    store.open_with_server(named)?.counts(&ids, &counted)?
+                }
+                answered => answered?,
+            };
             output::report(&serde_json::json!({ "counts": counts }), json, || {
                 counts
                     .iter()

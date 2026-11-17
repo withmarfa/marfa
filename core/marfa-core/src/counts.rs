@@ -8,7 +8,8 @@ use rusqlite::{Connection, params_from_iter};
 use serde_json::Value;
 
 use crate::error::CoreError;
-use crate::{Core, Result, filter, store, tables};
+use crate::model::SliceTier;
+use crate::{Core, Result, filter, query, store, tables};
 
 /// The most ids one count takes.
 pub const MOST_IDS: usize = 100;
@@ -81,9 +82,39 @@ fn distinct(ids: &[String]) -> Result<Vec<String>> {
     Ok(distinct)
 }
 
-/// A copy that leaves an item out cannot count it, so it refuses where an
-/// edge of the counted type reaches an item it does not hold: whether the
-/// server counts that item depends on what the copy lacks.
+/// Whether the copy holds every item the server could count: every tier and
+/// type, the active state, no narrowing by a filter or a place in the tree.
+/// An item such a copy lacks is one the credential does not list, which the
+/// server does not count either.
+fn holds_every_listed_item(conn: &Connection) -> Result<bool> {
+    let Some((types, tier)) = store::slice(conn)? else {
+        return Ok(false);
+    };
+    if tier != SliceTier::All || !types.iter().any(|held| held == store::EVERY_TYPE) {
+        return Ok(false);
+    }
+    Ok(match store::slice_query(conn)? {
+        None => true,
+        Some(query) => {
+            query.filter.is_none()
+                && query.beneath.is_none()
+                && query
+                    .states
+                    .is_none_or(|states| states.iter().any(|state| state == "active"))
+        }
+    })
+}
+
+/// The server counts an item it lists to the credential that is active and
+/// not `system.*`. The copy applies the local list's own active-state
+/// clause, leaves out a row the server did not list (a pin it holds for a
+/// read by id), and refuses where an edge of the counted type reaches an
+/// item it lacks that the server might count.
+///
+/// An anchor needs no item here: an edge the copy holds was shown to the
+/// credential only because the server reads its from item, source filter
+/// included (`edges/read-source-filter`), so a `backref` anchor with an edge
+/// is one the server reads, and an `edge` anchor is not read at all.
 fn linked(
     conn: &Connection,
     catalog: &Catalog,
@@ -118,21 +149,17 @@ fn linked(
         )?);
         groups.push_str(" THEN 1 ELSE 0 END)");
     }
+    let mut counted: Vec<String> = Vec::new();
+    let mut counted_values: Vec<Value> = Vec::new();
+    query::narrow_by_states(None, false, &mut counted, &mut counted_values)?;
+    let counted = counted.join(" AND ");
     let marks = vec!["?"; ids.len()].join(", ");
     let mut found: HashMap<String, (i64, [i64; 4])> = HashMap::new();
-    // A backref count is the server's only for an anchor it reads, which a
-    // copy that lacks the anchor cannot tell, so that counts as a gap too.
     let gap = format!(
         "SELECT 1 FROM edges e
           WHERE e.edge_type = ? AND e.{anchor} IN ({marks})
-            AND (NOT EXISTS (SELECT 1 FROM items WHERE items.id = e.{other})
-                 {anchor_gap})
-          LIMIT 1",
-        anchor_gap = if backref {
-            "OR NOT EXISTS (SELECT 1 FROM items WHERE items.id = e.from_id)"
-        } else {
-            ""
-        }
+            AND NOT EXISTS (SELECT 1 FROM items WHERE items.id = e.{other})
+          LIMIT 1"
     );
     let bound = |ids: &[String], first: &str| -> Vec<rusqlite::types::Value> {
         std::iter::once(first.to_string())
@@ -140,9 +167,10 @@ fn linked(
             .map(rusqlite::types::Value::Text)
             .collect()
     };
-    if conn
-        .prepare_cached(&gap)?
-        .exists(params_from_iter(bound(ids, edge_type)))?
+    if !holds_every_listed_item(conn)?
+        && conn
+            .prepare_cached(&gap)?
+            .exists(params_from_iter(bound(ids, edge_type)))?
     {
         return Err(CoreError::Invalid(format!(
             "a count of {edge_type:?} reaches an item this working copy does not hold, so it cannot say how many the server counts: ask the server"
@@ -153,7 +181,9 @@ fn linked(
             "SELECT e.{anchor}, COUNT(*){groups}
                FROM edges e CROSS JOIN items ON items.id = e.{other}
               WHERE e.edge_type = ? AND e.{anchor} IN ({marks})
-                AND items.state = 'active' AND items.type NOT LIKE 'system.%'
+                AND {counted} AND items.type NOT LIKE 'system.%'
+                AND NOT EXISTS (SELECT 1 FROM meta
+                                 WHERE key = 'item_listed/' || items.id AND value = 'false')
               GROUP BY e.{anchor}"
         );
         let mut params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
@@ -185,18 +215,6 @@ fn linked(
         .collect())
 }
 
-/// `None` where the copy does not hold the table whole, so the server counts it.
-fn rows_held(conn: &Connection, id: &str, table: &str) -> Result<Option<i64>> {
-    if tables::local_table(conn, id, table)?.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(conn.query_row(
-        "SELECT COUNT(*) FROM table_rows WHERE item_id = ?1 AND name = ?2",
-        [id, table],
-        |row| row.get(0),
-    )?))
-}
-
 impl Core {
     /// For each of up to `MOST_IDS` ids, once each in the order they first
     /// appear, how many items an edge of the type links to it, or how many
@@ -204,8 +222,10 @@ impl Core {
     /// by the same `backref` or `edge` filter, with no `state`, lists: active
     /// items only, none in the bin, archived or `system.*`. Links are counted
     /// from the copy, and refused `Invalid` where it does not hold the edge
-    /// type whole or lacks an item an edge reaches. Rows are counted from the
-    /// copy for a table it holds whole and by the server for the rest.
+    /// type whole or may lack an item the server counts that an edge reaches.
+    /// Rows are counted from the copy for a table it holds whole and by the
+    /// server for the rest, and the whole call is refused where the server
+    /// leaves an id out of its answer.
     pub fn counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
         let ids = distinct(ids)?;
         match counted {
@@ -230,7 +250,7 @@ impl Core {
                 }
                 self.lay_rows()?;
                 let held: Vec<Option<i64>> = store::read_marked(&mut *self.conn()?, |conn, _| {
-                    ids.iter().map(|id| rows_held(conn, id, table)).collect()
+                    tables::held_row_counts(conn, &ids, table)
                 })?;
                 let asked: Vec<&String> = ids
                     .iter()
@@ -241,18 +261,26 @@ impl Core {
                 let mut answered: HashMap<String, i64> = HashMap::new();
                 if !asked.is_empty() {
                     answered = self.http()?.item_counts(&asked, table)?;
+                    if let Some(missing) = asked.iter().find(|id| !answered.contains_key(**id)) {
+                        return Err(CoreError::Decoding(format!(
+                            "the server's counts leave out {missing}, which was asked"
+                        )));
+                    }
                 }
-                Ok(ids
-                    .iter()
+                ids.iter()
                     .zip(held)
-                    .map(|(id, held)| ItemCount {
-                        id: id.clone(),
-                        total: held
-                            .unwrap_or_else(|| answered.get(id).copied().unwrap_or_default()),
-                        status_groups: None,
-                        held: held.is_some(),
+                    .map(|(id, held)| {
+                        Ok(ItemCount {
+                            id: id.clone(),
+                            total: match held {
+                                Some(total) => total,
+                                None => answered[id],
+                            },
+                            status_groups: None,
+                            held: held.is_some(),
+                        })
                     })
-                    .collect())
+                    .collect()
             }
         }
     }
@@ -453,10 +481,12 @@ mod tests {
             linked(&conn, &catalog, &named(&["lone"]), "parent-of", true).unwrap()[0].total,
             0
         );
-        // An anchor the copy lacks, with edges, may be one the server does not read.
+        // An anchor the copy lacks is no gap: an edge the copy holds is one the server reads from.
         store::upsert_edge(&conn, &wire_edge("up", "unheld", "lone", "parent-of")).unwrap();
-        let refusal = linked(&conn, &catalog, &named(&["unheld"]), "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert_eq!(
+            linked(&conn, &catalog, &named(&["unheld"]), "parent-of", true).unwrap()[0].total,
+            1
+        );
         // From the other end the counted item is the one that links to the anchor, which the copy lacks.
         let refusal = linked(&conn, &catalog, &named(&["lone"]), "parent-of", false).unwrap_err();
         assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
@@ -508,6 +538,147 @@ mod tests {
                 .map(|count| count.id.clone())
                 .collect::<Vec<_>>(),
             [two, one]
+        );
+    }
+
+    fn holding_every_listed_item(conn: &Connection) {
+        store::meta_set(conn, store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+        store::meta_set(conn, store::META_SLICE_TIER, "all").unwrap();
+    }
+
+    #[test]
+    fn a_pinned_child_the_server_did_not_list_is_not_counted() {
+        let conn = tasks();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        put(&conn, "hidden", "acme.task", "active", json!({}));
+        store::upsert_edge(&conn, &wire_edge("h", "lone", "hidden", "parent-of")).unwrap();
+        store::pin(&conn, "hidden").unwrap();
+        // The witness: the same pin, listed, is counted in both directions.
+        crate::reach::set_listed(&conn, "hidden", true).unwrap();
+        let counted = |anchor: &str, backref| {
+            linked(&conn, &catalog, &named(&[anchor]), "parent-of", backref).unwrap()[0].total
+        };
+        assert_eq!(counted("lone", true), 1);
+        assert_eq!(counted("hidden", false), 1);
+        store::upsert_edge(&conn, &wire_edge("i", "hidden", "lone", "parent-of")).unwrap();
+        assert_eq!(counted("lone", false), 1);
+        crate::reach::set_listed(&conn, "hidden", false).unwrap();
+        assert_eq!(counted("lone", true), 0);
+        assert_eq!(counted("lone", false), 0);
+    }
+
+    #[test]
+    fn an_anchor_outside_the_slice_is_answered_while_every_counted_item_is_held() {
+        let conn = tasks();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        store::meta_set(&conn, store::META_SLICE_TYPES, "[\"acme.task\"]").unwrap();
+        store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        put(&conn, "child", "acme.task", "active", json!({}));
+        store::upsert_edge(&conn, &wire_edge("a", "outside", "child", "parent-of")).unwrap();
+        let anchors = named(&["outside"]);
+        assert_eq!(
+            linked(&conn, &catalog, &anchors, "parent-of", true).unwrap()[0].total,
+            1
+        );
+        // The witness: a counted item the narrow slice lacks is still refused.
+        store::upsert_edge(&conn, &wire_edge("b", "outside", "elsewhere", "parent-of")).unwrap();
+        let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
+        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+    }
+
+    #[test]
+    fn a_copy_holding_every_listed_item_answers_for_a_counted_item_it_lacks_and_a_narrower_one_refuses()
+     {
+        let conn = tasks();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        // The source filter leaves the child out, so the copy never held it.
+        store::upsert_edge(&conn, &wire_edge("far", PARENT, "filtered", "parent-of")).unwrap();
+        let anchors = named(&[PARENT]);
+        let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
+        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        holding_every_listed_item(&conn);
+        assert_eq!(
+            linked(&conn, &catalog, &anchors, "parent-of", true).unwrap()[0].total,
+            8
+        );
+        // A slice that leaves out a tier, a state or a type may lack a child the server counts.
+        for (types, tier, query) in [
+            ("[\"*\"]", "library", None),
+            ("[\"acme.task\"]", "all", None),
+            ("[\"*\"]", "all", Some("{\"states\":[\"archived\"]}")),
+            (
+                "[\"*\"]",
+                "all",
+                Some("{\"filter\":\"state eq \\\"todo\\\"\"}"),
+            ),
+        ] {
+            store::meta_set(&conn, store::META_SLICE_TYPES, types).unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, tier).unwrap();
+            if let Some(query) = query {
+                store::meta_set(&conn, store::META_SLICE_QUERY, query).unwrap();
+            }
+            let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
+            assert!(
+                matches!(refusal, CoreError::Invalid(_)),
+                "{types} {tier} {query:?}: {refusal:?}"
+            );
+            conn.execute("DELETE FROM meta WHERE key = ?1", [store::META_SLICE_QUERY])
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn rows_the_server_leaves_out_of_its_answer_are_refused_for_the_whole_batch() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let two = "01a1011c-2f86-76b6-9594-050c109f4957".to_string();
+        server.on(
+            "/items/counts",
+            vec![scripted::json(
+                200,
+                &json!({ "counts": [{ "id": one, "total": 3 }] }).to_string(),
+            )],
+        );
+        let refusal = core
+            .counts(&[one, two], &Counted::Table("messages".into()))
+            .unwrap_err();
+        assert!(matches!(refusal, CoreError::Decoding(_)), "{refusal:?}");
+    }
+
+    #[test]
+    fn held_rows_are_the_stored_count_of_a_whole_table_its_host_declares() {
+        let conn = conn();
+        let catalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(json!([
+                { "id": "acme.ledger", "fields": {},
+                  "tables": { "lines": { "columns": { "memo": { "type": "string" } } } } },
+                { "id": "acme.note", "fields": {} }
+            ]))
+            .unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        let hosts = [
+            ("whole", "acme.ledger", "active", "whole", 3),
+            ("binned", "acme.ledger", "trashed", "whole", 3),
+            ("owed", "acme.ledger", "active", "owed", 0),
+            ("online", "acme.ledger", "active", "online", 0),
+            ("undeclared", "acme.note", "active", "whole", 3),
+        ];
+        for (id, kind, state, table, rows) in hosts {
+            put(&conn, id, kind, state, json!({}));
+            conn.execute(
+                "INSERT INTO item_tables (item_id, name, state, rows) VALUES (?1, 'lines', ?2, ?3)",
+                rusqlite::params![id, table, rows],
+            )
+            .unwrap();
+        }
+        let ids = named(&["whole", "binned", "owed", "online", "undeclared", "absent"]);
+        assert_eq!(
+            tables::held_row_counts(&conn, &ids, "lines").unwrap(),
+            [Some(3), None, None, None, None, None]
         );
     }
 

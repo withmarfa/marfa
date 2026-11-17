@@ -102,6 +102,15 @@ fn linked_ids(rows: usize) -> Vec<String> {
         .collect()
 }
 
+/// The notes each active linked note links to first, which each have an
+/// incoming link that counts.
+fn linked_targets(rows: usize) -> Vec<String> {
+    (0..rows)
+        .filter(|index| linked(*index) && !index.is_multiple_of(50))
+        .map(|index| note_id((index + 1) % rows))
+        .collect()
+}
+
 fn timed<T>(label: &str, rows: usize, read: impl Fn() -> T) -> T {
     let mut best = Duration::MAX;
     let mut answer = None;
@@ -228,28 +237,26 @@ fn read_bench_times_the_counts() {
         "[\"references\"]",
     )
     .unwrap();
-    let anchors: Vec<String> = linked_ids(rows).into_iter().take(MOST_IDS).collect();
-    assert_eq!(anchors.len(), MOST_IDS.min(rows.div_ceil(10)));
     for counted in [
         Counted::Backref("references".into()),
         Counted::Edge("references".into()),
     ] {
+        // An anchor of `backref` links out and one of `edge` is linked to, so
+        // each is counted where it has something to count.
+        let (anchors, expected) = match counted {
+            Counted::Backref(_) => (linked_ids(rows), 2),
+            _ => (linked_targets(rows), 1),
+        };
+        let anchors: Vec<String> = anchors.into_iter().take(MOST_IDS).collect();
+        assert!(!anchors.is_empty());
         let answer = core.counts(&anchors, &counted).unwrap();
         assert_eq!(answer.len(), anchors.len());
-        let expected = if matches!(counted, Counted::Backref(_)) {
-            2
-        } else {
-            0
-        };
         assert!(
             answer.iter().all(|count| count.held
-                && count.total >= expected
+                && count.total == expected
                 && count.status_groups.is_some()),
             "{counted:?}"
         );
-        if let Counted::Backref(_) = counted {
-            assert!(answer.iter().all(|count| count.total == 2));
-        }
         let mut times: Vec<Duration> = (0..40)
             .map(|_| {
                 let started = Instant::now();
@@ -266,5 +273,100 @@ fn read_bench_times_the_counts() {
                 times[times.len() * 95 / 100].as_secs_f64() * 1000.0,
             );
         }
+    }
+}
+
+/// 100 held tables counted in one call give the rows each holds, and with
+/// `MARFA_READ_BENCH_ROWS` set, over that many items of 130 types and
+/// `MARFA_READ_BENCH_TABLE_ROWS` rows in each table, the call's 95th
+/// percentile is printed.
+#[test]
+fn read_bench_times_the_row_counts() {
+    use crate::Counted;
+    use crate::counts::MOST_IDS;
+    let rows: usize = std::env::var("MARFA_READ_BENCH_ROWS")
+        .ok()
+        .and_then(|rows| rows.parse().ok())
+        .unwrap_or(300);
+    let table_rows: usize = std::env::var("MARFA_READ_BENCH_TABLE_ROWS")
+        .ok()
+        .and_then(|rows| rows.parse().ok())
+        .unwrap_or(5);
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+    let mut types = vec![json!({
+        "id": "acme.ledger",
+        "fields": {},
+        "tables": { "lines": { "columns": { "memo": { "type": "string" } } } }
+    })];
+    types.extend((0..129).map(|n| json!({ "id": format!("acme.kind{n}"), "fields": {} })));
+    let hosts: Vec<String> = (0..MOST_IDS).map(note_id).collect();
+    {
+        let mut conn = core.conn().unwrap();
+        let tx = conn.transaction().unwrap();
+        let catalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(json!(types)).unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&tx, &catalog).unwrap();
+        for index in 0..rows.max(MOST_IDS) {
+            let kind = if index < MOST_IDS {
+                "acme.ledger".to_string()
+            } else {
+                format!("acme.kind{}", index % 129)
+            };
+            let item = store::testing::wire_item(
+                &note_id(index),
+                &kind,
+                "active",
+                "2026-01-01T00:00:00Z",
+                json!({}),
+            );
+            store::upsert_item(&tx, &item, None, &marfa_rules::catalog::Indexing::default())
+                .unwrap();
+        }
+        let mut add = tx
+            .prepare(
+                "INSERT INTO table_rows (item_id, name, id, body, updated_at)
+                 VALUES (?1, 'lines', ?2, '{\"memo\":\"m\"}', '2026-01-01T00:00:00Z')",
+            )
+            .unwrap();
+        for host in &hosts {
+            for row in 0..table_rows {
+                add.execute(rusqlite::params![host, format!("row-{row:08}")])
+                    .unwrap();
+            }
+            tx.execute(
+                "INSERT INTO item_tables (item_id, name, state, rows) VALUES (?1, 'lines', 'whole', ?2)",
+                rusqlite::params![host, table_rows as i64],
+            )
+            .unwrap();
+        }
+        drop(add);
+        tx.commit().unwrap();
+    }
+    let counted = Counted::Table("lines".into());
+    let answer = core.counts(&hosts, &counted).unwrap();
+    assert_eq!(answer.len(), MOST_IDS);
+    assert!(
+        answer
+            .iter()
+            .all(|count| count.held && count.total == table_rows as i64)
+    );
+    let mut times: Vec<Duration> = (0..40)
+        .map(|_| {
+            let started = Instant::now();
+            core.counts(&hosts, &counted).unwrap();
+            started.elapsed()
+        })
+        .collect();
+    times.sort();
+    if std::env::var_os("MARFA_READ_BENCH_ROWS").is_some() {
+        println!(
+            "{rows:>7} items  {:<44} median {:>7.2} ms  p95 {:>7.2} ms",
+            format!("count {MOST_IDS} held tables of {table_rows} rows"),
+            times[times.len() / 2].as_secs_f64() * 1000.0,
+            times[times.len() * 95 / 100].as_secs_f64() * 1000.0,
+        );
     }
 }

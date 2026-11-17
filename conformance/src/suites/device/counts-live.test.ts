@@ -1,3 +1,10 @@
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -33,14 +40,27 @@ const run = newRunId()
 const taskType = `user.counted-task-${run}`;
 const memoType = `user.counted-memo-${run}`;
 const driftType = `user.counted-drift-${run}`;
+const secretType = `user.counted-secret-${run}`;
 const heldLedger = `user.counted-held-${run}`;
 const servedLedger = `user.counted-served-${run}`;
 const EDGES = ["parent-of", "in-collection"];
 const NOT_LISTENING = "http://127.0.0.1:1";
+const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
+const NO_GROUPS = {
+  not_started: 0,
+  in_progress: 0,
+  completed: 0,
+  canceled: 0,
+};
 
 let server: FreshServer;
 let owner: MarfaClient;
+let hiddenWriter: MarfaClient;
+let reader: string;
+let shownOnly: string;
+let shownSource = "";
 let counter = 0;
+let proxy: DroppingProxy | undefined;
 const ids: Record<string, string> = {};
 
 beforeAll(async () => {
@@ -54,6 +74,7 @@ beforeAll(async () => {
   for (const schema of [
     { id: taskType, fields: { title: { type: "string" }, stage: status } },
     { id: memoType, fields: { title: { type: "string" } } },
+    { id: secretType, fields: { title: { type: "string" } } },
     {
       id: driftType,
       fields: {
@@ -70,7 +91,35 @@ beforeAll(async () => {
     expect(made.status, JSON.stringify(made.error)).toBe(201);
   }
 
+  const hidden = await owner.createKey({
+    label: "device-counts-hidden",
+    source: `hidden-${run}`,
+    permissions: [],
+    type_permissions: { "*": "write" },
+    edge_permissions: { "*": "write" },
+  });
+  expect(hidden.status, JSON.stringify(hidden.error)).toBe(201);
+  hiddenWriter = new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: hidden.data.key,
+  });
+  reader = await mint("reader", {
+    type_permissions: { [taskType]: "read", [memoType]: "read" },
+    edge_permissions: { "*": "read" },
+  });
+
   ids.parent = await item(taskType, { title: "parent" });
+  shownSource = (await owner.getItem(ids.parent)).data.item.source ?? "";
+  shownOnly = await mint("shown-only", {
+    type_permissions: { "*": "read" },
+    edge_permissions: { "*": "read" },
+    enforcement_override: {
+      source_filter: {
+        types: [taskType, memoType, secretType, driftType],
+        sources: [shownSource],
+      },
+    },
+  });
   ids.lone = await item(taskType, { title: "no children" });
   const children: [string, string, Record<string, unknown>][] = [
     ["todo", taskType, { stage: "todo" }],
@@ -109,6 +158,33 @@ beforeAll(async () => {
     await link("in-collection", ids[role], ids.collection);
   }
 
+  // A parent the key that reads the task type does not read, and a child of it.
+  ids.secretParent = await item(secretType, { title: "secret parent" });
+  ids.orphan = await item(taskType, { stage: "todo" });
+  await link("parent-of", ids.secretParent, ids.orphan);
+  // An anchor of a type the key cannot read, and one a source filter hides, each linked to.
+  ids.secretAnchor = await item(secretType, { title: "unreadable anchor" });
+  ids.pointer = await item(taskType, { stage: "todo" });
+  await link("references", ids.pointer, ids.secretAnchor);
+  ids.hiddenAnchor = await item(taskType, { stage: "done" }, hiddenWriter);
+  ids.pointerToHidden = await item(taskType, { stage: "doing" });
+  await link("references", ids.pointerToHidden, ids.hiddenAnchor);
+  // A parent outside a copy of the task type, whose children are tasks.
+  ids.outsideParent = await item(memoType, { title: "outside parent" });
+  for (const [role, stage] of [
+    ["outsideTodo", "todo"],
+    ["outsideDone", "done"],
+  ]) {
+    ids[role] = await item(taskType, { stage });
+    await link("parent-of", ids.outsideParent, ids[role]);
+  }
+  // A parent with a child a source filter hides.
+  ids.sourceParent = await item(taskType, { title: "source parent" });
+  ids.shownChild = await item(taskType, { stage: "doing" });
+  ids.hiddenChild = await item(taskType, { stage: "done" }, hiddenWriter);
+  await link("parent-of", ids.sourceParent, ids.shownChild);
+  await link("parent-of", ids.sourceParent, ids.hiddenChild);
+
   ids.held = await item(heldLedger, { title: "three rows" });
   ids.heldEmpty = await item(heldLedger, { title: "no rows" });
   ids.served = await item(servedLedger, { title: "two rows" });
@@ -117,6 +193,7 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
+  await proxy?.stop();
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -126,11 +203,26 @@ function value<T>(outcome: Outcome<T>): T {
   return outcome.value;
 }
 
+async function mint(
+  label: string,
+  body: Record<string, unknown>,
+): Promise<string> {
+  const made = await owner.createKey({
+    label: `device-counts-${label}`,
+    source: `${label}-${run}`,
+    permissions: [],
+    ...body,
+  } as never);
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
+  return made.data.key;
+}
+
 async function item(
   type: string,
   properties: Record<string, unknown>,
+  writer = owner,
 ): Promise<string> {
-  const made = await owner.createItem({ type, properties } as never);
+  const made = await writer.createItem({ type, properties } as never);
   expect(made.status, JSON.stringify(made.error)).toBe(201);
   return made.data.item.id;
 }
@@ -160,22 +252,28 @@ type Counted = { backref: string } | { edge: string } | { table: string };
 async function served(
   asked: string[],
   counted: Counted,
+  as: MarfaClient = owner,
 ): Promise<Omit<DeviceCount, "held">[]> {
-  const answered = await owner.rawRequest<{
+  const answered = await as.rawRequest<{
     counts: Omit<DeviceCount, "held">[];
   }>("/items/counts", { method: "POST", body: { ids: asked, ...counted } });
   expect(answered.status, JSON.stringify(answered.error)).toBe(200);
   return answered.data.counts;
 }
 
-function copyOf(label: string, url = server.apiUrl, store = ""): CliDevice {
+function copyOf(
+  label: string,
+  url = server.apiUrl,
+  store = "",
+  key = server.workingKey,
+): CliDevice {
   counter += 1;
   return new CliDevice({
     binary: requireBinary(),
     store:
       store === "" ? newStore(`counts-${label}-${String(counter)}`) : store,
     url,
-    key: server.workingKey,
+    key,
   });
 }
 
@@ -183,10 +281,90 @@ async function hydrated(
   label: string,
   types: string[],
   edgeTypes: string[],
+  key = server.workingKey,
+  tier: "library" | "all" = "library",
 ): Promise<CliDevice> {
-  const device = copyOf(label);
-  value(await device.hydrate(types, "library", { edgeTypes }));
+  const device = copyOf(label, server.apiUrl, "", key);
+  value(await device.hydrate(types, tier, { edgeTypes }));
   return device;
+}
+
+/** A minted key's client. */
+function clientOf(key: string): MarfaClient {
+  return new MarfaClient({ baseUrl: server.apiUrl, apiKey: key });
+}
+
+/** Passes everything on, leaving the last count out of each answer to `POST /items/counts`. */
+class DroppingProxy {
+  private constructor(
+    private readonly listener: Server,
+    readonly url: string,
+  ) {}
+
+  static async start(): Promise<DroppingProxy> {
+    const listener = createServer();
+    await new Promise<void>((resolve) =>
+      listener.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = listener.address() as AddressInfo;
+    const made = new DroppingProxy(
+      listener,
+      `http://127.0.0.1:${String(port)}`,
+    );
+    listener.on("request", (request, response) => {
+      made.pass(request, response).catch(() => response.destroy());
+    });
+    return made;
+  }
+
+  private async pass(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const headers = new Headers();
+    for (const [name, sent] of Object.entries(request.headers)) {
+      if (
+        sent !== undefined &&
+        !["host", "connection", "content-length"].includes(name)
+      )
+        headers.set(name, Array.isArray(sent) ? sent.join(", ") : sent);
+    }
+    const path = request.url ?? "/";
+    const method = request.method ?? "GET";
+    const forwarded = await fetch(`${server.apiUrl}${path}`, {
+      method,
+      headers,
+      body: method === "GET" ? undefined : Buffer.concat(chunks),
+    });
+    let body = Buffer.from(await forwarded.arrayBuffer());
+    if (method === "POST" && path.startsWith("/items/counts")) {
+      const answer = JSON.parse(body.toString("utf8")) as {
+        counts: unknown[];
+      };
+      answer.counts = answer.counts.slice(0, -1);
+      body = Buffer.from(JSON.stringify(answer));
+    }
+    const answered: Record<string, string> = {};
+    forwarded.headers.forEach((sent, name) => {
+      if (
+        ![
+          "connection",
+          "content-encoding",
+          "content-length",
+          "transfer-encoding",
+        ].includes(name)
+      )
+        answered[name] = sent;
+    });
+    response.writeHead(forwarded.status, answered);
+    response.end(body);
+  }
+
+  async stop(): Promise<void> {
+    await new Promise<void>((resolve) => this.listener.close(() => resolve()));
+  }
 }
 
 const EVERY_TYPE = [taskType, memoType, driftType, "core.collection"];
@@ -240,28 +418,69 @@ describe("a device counts as the server does", () => {
     expect(members[0]?.total).toBe(2);
   });
 
-  it("answers a count of an id the copy does not hold as the server answers one no item holds", async () => {
-    const device = await hydrated("unknown", EVERY_TYPE, EDGES);
-    const nothing = "019537a0-7b80-7000-8000-000000000000";
-    const local = value(
-      await device.counts([nothing], { backref: "parent-of" }),
+  it("counts the readable items that link to an anchor of a type the credential cannot read, as the server does", async () => {
+    const device = await hydrated(
+      "edge-anchor",
+      [taskType, memoType],
+      ["references"],
+      reader,
     );
-    expect(local.counts).toEqual([
-      {
-        id: nothing,
-        total: 0,
-        status_groups: {
-          not_started: 0,
-          in_progress: 0,
-          completed: 0,
-          canceled: 0,
-        },
-        held: true,
-      },
+    const asked = [ids.secretAnchor];
+    const local = value(await device.counts(asked, { edge: "references" }));
+    // The witness: a real item links to the anchor, and the anchor is not in the copy.
+    expect(local.counts[0]).toMatchObject({ total: 1, held: true });
+    expect(value(await device.list({ type: secretType })).length).toBe(0);
+    expect(local.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(asked, { edge: "references" }, clientOf(reader)),
+    );
+  });
+
+  it("counts the items that link to an anchor the source filter hides, as the server does", async () => {
+    const device = await hydrated(
+      "edge-anchor-source",
+      [taskType],
+      ["references"],
+      shownOnly,
+    );
+    const asked = [ids.hiddenAnchor];
+    const local = value(await device.counts(asked, { edge: "references" }));
+    expect(local.counts[0]).toMatchObject({
+      total: 1,
+      status_groups: { ...NO_GROUPS, in_progress: 1 },
+      held: true,
+    });
+    expect(local.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(asked, { edge: "references" }, clientOf(shownOnly)),
+    );
+  });
+
+  it("answers a missing and an unreadable anchor of a count of links out and of rows as the server does", async () => {
+    const device = await hydrated(
+      "anchors",
+      [taskType, memoType],
+      ["parent-of"],
+      reader,
+    );
+    // The witnesses: the owner counts what the reader is not told of.
+    expect(
+      (await served([ids.secretParent], { backref: "parent-of" }))[0]?.total,
+    ).toBe(1);
+    expect((await served([ids.held], { table: "lines" }))[0]?.total).toBe(3);
+    const asked = [ids.secretParent, UNKNOWN_ID];
+    const links = value(await device.counts(asked, { backref: "parent-of" }));
+    expect(links.counts.map(({ id: _id, ...rest }) => rest)).toEqual([
+      { total: 0, status_groups: NO_GROUPS, held: true },
+      { total: 0, status_groups: NO_GROUPS, held: true },
     ]);
-    expect(await served([nothing], { backref: "parent-of" })).toEqual([
-      { id: nothing, total: 0, status_groups: local.counts[0]?.status_groups },
-    ]);
+    expect(links.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(asked, { backref: "parent-of" }, clientOf(reader)),
+    );
+    const rowsAsked = [ids.held, UNKNOWN_ID];
+    const rowCounts = value(await device.counts(rowsAsked, { table: "lines" }));
+    expect(rowCounts.counts.map(({ total }) => total)).toEqual([0, 0]);
+    expect(rowCounts.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(rowsAsked, { table: "lines" }, clientOf(reader)),
+    );
   });
 
   it("answers each id once, in the order they first appear, and refuses more than 100 ids and an id that is no id", async () => {
@@ -325,6 +544,99 @@ describe("a device counts as the server does", () => {
     // The witness: a table the copy does not hold needs the server, which is not there.
     const rowsOf = await offline.counts([ids.served], { table: "lines" });
     expect(rowsOf.ok).toBe(false);
+  });
+
+  it("does not count a pinned child the source filter hides, as the server does not", async () => {
+    const device = await hydrated("unlisted", ["*"], EDGES, shownOnly, "all");
+    const asked = [ids.sourceParent];
+    const before = value(await device.counts(asked, { backref: "parent-of" }));
+    expect(before.counts[0]?.total).toBe(1);
+    // The witness: the pin brings the hidden child into the copy.
+    value(await device.pin(ids.hiddenChild));
+    expect(value(await device.get(ids.hiddenChild)).id).toBe(ids.hiddenChild);
+    const after = value(await device.counts(asked, { backref: "parent-of" }));
+    expect(after.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(asked, { backref: "parent-of" }, clientOf(shownOnly)),
+    );
+    expect(after.counts[0]?.total).toBe(1);
+  });
+
+  it("answers a count of an anchor outside the slice when every item its edges reach is held", async () => {
+    const device = await hydrated("held-ends", [taskType], ["parent-of"]);
+    const asked = [ids.outsideParent];
+    const local = value(await device.counts(asked, { backref: "parent-of" }));
+    // The witness: the anchor is not in the copy and two held children are counted.
+    expect(value(await device.list({ type: memoType })).length).toBe(0);
+    expect(local.counts[0]?.total).toBe(2);
+    expect(local.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(asked, { backref: "parent-of" }),
+    );
+  });
+
+  it("answers a count that reaches an item the source filter hides when the copy holds every item the credential lists", async () => {
+    const asked = [ids.sourceParent];
+    const whole = await hydrated(
+      "every-listed",
+      ["*"],
+      EDGES,
+      shownOnly,
+      "all",
+    );
+    const local = value(await whole.counts(asked, { backref: "parent-of" }));
+    expect(local.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(asked, { backref: "parent-of" }, clientOf(shownOnly)),
+    );
+    expect(local.counts[0]?.total).toBe(1);
+    // The witness: the edge to the hidden child is in the copy, which lacks the child,
+    // and a copy of one type, which may lack a child the server counts, refuses.
+    const edges = value(await whole.edgesFrom(ids.sourceParent));
+    expect(edges.map((edge) => edge.to_id)).toContain(ids.hiddenChild);
+    const narrow = await hydrated(
+      "every-listed-narrow",
+      [taskType],
+      EDGES,
+      shownOnly,
+    );
+    const refused = await narrow.counts(asked, { backref: "parent-of" });
+    expect(refused.ok).toBe(false);
+  });
+
+  it("answers a count the copy can answer from a closed store with no server and no credential", async () => {
+    const store = newStore(`counts-closed-${String(counter)}`);
+    const device = copyOf("closed", server.apiUrl, store);
+    value(await device.hydrate(EVERY_TYPE, "library", { edgeTypes: EDGES }));
+    const closed = new CliDevice({ binary: requireBinary(), store });
+    const local = value(
+      await closed.counts(linked(), { backref: "parent-of" }),
+    ).counts;
+    expect(local.map(({ held: _held, ...rest }) => rest)).toEqual(
+      await served(linked(), { backref: "parent-of" }),
+    );
+    // The witness: a count that needs the server is refused with no server named.
+    const needs = await closed.counts([ids.served], { table: "lines" });
+    expect(needs.ok).toBe(false);
+    if (!needs.ok) expect(needs.refusal.code).toBe("no_server");
+  });
+
+  it("refuses a count of rows whose served answer leaves out an id, answering no total", async () => {
+    const store = newStore(`counts-incomplete-${String(counter)}`);
+    const device = copyOf("incomplete", server.apiUrl, store);
+    value(await device.hydrate([heldLedger, servedLedger], "library"));
+    const asked = [ids.served, ids.held];
+    // The witness: asked of the server itself, the copy answers both.
+    expect(
+      value(await device.counts(asked, { table: "lines" })).counts.map(
+        (count) => [count.id, count.total],
+      ),
+    ).toEqual([
+      [ids.served, 2],
+      [ids.held, 3],
+    ]);
+    proxy ??= await DroppingProxy.start();
+    const dropping = copyOf("incomplete", proxy.url, store);
+    const refused = await dropping.counts(asked, { table: "lines" });
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("decoding");
   });
 
   it("gives the server's counts once the copy has caught up, and not before", async () => {

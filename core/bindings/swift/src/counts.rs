@@ -69,8 +69,8 @@ impl Core {
     /// how many rows it holds in a table: what a list anchored on the item
     /// by the same `backref` or `edge` filter, naming no state, would list.
     /// Links are counted from the copy and throw `Invalid` where it does not
-    /// hold the edge type whole or lacks an item an edge reaches, so ask the
-    /// server then. Rows come from the copy for a table held whole and from
+    /// hold the edge type whole or may lack an item the server counts that an
+    /// edge reaches, so ask the server then. Rows come from the copy for a table held whole and from
     /// the server otherwise; `held` says which.
     pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
         Ok(self
