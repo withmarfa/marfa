@@ -365,7 +365,7 @@ fn a_damaged_store_is_removed_only_when_every_write_is_agreed_lost() {
     let (_dir, path, _) = store_with(1);
     damage_table(&path, "queue");
     assert!(matches!(
-        Core::remove_store(&path, 1),
+        Core::remove_store(&path, &crate::store::confirmation(&[])),
         Err(CoreError::UnsentDiffers { unsent: None, .. })
     ));
     assert!(path.exists());
@@ -489,7 +489,7 @@ fn a_folders_store_whose_header_is_damaged_is_not_removed_or_replaced() {
         Err(CoreError::Invalid(said)) if said.contains("folder's store")
     ));
     assert!(matches!(
-        Core::remove_store(&path, 0),
+        Core::remove_store(&path, &crate::store::confirmation(&[])),
         Err(CoreError::Invalid(_))
     ));
     assert!(matches!(
@@ -572,9 +572,11 @@ fn a_store_whose_set_aside_stopped_is_not_removed_or_replaced_until_it_finishes(
     assert!(held());
 
     for refused in [
-        Core::remove_store(&path, 0).err(),
+        Core::remove_store(&path, &crate::store::confirmation(&[])).err(),
         Core::remove_store_losing_all(&path).err(),
         Core::replace_refused(&path, None).err(),
+        // Not shown as no writes, which the store set aside still holds.
+        Core::read_unsent(&path).err(),
     ] {
         let (named, _, said) = damaged(refused.expect("refused"));
         assert_eq!(named, path.display().to_string());
@@ -1241,6 +1243,20 @@ fn every_open_refuses_an_empty_file_whose_log_holds_writes_and_a_set_aside_carri
         .filter(|name| name.to_string_lossy().starts_with(".marfa-reading"))
         .collect();
     assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn an_emptied_store_is_shown_damaged_by_read_unsent_and_removed_losing_all() {
+    let (_dir, path, _) = emptied_with_log(2);
+    let log = bytes(&beside(&path, "-wal"));
+    let (named, _, said) = damaged(Core::read_unsent(&path).err().unwrap());
+    assert_eq!(named, path.display().to_string());
+    assert!(said.contains("log holds committed writes"), "{said}");
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    assert_eq!(bytes(&path), Some(Vec::new()));
+
+    Core::remove_store_losing_all(&path).unwrap();
+    assert!(!path.exists() && !beside(&path, "-wal").exists());
 }
 
 #[cfg(unix)]

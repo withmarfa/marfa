@@ -1443,6 +1443,15 @@ pub struct UnsentWrite {
     pub verdict: Option<String>,
 }
 
+/// The writes a store holds that the server has not taken, in queue order,
+/// and the confirmation `Core::remove_store` takes to lose exactly these.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnsentWrites {
+    pub writes: Vec<UnsentWrite>,
+    /// Opaque: a digest of every field of every write in `writes`, in order.
+    pub confirmation: String,
+}
+
 /// A verdict of `None` is a write not yet answered, and serializes as `null`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueuedWrite {

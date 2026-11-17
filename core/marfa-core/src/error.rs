@@ -161,16 +161,14 @@ pub enum CoreError {
         unsent: Option<u64>,
     },
     /// A removal of a store was refused, leaving it as it was, because the
-    /// writes it holds that the server has not taken are not the number the
-    /// caller agreed to lose.
-    #[error("{}", unsent_differs(path, *unsent, *agreed))]
+    /// writes it holds that the server has not taken are not those the
+    /// confirmation was given with.
+    #[error("{}", unsent_differs(path, *unsent))]
     UnsentDiffers {
         path: String,
-        /// The writes the store holds that the server has not taken, as
-        /// `WrongSchema` counts them; `None` where they cannot be counted.
+        /// How many writes the store holds that the server has not taken;
+        /// `None` where they cannot be read.
         unsent: Option<u64>,
-        /// The count the caller agreed to lose.
-        agreed: u64,
     },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
@@ -627,12 +625,12 @@ fn store_damaged(path: &str, reason: &str, unsent: Option<u64>) -> String {
     format!("{path} cannot be opened: {reason}. {holds}")
 }
 
-fn unsent_differs(path: &str, unsent: Option<u64>, agreed: u64) -> String {
-    let writes = |count: u64| if count == 1 { "write" } else { "writes" };
+fn unsent_differs(path: &str, unsent: Option<u64>) -> String {
     match unsent {
         Some(count) => format!(
-            "{path} was not removed: it holds {count} {} the server has not taken, not the {agreed} agreed to; show the person the {count} and remove it with that count once they agree",
-            writes(count)
+            "{path} was not removed: the {count} {} it holds that the server has not taken {} not what the person was shown; read them again, show them to the person and remove it with the new confirmation once they agree",
+            if count == 1 { "write" } else { "writes" },
+            if count == 1 { "is" } else { "are" },
         ),
         None => format!(
             "{path} was not removed: whether it holds writes the server has not taken cannot be read, so it cannot be known what removing it would lose"

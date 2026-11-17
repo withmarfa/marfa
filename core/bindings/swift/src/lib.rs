@@ -19,6 +19,7 @@ mod json;
 mod packed;
 mod reads;
 mod renewal;
+mod tables;
 mod views;
 
 pub use instance::{InstanceDescription, instance_description};
@@ -1515,14 +1516,14 @@ pub enum MarfaError {
         message: String,
     },
     /// A removal of a store was refused, leaving it as it was, because the
-    /// writes it holds that the server has not taken are not the number the
-    /// caller agreed to lose. Carried so an app can show the person the
-    /// store's own count and ask again.
+    /// writes it holds that the server has not taken are not those its
+    /// confirmation was given with. An app reads them again with
+    /// `readUnsent`, shows them to the person and asks again.
     UnsentDiffers {
         path: String,
-        /// The store's own count; `None` where it cannot be read.
+        /// How many such writes the store holds; `None` where they cannot be
+        /// read.
         unsent: Option<u64>,
-        agreed: u64,
         message: String,
     },
     /// The copy can no longer be kept current from its cursor: a hydration
@@ -1785,14 +1786,9 @@ impl From<marfa_core::CoreError> for MarfaError {
                 unsent,
                 message,
             },
-            E::UnsentDiffers {
+            E::UnsentDiffers { path, unsent } => MarfaError::UnsentDiffers {
                 path,
                 unsent,
-                agreed,
-            } => MarfaError::UnsentDiffers {
-                path,
-                unsent,
-                agreed,
                 message,
             },
             E::CopyExpired { reason, .. } => MarfaError::CopyExpired {
@@ -3275,24 +3271,25 @@ impl Core {
 /// removed, including one `open` refuses with `WrongSchema`. Drop every `Core`
 /// on the store first.
 ///
-/// `unsent` is the number of writes the server has not taken that the person
-/// agreed to lose. Throws `UnsentDiffers` with the store's own count, leaving
-/// it as it was, unless that count equals `unsent`; the count is `nil` where
-/// it cannot be read, and such a store is never removed. Throws
-/// `ReadingHandle` while another process, or another `Core` in this one,
-/// writes the store, and `Invalid` for a folder's store. With nothing at
-/// `path`, removes what a removal stopped part way left there when `unsent`
-/// is 0. A process that only reads the store does not stop the removal and
+/// `confirmation` is the one `readUnsent` gave with the writes the person was
+/// shown and agreed to lose. Throws `UnsentDiffers`, leaving the store as it
+/// was, unless the writes it holds that the server has not taken are those,
+/// with every field `readUnsent` shows unchanged; a store whose writes cannot
+/// be read is never removed. Throws `ReadingHandle` while another process,
+/// or another `Core` in this one, writes the store, and `Invalid` for a
+/// folder's store. With nothing at `path`, `readUnsent` shows no writes, and
+/// removing with its confirmation takes what a removal stopped part way left
+/// there. A process that only reads the store does not stop the removal and
 /// keeps showing the old copy until it reopens.
 #[uniffi::export]
-pub fn remove_store(path: String, unsent: u64) -> Result<(), MarfaError> {
-    Ok(marfa_core::Core::remove_store(path, unsent)?)
+pub fn remove_store(path: String, confirmation: String) -> Result<(), MarfaError> {
+    Ok(marfa_core::Core::remove_store(path, &confirmation)?)
 }
 
 /// Removes the store at `path` as `removeStore` does, agreeing to lose every
-/// write it holds that the server has not taken, however many there are and
-/// whether or not they can be counted, as for a store `open` refuses with
-/// `StoreDamaged`. Throws as `removeStore` does but for the count.
+/// write it holds that the server has not taken, whatever they are and
+/// whether or not they can be read, as for a store `open` refuses with
+/// `StoreDamaged`. Throws as `removeStore` does but for the writes.
 #[uniffi::export]
 pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store_losing_all(path)?)
@@ -3322,19 +3319,35 @@ pub struct UnsentWrite {
     pub verdict: Option<String>,
 }
 
-/// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
+/// The writes a store holds that the server has not taken, and the
+/// confirmation `removeStore` takes to lose exactly these.
+#[derive(uniffi::Record)]
+pub struct UnsentWrites {
+    /// In queue order.
+    pub writes: Vec<UnsentWrite>,
+    /// Opaque; pass it to `removeStore` unchanged.
+    pub confirmation: String,
+}
+
+/// Lists the unsent writes of a store of any build, a refused one included,
+/// with the confirmation `removeStore` takes; see BINDINGS.md for refusals.
 #[uniffi::export]
-pub fn read_unsent(path: String) -> Result<Vec<UnsentWrite>, MarfaError> {
-    Ok(marfa_core::Core::read_unsent(path)?
-        .into_iter()
-        .map(|write| UnsentWrite {
-            id: write.id,
-            kind: write.kind,
-            item_id: write.item_id,
-            body: write.body,
-            verdict: write.verdict,
-        })
-        .collect())
+pub fn read_unsent(path: String) -> Result<UnsentWrites, MarfaError> {
+    let unsent = marfa_core::Core::read_unsent(path)?;
+    Ok(UnsentWrites {
+        writes: unsent
+            .writes
+            .into_iter()
+            .map(|write| UnsentWrite {
+                id: write.id,
+                kind: write.kind,
+                item_id: write.item_id,
+                body: write.body,
+                verdict: write.verdict,
+            })
+            .collect(),
+        confirmation: unsent.confirmation,
+    })
 }
 
 /// What `setAsideDamaged` did.
@@ -3485,7 +3498,6 @@ mod tests {
             E::UnsentDiffers {
                 path: text(),
                 unsent: None,
-                agreed: 0,
             },
             E::CopyExpired {
                 reason: text(),
@@ -3928,7 +3940,6 @@ mod tests {
                 E::UnsentDiffers {
                     path: text(),
                     unsent: Some(2),
-                    agreed: 1,
                 }
                 .into(),
                 "UnsentDiffers",
@@ -6299,5 +6310,56 @@ mod tests {
             before,
             "the writer saved and the reader was not told"
         );
+    }
+
+    fn queue_note(path: &str, title: &str) -> String {
+        let core = Core::open(path.to_string(), None, None, None).unwrap();
+        core.create_item(Draft {
+            state: None,
+            capture_latitude: None,
+            capture_longitude: None,
+            edges: HashMap::new(),
+            r#type: "core.note".into(),
+            properties: object(serde_json::json!({ "title": title })),
+            id: None,
+            tags: Vec::new(),
+            tier: None,
+            source: None,
+            source_id: None,
+            occurred_at: None,
+            base_version: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn a_store_is_removed_only_with_the_confirmation_of_the_writes_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let first = queue_note(&path, "first");
+        let shown = read_unsent(path.clone()).unwrap();
+        assert_eq!(shown.writes.len(), 1);
+        assert_eq!(shown.writes[0].id, first);
+        let late = queue_note(&path, "late");
+
+        for agreed in [shown.confirmation.clone(), String::new()] {
+            assert!(matches!(
+                remove_store(path.clone(), agreed),
+                Err(MarfaError::UnsentDiffers {
+                    unsent: Some(2),
+                    ..
+                })
+            ));
+            assert_eq!(read_unsent(path.clone()).unwrap().writes.len(), 2);
+        }
+
+        let both = read_unsent(path.clone()).unwrap();
+        assert!(both.writes.iter().any(|write| write.id == late));
+        remove_store(path.clone(), both.confirmation).unwrap();
+        assert!(!std::path::Path::new(&path).exists());
+        let nothing = read_unsent(path.clone()).unwrap();
+        assert!(nothing.writes.is_empty());
+        remove_store(path.clone(), nothing.confirmation).unwrap();
     }
 }

@@ -257,6 +257,16 @@ pub struct UnsentWrite {
     pub verdict: Option<String>,
 }
 
+/// The writes a store holds that the server has not taken, and the
+/// confirmation `removeStore` takes to lose exactly these.
+#[napi(object)]
+pub struct UnsentWrites {
+    /// In queue order.
+    pub writes: Vec<UnsentWrite>,
+    /// Opaque; pass it to `removeStore` unchanged.
+    pub confirmation: String,
+}
+
 /// What `setAsideDamaged` did.
 #[napi(object)]
 pub struct SetAside {
@@ -1697,15 +1707,9 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             ("reason", json!(reason)),
             ("unsent", json!(unsent)),
         ],
-        E::UnsentDiffers {
-            path,
-            unsent,
-            agreed,
-        } => vec![
-            ("path", json!(path)),
-            ("unsent", json!(unsent)),
-            ("agreed", json!(agreed)),
-        ],
+        E::UnsentDiffers { path, unsent } => {
+            vec![("path", json!(path)), ("unsent", json!(unsent))]
+        }
         E::CopyExpired { reason, .. } | E::StreamIncomplete { reason, .. } => {
             vec![("reason", json!(reason))]
         }
@@ -2497,55 +2501,53 @@ impl MarfaCore {
     /// any schema is removed, including one `open` refuses with
     /// `wrong_schema`. Close every `MarfaCore` on the store first.
     ///
-    /// `unsent` is the number of writes the server has not taken that the
-    /// person agreed to lose. Refuses with `unsent_differs` and the store's
-    /// own count as `unsent`, leaving it as it was, unless that count equals
-    /// `unsent`; the count is `null` where it cannot be read, and such a store
-    /// is never removed. Refuses with `reading_handle` while another process,
-    /// or another `MarfaCore` in this one, writes the store, and with
-    /// `invalid` for a folder's store. With nothing at `path`, removes what a
-    /// removal stopped part way left there when `unsent` is 0. A process that
-    /// only reads the store does not stop the removal and keeps showing the
-    /// old copy until it reopens.
+    /// `confirmation` is the one `readUnsent` gave with the writes the person
+    /// was shown and agreed to lose. Refuses with `unsent_differs`, and how
+    /// many such writes the store holds as `unsent`, leaving it as it was,
+    /// unless the writes it holds that the server has not taken are those,
+    /// with every field `readUnsent` shows unchanged; `unsent` is `null`
+    /// where they cannot be read, and such a store is never removed. Refuses
+    /// with `reading_handle` while another process, or another `MarfaCore`
+    /// in this one, writes the store, and with `invalid` for a folder's
+    /// store. With nothing at `path`, `readUnsent` shows no writes, and
+    /// removing with its confirmation takes what a removal stopped part way
+    /// left there. A process that only reads the store does not stop the
+    /// removal and keeps showing the old copy until it reopens.
     #[napi]
-    pub fn remove_store(env: Env, path: String, unsent: f64) -> Result<()> {
-        // Checked as a number first: napi's integer conversion truncates a
-        // fraction and reads NaN as zero, which would agree to lose writes.
-        if unsent.fract() != 0.0 || !(0.0..=MAX_SAFE_INTEGER).contains(&unsent) {
-            return Err(failure(
-                env,
-                marfa_core::CoreError::Invalid(
-                    "unsent is a whole count from 0 to Number.MAX_SAFE_INTEGER".to_string(),
-                ),
-            ));
-        }
-        marfa_core::Core::remove_store(path, unsent as u64).map_err(|error| failure(env, error))
+    pub fn remove_store(env: Env, path: String, confirmation: String) -> Result<()> {
+        marfa_core::Core::remove_store(path, &confirmation).map_err(|error| failure(env, error))
     }
 
     /// Removes the store at `path` as `removeStore` does, agreeing to lose
-    /// every write it holds that the server has not taken, however many there
-    /// are and whether or not they can be counted, as for a store `open`
+    /// every write it holds that the server has not taken, whatever they are
+    /// and whether or not they can be read, as for a store `open`
     /// refuses with `store_damaged`. Refuses as `removeStore` does but for
-    /// the count.
+    /// the writes.
     #[napi]
     pub fn remove_store_losing_all(env: Env, path: String) -> Result<()> {
         marfa_core::Core::remove_store_losing_all(path).map_err(|error| failure(env, error))
     }
 
-    /// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
+    /// Lists the unsent writes of a store of any build, a refused one
+    /// included, with the confirmation `removeStore` takes; see BINDINGS.md
+    /// for refusals.
     #[napi]
-    pub fn read_unsent(env: Env, path: String) -> Result<Vec<UnsentWrite>> {
+    pub fn read_unsent(env: Env, path: String) -> Result<UnsentWrites> {
         let unsent = marfa_core::Core::read_unsent(path).map_err(|error| failure(env, error))?;
-        Ok(unsent
-            .into_iter()
-            .map(|write| UnsentWrite {
-                id: write.id,
-                kind: write.kind,
-                item_id: write.item_id,
-                body: write.body,
-                verdict: write.verdict,
-            })
-            .collect())
+        Ok(UnsentWrites {
+            writes: unsent
+                .writes
+                .into_iter()
+                .map(|write| UnsentWrite {
+                    id: write.id,
+                    kind: write.kind,
+                    item_id: write.item_id,
+                    body: write.body,
+                    verdict: write.verdict,
+                })
+                .collect(),
+            confirmation: unsent.confirmation,
+        })
     }
 
     /// Reads every page of the store at `path`, and checks each index against

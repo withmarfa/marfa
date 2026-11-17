@@ -376,9 +376,9 @@ fn a_reading_handle_is_refused_at_every_write_door() {
         "replace_refused",
         // Take no core either; `remove_tests` and `damage_tests` hold the
         // role from another core and are refused.
-        "remove_agreed",
+        // `read_unsent` and `remove_agreed` claim through it.
+        "claim_unsent",
         "check_store",
-        "read_unsent",
         "set_aside_damaged",
         "catch_up_pass",
         "follow_from",

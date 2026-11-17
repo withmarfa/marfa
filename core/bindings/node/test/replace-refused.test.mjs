@@ -130,7 +130,7 @@ test("a refused store lists each write it holds unsent, and is left unchanged", 
     db.close();
     assert.equal(refusal(() => MarfaCore.open(path)).code, "wrong_schema");
     const before = digest(path);
-    assert.deepEqual(MarfaCore.readUnsent(path), [
+    assert.deepEqual(MarfaCore.readUnsent(path).writes, [
       { id: "q1", kind: "create_item", body: "{}" },
       { id: "q2", kind: "remove_tag", itemId: "n1", body: '{"tags":[]}', verdict: "dead" },
     ]);

@@ -3758,6 +3758,22 @@ When a device is asked for the writes a store holds that the server has not take
 
 **Tests:** `device/working-copy.test.ts › lists each write a store of another version holds unsent, with its kind, item and body`.
 
+### `device/unsent-confirmation`
+
+When a device lists the writes a store holds that the server has not taken, a device MUST give with them a confirmation that stands for every listed write's id, kind, item, body and verdict, in the order listed.
+
+**Reason:** an app passes the confirmation to the removal of the store (`device/remove-store`), so the removal loses only what the person was shown, without the app sending the writes back.
+
+**Tests:** `device/binding-remove-store.test.ts › removes a store holding exactly the unsent writes it showed, with its log, fetched bytes and lock`, `› refuses to remove a store whose unsent write's body changed under the same id after it was shown`.
+
+### `device/unsent-absent`
+
+When a device is asked for the writes a path holds that the server has not taken, and the path holds no store file and no set-aside of a store there stopped part way, a device MUST list none, with the confirmation of none.
+
+**Reason:** a removal that stopped part way, or one asked for twice, is finished by reading the path again and removing with what it gives (`device/remove-store-absent`), and a path with no store holds no write to lose.
+
+**Tests:** `device/binding-remove-store.test.ts › removes what a removal left at a path with no store only with the confirmation of no writes`.
+
 ### `device/wrong-schema-no-delete`
 
 When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting the store.
@@ -3836,57 +3852,57 @@ When a device refuses to replace a store, a device MUST leave the store's file a
 
 ### `device/remove-store`
 
-When a device is asked to remove a store, agreeing to lose a number of writes the server has not taken, and the store holds that number, a device MUST remove the store file, its write-ahead log, its rollback journal, its shared-memory file, the fetched bytes it keeps beside it and its writer lock.
+When a device is asked to remove a store with the confirmation it gave with the writes the store holds that the server has not taken (`device/unsent-confirmation`), and the store still holds exactly those writes, a device MUST remove the store file, its write-ahead log, its rollback journal, its shared-memory file, the fetched bytes it keeps beside it and its writer lock.
 
 **Reason:** an app that lets a person discard their copy has to remove every file that copy is made of, whichever build made it, and an app that removed them itself would not know which files a build keeps or whether another process writes them.
 
-**Tests:** `device/binding-remove-store.test.ts › removes a store holding the agreed number of unsent writes, with its log, fetched bytes and lock`.
+**Tests:** `device/binding-remove-store.test.ts › removes a store holding exactly the unsent writes it showed, with its log, fetched bytes and lock`.
 
 ### `device/remove-store-only`
 
 When a device removes a store, a device MUST NOT remove any other file beside it, including a refused store it set aside.
 
-**Tests:** `device/binding-remove-store.test.ts › removes a store holding the agreed number of unsent writes, with its log, fetched bytes and lock`.
+**Tests:** `device/binding-remove-store.test.ts › removes a store holding exactly the unsent writes it showed, with its log, fetched bytes and lock`.
 
 ### `device/remove-store-any-schema`
 
-When a device is asked to remove a store it refuses `wrong_schema`, and the store holds the number of writes the server has not taken that was agreed to be lost, a device MUST remove the store.
+When a device is asked to remove a store it refuses `wrong_schema` with the confirmation it gave with the writes the store holds that the server has not taken, a device MUST remove the store.
 
-**Reason:** a store another build made is the copy a person most often needs to discard, and the count the refusal said (`device/wrong-schema-says`) is the count they agreed to lose.
+**Reason:** a store another build made is the copy a person most often needs to discard, and the writes a device lists for it (`device/wrong-schema-lists`) are the writes they see and agree to lose.
 
-**Tests:** `device/binding-remove-store.test.ts › removes a store the writer refuses wrong_schema under its own count`.
+**Tests:** `device/binding-remove-store.test.ts › removes a store the writer refuses wrong_schema with the confirmation of the unsent writes it lists`.
 
 ### `device/remove-store-held`
 
 While another process holds a store's writer role, a device MUST refuse to remove the store `reading_handle`.
 
-**Reason:** a count of the writes the server has not taken stays true only while no other process can queue one, so a device counts them and removes the store under the writer role, which also keeps a store from being removed from under an app that writes it.
+**Reason:** the writes the server has not taken stay as they were read only while no other process can queue or change one, so a device reads them and removes the store under the writer role, which also keeps a store from being removed from under an app that writes it.
 
 **Tests:** `device/binding-remove-store.test.ts › refuses to remove a store while another process holds its writer role`.
 
 ### `device/remove-store-unsent`
 
-If a store a device is asked to remove holds another number of writes the server has not taken than the number agreed to be lost, or a number the device cannot count, then a device MUST refuse to remove it `unsent_differs`.
+If the writes the server has not taken that a store a device is asked to remove holds differ from those its confirmation was given with, in their number, their order or any write's id, kind, item, body or verdict, or a device cannot read them, then a device MUST refuse to remove it `unsent_differs`.
 
-**Reason:** a person agrees to lose the writes they were shown, and a write queued after they were shown it, or a count that cannot be read, is a loss they did not agree to.
+**Reason:** a person agrees to lose the writes they were shown, as they were shown. A write queued, answered or changed under the same id after they were shown it, or writes that cannot be read, is a loss they did not agree to, and two lists of the same ids can hold different contents.
 
-**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`.
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store with a confirmation it did not give, saying how many unsent writes it holds`, `› refuses to remove a store whose unsent write's body changed under the same id after it was shown`, `› refuses to remove a store whose unsent write's verdict changed after it was shown`, `› refuses to remove a store a write reached after its unsent writes were read`, `› refuses to remove a store whose unsent writes it cannot read`.
 
 ### `device/remove-store-says`
 
-When a device refuses to remove a store `unsent_differs`, a device MUST say the number of writes the store holds that the server has not taken, or that it cannot count them, and the number agreed to be lost.
+When a device refuses to remove a store `unsent_differs`, a device MUST say how many writes the store holds that the server has not taken, or that it cannot read them.
 
-**Reason:** an app shows the person the store's own count and asks again, so the next request agrees to the loss it will cause.
+**Reason:** an app reads the store's writes again, shows them to the person and asks again with the new confirmation, so the next request agrees to the loss it will cause.
 
-**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`.
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store with a confirmation it did not give, saying how many unsent writes it holds`, `› refuses to remove a store whose unsent write's body changed under the same id after it was shown`, `› refuses to remove a store whose unsent write's verdict changed after it was shown`, `› refuses to remove a store a write reached after its unsent writes were read`, `› refuses to remove a store whose unsent writes it cannot read`.
 
 ### `device/remove-store-absent`
 
-When a device is asked to remove a store at a path that holds no store file, a device MUST count no writes the server has not taken and remove what is left of the store's other files.
+When a device is asked to remove a store at a path that holds no store file, with the confirmation of no writes, a device MUST remove what is left of the store's other files.
 
 **Reason:** a removal that stopped part way, or one asked for twice, is finished by asking again, and a path with no store holds no write to lose.
 
-**Tests:** `device/binding-remove-store.test.ts › removes what a removal left at a path with no store only when nothing is agreed to be lost`.
+**Tests:** `device/binding-remove-store.test.ts › removes what a removal left at a path with no store only with the confirmation of no writes`.
 
 ### `device/remove-store-no-link`
 
@@ -3910,7 +3926,7 @@ When a device refuses to remove a store, a device MUST leave the store file, its
 
 **Reason:** the shared-memory index (`-shm`) is not covered, because SQLite may create it to read a write-ahead log.
 
-**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`, `› refuses to remove a store while another process holds its writer role`, `› removes what a removal left at a path with no store only when nothing is agreed to be lost`, `› refuses to remove a folder's store`, `› refuses to remove a folder's store whose first page does not read`, `› refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store with a confirmation it did not give, saying how many unsent writes it holds`, `› refuses to remove a store whose unsent write's body changed under the same id after it was shown`, `› refuses to remove a store whose unsent write's verdict changed after it was shown`, `› refuses to remove a store a write reached after its unsent writes were read`, `› refuses to remove a store whose unsent writes it cannot read`, `› refuses to remove a store while another process holds its writer role`, `› removes what a removal left at a path with no store only with the confirmation of no writes`, `› refuses to remove a folder's store`, `› refuses to remove a folder's store whose first page does not read`, `› refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
 
 ### `device/writer-per-file`
 
@@ -4142,11 +4158,11 @@ When a device is asked to set aside a store whose set-aside stopped part way, a 
 
 ### `device/remove-store-all`
 
-When a device is asked to remove a store agreeing to lose every write it holds, a device MUST remove the store, however many writes it holds and whether or not it can count them.
+When a device is asked to remove a store agreeing to lose every write it holds, a device MUST remove the store, whatever writes it holds and whether or not it can read them.
 
-**Reason:** the writes of a store SQLite cannot read may not be countable, so a person who agrees to lose them all has no count to agree to.
+**Reason:** the writes of a store SQLite cannot read may not be listable, so a person who agrees to lose them all has no list to agree to.
 
-**Tests:** `device/binding-remove-store.test.ts › removes a store whose unsent writes it cannot count when every write is agreed lost`.
+**Tests:** `device/binding-remove-store.test.ts › removes a store whose unsent writes it cannot read when every write is agreed lost`.
 
 ### `device/remove-store-set-aside-stopped`
 
@@ -7241,7 +7257,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `reading_handle`       | The handle is a reading handle, and another process holds the writer.                                                                                                                                                                                                                                                   |
 | `wrong_schema`         | The store was made by another build of the core, which only that build can read.                                                                                                                                                                                                                                        |
 | `store_damaged`        | The store's file cannot be read whole: part of it is damaged, or it is empty beside a log that holds writes.                                                                                                                                                                                                            |
-| `unsent_differs`       | A store's removal was refused, because it holds a different number of unsent writes from the one agreed to lose.                                                                                                                                                                                                        |
+| `unsent_differs`       | A store's removal was refused, because the unsent writes it holds are not those its confirmation was given with.                                                                                                                                                                                                        |
 | `copy_expired`         | The copy can no longer be kept current, and is rebuilt from the server.                                                                                                                                                                                                                                                 |
 | `stream_incomplete`    | The event stream ended before it finished.                                                                                                                                                                                                                                                                              |
 | `wrong_server`         | The file belongs to another server.                                                                                                                                                                                                                                                                                     |
