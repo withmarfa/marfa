@@ -217,6 +217,12 @@ impl Limiter {
             .max()
     }
 
+    #[cfg(test)]
+    pub fn counted(&self, now_ms: i64, lane: &Lane) -> u64 {
+        let windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        windows.live(lane, now_ms).map_or(0, |window| window.count)
+    }
+
     /// Takes one attempt back from each lane whose window was already open at `admitted_ms`,
     /// leaving every window's end where it was.
     pub fn give_back(&self, admitted_ms: i64, now_ms: i64, lanes: &[Lane]) {

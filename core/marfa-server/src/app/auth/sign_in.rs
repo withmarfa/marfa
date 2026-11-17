@@ -11,7 +11,7 @@ use super::allowance::{self, CHANGE_REFUSED, CONFIRM_REFUSED, Door, SIGN_IN_REFU
 use super::device::{Holder, Known};
 use super::limits::{self, PasswordLanes, Sender, too_many_passwords};
 use super::owner::{self, Owner};
-use super::password::{self, Checked, Queue};
+use super::password::{self, Checked, Queue, Turn};
 use super::session::{self, New, Opened};
 use super::{Note, Visit, note};
 use crate::app::App;
@@ -51,11 +51,20 @@ impl<T> Tried<T> {
 struct Gate {
     /// The wait while every stranger's hour is spent; a judged attempt is still answered `429`.
     spent: Option<i64>,
-    /// Whether a right password may act.
-    opens: bool,
-    /// Whether the password is checked: once every stranger's hour is spent, only an attempt
-    /// that could open a session takes a place in the queue.
+    /// Whether the password is checked: only an attempt a right password could sign in is.
     judged: bool,
+}
+
+impl Gate {
+    /// An attempt not checked waits where a checked one at its email would: in the open queue
+    /// while every stranger's hour has room, and after that, in its email's own queue.
+    fn turn(self, email: &str, queue: Queue) -> Turn<'_> {
+        match (self.judged, self.spent) {
+            (true, _) => Turn::Check(queue),
+            (false, None) => Turn::StandIn(None),
+            (false, Some(_)) => Turn::StandIn(Some(email)),
+        }
+    }
 }
 
 /// Counts the attempt before `attempt` runs, and takes it back once its right password acted.
@@ -77,8 +86,7 @@ where
     let owner = lanes.owner.as_ref().map(|lane| one(lane).is_none());
     let gate = Gate {
         spent,
-        opens: owner != Some(false),
-        judged: spent.is_none() || owner == Some(true),
+        judged: owner.unwrap_or(spent.is_none()),
     };
     let tried = attempt(gate).await;
     if tried.proven {
@@ -159,19 +167,26 @@ async fn prove(
     email: &str,
     password: String,
     rehash: bool,
-    queue: Queue,
+    turn: Turn<'_>,
 ) -> Result<Option<Proven>> {
-    let email = email.to_string();
+    let named = email.to_string();
     let found = app
         .db
         .read(move |tx| {
-            let Some(owner) = owner::read(tx)?.filter(|owner| owner.email == email) else {
+            let Some(owner) = owner::read(tx)?.filter(|owner| owner.email == named) else {
                 return Ok(None);
             };
             let held = owner::stored_password(tx, &owner.id)?;
             Ok(held.map(|held| (owner, held)))
         })
         .await?;
+    let queue = match turn {
+        Turn::Check(queue) => queue,
+        Turn::StandIn(at) => {
+            app.passwords.wait_as_a_check(at).await?;
+            return Ok(None);
+        }
+    };
     let stored = found.as_ref().map(|(_, held)| held.as_str());
     let checked = app.passwords.check(stored, password.clone(), queue).await?;
     if checked == Checked::Wrong {
@@ -350,19 +365,9 @@ async fn open_with_password(
     visit: &Visit,
     gate: Gate,
 ) -> Tried<Opening> {
-    if !gate.judged {
-        let outcome = match app.passwords.wait_as_a_check().await {
-            Ok(()) => answered_wrong(app, email, visit, gate, false).await,
-            Err(refusal) => Err(refusal),
-        };
-        return Tried::unproven(outcome);
-    }
-    let proven = match prove(app, email, password, gate.opens, queue).await {
-        Ok(Some(proven)) if gate.opens => proven,
-        Ok(found) => {
-            let right = found.is_some();
-            return Tried::unproven(answered_wrong(app, email, visit, gate, right).await);
-        }
+    let proven = match prove(app, email, password, true, gate.turn(email, queue)).await {
+        Ok(Some(proven)) => proven,
+        Ok(None) => return Tried::unproven(answered_wrong(app, email, visit, gate).await),
         Err(refusal) if refusal.code == Code::RateLimited => {
             let refusal = gate.spent.map_or(refusal, too_many_passwords);
             return Tried::unproven(
@@ -377,20 +382,21 @@ async fn open_with_password(
     }
 }
 
-/// A right password the owner's share cannot take is answered, and counted, as a wrong one.
-async fn answered_wrong<T>(
-    app: &Arc<App>,
-    email: &str,
-    visit: &Visit,
-    gate: Gate,
-    right: bool,
-) -> Result<T> {
-    let refusal = match gate.spent {
-        Some(wait) => too_many_passwords(wait),
-        None if right => wrong_credentials(),
-        None => return refused(app, None, email, INVALID, visit, wrong_credentials()).await,
-    };
-    limited(app, None, email, SIGN_IN_REFUSED, visit, refusal).await
+async fn answered_wrong<T>(app: &Arc<App>, email: &str, visit: &Visit, gate: Gate) -> Result<T> {
+    match gate.spent {
+        Some(wait) => {
+            limited(
+                app,
+                None,
+                email,
+                SIGN_IN_REFUSED,
+                visit,
+                too_many_passwords(wait),
+            )
+            .await
+        }
+        None => refused(app, None, email, INVALID, visit, wrong_credentials()).await,
+    }
 }
 
 /// The lanes of a door only a caller holding the owner's credential reaches.
@@ -485,7 +491,7 @@ async fn reopen(
     visit: Visit,
 ) -> Tried<Opening> {
     let actor = Some(caller);
-    match prove(app, email, password, true, Queue::Owner).await {
+    match prove(app, email, password, true, Turn::Check(Queue::Owner)).await {
         Ok(Some(proven)) => {
             let outcome = match confirmed(app, caller, session, proven, visit.clone()).await {
                 Ok(Some(opening)) => Ok(opening),
@@ -625,7 +631,15 @@ async fn replace(
     visit: Visit,
 ) -> Tried<(String, i64)> {
     let actor = Some(caller);
-    match prove(app, email, current_password, false, Queue::Owner).await {
+    match prove(
+        app,
+        email,
+        current_password,
+        false,
+        Turn::Check(Queue::Owner),
+    )
+    .await
+    {
         Ok(Some(proven)) => {
             let changed = replaced(app, caller, proven, new_password, visit.clone());
             let outcome = match changed.await {
@@ -745,6 +759,10 @@ mod tests {
                 Some(IpAddr::from([203, 0, 113, n / 10])),
                 sender,
             );
+            let shared = lanes.shared.as_slice();
+            if app.limiter.spent(now, shared).is_some() {
+                return;
+            }
             assert_eq!(app.limiter.admit(now, &lanes.all()), None);
         }
     }
@@ -777,5 +795,190 @@ mod tests {
         drop(held);
         let owner = with_password(&app, EMAIL.into(), PASSWORD.into(), None, from(200)).await;
         assert!(owner.is_ok());
+    }
+
+    fn spend_the_owners_count(app: &App) {
+        let now = app.clock.now_ms();
+        let sender = Sender::Stranger { owners_email: true };
+        let lanes = limits::password_lanes(EMAIL, None, sender);
+        let owner = lanes.owner.unwrap();
+        let owner = [owner];
+        while app.limiter.spent(now, &owner).is_none() {
+            assert_eq!(app.limiter.admit(now, &owner), None);
+        }
+    }
+
+    async fn failed_sign_ins(app: &App) -> Vec<serde_json::Value> {
+        app.db
+            .read(|tx| {
+                let mut rows = tx.prepare(
+                    "SELECT details FROM audit_log WHERE action = ?1 ORDER BY created_at, id",
+                )?;
+                let details = rows
+                    .query_map([SIGN_IN_FAILED], |row| row.get::<_, String>(0))?
+                    .map(|details| Ok(serde_json::from_str(&details?).unwrap()))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(details)
+            })
+            .await
+            .unwrap()
+    }
+
+    fn counts(app: &App, visit: &Visit) -> Vec<u64> {
+        let sender = Sender::Stranger { owners_email: true };
+        let lanes = limits::password_lanes(EMAIL, visit.address, sender);
+        let now = app.clock.now_ms();
+        lanes
+            .all()
+            .iter()
+            .map(|lane| app.limiter.counted(now, lane))
+            .collect()
+    }
+
+    /// What one attempt at the owner's email does: its answer, the audit rows it writes, the
+    /// counts it adds and the password checks it makes.
+    async fn what_it_does(
+        app: &Arc<App>,
+        password: &str,
+        visit: Visit,
+    ) -> (Code, String, Vec<serde_json::Value>, Vec<i64>, u64) {
+        let audit = failed_sign_ins(app).await.len();
+        let counted = counts(app, &visit);
+        let checks = app.passwords.checks_made();
+        let refusal = with_password(app, EMAIL.into(), password.into(), None, visit.clone())
+            .await
+            .err()
+            .unwrap();
+        let written = failed_sign_ins(app).await.split_off(audit);
+        let added = counts(app, &visit)
+            .iter()
+            .zip(counted)
+            .map(|(after, before)| i64::try_from(*after).unwrap() - i64::try_from(before).unwrap())
+            .collect();
+        let checked = app.passwords.checks_made() - checks;
+        (
+            refusal.code,
+            refusal.message.into(),
+            written,
+            added,
+            checked,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_password_past_the_owners_count_is_not_checked_and_is_answered_as_a_wrong_one() {
+        let (_dir, app) = claimed().await;
+        let room = what_it_does(&app, "a guess", from(1)).await;
+        assert_eq!(room.0, Code::Unauthorized);
+        assert_eq!(
+            room.4, 1,
+            "a wrong password with the owner's count open is checked"
+        );
+        spend_the_owners_count(&app);
+        let right = what_it_does(&app, PASSWORD, from(2)).await;
+        let wrong = what_it_does(&app, "a guess", from(3)).await;
+        assert_eq!(right, wrong);
+        assert_eq!(right.0, Code::Unauthorized);
+        assert_eq!(right.2.len(), 1);
+        assert_eq!(right.2[0]["reason"], INVALID);
+        assert_eq!(right.4, 0);
+        assert_eq!(right.2, room.2);
+        assert_eq!(
+            right.3,
+            room.3[..2]
+                .iter()
+                .chain(&[1, 1])
+                .copied()
+                .collect::<Vec<_>>()
+        );
+
+        spend_the_shared_hour(&app);
+        let right = what_it_does(&app, PASSWORD, from(4)).await;
+        let wrong = what_it_does(&app, "a guess", from(5)).await;
+        assert_eq!(
+            (&right.0, &right.1, &right.3, right.4),
+            (&wrong.0, &wrong.1, &wrong.3, wrong.4)
+        );
+        assert_eq!(right.0, Code::RateLimited);
+        assert_eq!(right.4, 0);
+    }
+
+    /// Sends `n` attempts at `email` together and gives each one's answer and wait, in the order
+    /// they were answered.
+    async fn together(app: &Arc<App>, email: &str, n: u8, first: u8) -> Vec<(Code, Duration)> {
+        let mut attempts = tokio::task::JoinSet::new();
+        for k in 0..n {
+            let app = app.clone();
+            let email = email.to_string();
+            attempts.spawn(async move {
+                let started = std::time::Instant::now();
+                let answer =
+                    with_password(&app, email, "a guess".into(), None, from(first + k)).await;
+                (answer.err().unwrap().code, started.elapsed())
+            });
+        }
+        let mut answered = Vec::new();
+        while let Some(answer) = attempts.join_next().await {
+            answered.push(answer.unwrap());
+        }
+        answered.sort_by_key(|(_, waited)| *waited);
+        answered
+    }
+
+    #[tokio::test]
+    async fn attempts_together_past_the_shared_hour_wait_alike_at_the_owners_email_and_any_other() {
+        let (_dir, app) = claimed().await;
+        let warmed = with_password(&app, EMAIL.into(), "a guess".into(), None, from(199)).await;
+        assert!(warmed.is_err());
+        spend_the_shared_hour(&app);
+        let places = app.passwords.open_places_left();
+        let n = u8::try_from(places + 4).unwrap();
+        let check = Duration::from_micros(app.passwords.check_us());
+        let owners = together(&app, EMAIL, n, 0).await;
+        let others = together(&app, "someone@example.test", n, n).await;
+        assert_eq!(app.passwords.stand_ins_held(), 0);
+        for answered in [&owners, &others] {
+            assert!(answered.iter().all(|(code, _)| *code == Code::RateLimited));
+            let at_once = answered
+                .iter()
+                .filter(|(_, waited)| *waited < check / 2)
+                .count();
+            assert_eq!(at_once, usize::from(n) - places, "{answered:?}");
+        }
+        let longest = |answered: &[(Code, Duration)]| answered.last().unwrap().1.as_secs_f64();
+        let ratio = longest(&owners) / longest(&others);
+        assert!((0.5..2.0).contains(&ratio), "{owners:?} {others:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stand_in_queue_is_dropped_once_nothing_holds_it() {
+        let (_dir, app) = claimed().await;
+        spend_the_shared_hour(&app);
+        let attempt = with_password(
+            &app,
+            "someone@example.test".into(),
+            "a guess".into(),
+            None,
+            from(1),
+        );
+        let mut attempt = Box::pin(attempt);
+        let held = async {
+            while app.passwords.stand_ins_held() == 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        };
+        tokio::select! {
+            () = held => {}
+            _ = &mut attempt => panic!("the attempt took no place"),
+        }
+        assert_eq!(app.passwords.stand_ins_held(), 1);
+        drop(attempt);
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while app.passwords.stand_ins_held() > 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }
