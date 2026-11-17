@@ -598,7 +598,9 @@ If `keys create` is given `--socket PATH` and no permission, no map entry, no cl
 
 ### `cli/keys-create-all-access`
 
-When `keys create` is given `--all-access`, the CLI MUST send every one of the fourteen permissions and `*` at `write` in each of the five maps, and name no claimed source.
+When `keys create` is given `--all-access`, the CLI MUST send every one of the fourteen permissions and `*` at `write` in each of the five maps.
+
+**Reason:** a claim says which source the key writes as, not what it may reach, so a `--claim` given with `--all-access` is sent as usual.
 
 **Tests:** `cli/owner-commands.test.ts › refuses a mint through the private socket that names no access, and mints every permission and map for --all-access`.
 
