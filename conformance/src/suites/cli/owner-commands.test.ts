@@ -9,7 +9,7 @@ import {
 import { png } from "../../utils/avatars.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
-import { Cli, requireBinary } from "./harness.js";
+import { Cli, requireBinary, unique } from "./harness.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 let server: FreshServer;
@@ -377,4 +377,72 @@ it("reads a secret setting from standard input and refuses it as an argument", a
 
   await keyed.json(["config", "unset", name]);
   expect((await setting(name)).set).toBeFalsy();
+});
+
+it("refuses a mint through the private socket that names no access, and mints every permission and map for --all-access", async () => {
+  const mint = (...flags: string[]) => [
+    "keys",
+    "create",
+    "--label",
+    "socket-access",
+    "--source",
+    unique("cli-socket-access"),
+    ...flags,
+  ];
+  const before = (
+    await local.json<{ data: Array<{ id: string }> }>(["keys", "list"])
+  ).data.length;
+
+  const bare = await local.refused(mint());
+  expect(bare.code).toBe(2);
+  expect(bare.envelope.error.code).toBe("usage");
+  expect(bare.envelope.error.server).toBeNull();
+  for (const flag of [
+    "--permission",
+    "--type-permission",
+    "--extension-permission",
+    "--edge-permission",
+    "--metadata-permission",
+    "--profile-permission",
+    "--claim",
+    "--no-permissions",
+    "--all-access",
+  ]) {
+    expect(bare.envelope.error.message).toContain(flag);
+  }
+  for (const narrower of [
+    ["--permission", "audit.read"],
+    ["--type-permission", "core.note=read"],
+    ["--extension-permission", "*=read"],
+    ["--edge-permission", "*=read"],
+    ["--metadata-permission", "*=read"],
+    ["--profile-permission", "*=read"],
+    ["--no-permissions"],
+  ]) {
+    const conflicting = await local.refused(mint("--all-access", ...narrower));
+    expect(conflicting.code, narrower.join(" ")).toBe(2);
+    expect(conflicting.envelope.error.code, narrower.join(" ")).toBe("usage");
+  }
+  expect(
+    (await local.json<{ data: Array<{ id: string }> }>(["keys", "list"])).data,
+    "a refused mint made a key",
+  ).toHaveLength(before);
+
+  // The witness: the same mint through a key names nothing and is made.
+  await keyed.json(mint());
+
+  const wide = await local.json<{ id: string }>(mint("--all-access"));
+  const held = (
+    await local.json<{ data: Array<Record<string, unknown>> }>(["keys", "list"])
+  ).data.find((key) => key.id === wide.id)!;
+  expect((held.permissions as string[]).length).toBe(14);
+  for (const map of [
+    "type_permissions",
+    "extension_permissions",
+    "edge_permissions",
+    "metadata_permissions",
+    "profile_permissions",
+  ]) {
+    expect(held[map], map).toEqual({ "*": "write" });
+  }
 });

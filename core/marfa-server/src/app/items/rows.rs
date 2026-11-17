@@ -1,4 +1,4 @@
-//! Nothing outside `items` reaches this module, so every write to these tables goes through `write`.
+//! Private to `items`, and the only place that writes the `items` table.
 
 use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
 use serde::Serialize;

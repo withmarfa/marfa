@@ -90,20 +90,22 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | End one sign-in | `marfa sign-ins end` |
 | End every sign-in of a kind at once | `marfa sign-ins end-all` |
 | List, narrow and revoke a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps revoke` |
-| Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
+| Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys add`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
 | Change the owner's password | `marfa owner password` |
 | Recover the owner's password | `marfa owner recover` |
 | Claim a new instance | `marfa setup status`, `marfa setup code`, `marfa setup open`, `marfa setup claim` |
 | Read and change the owner's email, name and avatar, or clear the avatar | `marfa profile show`, `marfa profile update`, `marfa profile avatar` |
 | See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
-| Remove a connector | `marfa connectors delete` |
+| Remove a connector, or only its state | `marfa connectors delete`, `marfa connectors state delete` |
 | Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
 | List, make, update and revoke folders, and read their sync reports | `marfa folders inventory`, `marfa folders create`, `marfa folders update`, `marfa folders revoke`, `marfa folders health` |
 | Manage webhooks and their deliveries | `marfa webhooks create`, `marfa webhooks list`, `marfa webhooks get`, `marfa webhooks update`, `marfa webhooks delete`, `marfa webhooks deliveries`, `marfa webhooks redeliver` |
 | Read the audit log | `marfa audit` |
-| List and run the housekeeping jobs | `marfa housekeeping list`, `marfa housekeeping run` |
+| List and run the housekeeping jobs, and confirm the server's clock | `marfa housekeeping list`, `marfa housekeeping run`, `marfa housekeeping confirm-clock` |
+| See whether a newer release exists, and update the server | `marfa update status`, `marfa update start` |
+| List, take and restore backups, and start afresh on a replaced backup disk | `marfa backups list`, `marfa backups run`, `marfa backups restore`, `marfa backups folder adopt` |
 | Manage blob stores and copies | `marfa blobs stores`, `marfa blobs copies`, `marfa blobs delete-copy`, `marfa blobs orphans` |
-| Trash, restore and purge an item, and empty the bin | `marfa items trash`, `marfa items restore`, `marfa items purge`, `marfa items bin list`, `marfa items bin empty` |
+| Trash, restore and purge an item, and empty the bin | `marfa items trash`, `marfa items restore`, `marfa items purge`, `marfa items bin list`, `marfa items bin empty`, `marfa items bulk-action purge`, `marfa device items purge` |
 | Export and restore the instance | `marfa export`, `marfa restore` |
 
 ## status
@@ -1881,7 +1883,7 @@ marfa keys [OPTIONS] <COMMAND>
 
 Mint a key. Needs `keys.mint` or local authority.
 
-The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. With none named, the key takes the caller's whole set.
+The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. `--all-access` names every permission and every map at its widest. With none named, a key sent to a server takes the caller's whole set, and through `--socket` the command is refused, since the socket's authority has no limit to take.
 
 ```text
 marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
@@ -1904,6 +1906,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 | `--expires-in <DURATION>` | Stop the key working this long from now: a whole number and a unit, `s`, `m`, `h`, `d` or `w`, such as `90m` or `7d`. Measured on this machine's clock. |
 | `--expires-at <TIME>` | Stop the key working at this time, as an RFC 3339 time such as `2030-01-31T12:00:00Z`. |
 | `--no-permissions` | A key that holds nothing at all, asked for out loud. |
+| `--all-access` | A key that holds every permission and, in each of the five maps, `*=write`, asked for out loud. |
 
 ### marfa keys list
 
@@ -2182,7 +2185,7 @@ Restore an archive. Needs `backups.manage` and a sign-in from the last five minu
 
 Preserves item and edge IDs, created_at and updated_at dates, current versions, tags, extensions, and the item's earlier versions carried in the archive. Existing items and their history remain unchanged.
 
-The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Each setting, enforcement setting, type icon, source name, and connector state comes back only where this instance has none of its own. After a restore of another instance's archive, the command names where the backup destination keeps that instance's backups: delete them only once that instance no longer runs and nothing else restores from them. Items in the bin are absent unless explicitly exported, for example with `export --format archive --state any`.
+The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Each setting, enforcement setting, type icon, source name, and connector state comes back only where this instance has none of its own. After a restore of another instance's archive, the command names where the backup destination keeps that instance's backups: delete them only once that instance no longer runs and nothing else restores from them. An archive holds the items in the bin only if its export did: `marfa export` carries them unless `--state` names other states.
 
 A build restores every archive version up to its own and refuses a later one, or one written before Marfa 0.1, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
 

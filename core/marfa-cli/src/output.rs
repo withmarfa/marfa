@@ -1109,6 +1109,25 @@ fn record_columns(record: &Value) -> Cols {
             ],
         );
     }
+    if record.get("item_id").is_some()
+        && record.get("version").is_some()
+        && record.get("writer").is_some()
+    {
+        let writer = record
+            .get("writer")
+            .filter(|writer| !writer.is_null())
+            .map(|writer| format!("{} ({})", field(writer, "name"), field(writer, "kind")))
+            .unwrap_or_else(|| "Not recorded".into());
+        return Cols::new(
+            &["version", "written", "writer", "title"],
+            vec![
+                format!("v{}", record["version"]),
+                owned("created_at"),
+                printable(&writer),
+                record_title(record).to_string(),
+            ],
+        );
+    }
     if record.get("name").is_some()
         && record.get("version").is_some()
         && record.get("properties").is_none()
@@ -1590,6 +1609,44 @@ pub(crate) mod tests {
         assert!(text.contains("Shopping list"), "{text}");
         assert!(!text.contains("Not recorded"), "{text}");
         assert!(!text.contains("automatic deletion"), "{text}");
+    }
+
+    #[test]
+    fn item_versions_show_number_time_writer_and_title() {
+        let text = describe(&json!({"data":[
+            {"id":"snap-2", "item_id":"item-one", "version":2, "type":"core.note", "tier":"library", "occurred_at":"2026-01-01T00:00:00Z", "source_id":null, "writer":{"kind":"key", "id":"k1", "name":"CRM sync"}, "created_at":"2026-01-03T10:00:00.000Z", "properties":{"title":"Second"}},
+            {"id":"snap-1", "item_id":"item-one", "version":1, "type":"core.note", "tier":"library", "occurred_at":"2026-01-01T00:00:00Z", "source_id":null, "writer":null, "created_at":"2026-01-02T09:00:00.000Z", "properties":{"title":"First"}}
+        ], "next_cursor":null})).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let cells = |line: &str| {
+            line.split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            cells(lines[0]),
+            ["version", "written", "writer", "title"].map(String::from),
+            "{text}"
+        );
+        assert_eq!(
+            cells(lines[1]),
+            [
+                "v2",
+                "2026-01-03T10:00:00.000Z",
+                "CRM",
+                "sync",
+                "(key)",
+                "Second"
+            ]
+            .map(String::from),
+            "{text}"
+        );
+        assert_eq!(
+            cells(lines[2]),
+            ["v1", "2026-01-02T09:00:00.000Z", "Not", "recorded", "First"].map(String::from),
+            "{text}"
+        );
+        assert!(!text.contains("snap-"), "{text}");
     }
 
     #[test]
