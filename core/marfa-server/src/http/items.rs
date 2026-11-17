@@ -14,7 +14,7 @@ use marfa_rules::{names, time, validation};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
-use super::answer::{Answer, Stopped, refusal_body, text_answer};
+use super::answer::{Answer, Stopped, json_answer, refusal_body, text_answer};
 use super::body::{Bag, JsonBody, ReadBody, only_declared};
 use super::listing::{Params, states_of};
 use super::query;
@@ -24,6 +24,7 @@ use crate::app::edges::write::Inline;
 use crate::app::idempotency::{self, Claim, Entry, Kept, MAX_KEY_CHARACTERS};
 use crate::app::items::write::{self, Change, Done, Put, Settle, Update, ruled};
 use crate::app::items::{self, Detail, Door, Many};
+use crate::app::query::{Counted, counts as run_counts};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::{check_id, missing_field};
 
@@ -58,6 +59,7 @@ const UPDATE_FIELDS: [&str; 11] = [
 ];
 const TAG_FIELDS: [&str; 1] = ["tags"];
 const BULK_GET_FIELDS: [&str; 2] = ["ids", "include"];
+const COUNT_FIELDS: [&str; 4] = ["ids", "backref", "edge", "table"];
 const TITLE_FIELDS: [&str; 1] = ["names"];
 const MAX_BULK_IDS: usize = 100;
 const MAX_TITLE_NAMES: usize = 200;
@@ -632,6 +634,33 @@ fn many_of(sent: &Map<String, Value>) -> Result<Many> {
     Ok(many)
 }
 
+/// The ids a body names under `ids`, at most `MAX_BULK_IDS`, each a well-formed id.
+fn ids_of(sent: &Map<String, Value>) -> Result<Vec<String>> {
+    let Some(ids) = sent.get("ids") else {
+        return Err(missing_field("ids"));
+    };
+    let Some(listed) = ids.as_array() else {
+        return Err(Refusal::validation("ids must be a list."));
+    };
+    if listed.len() > MAX_BULK_IDS {
+        return Err(
+            Refusal::validation(format!("Maximum {MAX_BULK_IDS} ids per call"))
+                .with_detail("cap", MAX_BULK_IDS)
+                .with_detail("provided", listed.len()),
+        );
+    }
+    let ids = strings_of(ids, "ids")?;
+    for id in &ids {
+        if validation::id("id", id).is_err() {
+            return Err(
+                Refusal::new(Code::InvalidId, format!("Invalid item id: {id}"))
+                    .with_detail("id", id.as_str()),
+            );
+        }
+    }
+    Ok(ids)
+}
+
 pub async fn bulk_get(
     State(app): State<Arc<App>>,
     caller: Caller,
@@ -640,33 +669,85 @@ pub async fn bulk_get(
 ) -> Answer {
     query::only(&uri, &[])?;
     let sent = body.object(&BULK_GET_FIELDS).await?;
-    let Some(ids) = sent.get("ids") else {
-        return Err(missing_field("ids").into());
-    };
-    let Some(listed) = ids.as_array() else {
-        return Err(Refusal::validation("ids must be a list.").into());
-    };
-    if listed.len() > MAX_BULK_IDS {
-        return Err(
-            Refusal::validation(format!("Maximum {MAX_BULK_IDS} ids per call"))
-                .with_detail("cap", MAX_BULK_IDS)
-                .with_detail("provided", listed.len())
-                .into(),
-        );
-    }
-    let ids = strings_of(ids, "ids")?;
-    for id in &ids {
-        if validation::id("id", id).is_err() {
-            return Err(
-                Refusal::new(Code::InvalidId, format!("Invalid item id: {id}"))
-                    .with_detail("id", id.as_str())
-                    .into(),
-            );
-        }
-    }
+    let ids = ids_of(&sent)?;
     let include = many_of(&sent)?;
     let answer = items::bulk_get(&app, &caller, ids, include).await?;
     Ok(text_answer(StatusCode::OK, answer))
+}
+
+/// Each id once, in the order first named.
+fn distinct(ids: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
+pub async fn counts(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let sent = body.object(&COUNT_FIELDS).await?;
+    let ids = distinct(ids_of(&sent)?);
+    let named: Vec<&str> = COUNT_FIELDS[1..]
+        .iter()
+        .copied()
+        .filter(|field| sent.contains_key(*field))
+        .collect();
+    let [field] = named.as_slice() else {
+        return Err(
+            Refusal::validation("Name exactly one of backref, edge and table.")
+                .with_detail("fields", json!(&COUNT_FIELDS[1..]))
+                .into(),
+        );
+    };
+    let text = text_of(&sent, field)?.unwrap_or_default();
+    let counted = match *field {
+        "table" => {
+            if !marfa_rules::catalog::api_name(&text) {
+                return Err(invalid_field(
+                    "table",
+                    "table is a lowercase letter and then at most 63 lowercase letters, digits and underscores.",
+                )
+                .into());
+            }
+            Counted::Table(text)
+        }
+        _ => {
+            if !marfa_rules::filter::edge_type_named(&text) {
+                return Err(invalid_field(
+                    field,
+                    format!("{field} names an edge type: not blank, with no space and no closing bracket."),
+                )
+                .into());
+            }
+            if *field == "backref" {
+                Counted::Backref(text)
+            } else {
+                Counted::Edge(text)
+            }
+        }
+    };
+    let counts = run_counts(&app, &caller, ids, counted).await?;
+    let counts: Vec<Value> = counts
+        .into_iter()
+        .map(|count| {
+            let mut entry = json!({ "id": count.id, "total": count.total });
+            if let Some(groups) = count.groups {
+                let named: Map<String, Value> = marfa_rules::catalog::STATUS_GROUPS
+                    .iter()
+                    .zip(groups)
+                    .map(|(group, held)| ((*group).to_string(), Value::from(held)))
+                    .collect();
+                entry["status_groups"] = Value::Object(named);
+            }
+            entry
+        })
+        .collect();
+    Ok(json_answer(StatusCode::OK, &json!({ "counts": counts })))
 }
 
 pub async fn titles(

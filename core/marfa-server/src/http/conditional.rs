@@ -112,7 +112,9 @@ pub async fn judged(
 ) -> Response {
     let method = request.method().clone();
     let route = matched.as_str().to_string();
-    let reads = method == Method::GET || (method == Method::POST && route == "/items/bulk-get");
+    let reads = method == Method::GET
+        || (method == Method::POST
+            && matches!(route.as_str(), "/items/bulk-get" | "/items/counts"));
     if !reads || !request.headers().contains_key(REACH_HEADER) || route == EVENTS {
         return next.run(request).await;
     }

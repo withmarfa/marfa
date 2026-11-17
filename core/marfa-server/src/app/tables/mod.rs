@@ -35,6 +35,7 @@ pub use lifecycle::{
     Shape, cleanup, constraining_columns, doom, held_in_use, judge_item_change, refuse_moving_type,
     rekey_item, rekey_types, unkept_columns,
 };
+pub(crate) use read::row_counts;
 pub use read::{Page, batches, get, list, page, totals};
 pub use undo::undo;
 

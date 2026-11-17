@@ -177,6 +177,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items/bulk", post(bulk::write))
         .route("/items/bulk-actions", post(jobs::queue))
         .route("/items/bulk-get", post(items::bulk_get))
+        .route("/items/counts", post(items::counts))
         .route("/items/titles", post(items::titles))
         .route("/items/lookup", post(lookup::lookup))
         .route("/items/tombstones", post(lookup::settle))

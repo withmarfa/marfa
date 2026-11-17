@@ -3,6 +3,7 @@
 //! `items` with its own SQL.
 
 mod compile;
+mod counts;
 mod cursor;
 mod events;
 mod export;
@@ -18,6 +19,7 @@ mod views;
 
 pub use compile::{Ask, Filter, States};
 pub(crate) use compile::{Sql, judge_type};
+pub use counts::{Count, Counted, counts};
 pub use cursor::{Position, SECRET_KEY, Secret, refused as bad_cursor};
 pub(crate) use events::{Event, Recurrence, events, parents};
 pub(crate) use export::selected;

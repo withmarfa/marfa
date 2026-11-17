@@ -212,7 +212,11 @@ struct Token {
     pos: usize,
 }
 
-/// The type is anything but a closing bracket or whitespace, and not nothing.
+/// An edge type a filter term can name: anything but a closing bracket or whitespace, and not nothing.
+pub fn edge_type_named(edge_type: &str) -> bool {
+    !edge_type.is_empty() && !edge_type.contains(']') && !edge_type.chars().any(char::is_whitespace)
+}
+
 fn edge_ref(word: &str) -> Option<(bool, &str)> {
     let (backref, rest) = if let Some(rest) = word.strip_prefix("edge[") {
         (false, rest)
@@ -220,11 +224,7 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
         (true, word.strip_prefix("backref[")?)
     };
     let edge_type = rest.strip_suffix(']')?;
-    if edge_type.is_empty() || edge_type.contains(']') || edge_type.chars().any(char::is_whitespace)
-    {
-        return None;
-    }
-    Some((backref, edge_type))
+    edge_type_named(edge_type).then_some((backref, edge_type))
 }
 
 fn tokenize(input: &str) -> Result<Vec<Token>> {
