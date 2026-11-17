@@ -134,7 +134,7 @@ pub fn user_home() -> std::io::Result<PathBuf> {
         let mut buffer = vec![0u8; size];
         let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
         let mut result = std::ptr::null_mut();
-        // The entry and buffer remain live until pw_dir has been copied.
+        // SAFETY: The entry and buffer remain live until pw_dir has been copied.
         let status = unsafe {
             libc::getpwuid_r(
                 libc::geteuid(),
@@ -158,13 +158,14 @@ pub fn user_home() -> std::io::Result<PathBuf> {
                 "the operating-system user has no home directory",
             ));
         }
-        // A successful lookup populated the entry; pw_dir lives in buffer.
+        // SAFETY: A successful lookup populated the entry; pw_dir lives in buffer.
         let entry = unsafe { entry.assume_init() };
         if entry.pw_dir.is_null() {
             return Err(unrecorded(
                 "the operating-system user has no home directory",
             ));
         }
+        // SAFETY: `pw_dir` is not null and is a NUL-terminated string in `buffer`, which is still live.
         let home = PathBuf::from(std::ffi::OsStr::from_bytes(unsafe {
             CStr::from_ptr(entry.pw_dir).to_bytes()
         }));
@@ -196,10 +197,10 @@ fn ubiquitous(dir: &Path) -> bool {
     let Some(url) = CFURL::from_path(dir, true) else {
         return false;
     };
-    // The key is a constant of CoreFoundation, held by it for the process.
+    // SAFETY: The key is a constant of CoreFoundation, held by it for the process.
     let key = unsafe { CFString::wrap_under_get_rule(kCFURLIsUbiquitousItemKey) };
     let keys = CFArray::from_CFTypes(std::slice::from_ref(&key));
-    // Copies a dictionary of the properties asked for, or null on failure.
+    // SAFETY: The URL and the keys are live; the call copies a dictionary of the properties asked for, or null on failure.
     let found = unsafe {
         CFURLCopyResourcePropertiesForKeys(
             url.as_concrete_TypeRef(),
@@ -210,6 +211,7 @@ fn ubiquitous(dir: &Path) -> bool {
     if found.is_null() {
         return false;
     }
+    // SAFETY: `found` is not null and came from a copy, which the create rule hands over.
     let properties: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_create_rule(found) };
     properties

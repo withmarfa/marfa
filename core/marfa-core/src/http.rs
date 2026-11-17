@@ -4099,7 +4099,7 @@ mod tests {
                 }
             }
         });
-        // One process for each test, so nothing else reads the environment.
+        // SAFETY: One process for each test, so nothing else reads the environment.
         unsafe {
             std::env::set_var("HTTP_PROXY", format!("http://127.0.0.1:{proxy}"));
             std::env::set_var("http_proxy", format!("http://127.0.0.1:{proxy}"));
@@ -4198,6 +4198,7 @@ mod tests {
     }
 
     fn direct_agents() -> Agents {
+        // SAFETY: One process for each test, so nothing else reads the environment.
         unsafe {
             std::env::remove_var("HTTP_PROXY");
             std::env::remove_var("http_proxy");

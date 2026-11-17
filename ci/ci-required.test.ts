@@ -270,7 +270,14 @@ describe("what a change runs", () => {
     [
       "the core's lockfile, since a dependency bump can break an Apple build",
       ["core/Cargo.lock"],
-      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
+      [
+        ...RUST,
+        ...ENRICHMENT,
+        "core-deny",
+        "image",
+        "quick-checks",
+        "version-fields",
+      ],
     ],
     [
       "the action that installs the compiler, which every job that builds Rust runs",
@@ -280,7 +287,14 @@ describe("what a change runs", () => {
     [
       "the core's compiler version, since a new compiler can break any build of the core",
       ["core/rust-toolchain.toml"],
-      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
+      [
+        ...RUST,
+        ...ENRICHMENT,
+        "core-deny",
+        "image",
+        "quick-checks",
+        "version-fields",
+      ],
     ],
     [
       "the native readers' scripts, pins and patches, which the native build, the image's programs and the Rust server's build run, and MCP conformance and the restore drill boot the same program",
@@ -312,7 +326,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/Cargo.toml",
         "core/marfa-enrichment/tests/isolation.rs",
       ],
-      ["quick-checks", "version-fields", ...RUST, ...ENRICHMENT],
+      ["quick-checks", "version-fields", "core-deny", ...RUST, ...ENRICHMENT],
     ],
     [
       "nextest's budget and the runner that caps a test, which the fault-injection tests run under",
@@ -337,12 +351,24 @@ describe("what a change runs", () => {
       ["quick-checks", "core-checks", "core", "swift-package"],
     ],
     [
+      "the dependency policy, which only `cargo deny check` reads",
+      ["core/deny.toml"],
+      [
+        "quick-checks",
+        "core-checks-linux",
+        "core-deny",
+        ...RUST_SERVER,
+        ...OFFLINE,
+      ],
+    ],
+    [
       "the Swift crate's lockfile, which pins the uniffi the glue is made with",
       ["core/bindings/swift/Cargo.lock"],
       [
         "quick-checks",
         "core-checks",
         "core",
+        "core-deny",
         "swift-package",
         "version-fields",
       ],
@@ -355,6 +381,7 @@ describe("what a change runs", () => {
         "workspace",
         "core-checks",
         "core",
+        "core-deny",
         "swift-package",
         "version-fields",
       ],
@@ -625,7 +652,7 @@ describe("what a change runs", () => {
     [
       "a crate manifest, which this test reads",
       ["core/marfa-core/Cargo.toml"],
-      ["quick-checks", ...RUST, "version-fields"],
+      ["quick-checks", ...RUST, "core-deny", "version-fields"],
     ],
     [
       "ci.yml, which defines every job it runs, the call of core-live.yml among them",
@@ -702,7 +729,13 @@ describe("what a change runs", () => {
     [
       "the Rust server's manifest",
       ["core/marfa-server/Cargo.toml"],
-      ["quick-checks", "core-checks-linux", ...RUST_SERVER, "version-fields"],
+      [
+        "quick-checks",
+        "core-checks-linux",
+        "core-deny",
+        ...RUST_SERVER,
+        "version-fields",
+      ],
     ],
     [
       "an icon set the rules crate embeds",

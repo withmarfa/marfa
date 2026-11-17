@@ -5,9 +5,10 @@ use std::path::Path;
 
 fn stats_of(path: &Path) -> Option<libc::statvfs> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `statvfs` is plain integers, for which all zeros is a valid value.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: `statvfs` writes only into the struct it is given, and `path`
     // is a NUL-terminated string that outlives the call.
-    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
     let answered = unsafe { libc::statvfs(path.as_ptr(), &mut stats) };
     (answered == 0).then_some(stats)
 }

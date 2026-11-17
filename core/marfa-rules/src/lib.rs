@@ -2,6 +2,8 @@
 //! storage, network, runtime or client code. A refusal is data: see
 //! [`RuleError`].
 
+#![forbid(unsafe_code)]
+
 pub mod builtin;
 pub mod catalog;
 pub mod conflict;

@@ -105,7 +105,7 @@ mod tests {
         let received = Arc::new(AtomicUsize::new(0));
         let receiver = listen(received.clone());
         let named = format!("http://127.0.0.1:{proxy}");
-        // Nextest runs each test in a process of its own.
+        // SAFETY: Nextest runs each test in a process of its own.
         unsafe {
             std::env::set_var("HTTP_PROXY", &named);
             std::env::set_var("http_proxy", &named);

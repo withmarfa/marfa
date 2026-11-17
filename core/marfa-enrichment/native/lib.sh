@@ -289,11 +289,16 @@ cargo_environment() {
   export CARGO_BUILD_RUSTC_WRAPPER=
   export RUSTC_WRAPPER=
   export CARGO_INCREMENTAL=0
-  export CARGO_PROFILE_RELEASE_STRIP=symbols
   export MARFA_NATIVE_PREFIX="$PREFIX"
 
-  # Paths in the program name the code, not the builder's folders.
-  local flags="--remap-path-prefix=$CORE=/marfa/core --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+  # Paths in the program name the code, not the builder's folders. C code names its own
+  # source in `__FILE__` and assertion messages, so it needs the same maps as Rust.
+  local cargo_home=${CARGO_HOME:-$HOME/.cargo}
+  local flags="--remap-path-prefix=$CORE=/marfa/core --remap-path-prefix=$cargo_home=/cargo"
+  local c_flags="-ffile-prefix-map=$CORE=/marfa/core -ffile-prefix-map=$cargo_home=/cargo"
+  local target_name=${TARGET//-/_}
+  export "CFLAGS_${target_name}=$c_flags"
+  export "CXXFLAGS_${target_name}=$c_flags"
 
   case "$TARGET" in
     aarch64-apple-darwin)

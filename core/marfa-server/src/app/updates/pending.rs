@@ -4,7 +4,6 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::settings::DatabasePath;
@@ -95,11 +94,12 @@ impl Folder {
         self.read(LAST)
     }
 
-    pub fn end(&self, outcome: Outcome, version: &str, reason: Option<String>) {
+    /// `at` is the time as the server's clock writes it.
+    pub fn end(&self, at: &str, outcome: Outcome, version: &str, reason: Option<String>) {
         let last = Last {
             outcome: outcome.word().to_string(),
             release: version.to_string(),
-            finished_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            finished_at: at.to_string(),
             reason,
         };
         let kept = serde_json::to_string(&last)
@@ -128,7 +128,12 @@ pub fn put_back(programs: &Path) -> std::io::Result<()> {
 }
 
 /// Counts the starts of an unsettled release; the second puts the old one back.
-pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<u32>) -> Start {
+pub fn on_start(
+    record: &Folder,
+    running: &str,
+    at: &str,
+    schema_now: &dyn Fn() -> Option<u32>,
+) -> Start {
     let Some(mut pending) = record.pending() else {
         return Start::Proceed;
     };
@@ -136,6 +141,7 @@ pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<
         record.clear_pending();
         if pending.from == running {
             record.end(
+                at,
                 Outcome::RolledBack,
                 &pending.to,
                 Some(format!("The service started release {running} again.")),
@@ -153,7 +159,7 @@ pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<
     record.clear_pending();
     if pending.schema != schema_now() {
         record.end(
-            Outcome::Failed,
+            at,            Outcome::Failed,
             &pending.to,
             Some(format!(
                 "Release {} did not stay up, and it had changed the database, so release {} cannot be put back. The copy kept before the change is beside the database.",
@@ -165,6 +171,7 @@ pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<
     match put_back(&pending.programs) {
         Ok(()) => {
             record.end(
+                at,
                 Outcome::RolledBack,
                 &pending.to,
                 Some(format!(
@@ -176,6 +183,7 @@ pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<
         }
         Err(error) => {
             record.end(
+                at,
                 Outcome::Failed,
                 &pending.to,
                 Some(format!(
@@ -188,19 +196,21 @@ pub fn on_start(record: &Folder, running: &str, schema_now: &dyn Fn() -> Option<
     }
 }
 
-pub fn settle(record: &Folder, running: &str) {
+pub fn settle(record: &Folder, running: &str, at: &str) {
     if record
         .pending()
         .is_some_and(|pending| pending.to == running)
     {
         record.clear_pending();
-        record.end(Outcome::Succeeded, running, None);
+        record.end(at, Outcome::Succeeded, running, None);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const AT: &str = "2030-01-02T03:04:05.678Z";
 
     fn scratch(name: &str) -> (PathBuf, Folder) {
         let dir = std::env::temp_dir().join(format!("marfa-pending-{}-{name}", std::process::id()));
@@ -229,15 +239,16 @@ mod tests {
     fn a_release_that_stays_up_settles_the_swap_and_the_owner_reads_it() {
         let (dir, record) = scratch("settles");
         record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.75", &|| Some(1)), Start::Proceed);
+        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Proceed);
         assert_eq!(record.pending().unwrap().starts, 1);
-        settle(&record, "0.0.75");
+        settle(&record, "0.0.75", AT);
         assert!(record.pending().is_none());
         let last = record.last().unwrap();
         assert_eq!(
             (last.outcome.as_str(), last.release.as_str()),
             ("succeeded", "0.0.75")
         );
+        assert_eq!(last.finished_at, AT);
         assert_eq!(fs::read_to_string(dir.join("bin/marfa")).unwrap(), "new");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -246,8 +257,8 @@ mod tests {
     fn a_release_that_did_not_stay_up_is_put_back_while_the_database_is_as_it_was() {
         let (dir, record) = scratch("back");
         record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.75", &|| Some(1)), Start::Proceed);
-        assert_eq!(on_start(&record, "0.0.75", &|| Some(1)), Start::Restart);
+        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Proceed);
+        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Restart);
         for name in PROGRAMS {
             assert_eq!(
                 fs::read_to_string(dir.join("bin").join(name)).unwrap(),
@@ -264,8 +275,8 @@ mod tests {
     fn a_release_that_changed_the_database_is_not_put_back_and_the_owner_is_told() {
         let (dir, record) = scratch("moved");
         record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.75", &|| Some(1)), Start::Proceed);
-        assert_eq!(on_start(&record, "0.0.75", &|| Some(2)), Start::Proceed);
+        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Proceed);
+        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(2)), Start::Proceed);
         assert_eq!(fs::read_to_string(dir.join("bin/marfa")).unwrap(), "new");
         let last = record.last().unwrap();
         assert_eq!(last.outcome, "failed");
@@ -278,7 +289,7 @@ mod tests {
     fn the_old_release_starting_again_ends_the_record_as_a_rollback() {
         let (dir, record) = scratch("old");
         record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.74", &|| Some(1)), Start::Proceed);
+        assert_eq!(on_start(&record, "0.0.74", AT, &|| Some(1)), Start::Proceed);
         assert!(record.pending().is_none());
         assert_eq!(record.last().unwrap().outcome, "rolled_back");
         let _ = fs::remove_dir_all(&dir);
@@ -287,10 +298,10 @@ mod tests {
     #[test]
     fn nothing_pending_changes_nothing_and_a_settle_of_another_release_leaves_the_record() {
         let (dir, record) = scratch("none");
-        assert_eq!(on_start(&record, "0.0.75", &|| None), Start::Proceed);
+        assert_eq!(on_start(&record, "0.0.75", AT, &|| None), Start::Proceed);
         assert!(record.last().is_none());
         record.keep_pending(&swapped(&dir, None)).unwrap();
-        settle(&record, "0.0.99");
+        settle(&record, "0.0.99", AT);
         assert!(record.pending().is_some());
         let _ = fs::remove_dir_all(&dir);
     }

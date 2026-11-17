@@ -164,6 +164,10 @@ impl Folder {
             root: root.to_path_buf(),
             instance: instance.to_string(),
             files: RwLock::new(Arc::new(files)),
+            #[allow(
+                clippy::disallowed_methods,
+                reason = "compared with files' modification times, which are the host's time"
+            )]
             started: SystemTime::now(),
         })
     }

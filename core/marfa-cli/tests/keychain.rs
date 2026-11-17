@@ -135,7 +135,7 @@ fn a_named_keychain_keeps_its_credential_locks_beside_it_and_none_in_the_home() 
 /// From the operating system's record, as the binary finds it, not `HOME`.
 fn users_home() -> std::path::PathBuf {
     use std::os::unix::ffi::OsStrExt;
-    // Safe: the record is copied out before any other call can replace it.
+    // SAFETY: the record is copied out before any other call can replace it.
     unsafe {
         let entry = libc::getpwuid(libc::geteuid());
         assert!(!entry.is_null() && !(*entry).pw_dir.is_null());

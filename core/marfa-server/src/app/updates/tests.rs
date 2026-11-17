@@ -373,7 +373,9 @@ async fn a_program_folder_the_account_cannot_write_is_refused_with_the_programs_
     let refused = case.run(job).await;
     fs::set_permissions(case.bin(), fs::Permissions::from_mode(0o755)).unwrap();
     // A superuser can write anywhere, so the refusal is only owed to everyone else.
-    if unsafe { libc::geteuid() } != 0 {
+    // SAFETY: `geteuid` takes no arguments and cannot fail.
+    let superuser = unsafe { libc::geteuid() } == 0;
+    if !superuser {
         assert!(refused.unwrap_err().contains("beside the programs"));
         case.untouched();
     }

@@ -1,0 +1,8 @@
+# Applies to marfa-server only: `disallowed_methods` is allowed workspace-wide
+# and turned on in that crate's root.
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "read the time through app::clock, which a test can move" },
+    { path = "std::time::SystemTime::elapsed", reason = "read the time through app::clock, which a test can move" },
+    { path = "chrono::Utc::now", reason = "read the time through app::clock, which a test can move" },
+    { path = "chrono::Local::now", reason = "read the time through app::clock, which a test can move" },
+]

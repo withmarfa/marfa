@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
@@ -123,12 +124,17 @@ pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
 }
 
 /// Before the files are touched: puts the old programs back after a release that did not stay up.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "this runs before the settings are read and the clock exists"
+)]
 pub fn before_start(database: &DatabasePath) -> Start {
     let Some(record) = Folder::of(database) else {
         return Start::Proceed;
     };
     let file = database.file();
-    pending::on_start(&record, &Version::running().to_string(), &|| {
+    let at = marfa_rules::time::written(&Utc::now());
+    pending::on_start(&record, &Version::running().to_string(), &at, &|| {
         file.as_deref()
             .and_then(|file| db::inspect(file, MIGRATIONS).ok())
             .and_then(|looked| looked.schema)
@@ -158,7 +164,8 @@ pub fn settle_when_up(app: &Arc<App>) {
             wait = SETTLE_LOOKS_AGAIN;
         }
         let record = record.clone();
-        let _ = tokio::task::spawn_blocking(move || pending::settle(&record, &running)).await;
+        let at = app.clock.stamp();
+        let _ = tokio::task::spawn_blocking(move || pending::settle(&record, &running, &at)).await;
     });
 }
 
@@ -314,8 +321,9 @@ fn run(app: Arc<App>, job: apply::Job) {
             Err(reason) => {
                 tracing::warn!("The update to release {version} did not go ahead: {reason}");
                 let record = record.clone();
+                let at = app.clock.stamp();
                 let _ = tokio::task::spawn_blocking(move || {
-                    record.end(Outcome::Failed, &version, Some(reason));
+                    record.end(&at, Outcome::Failed, &version, Some(reason));
                 })
                 .await;
                 app.updates.set(State::Idle);

@@ -154,6 +154,7 @@ pub enum Refused {
     TooFarSet,
 }
 
+#[allow(clippy::disallowed_methods, reason = "this is the clock")]
 fn system_ms() -> i64 {
     Utc::now().timestamp_millis()
 }

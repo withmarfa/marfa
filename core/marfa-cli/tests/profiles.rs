@@ -621,6 +621,7 @@ fn ctrl_c_while_a_key_command_runs_stops_it_with_marfa() {
         "the key command is running before the interrupt"
     );
 
+    // SAFETY: `kill` takes two integers; the process is a child of this test.
     unsafe { libc::kill(marfa.id() as libc::pid_t, libc::SIGINT) };
     let status = marfa.wait().unwrap();
     assert_eq!(status.signal(), Some(libc::SIGINT), "{status:?}");
@@ -630,6 +631,7 @@ fn ctrl_c_while_a_key_command_runs_stops_it_with_marfa() {
     }
     let left = alive(pid);
     if left {
+        // SAFETY: `kill` takes two integers; the process is the key command this test started.
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
     assert!(!left, "the key command outlived marfa");

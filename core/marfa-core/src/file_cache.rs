@@ -440,9 +440,10 @@ pub(crate) fn exclude_from_backups(file: &File) -> io::Result<()> {
     }
     let url = CFURL::from_path(path, false)
         .ok_or_else(|| io::Error::other("the file's path is not a file URL"))?;
-    // The key is a constant of CoreFoundation, held by it for the process.
+    // SAFETY: The key is a constant of CoreFoundation, held by it for the process.
     let key = unsafe { CFString::wrap_under_get_rule(kCFURLIsExcludedFromBackupKey) };
     let mut error = std::ptr::null_mut();
+    // SAFETY: the URL, the key and the value are live CoreFoundation objects, and `error` is a place the call may write.
     let set = unsafe {
         CFURLSetResourcePropertyForKey(
             url.as_concrete_TypeRef(),
@@ -457,7 +458,7 @@ pub(crate) fn exclude_from_backups(file: &File) -> io::Result<()> {
     let reason = if error.is_null() {
         "the system gave no reason".to_string()
     } else {
-        // Returned under the create rule, so it is released here.
+        // SAFETY: Returned under the create rule, so it is released here.
         unsafe { CFError::wrap_under_create_rule(error) }
             .description()
             .to_string()

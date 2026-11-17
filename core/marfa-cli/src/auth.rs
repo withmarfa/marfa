@@ -603,7 +603,7 @@ fn lock_file_in(dir: &std::path::Path, origin: &str) -> Result<File, CliError> {
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(dir)?;
     let metadata = directory.metadata()?;
-    // Safe: geteuid takes no arguments and cannot fail.
+    // SAFETY: geteuid takes no arguments and cannot fail.
     let uid = unsafe { libc::geteuid() };
     if metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
         return Err(CliError::Invalid(
@@ -611,6 +611,7 @@ fn lock_file_in(dir: &std::path::Path, origin: &str) -> Result<File, CliError> {
         ));
     }
     let name = CString::new(format!("{}.lock", fingerprint(origin))).expect("hex name has no NUL");
+    // SAFETY: `directory` is open for the call and `name` is a NUL-terminated string that openat does not keep.
     // openat pins the parent to the checked descriptor. NONBLOCK lets us
     // reject a planted FIFO instead of waiting on it before validation.
     let fd = unsafe {
@@ -624,7 +625,7 @@ fn lock_file_in(dir: &std::path::Path, origin: &str) -> Result<File, CliError> {
     if fd < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
-    // The successful openat returned a new, owned descriptor.
+    // SAFETY: The successful openat returned a new, owned descriptor.
     let file = unsafe { File::from_raw_fd(fd) };
     let metadata = file.metadata()?;
     if !metadata.is_file()

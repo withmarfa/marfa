@@ -7,22 +7,27 @@ pub use tikv_jemallocator::Jemalloc as Allocator;
 static MALLOC_CONF: &[u8; 57] = b"narenas:2,dirty_decay_ms:0,muzzy_decay_ms:0,tcache:false\0";
 
 unsafe extern "C" fn allocate(size: c_int) -> *mut c_void {
+    // SAFETY: SQLite calls this as `malloc`; jemalloc takes any size.
     unsafe { tikv_jemalloc_sys::malloc(size as usize) }
 }
 
 unsafe extern "C" fn release(block: *mut c_void) {
+    // SAFETY: SQLite passes back a block `allocate` or `reallocate` returned, or null.
     unsafe { tikv_jemalloc_sys::free(block) }
 }
 
 unsafe extern "C" fn reallocate(block: *mut c_void, size: c_int) -> *mut c_void {
+    // SAFETY: SQLite passes back a block `allocate` or `reallocate` returned, or null.
     unsafe { tikv_jemalloc_sys::realloc(block, size as usize) }
 }
 
 unsafe extern "C" fn size_of(block: *mut c_void) -> c_int {
+    // SAFETY: SQLite asks about a block `allocate` or `reallocate` returned.
     unsafe { tikv_jemalloc_sys::malloc_usable_size(block) as c_int }
 }
 
 unsafe extern "C" fn round_up(size: c_int) -> c_int {
+    // SAFETY: `nallocx` only computes a size, with flags that are valid.
     unsafe { tikv_jemalloc_sys::nallocx(size as usize, 0) as c_int }
 }
 
