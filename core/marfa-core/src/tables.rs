@@ -89,7 +89,7 @@ pub struct TableHold {
     pub fill: Option<FillReport>,
 }
 
-/// A table the copy holds whose state or rows changed.
+/// A table the copy holds, or held, whose state or rows changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChangedTable {
     pub item: String,

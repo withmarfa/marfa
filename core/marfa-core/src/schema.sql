@@ -129,16 +129,13 @@ CREATE TABLE IF NOT EXISTS item_tables (
   -- What `table_rows` holds of it, so the cap is judged without a scan.
   rows INTEGER NOT NULL DEFAULT 0,
   bytes INTEGER NOT NULL DEFAULT 0,
-  -- Counts each write of a row, so a row changed to one of the same size
-  -- still changes the table's record.
+  -- Detects row changes that leave the row count and byte size unchanged.
   revision INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (item_id, name)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS item_tables_state ON item_tables (state);
 
--- Each held table whose state or rows a change to the copy touched, numbered
--- by its latest change (`Core::changes_since`). One row a table the copy has
--- held, kept after the table goes so that its going is named.
+-- Retains each table's latest change after removal so callers learn it is gone.
 CREATE TABLE IF NOT EXISTS table_changes (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,

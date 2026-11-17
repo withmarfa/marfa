@@ -377,8 +377,7 @@ pub struct CatchUpReport {
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
-    /// Each table whose state or rows the catch-up changed, its fill and the
-    /// events it applied included.
+    /// Tables whose state or rows changed during catch-up, including fills.
     pub changed_tables: Vec<ChangedTable>,
 }
 

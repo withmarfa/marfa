@@ -31,8 +31,7 @@ pub struct CopyChanges {
     pub edges: Vec<String>,
     /// Each changed edge the copy no longer holds.
     pub removed_edges: Vec<String>,
-    /// Each table the copy holds, or held, whose state or rows changed,
-    /// whether a fill or an event moved it.
+    /// Tables held now or before whose state or rows changed, including local writes.
     pub tables: Vec<ChangedTable>,
 }
 

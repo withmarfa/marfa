@@ -548,8 +548,7 @@ pub struct CatchUpReport {
     pub catalog_changed: bool,
     /// The fill of the tables the copy holds that were not whole.
     pub tables: crate::tables::FillReport,
-    /// Each table whose state or rows the catch-up changed, its fill and the
-    /// events it applied included.
+    /// Tables whose state or rows changed during catch-up, including fills.
     pub changed_tables: Vec<crate::tables::ChangedTable>,
 }
 

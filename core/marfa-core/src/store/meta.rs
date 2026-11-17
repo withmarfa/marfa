@@ -289,8 +289,7 @@ pub(crate) fn last_table_change(conn: &Connection) -> Result<i64, CoreError> {
         .query_row([], |row| row.get(0))?)
 }
 
-/// The tables, as item and name, changed after change `since`, sorted, or
-/// `None` where more than `most` did.
+/// Changed tables in name order, or `None` when their count exceeds `most`.
 pub(crate) fn tables_changed_since(
     conn: &Connection,
     since: i64,
