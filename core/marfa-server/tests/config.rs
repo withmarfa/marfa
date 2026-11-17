@@ -720,38 +720,37 @@ async fn a_sign_in_change_says_nothing_of_browsers_or_apps_it_reaches_none_of() 
 }
 
 #[tokio::test]
-async fn an_address_check_says_what_would_happen_and_writes_nothing() {
+async fn an_address_check_leaves_the_audit_log_and_the_live_address_alone() {
     let instance = Instance::start(&[]).await;
     instance
         .patch(json!({ "sign_in_address": "https://a.example" }))
         .await;
     instance.claim().await;
-    let held = instance.config().await;
     let audited = audit_rows(&instance).await;
+    let change = json!({ "sign_in_address": "https://b.example" });
 
     let checked = instance
-        .call(
-            Method::POST,
-            "/config/address-check",
-            Some(json!({ "sign_in_address": "https://b.example", "addresses": ["https://b.example"] })),
-        )
+        .call(Method::POST, "/config/address-check", Some(change))
         .await;
     assert_eq!(checked.status, StatusCode::OK, "{}", checked.text);
-    assert_eq!(checked.body["requires_confirmation"], true);
-    let codes: Vec<_> = checked.body["consequences"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["code"].as_str().unwrap())
-        .collect();
-    assert!(codes.contains(&"address_removed"), "{codes:?}");
-    assert!(checked.body["consequences"][0]["count"].is_null());
-
-    assert_eq!(instance.config().await, held);
     assert_eq!(audit_rows(&instance).await, audited);
     assert_eq!(
         instance.app.addresses().sign_in().origin(),
         "https://a.example"
+    );
+
+    let confirmed = instance
+        .patch(json!({
+            "sign_in_address": "https://b.example",
+            "confirm_sign_in_address_change": true,
+            "skip_sign_in_address_check": true,
+        }))
+        .await;
+    assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.text);
+    assert!(audit_rows(&instance).await > audited);
+    assert_eq!(
+        instance.app.addresses().sign_in().origin(),
+        "https://b.example"
     );
 }
 

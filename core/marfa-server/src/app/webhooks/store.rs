@@ -453,14 +453,16 @@ pub fn next_due(tx: &Transaction<'_>, now_ms: i64, busy: &[String]) -> Result<Op
 
 #[test]
 fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
-    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    let mut db = baseline();
     let tx = db.transaction().unwrap();
     tx.execute_batch(&format!(
-        "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-         CREATE TABLE webhook_deliveries (seq INTEGER, id TEXT, webhook_id TEXT, status TEXT, due_at TEXT);
-         INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', 'k1', NULL),
-         ('d', NULL, 'g1');
-         INSERT INTO webhook_deliveries VALUES {};",
+        "{} {}",
+        webhooks(&[
+            ("a", "k1", ""),
+            ("b", "k1", ""),
+            ("c", "k1", ""),
+            ("d", "", "g1")
+        ]),
         deliveries(&[
             (1, "a", "pending", 0),
             (2, "a", "pending", 0),
@@ -514,14 +516,17 @@ fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
 fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it() {
     let held = ["key:k1".to_string(), "key:k1".to_string()];
     let ask = |rows: &[(i64, &str, &str, i64)], beyond_share: usize| {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        let mut db = baseline();
         let tx = db.transaction().unwrap();
         tx.execute_batch(&format!(
-            "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-             CREATE TABLE webhook_deliveries (seq INTEGER, id TEXT, webhook_id TEXT, status TEXT, due_at TEXT);
-             INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', NULL, 'g1'),
-             ('d', 'k2', NULL), ('e', 'k1', NULL);
-             INSERT INTO webhook_deliveries VALUES {};",
+            "{} {}",
+            webhooks(&[
+                ("a", "k1", ""),
+                ("b", "k1", ""),
+                ("c", "", "g1"),
+                ("d", "k2", ""),
+                ("e", "k1", ""),
+            ]),
             deliveries(rows)
         ))
         .unwrap();
@@ -597,28 +602,72 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
 
 #[test]
 fn a_due_time_that_does_not_read_is_refused() {
-    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    let mut db = baseline();
     let tx = db.transaction().unwrap();
-    tx.execute_batch(
-        "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-         CREATE TABLE webhook_deliveries (seq INTEGER, id TEXT, webhook_id TEXT, status TEXT, due_at TEXT);
-         INSERT INTO webhooks VALUES ('a', 'k1', NULL);
-         INSERT INTO webhook_deliveries VALUES (1, 'd1', 'a', 'pending', 'soon');",
-    )
-    .unwrap();
+    tx.execute_batch(&webhooks(&[("a", "k1", "")])).unwrap();
+    tx.execute_batch(&deliveries(&[(1, "a", "pending", 0)]))
+        .unwrap();
+    tx.execute("UPDATE webhook_deliveries SET due_at = 'soon'", [])
+        .unwrap();
     assert!(next_due(&tx, 0, &[]).is_err());
 }
 
-/// Delivery rows `(seq, webhook_id, status, due_at in ms)` as SQL values, each time stamped and given the id `d<seq>`.
+/// An empty database made from the baseline, with no foreign keys so a test need not make each maker.
 #[cfg(test)]
-fn deliveries(rows: &[(i64, &str, &str, i64)]) -> String {
-    rows.iter()
-        .map(|(seq, webhook, status, ms)| {
-            let due = Stamp::from_ms(*ms).unwrap().text();
-            format!("({seq}, 'd{seq}', '{webhook}', '{status}', '{due}')")
+fn baseline() -> rusqlite::Connection {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", false).unwrap();
+    db.execute_batch(crate::db::migrate::MIGRATIONS[0].sql)
+        .unwrap();
+    db
+}
+
+/// Subscriptions `(id, key_id, grant_id)` as SQL, an empty maker standing for none.
+#[cfg(test)]
+fn webhooks(rows: &[(&str, &str, &str)]) -> String {
+    let maker = |id: &str| {
+        if id.is_empty() {
+            "NULL".to_string()
+        } else {
+            format!("'{id}'")
+        }
+    };
+    let values = rows
+        .iter()
+        .map(|(id, key, grant)| {
+            format!(
+                "('{id}', 'https://hooks.example/{id}', '[]', NULL, 'secret', 1, {}, {}, 0, \
+                 '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
+                maker(key),
+                maker(grant)
+            )
         })
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+    format!(
+        "INSERT INTO webhooks (id, url, events, type_filter, secret, \
+         active, key_id, grant_id, starts_after, created_at, updated_at) VALUES {values};"
+    )
+}
+
+/// Delivery rows `(seq, webhook_id, status, due_at in ms)` as an SQL insert, each time stamped.
+#[cfg(test)]
+fn deliveries(rows: &[(i64, &str, &str, i64)]) -> String {
+    let values = rows
+        .iter()
+        .map(|(seq, id, status, ms)| {
+            let due = Stamp::from_ms(*ms).unwrap().text();
+            format!(
+                "({seq}, 'd{seq}', '{id}', {seq}, 'item.created', 'core.note', 'test', '{{}}', \
+                 '{status}', '{due}', '{due}', '{due}')"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "INSERT INTO webhook_deliveries (seq, id, webhook_id, event_id, event_type, type, \
+         source, payload, status, due_at, created_at, updated_at) VALUES {values};"
+    )
 }
 
 #[cfg(test)]

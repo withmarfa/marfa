@@ -392,7 +392,7 @@ mod tests {
 
     fn table() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute_batch(crate::db::migrate::MIGRATIONS[0].sql)
             .unwrap();
         conn
     }
@@ -492,9 +492,7 @@ mod tests {
 
     #[test]
     fn a_note_cannot_take_a_settings_row() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
-            .unwrap();
+        let mut conn = table();
         let tx = conn.transaction().unwrap();
         for entry in ENTRIES {
             assert!(put(&tx, entry.key, "note").is_err(), "{}", entry.key);

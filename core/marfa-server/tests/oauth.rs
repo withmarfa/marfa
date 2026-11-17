@@ -2537,13 +2537,29 @@ async fn a_grant_records_its_use_at_most_once_a_minute_and_starts_over_when_stoo
     let issuing = instance.last_use().await;
     assert!(!issuing.is_empty());
 
+    instance
+        .stage("CREATE TABLE recorded_uses (at TEXT NOT NULL)")
+        .await;
+    instance
+        .stage(
+            "CREATE TRIGGER record_use AFTER UPDATE OF last_used_at ON oauth_consents \
+             WHEN new.last_used_at IS NOT NULL \
+             BEGIN INSERT INTO recorded_uses VALUES (new.last_used_at); END",
+        )
+        .await;
+
     instance.app.clock.advance(30_000).unwrap();
     assert_eq!(instance.reads(token).await, StatusCode::OK);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(instance.last_use().await, issuing);
     instance.app.clock.advance(31_000).unwrap();
+    let second = instance.app.clock.stamp();
     assert_eq!(instance.reads(token).await, StatusCode::OK);
-    assert!(instance.when_use_moves_from(issuing.clone()).await > issuing);
+    let recorded = instance.when_use_moves_from(issuing.clone()).await;
+    assert!(recorded >= second, "{recorded} is the use at 30 seconds");
+    assert_eq!(
+        instance.count("SELECT count(*) FROM recorded_uses").await,
+        1,
+        "the use at 30 seconds was recorded as well"
+    );
 
     let grant = instance.grant_of(&client).await;
     let ended = instance.end_grant(&grant).await;

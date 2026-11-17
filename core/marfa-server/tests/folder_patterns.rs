@@ -104,16 +104,18 @@ async fn a_refused_list_is_answered_while_the_writer_is_busy() {
     let instance = Instance::start().await;
     let key = instance.key().await;
     let (release, held) = std::sync::mpsc::channel::<()>();
+    let (holding, holds) = tokio::sync::oneshot::channel::<()>();
     let app = instance.app.clone();
     let busy = tokio::spawn(async move {
         app.db
             .write(Write::own(), move |_| {
+                holding.send(()).ok();
                 held.recv().ok();
                 Ok(())
             })
             .await
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    holds.await.unwrap();
 
     let too_big = vec!["?".repeat(500); 12];
     for (include, why) in [

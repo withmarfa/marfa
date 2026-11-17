@@ -24,6 +24,9 @@ const BOUND_MIB = 64;
 /** A page is sized by what its items store, so it holds a quarter MiB plus one item, not sixteen. */
 const MIXED_BOUND_MIB = 16;
 
+/** A scheduled backup reads every item a few seconds after the boot, which would count as the export's memory. */
+const NO_BACKUPS = { MARFA_BACKUP_INTERVAL_SECONDS: "0" };
+
 let server: FreshServer | undefined;
 let working: MarfaClient;
 
@@ -73,7 +76,7 @@ describe("what an NDJSON export of large items holds in memory", () => {
   const ids: string[] = [];
 
   beforeAll(async () => {
-    server = await bootFreshServer("export-memory");
+    server = await bootFreshServer("export-memory", NO_BACKUPS);
     ({ working } = clientsFor(server));
     for (let at = 0; at < NOTES; at += 1) {
       ids.push(await note(`large ${at}`, BODY_BYTES));
@@ -126,7 +129,7 @@ describe("what an NDJSON export does with one item among small ones that is far 
   it(
     "sends every item whole, in order, and holds a bounded amount",
     async () => {
-      server = await bootFreshServer("export-memory-one");
+      server = await bootFreshServer("export-memory-one", NO_BACKUPS);
       ({ working } = clientsFor(server));
       const made: string[] = [];
       for (let at = 0; at < 20; at += 1)
@@ -159,7 +162,7 @@ describe("what an NDJSON export holds when one small item is followed by sixteen
   it(
     "holds a fixed amount while the client reads nothing, and loses no item, in order",
     async () => {
-      server = await bootFreshServer("export-memory-mixed");
+      server = await bootFreshServer("export-memory-mixed", NO_BACKUPS);
       ({ working } = clientsFor(server));
       const made: string[] = [];
       for (let group = 0; group < 6; group += 1) {

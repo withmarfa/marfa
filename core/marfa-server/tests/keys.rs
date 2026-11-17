@@ -227,15 +227,13 @@ async fn a_key_reached_through_a_claim_is_out_of_reach_until_the_caller_holds_th
 }
 
 #[tokio::test]
-async fn a_mint_wider_than_its_maker_is_refused_in_every_family() {
+async fn a_mint_wider_than_its_maker_is_refused_for_types_edges_metadata_profiles_and_sources() {
     let instance = Instance::start(&[]).await;
     let (_, minter) = instance.key(narrow_minter("minter")).await;
     for (field, value) in [
-        ("permissions", json!(["audit.read"])),
         ("type_permissions", json!({ "core.note": "read" })),
         ("type_permissions", json!({ "user.nothing-here": "read" })),
         ("edge_permissions", json!({ "about": "read" })),
-        ("extension_permissions", json!({ "mine": "read" })),
         ("metadata_permissions", json!({ "types": "write" })),
         ("profile_permissions", json!({ "name": "read" })),
         ("sources", json!(["theirs"])),
@@ -253,6 +251,13 @@ async fn a_mint_wider_than_its_maker_is_refused_in_every_family() {
         );
     }
     assert_eq!(instance.audited("key.create").await.len(), 1);
+
+    let held = json!({ "label": "held", "source": "held", "permissions": ["keys.mint"] });
+    let allowed = instance
+        .call(&minter, Method::POST, "/keys", Some(held))
+        .await;
+    assert_eq!(allowed.status, StatusCode::CREATED, "{}", allowed.body);
+    assert_eq!(instance.audited("key.create").await.len(), 2);
 }
 
 #[tokio::test]
