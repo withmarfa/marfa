@@ -1002,7 +1002,9 @@ fn read_only_bench_times_a_flip_and_a_read_beside_it() {
             let mut waits = Vec::new();
             while !flipped.load(std::sync::atomic::Ordering::Relaxed) {
                 let asked = std::time::Instant::now();
-                core.get("note-000000").unwrap().unwrap();
+                core.get(&crate::read_bench_tests::note_id(0))
+                    .unwrap()
+                    .unwrap();
                 waits.push(asked.elapsed());
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }

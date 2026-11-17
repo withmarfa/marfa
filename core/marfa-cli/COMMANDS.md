@@ -3183,6 +3183,28 @@ marfa device items bulk-get [OPTIONS] <IDS>...
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device items counts
+
+Count, for each item, the active items an edge type links to it or the rows it holds in a table, as `marfa items counts` does.
+
+Links are counted from the copy, and refused `invalid` where it does not hold the edge type whole or lacks an item an edge reaches. Rows are counted from the copy for a table it holds whole and by the server for any other; `held` says which.
+
+```text
+marfa device items counts [OPTIONS] <--backref <EDGE_TYPE>|--edge <EDGE_TYPE>|--table <TABLE>> <ID>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>...` | The item ids, at most 100. |
+
+| Option | Description |
+| --- | --- |
+| `--backref <EDGE_TYPE>` | Count the items an edge of this type leaves each item for, such as `parent-of` for children. |
+| `--edge <EDGE_TYPE>` | Count the items with an edge of this type to each item, such as `in-collection` for a collection's members. |
+| `--table <TABLE>` | Count the rows each item holds in this table. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device items create
 
 Write a new item into the local copy and queue it for the server.

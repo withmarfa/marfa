@@ -1272,7 +1272,11 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
     Ok(Applied::Changed)
 }
 
-fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<String, Value>>> {
+pub(crate) fn local_table(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+) -> Result<Option<Map<String, Value>>> {
     let state: Option<String> = conn
         .query_row(
             "SELECT t.state FROM item_tables t JOIN items i ON i.id = t.item_id

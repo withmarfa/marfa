@@ -22,8 +22,8 @@ fn linked(index: usize) -> bool {
     index.is_multiple_of(10)
 }
 
-fn note_id(index: usize) -> String {
-    format!("note-{index:06}")
+pub(crate) fn note_id(index: usize) -> String {
+    format!("019537a0-7b80-7000-8000-{index:012x}")
 }
 
 pub(crate) fn large_copy(dir: &Path, rows: usize) -> Core {
@@ -209,4 +209,62 @@ fn read_bench_times_the_reads() {
         core.changes_since(Some(&since), 1000).unwrap()
     });
     assert_eq!(hundred.items.len(), 100);
+}
+
+/// 100 anchors counted in one call equal the list each count names, and with
+/// `MARFA_READ_BENCH_ROWS` set the call's 95th percentile is printed.
+#[test]
+fn read_bench_times_the_counts() {
+    use crate::{Counted, counts::MOST_IDS};
+    let rows = std::env::var("MARFA_READ_BENCH_ROWS")
+        .ok()
+        .and_then(|rows| rows.parse().ok())
+        .unwrap_or(300);
+    let dir = tempfile::tempdir().unwrap();
+    let core = large_copy(dir.path(), rows);
+    store::meta_set(
+        &core.conn().unwrap(),
+        store::META_SLICE_EDGE_TYPES,
+        "[\"references\"]",
+    )
+    .unwrap();
+    let anchors: Vec<String> = linked_ids(rows).into_iter().take(MOST_IDS).collect();
+    assert_eq!(anchors.len(), MOST_IDS.min(rows.div_ceil(10)));
+    for counted in [
+        Counted::Backref("references".into()),
+        Counted::Edge("references".into()),
+    ] {
+        let answer = core.counts(&anchors, &counted).unwrap();
+        assert_eq!(answer.len(), anchors.len());
+        let expected = if matches!(counted, Counted::Backref(_)) {
+            2
+        } else {
+            0
+        };
+        assert!(
+            answer.iter().all(|count| count.held
+                && count.total >= expected
+                && count.status_groups.is_some()),
+            "{counted:?}"
+        );
+        if let Counted::Backref(_) = counted {
+            assert!(answer.iter().all(|count| count.total == 2));
+        }
+        let mut times: Vec<Duration> = (0..40)
+            .map(|_| {
+                let started = Instant::now();
+                core.counts(&anchors, &counted).unwrap();
+                started.elapsed()
+            })
+            .collect();
+        times.sort();
+        if std::env::var_os("MARFA_READ_BENCH_ROWS").is_some() {
+            println!(
+                "{rows:>7} rows  {:<44} median {:>7.2} ms  p95 {:>7.2} ms",
+                format!("count {} anchors, {counted:?}", anchors.len()),
+                times[times.len() / 2].as_secs_f64() * 1000.0,
+                times[times.len() * 95 / 100].as_secs_f64() * 1000.0,
+            );
+        }
+    }
 }

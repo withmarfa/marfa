@@ -7,6 +7,7 @@ mod catalog;
 mod catch_up;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
+mod counts;
 mod damage;
 #[cfg(test)]
 mod damage_tests;
@@ -123,6 +124,7 @@ pub use body::{
 };
 pub use catalog::ServerCatalog;
 pub use catch_up::{Change, ChangeEvent, FollowReport};
+pub use counts::{Counted, ItemCount, MOST_IDS, StatusGroups};
 pub use damage::SetAside;
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{

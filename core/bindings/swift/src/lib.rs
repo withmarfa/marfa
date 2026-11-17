@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 uniffi::setup_scaffolding!();
 
+mod counts;
 mod filters;
 mod folder_settings;
 mod folders;
@@ -22,6 +23,7 @@ mod renewal;
 mod tables;
 mod views;
 
+pub use counts::{Counted, ItemCount, StatusGroups};
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError};
