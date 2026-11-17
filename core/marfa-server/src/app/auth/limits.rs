@@ -75,9 +75,9 @@ pub enum Sender<'a> {
 pub struct PasswordLanes {
     /// Spent, these refuse the attempt before its password is judged.
     pub before: Vec<Lane>,
-    /// Spent, this answers the attempt `429`, but its password is still judged.
+    /// Spent, this answers the attempt `429`; only one the owner's share takes is still judged.
     pub shared: Option<Lane>,
-    /// Spent, this counts and answers a right password as a wrong one.
+    /// Spent, this leaves a password at the owner's email unchecked and answered as a wrong one.
     pub owner: Option<Lane>,
 }
 
