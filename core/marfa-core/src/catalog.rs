@@ -792,7 +792,7 @@ mod tests {
     #[test]
     fn a_failed_catalog_rollback_reports_both_errors_without_committing_partial_writes() {
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
-        let conn = held(
+        let mut conn = held(
             serde_json::json!([{ "id": "acme.old" }]),
             serde_json::json!([]),
         );
@@ -852,7 +852,7 @@ mod tests {
     fn a_failed_catalog_write_rolls_back_only_its_scope() {
         for fail_release in [false, true] {
             use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
-            let conn = held(
+            let mut conn = held(
                 serde_json::json!([{ "id": "acme.old" }]),
                 serde_json::json!([]),
             );
@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn a_transient_catalog_rollback_error_is_reported_and_cleanup_is_retried() {
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
-        let conn = held(
+        let mut conn = held(
             serde_json::json!([{ "id": "acme.old" }]),
             serde_json::json!([]),
         );
@@ -981,7 +981,7 @@ mod tests {
     #[test]
     fn an_outer_catalog_scope_cleans_up_its_failed_nested_scope() {
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
-        let conn = held(
+        let mut conn = held(
             serde_json::json!([{ "id": "acme.old" }]),
             serde_json::json!([]),
         );

@@ -11,7 +11,7 @@ fn main() {
     let bytes = fs::read(source.join("sqlite3.c")).expect("read pinned SQLite amalgamation");
     assert_eq!(
         hex::encode(Sha256::digest(&bytes)),
-        "0a409f1633283fa31a9126b11fbfd64a1991c5d30defad07e5745d4667f5e23d",
+        "0c657666d819f261cc4007526ad57e1669de9949df7a8ea847aa284a2bf0ee52",
         "review the directory extension before changing SQLite"
     );
     let text = String::from_utf8(bytes).unwrap();
@@ -26,33 +26,65 @@ fn main() {
         ("osOpenDirectory(", "marfaOpenDirectory("),
         ("osOpen(z,", "marfaOpen(z,"),
     ] {
-        unix = unix.replace(from, to);
+        unix = rewrite(&unix, from, to);
     }
-    unix = unix.replace(
+    unix = rewrite(
+        &unix,
         "typedef struct unixFile unixFile;",
         "typedef struct MarfaDirectory MarfaDirectory;\ntypedef struct unixFile unixFile;",
     );
-    unix = unix.replace("sqlite3_io_methods const *pMethod;  /* Always the first entry */", "sqlite3_io_methods const *pMethod;  /* Always the first entry */\n  MarfaDirectory *marfaDirectory;");
-    unix = unix.replace(
+    unix = rewrite(
+        &unix,
+        "sqlite3_io_methods const *pMethod;  /* Always the first entry */",
+        "sqlite3_io_methods const *pMethod;  /* Always the first entry */\n  MarfaDirectory *marfaDirectory;",
+    );
+    unix = rewrite(
+        &unix,
         "  memset(pFile, 0, sizeof(unixFile));",
         "  marfaRelease(pFile->marfaDirectory);\n  memset(pFile, 0, sizeof(unixFile));",
     );
+    assert!(
+        unix.contains("  switch( op ){"),
+        "the SQLite source no longer holds `  switch( op ){{`"
+    );
     unix = unix.replacen("  switch( op ){", "  if( pFile->marfaDirectory && (op==SQLITE_FCNTL_SET_LOCKPROXYFILE || op==SQLITE_FCNTL_GET_LOCKPROXYFILE) ) return SQLITE_NOTFOUND;\n  switch( op ){", 1);
-    unix = unix.replace(
+    unix = rewrite(
+        &unix,
         "struct unixShmNode {",
         "struct unixShmNode {\n  MarfaDirectory *marfaDirectory;\n  char *marfaFilename;",
     );
-    unix = unix.replace("    p->pInode->pShmNode = 0;", "    p->pInode->pShmNode = 0;\n    sqlite3_free(p->marfaFilename);\n    marfaRelease(p->marfaDirectory);");
-    unix = unix.replace("  /* Make the new connection a child of the unixShmNode */", "  if( !pShmNode->marfaDirectory ){\n    MarfaDirectory *directory = marfaRetain(pDbFd->zPath);\n    if( directory ){\n      char *anchored = sqlite3_mprintf(\"%s-shm\", pDbFd->zPath);\n      if( !anchored ){ marfaRelease(directory); rc=SQLITE_NOMEM; goto shm_open_err; }\n      pShmNode->marfaDirectory = directory;\n      pShmNode->marfaFilename = anchored;\n      pShmNode->zFilename = anchored;\n    }\n  }\n  /* Make the new connection a child of the unixShmNode */");
-    unix = unix.replace(
+    unix = rewrite(
+        &unix,
+        "    p->pInode->pShmNode = 0;",
+        "    p->pInode->pShmNode = 0;\n    sqlite3_free(p->marfaFilename);\n    marfaRelease(p->marfaDirectory);",
+    );
+    unix = rewrite(
+        &unix,
+        "  /* Make the new connection a child of the unixShmNode */",
+        "  if( !pShmNode->marfaDirectory ){\n    MarfaDirectory *directory = marfaRetain(pDbFd->zPath);\n    if( directory ){\n      char *anchored = sqlite3_mprintf(\"%s-shm\", pDbFd->zPath);\n      if( !anchored ){ marfaRelease(directory); rc=SQLITE_NOMEM; goto shm_open_err; }\n      pShmNode->marfaDirectory = directory;\n      pShmNode->marfaFilename = anchored;\n      pShmNode->zFilename = anchored;\n    }\n  }\n  /* Make the new connection a child of the unixShmNode */",
+    );
+    unix = rewrite(
+        &unix,
         "unixGetTempname(pVfs->mxPathname, zTmpname)",
         "marfaTempname(pVfs, pVfs->mxPathname, zTmpname)",
     );
-    unix = unix.replace(
+    unix = rewrite(
+        &unix,
         "unixGetTempname(pFile->pVfs->mxPathname, zTFile)",
         "marfaTempname(pFile->pVfs, pFile->pVfs->mxPathname, zTFile)",
     );
-    unix = unix.replace("statfs(filePath, &fsInfo)", "fstatfs(pNew->h, &fsInfo)");
+    unix = rewrite(
+        &unix,
+        "statfs(filePath, &fsInfo)",
+        "fstatfs(pNew->h, &fsInfo)",
+    );
+    // An O_TMPFILE file lives in the host's temporary folder, outside the retained directory.
+    unix = rewrite(
+        &unix,
+        "#if defined(__linux__) && defined(O_TMPFILE)",
+        "#if 0",
+    );
+    assert!(!unix.contains("defined(O_TMPFILE)"));
     let insert = unix.find("static int robust_open(").unwrap();
     unix.insert_str(insert, &fs::read_to_string("sqlite/directory.c").unwrap());
     unix.push_str(&fs::read_to_string("sqlite/register.c").unwrap());
@@ -148,4 +180,14 @@ fn main() {
         }
     }
     build.compile("marfa_directory_sqlite");
+}
+
+/// Replaces every `from`, refusing a SQLite source that no longer holds it, so a rewrite that
+/// stops matching after an update fails the build instead of leaving SQLite's own behavior.
+fn rewrite(text: &str, from: &str, to: &str) -> String {
+    assert!(
+        text.contains(from),
+        "the SQLite source no longer holds `{from}`"
+    );
+    text.replace(from, to)
 }

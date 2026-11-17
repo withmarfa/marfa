@@ -9098,7 +9098,7 @@ mod tests {
     }
 
     /// The SQLite virtual-machine steps `work` takes on `conn`.
-    fn steps_of(conn: &Connection, work: impl FnOnce()) -> u64 {
+    fn steps_of(conn: &mut Connection, work: impl FnOnce(&Connection)) -> u64 {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicU64, Ordering};
         let steps = Arc::new(AtomicU64::new(0));
@@ -9110,7 +9110,7 @@ mod tests {
                 false
             }),
         );
-        work();
+        work(conn);
         let _ = conn.progress_handler(1, None::<fn() -> bool>);
         steps.load(Ordering::Relaxed)
     }
@@ -9118,7 +9118,7 @@ mod tests {
     /// The witness for the cost, the asserted answer for the meaning.
     #[test]
     fn the_untaken_creates_for_an_item_cost_the_same_however_many_landings_are_pending() {
-        let conn = conn();
+        let mut conn = conn();
         let create = |id: &str, item: &str, verdict: Option<&str>| {
             conn.execute(
                 "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, sent, depends_on, queued_at)
@@ -9131,17 +9131,17 @@ mod tests {
         create("refused-and-unlanded", "other", Some("refused"));
         create("unanswered", "unanswered-item", None);
         meta_set(&conn, "receipt_pending/refused-onto-a-row", "land:landed").unwrap();
-        let ask = |item: &str| {
+        let ask = |conn: &mut Connection, item: &str| {
             let mut found = Vec::new();
-            let steps = steps_of(&conn, || {
-                found = untaken_creates_for_item(&conn, item).unwrap();
+            let steps = steps_of(conn, |conn| {
+                found = untaken_creates_for_item(conn, item).unwrap();
             });
             (found, steps)
         };
-        let (few_found, few) = ask("item");
+        let (few_found, few) = ask(&mut conn, "item");
         assert_eq!(few_found, named(&["refused-onto-a-row"]));
-        assert_eq!(ask("other").0, Vec::<String>::new());
-        assert_eq!(ask("unanswered-item").0, named(&["unanswered"]));
+        assert_eq!(ask(&mut conn, "other").0, Vec::<String>::new());
+        assert_eq!(ask(&mut conn, "unanswered-item").0, named(&["unanswered"]));
 
         for n in 0..2_000 {
             meta_set(
@@ -9152,7 +9152,7 @@ mod tests {
             .unwrap();
             meta_set(&conn, &format!("unrelated/{n}"), "x").unwrap();
         }
-        let (many_found, many) = ask("item");
+        let (many_found, many) = ask(&mut conn, "item");
         assert_eq!(many_found, few_found);
         assert!(
             many < few * 2 + 100,
@@ -9372,7 +9372,7 @@ mod tests {
     fn ticks_to_mark_sent(queued: usize, sent: usize) -> u64 {
         use std::sync::atomic::{AtomicU64, Ordering};
         static TICKS: AtomicU64 = AtomicU64::new(0);
-        let conn = conn();
+        let mut conn = conn();
         let mut last = String::new();
         let tx = conn.unchecked_transaction().unwrap();
         for number in 0..queued {
@@ -11807,16 +11807,17 @@ mod meta_plan_tests {
             "the plan check cannot see a scan"
         );
 
-        let conn = conn();
+        let mut conn = conn();
         SEEN.with(|seen| seen.borrow_mut().clear());
         conn.trace_v2(
             TraceEventCodes::SQLITE_TRACE_STMT,
-            Some(|event| {
+            Some(|event: TraceEvent<'_>| {
                 if let TraceEvent::Stmt(_, sql) = event {
                     SEEN.with(|seen| seen.borrow_mut().push(sql.to_string()));
                 }
             }),
-        );
+        )
+        .unwrap();
         meta_keys(&conn, "dead_effect/").unwrap();
         readmit_attempt(&conn, "attempt").unwrap();
         pending_landings(&conn).unwrap();
@@ -11827,7 +11828,8 @@ mod meta_plan_tests {
         clear_slice(&conn).unwrap();
         start_refill(&conn).unwrap();
         sweep_refill(&conn).unwrap();
-        conn.trace_v2(TraceEventCodes::empty(), None);
+        conn.trace_v2(TraceEventCodes::empty(), None::<fn(TraceEvent<'_>)>)
+            .unwrap();
 
         let mut asked: Vec<String> = SEEN.with(|seen| seen.borrow().clone());
         asked.retain(|sql| sql.contains("meta") && !sql.starts_with("--"));

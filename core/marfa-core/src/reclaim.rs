@@ -32,7 +32,7 @@ pub(crate) const RETRY_AFTER_BUSY: Duration = Duration::from_secs(30);
 pub(crate) const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(15 * 60);
 
 #[cfg(test)]
-type RewriteHook = Box<dyn Fn(&Connection)>;
+type RewriteHook = Box<dyn Fn(&mut Connection)>;
 
 #[cfg(test)]
 thread_local! {
@@ -228,10 +228,10 @@ impl Core {
         }
         // Not `conn()`, which waits: a step of the follow that holds the
         // connection is not held up by this.
-        let Ok(conn) = self.conn.try_lock() else {
+        let Ok(mut conn) = self.conn.try_lock() else {
             return Reclaim::Skipped;
         };
-        match self.reclaim_in(&conn) {
+        match self.reclaim_in(&mut conn) {
             Ok(reclaim) => reclaim,
             Err(error) => {
                 self.hold_off(RETRY_AFTER_FAILURE);
@@ -240,7 +240,7 @@ impl Core {
         }
     }
 
-    fn reclaim_in(&self, conn: &Connection) -> Result<Reclaim, CoreError> {
+    fn reclaim_in(&self, conn: &mut Connection) -> Result<Reclaim, CoreError> {
         let owed = checkpoint_owed(conn)? || without_waiting(conn, || log_large(conn))?;
         let rewrite = due(conn)?;
         if !owed && !rewrite {
@@ -255,21 +255,21 @@ impl Core {
         // A reader of the store, or a statement of this process, is a try for
         // later: waiting, in the rewrite or in the checkpoint, would hold up
         // the watch and everything else that waits for the connection.
-        let finished = without_waiting(conn, || {
-            if rewrite {
-                #[cfg(test)]
-                TEST_BEFORE_REWRITE.with(|hook| {
-                    if let Some(hook) = hook.borrow().as_ref() {
-                        hook(conn);
-                    }
-                });
-                if let Err(error) = conn.execute_batch("VACUUM") {
-                    return if busy(&error) {
-                        Ok(None)
-                    } else {
-                        Err(error.into())
-                    };
+        #[cfg(test)]
+        if rewrite {
+            TEST_BEFORE_REWRITE.with(|hook| {
+                if let Some(hook) = hook.borrow().as_ref() {
+                    hook(conn);
                 }
+            });
+        }
+        let finished = without_waiting(conn, || {
+            if rewrite && let Err(error) = conn.execute_batch("VACUUM") {
+                return if busy(&error) {
+                    Ok(None)
+                } else {
+                    Err(error.into())
+                };
             }
             checkpointed(conn).map(Some)
         })?;

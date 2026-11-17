@@ -4,7 +4,7 @@ Folder storage extends the pinned bundled SQLite Unix VFS. The build checks the 
 
 Each registration retains a directory descriptor. Synthetic filenames select that registration and an entry name; they are not operating-system paths. Native files and shared-memory nodes retain the registration until their last close. Ordinary connections continue to use the native VFS and share its lock registry.
 
-The directory VFS supports one persistent database per connection. Persistent `ATTACH` is refused; SQLite's temporary attachment for `VACUUM` remains supported. Temporary files are created in the retained directory. Lock-proxy controls are refused because their additional path operations are outside the directory capability.
+The directory VFS supports one persistent database per connection. Persistent `ATTACH` is refused; SQLite's temporary attachment for `VACUUM` remains supported. Temporary files are created in the retained directory. The build turns off SQLite's `O_TMPFILE` path, which would create them unnamed in the host's temporary folder. Lock-proxy controls are refused because their additional path operations are outside the directory capability.
 
 Folder admission must check filesystem support before creating state. Apple platforms support APFS, HFS, UFS, FAT and exFAT, using SQLite’s native filesystem locking selection against the opened file. Linux keeps the native POSIX locking mode and refuses known NFS and SMB filesystems. Other platforms are refused. SQLite build options that remove WAL, change the OS implementation, move shared memory elsewhere, or change threading are also refused.
 
