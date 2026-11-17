@@ -335,14 +335,14 @@ pub fn delivery(tx: &Transaction<'_>, webhook_id: &str, id: &str) -> Result<Opti
 }
 
 /// The delivery with its stored event, while it is still pending.
-pub fn pending(tx: &Transaction<'_>, seq: i64) -> Result<Option<(Delivery, String)>> {
+pub fn pending(tx: &Transaction<'_>, id: &str) -> Result<Option<(Delivery, String)>> {
     Ok(tx
         .query_row(
             &format!(
                 "SELECT {DELIVERY_COLUMNS}, payload FROM webhook_deliveries \
-                 WHERE seq = ?1 AND status = 'pending'"
+                 WHERE id = ?1 AND status = 'pending'"
             ),
-            [seq],
+            [id],
             |row| Ok((delivery_of(row)?, row.get(13)?)),
         )
         .optional()?)
@@ -376,14 +376,14 @@ const MAKER: &str = "SELECT id, CASE WHEN key_id IS NOT NULL THEN 'key:' || key_
 
 /// A delivery that has fallen due, and the maker whose share its attempt takes.
 pub struct Due {
-    pub seq: i64,
+    pub id: String,
     pub maker: String,
 }
 
 /// The deliveries that have fallen due as of `?1`, each with its subscription's maker.
 fn due_rows() -> String {
     format!(
-        "SELECT d.seq, d.webhook_id, d.due_at, m.maker FROM webhook_deliveries d \
+        "SELECT d.seq, d.id, d.webhook_id, d.due_at, m.maker FROM webhook_deliveries d \
          JOIN ({MAKER}) m ON m.id = d.webhook_id WHERE d.status = 'pending' AND d.due_at <= ?1"
     )
 }
@@ -392,7 +392,7 @@ fn due_rows() -> String {
 pub fn due(
     tx: &Transaction<'_>,
     now_ms: i64,
-    busy: &[i64],
+    busy: &[String],
     holding: &[String],
     share: usize,
     limit: usize,
@@ -405,19 +405,19 @@ pub fn due(
     let mut statement = tx.prepare_cached(&format!(
         "WITH due AS ({}), \
          span AS (SELECT MIN(maker) AS lo, MAX(maker) AS hi FROM due), \
-         heads AS (SELECT seq, due_at, maker, ROW_NUMBER() OVER \
+         heads AS (SELECT seq, id, due_at, maker, ROW_NUMBER() OVER \
          (PARTITION BY maker ORDER BY due_at, seq) AS place \
-         FROM (SELECT seq, due_at, maker, ROW_NUMBER() OVER \
+         FROM (SELECT seq, id, due_at, maker, ROW_NUMBER() OVER \
          (PARTITION BY webhook_id ORDER BY due_at, seq) AS turn FROM due \
          WHERE webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
-         WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1), \
-         shared AS (SELECT seq, due_at, maker, place, ?4 - (SELECT COUNT(*) FROM json_each(?3) \
+         WHERE id IN (SELECT value FROM json_each(?2)))) WHERE turn = 1), \
+         shared AS (SELECT seq, id, due_at, maker, place, ?4 - (SELECT COUNT(*) FROM json_each(?3) \
          WHERE value = heads.maker) AS room FROM heads), \
-         picked AS (SELECT seq, due_at, maker, place > room AS past FROM shared, span \
+         picked AS (SELECT seq, id, due_at, maker, place > room AS past FROM shared, span \
          WHERE place <= room OR (lo = maker AND hi = maker)), \
-         ranked AS (SELECT seq, maker, past, ROW_NUMBER() OVER (ORDER BY past, due_at, seq) AS n \
+         ranked AS (SELECT seq, id, maker, past, ROW_NUMBER() OVER (ORDER BY past, due_at, seq) AS n \
          FROM picked) \
-         SELECT seq, maker FROM ranked \
+         SELECT id, maker FROM ranked \
          WHERE NOT past OR n <= ?6 ORDER BY n LIMIT ?5",
         due_rows()
     ))?;
@@ -429,7 +429,7 @@ pub fn due(
         params![now, busy, holding, share, limit, beyond_share],
         |row| {
             Ok(Due {
-                seq: row.get(0)?,
+                id: row.get(0)?,
                 maker: row.get(1)?,
             })
         },
@@ -438,13 +438,13 @@ pub fn due(
 }
 
 /// When the next delivery not yet due falls due, leaving out the subscriptions being attempted.
-pub fn next_due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Option<i64>> {
+pub fn next_due(tx: &Transaction<'_>, now_ms: i64, busy: &[String]) -> Result<Option<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
     let next: Option<Stamp> = tx.query_row(
         "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' AND due_at > ?1 \
          AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
-         WHERE seq IN (SELECT value FROM json_each(?2)))",
+         WHERE id IN (SELECT value FROM json_each(?2)))",
         params![Stamp::from_ms(now_ms)?, busy],
         |row| row.get(0),
     )?;
@@ -457,7 +457,7 @@ fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
     let tx = db.transaction().unwrap();
     tx.execute_batch(&format!(
         "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-         CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+         CREATE TABLE webhook_deliveries (seq INTEGER, id TEXT, webhook_id TEXT, status TEXT, due_at TEXT);
          INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', 'k1', NULL),
          ('d', NULL, 'g1');
          INSERT INTO webhook_deliveries VALUES {};",
@@ -470,13 +470,21 @@ fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
         ])
     ))
     .unwrap();
-    let seqs = |found: Vec<Due>| found.into_iter().map(|due| due.seq).collect::<Vec<_>>();
+    let seqs = |found: Vec<Due>| {
+        found
+            .into_iter()
+            .map(|due| seq_of(&due.id))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
         seqs(due(&tx, 1, &[], &[], 8, 10, 10).unwrap()),
         vec![1, 3, 5]
     );
     assert_eq!(seqs(due(&tx, 1, &[], &[], 8, 1, 10).unwrap()), vec![1]);
-    assert_eq!(seqs(due(&tx, 1, &[1], &[], 8, 10, 10).unwrap()), vec![3, 5]);
+    assert_eq!(
+        seqs(due(&tx, 1, &ids(&[1]), &[], 8, 10, 10).unwrap()),
+        vec![3, 5]
+    );
     assert_eq!(seqs(due(&tx, 1, &[], &[], 1, 10, 10).unwrap()), vec![1, 5]);
     let held = ["key:k1".to_string()];
     assert_eq!(seqs(due(&tx, 1, &[], &held, 1, 10, 10).unwrap()), vec![5]);
@@ -490,13 +498,13 @@ fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
         "a maker no other maker waits behind may pass its share"
     );
     assert_eq!(
-        seqs(due(&tx, 1, &[1, 3], &held, 1, 10, 10).unwrap()),
+        seqs(due(&tx, 1, &ids(&[1, 3]), &held, 1, 10, 10).unwrap()),
         vec![5],
         "the busy subscriptions of another maker keep the share"
     );
-    assert_eq!(next_due(&tx, 1, &[1, 3]).unwrap(), Some(5));
+    assert_eq!(next_due(&tx, 1, &ids(&[1, 3])).unwrap(), Some(5));
     assert_eq!(
-        next_due(&tx, 1, &[1, 3, 4]).unwrap(),
+        next_due(&tx, 1, &ids(&[1, 3, 4])).unwrap(),
         None,
         "a delivery already due waits for an attempt to end, and a busy subscription for its own"
     );
@@ -510,7 +518,7 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
         let tx = db.transaction().unwrap();
         tx.execute_batch(&format!(
             "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-             CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+             CREATE TABLE webhook_deliveries (seq INTEGER, id TEXT, webhook_id TEXT, status TEXT, due_at TEXT);
              INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', NULL, 'g1'),
              ('d', 'k2', NULL), ('e', 'k1', NULL);
              INSERT INTO webhook_deliveries VALUES {};",
@@ -520,9 +528,9 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
         let started: Vec<i64> = due(&tx, 10, &[], &held, 2, 10, beyond_share)
             .unwrap()
             .into_iter()
-            .map(|due| due.seq)
+            .map(|due| seq_of(&due.id))
             .collect();
-        let next = next_due(&tx, 10, &started).unwrap();
+        let next = next_due(&tx, 10, &ids(&started)).unwrap();
         (started, next)
     };
     let alone: &[(i64, &str, &str, i64)] = &[
@@ -593,32 +601,42 @@ fn a_due_time_that_does_not_read_is_refused() {
     let tx = db.transaction().unwrap();
     tx.execute_batch(
         "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-         CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+         CREATE TABLE webhook_deliveries (seq INTEGER, id TEXT, webhook_id TEXT, status TEXT, due_at TEXT);
          INSERT INTO webhooks VALUES ('a', 'k1', NULL);
-         INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 'soon');",
+         INSERT INTO webhook_deliveries VALUES (1, 'd1', 'a', 'pending', 'soon');",
     )
     .unwrap();
     assert!(next_due(&tx, 0, &[]).is_err());
 }
 
-/// Delivery rows `(seq, webhook_id, status, due_at in ms)` as SQL values, each time stamped.
+/// Delivery rows `(seq, webhook_id, status, due_at in ms)` as SQL values, each time stamped and given the id `d<seq>`.
 #[cfg(test)]
 fn deliveries(rows: &[(i64, &str, &str, i64)]) -> String {
     rows.iter()
-        .map(|(seq, id, status, ms)| {
+        .map(|(seq, webhook, status, ms)| {
             let due = Stamp::from_ms(*ms).unwrap().text();
-            format!("({seq}, '{id}', '{status}', '{due}')")
+            format!("({seq}, 'd{seq}', '{webhook}', '{status}', '{due}')")
         })
         .collect::<Vec<_>>()
         .join(", ")
 }
 
+#[cfg(test)]
+fn ids(seqs: &[i64]) -> Vec<String> {
+    seqs.iter().map(|seq| format!("d{seq}")).collect()
+}
+
+#[cfg(test)]
+fn seq_of(id: &str) -> i64 {
+    id.trim_start_matches('d').parse().unwrap()
+}
+
 /// Preserves earlier attempts and leaves settled deliveries unchanged.
-pub fn cancel(tx: &Transaction<'_>, seq: i64, error: &str, at: &str) -> Result<()> {
+pub fn cancel(tx: &Transaction<'_>, id: &str, error: &str, at: &str) -> Result<()> {
     tx.execute(
         "UPDATE webhook_deliveries SET status = 'canceled', error = ?2, updated_at = ?3, \
-         payload = NULL WHERE seq = ?1 AND status = 'pending'",
-        params![seq, error, at],
+         payload = NULL WHERE id = ?1 AND status = 'pending'",
+        params![id, error, at],
     )?;
     Ok(())
 }
@@ -641,14 +659,14 @@ pub struct Recorded<'a> {
 }
 
 /// Only a delivery still pending takes the outcome, so one settled while it was attempted stays settled.
-pub fn record(tx: &Transaction<'_>, seq: i64, recorded: &Recorded<'_>, at: &str) -> Result<()> {
+pub fn record(tx: &Transaction<'_>, id: &str, recorded: &Recorded<'_>, at: &str) -> Result<()> {
     tx.execute(
         "UPDATE webhook_deliveries SET status = ?2, status_code = ?3, error = ?4, due_at = ?5, \
          attempt = attempt + 1, cycle_attempt = cycle_attempt + 1, updated_at = ?6, \
          payload = CASE WHEN ?2 = 'succeeded' THEN NULL ELSE payload END \
-         WHERE seq = ?1 AND status = 'pending'",
+         WHERE id = ?1 AND status = 'pending'",
         params![
-            seq,
+            id,
             recorded.status.wire(),
             recorded.status_code,
             recorded.error,

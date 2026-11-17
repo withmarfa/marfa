@@ -17,13 +17,13 @@ struct Entry {
 
 #[derive(Default)]
 pub struct Deferred {
-    entries: HashMap<i64, Entry>,
+    entries: HashMap<String, Entry>,
 }
 
 impl Deferred {
     /// A delivery found its maker's share full. It waits unless the share has room again.
-    pub fn defer(&mut self, seq: i64, maker: &str, now: Instant, waiting: bool) {
-        let entry = self.entries.entry(seq).or_insert_with(|| Entry {
+    pub fn defer(&mut self, id: &str, maker: &str, now: Instant, waiting: bool) {
+        let entry = self.entries.entry(id.to_string()).or_insert_with(|| Entry {
             maker: maker.to_string(),
             since: now,
             waiting,
@@ -32,8 +32,8 @@ impl Deferred {
     }
 
     /// The delivery's attempt ended some other way.
-    pub fn settle(&mut self, seq: i64) {
-        self.entries.remove(&seq);
+    pub fn settle(&mut self, id: &str) {
+        self.entries.remove(id);
     }
 
     /// A slot was given back, so each waiting delivery whose maker has room is offered a lookup again.
@@ -56,17 +56,17 @@ impl Deferred {
     }
 
     /// Whether the delivery's next attempt counts without a slot.
-    pub fn spent(&self, seq: i64, now: Instant) -> bool {
+    pub fn spent(&self, id: &str, now: Instant) -> bool {
         self.entries
-            .get(&seq)
+            .get(id)
             .is_some_and(|entry| now >= entry.since + LIMIT)
     }
 
-    pub fn waiting(&self) -> impl Iterator<Item = i64> + '_ {
+    pub fn waiting(&self) -> impl Iterator<Item = &str> + '_ {
         self.entries
             .iter()
             .filter(|(_, entry)| entry.waiting)
-            .map(|(seq, _)| *seq)
+            .map(|(id, _)| id.as_str())
     }
 
     pub fn any_waiting(&self) -> bool {
@@ -91,19 +91,19 @@ mod tests {
     fn a_delivery_waits_until_a_slot_is_given_back() {
         let start = Instant::now();
         let mut deferred = Deferred::default();
-        deferred.defer(7, "a", start, true);
-        deferred.defer(8, "b", start, true);
+        deferred.defer("d7", "a", start, true);
+        deferred.defer("d8", "b", start, true);
         deferred.release(|maker| maker == "a");
-        assert_eq!(deferred.waiting().collect::<Vec<_>>(), vec![8]);
+        assert_eq!(deferred.waiting().collect::<Vec<_>>(), vec!["d8"]);
         deferred.release(|_| true);
         assert!(!deferred.any_waiting());
-        assert!(!deferred.spent(7, start + Duration::from_secs(1)));
+        assert!(!deferred.spent("d7", start + Duration::from_secs(1)));
     }
 
     #[test]
     fn a_slot_given_back_during_the_attempt_means_no_wait() {
         let mut deferred = Deferred::default();
-        deferred.defer(7, "a", Instant::now(), false);
+        deferred.defer("d7", "a", Instant::now(), false);
         assert!(!deferred.any_waiting());
     }
 
@@ -111,25 +111,25 @@ mod tests {
     fn the_limit_counts_from_the_first_deferral_however_often_it_is_offered_again() {
         let start = Instant::now();
         let mut deferred = Deferred::default();
-        deferred.defer(7, "a", start, true);
+        deferred.defer("d7", "a", start, true);
         deferred.release(|_| true);
-        deferred.defer(7, "a", start + Duration::from_secs(6), true);
+        deferred.defer("d7", "a", start + Duration::from_secs(6), true);
         assert_eq!(deferred.next_limit(), Some(start + LIMIT));
         deferred.expire(start + LIMIT);
         assert!(!deferred.any_waiting());
-        assert!(deferred.spent(7, start + LIMIT));
+        assert!(deferred.spent("d7", start + LIMIT));
     }
 
     #[test]
     fn a_settled_delivery_starts_again_and_a_gone_one_is_forgotten() {
         let start = Instant::now();
         let mut deferred = Deferred::default();
-        deferred.defer(7, "a", start, true);
-        deferred.defer(8, "a", start, false);
-        deferred.settle(7);
+        deferred.defer("d7", "a", start, true);
+        deferred.defer("d8", "a", start, false);
+        deferred.settle("d7");
         assert!(!deferred.any_waiting());
         deferred.expire(start + FORGOTTEN);
-        assert!(!deferred.spent(8, start + FORGOTTEN));
+        assert!(!deferred.spent("d8", start + FORGOTTEN));
         assert_eq!(deferred.next_limit(), None);
     }
 }

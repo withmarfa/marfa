@@ -88,7 +88,7 @@ pub fn retarget(unit: &Unit<'_, '_>, rules: &Rules, id: &str, to: &str) -> Resul
     store::update(tx, &next)?;
     for delivery in store::pending_of(tx, id)? {
         if !selects(&next, rules, &delivery.event_type, &delivery.type_id) {
-            store::cancel(tx, delivery.seq, CANCEL_UNSELECTED, &unit.at)?;
+            store::cancel(tx, &delivery.id, CANCEL_UNSELECTED, &unit.at)?;
         }
     }
     unit.audit_also(
@@ -355,7 +355,7 @@ pub fn apply_update(
                 &delivery.event_type,
                 &delivery.type_id,
             ) {
-                store::cancel(tx, delivery.seq, CANCEL_UNSELECTED, &unit.at)?;
+                store::cancel(tx, &delivery.id, CANCEL_UNSELECTED, &unit.at)?;
             }
         }
     }
