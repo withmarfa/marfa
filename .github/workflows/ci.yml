@@ -330,9 +330,11 @@ jobs:
           cargo nextest run --locked -p marfa-core
           # Fault injection compiles only with debug assertions, so a test or
           # benchmark that names it must be gated the same way. A release
-          # build of every target is the cheapest proof that it is.
+          # build of every target is the cheapest proof that it is. Clippy
+          # runs on the core in release too: some lints fire only without
+          # debug assertions.
           cargo check --locked --release --workspace --all-targets
-          cargo check --locked --release -p marfa-core --all-targets
+          cargo clippy --locked --release -p marfa-core --all-targets --no-deps -- -D warnings
       # A pull request that leaves the bindings, keychain and file watching
       # alone skips the macOS job, so the Swift FFI crate's format, lints and
       # compile are checked here too. Its tests and the Apple builds stay on
