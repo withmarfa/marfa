@@ -608,25 +608,50 @@ export class BindingDevice {
   }
 
   /**
-   * The writes the store holds that the server has not taken. Call `forget`
+   * The writes the store at `path` holds that the server has not taken, with
+   * the confirmation `removeStore` takes to lose exactly these. Call `forget`
    * first, or the binding's own core holds the store.
    */
-  async readUnsent(): Promise<Outcome<{ id: string; kind: string }[]>> {
-    const reply = await this.request({ op: "read-unsent", path: this.store });
+  async readUnsent(path: string = this.store): Promise<
+    Outcome<{
+      writes: {
+        id: string;
+        kind: string;
+        itemId?: string;
+        body: string;
+        verdict?: string;
+      }[];
+      confirmation: string;
+    }>
+  > {
+    const reply = await this.request({ op: "read-unsent", path });
     return reply.ok
-      ? { ok: true, value: reply.value as { id: string; kind: string }[] }
+      ? {
+          ok: true,
+          value: reply.value as {
+            writes: {
+              id: string;
+              kind: string;
+              itemId?: string;
+              body: string;
+              verdict?: string;
+            }[];
+            confirmation: string;
+          },
+        }
       : { ok: false, refusal: refusalOf(reply.error) };
   }
 
   /**
-   * Removes the store, agreeing to lose the writes `unsent` names by id.
-   * Call `forget` first, or the binding's own core holds the store.
+   * Removes the store, agreeing to lose the writes `readUnsent` gave
+   * `confirmation` with. Call `forget` first, or the binding's own core
+   * holds the store.
    */
-  async removeStore(unsent: string[]): Promise<Outcome<null>> {
+  async removeStore(confirmation: string): Promise<Outcome<null>> {
     const reply = await this.request({
       op: "remove-store",
       path: this.store,
-      unsent,
+      confirmation,
     });
     return reply.ok
       ? { ok: true, value: null }
@@ -634,8 +659,8 @@ export class BindingDevice {
   }
 
   /**
-   * Removes the store, agreeing to lose every write it holds, however many
-   * and whether or not they can be counted. Call `forget` first.
+   * Removes the store, agreeing to lose every write it holds, whatever they
+   * are and whether or not they can be read. Call `forget` first.
    */
   async removeStoreLosingAll(): Promise<Outcome<null>> {
     const reply = await this.request({

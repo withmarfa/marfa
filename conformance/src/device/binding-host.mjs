@@ -33,9 +33,12 @@
 //                                         the writer refuses with an empty one
 //                                         and holds it as `handle`
 //   { op: "read-unsent", path }           lists the writes the store holds
-//                                         that the server has not taken
-//   { op: "remove-store", path, unsent }  removes the store, agreeing to lose
-//                                         the writes `unsent` names by id
+//                                         that the server has not taken, with
+//                                         their confirmation
+//   { op: "remove-store", path, confirmation }
+//                                         removes the store, agreeing to lose
+//                                         the writes `confirmation` was given
+//                                         with
 //   { op: "remove-store-all", path }      removes the store, agreeing to lose
 //                                         every write it holds
 //   { op: "hook", name, point, arg? }      the debug build's testHooks
@@ -221,7 +224,7 @@ async function handle(message) {
     case "read-unsent":
       return binding.MarfaCore.readUnsent(message.path);
     case "remove-store":
-      binding.MarfaCore.removeStore(message.path, message.unsent);
+      binding.MarfaCore.removeStore(message.path, message.confirmation);
       return null;
     case "remove-store-all":
       binding.MarfaCore.removeStoreLosingAll(message.path);

@@ -187,7 +187,10 @@ stays because that thing is what it checks.
   a write dead or refused without a run of drains.
   `device/classification.test.ts` damages a store the same way to reach the
   blocked reason a set-aside gives, and `device/binding-remove-store.test.ts`
-  damages a store's first page or its rows, for the same reason.
+  damages a store's first page or its rows, for the same reason. It also
+  changes the body or the verdict of a queued write under the same id: no
+  door changes one write's stored content and leaves the rest of the queue as
+  it was.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 
