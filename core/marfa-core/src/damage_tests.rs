@@ -1,8 +1,11 @@
 //! A store SQLite cannot read: refused by name with what its queue holds,
 //! and set aside for a new store that carries every write it can read.
 //!
-//! The interrupted set-aside flips a fault for its own thread, so these run
-//! with `cargo nextest` like the rest (`core/AGENTS.md`).
+//! A store that meets damage makes every core in its process keep its log
+//! when it closes (`damage::note_met`), so these run with `cargo nextest`,
+//! one process per test (`core/AGENTS.md`). Beside another test in one
+//! process, a healthy store here keeps its log and a damaged header is read
+//! from the log, which fails a different test each run.
 
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +15,25 @@ use rusqlite::Connection;
 use crate::stop_tests::note;
 use crate::{Core, CoreError, QueuedWrite, SetAside, blob, store};
 
+/// Every test here makes its folder through `folder` or `folder_in_temp`,
+/// which refuse to run outside nextest instead of failing by chance.
+fn own_process() {
+    assert!(
+        std::env::var_os("NEXTEST").is_some(),
+        "run these tests with `cargo nextest`: tests that share a process disturb each other"
+    );
+}
+
+fn folder() -> tempfile::TempDir {
+    own_process();
+    tempfile::tempdir().unwrap()
+}
+
+fn folder_in_temp() -> tempfile::TempDir {
+    own_process();
+    tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+}
+
 fn beside(path: &Path, suffix: &str) -> PathBuf {
     store::suffixed(path, suffix)
 }
@@ -19,7 +41,7 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
 /// A store holding `count` creates the server has not taken, closed so its
 /// log is emptied into the file.
 fn store_with(count: usize) -> (tempfile::TempDir, PathBuf, Vec<QueuedWrite>) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = folder();
     let path = dir.path().join("core.sqlite");
     let core = Core::open(&path, None).unwrap();
     for _ in 0..count {
@@ -448,7 +470,7 @@ fn a_writer_that_meets_damage_leaves_the_log_and_the_file_as_they_were() {
 
 #[test]
 fn a_folders_store_whose_header_is_damaged_is_not_removed_or_replaced() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = folder();
     let state = dir.path().join(crate::folder::STATE_DIR);
     std::fs::create_dir(&state).unwrap();
     let path = state.join(store::FOLDER_STORE);
@@ -485,7 +507,7 @@ fn a_folders_store_whose_header_is_damaged_is_not_removed_or_replaced() {
 #[test]
 fn a_listed_folders_store_reached_by_another_name_is_not_removed() {
     let (registry, _own) = crate::folder::registry::tests::own_registry();
-    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let dir = folder_in_temp();
     let root = dir.path().join("folder");
     let state = root.join(crate::folder::STATE_DIR);
     std::fs::create_dir_all(&state).unwrap();
@@ -957,7 +979,7 @@ fn a_write_held_record_unread_keeps_its_reason_when_the_copy_moves_to_another_in
 #[cfg(unix)]
 #[test]
 fn a_folders_store_that_fails_to_open_on_damage_keeps_its_log() {
-    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let dir = folder_in_temp();
     let state = dir.path().join(crate::folder::STATE_DIR);
     std::fs::create_dir(&state).unwrap();
     let path = state.join(store::FOLDER_STORE);
@@ -1224,7 +1246,7 @@ fn every_open_refuses_an_empty_file_whose_log_holds_writes_and_a_set_aside_carri
 #[cfg(unix)]
 #[test]
 fn a_folders_store_whose_file_is_empty_and_whose_log_holds_writes_is_refused_and_kept() {
-    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let dir = folder_in_temp();
     let state = dir.path().join(crate::folder::STATE_DIR);
     std::fs::create_dir(&state).unwrap();
     let path = state.join(store::FOLDER_STORE);
@@ -1461,7 +1483,7 @@ fn a_store_whose_index_is_out_of_step_with_its_rows_is_refused_by_name_and_set_a
 
 #[test]
 fn a_device_store_in_a_folder_named_like_a_folders_state_is_set_aside() {
-    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let dir = folder_in_temp();
     let state = dir.path().join(crate::folder::STATE_DIR);
     std::fs::create_dir(&state).unwrap();
     // The witness: the folder's store's name, in any case, is refused.
@@ -1493,7 +1515,7 @@ fn a_device_store_in_a_folder_named_like_a_folders_state_is_set_aside() {
 #[test]
 fn a_device_store_in_a_listed_folders_state_by_another_name_is_set_aside() {
     let (registry, _own) = crate::folder::registry::tests::own_registry();
-    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let dir = folder_in_temp();
     let root = dir.path().join("folder");
     let state = root.join(crate::folder::STATE_DIR);
     std::fs::create_dir_all(&state).unwrap();

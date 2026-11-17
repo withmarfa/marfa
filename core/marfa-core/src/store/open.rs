@@ -679,6 +679,10 @@ pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError>
 /// a failure there is a warning and never the caller's.
 pub(crate) fn restore_log_interval(conn: &Connection, kept: i64) -> Result<(), CoreError> {
     conn.execute_batch(&format!("PRAGMA wal_autocheckpoint = {kept}"))?;
+    #[allow(
+        clippy::redundant_closure_call,
+        reason = "the early return exists only with debug assertions"
+    )]
     let emptied = (|| {
         #[cfg(debug_assertions)]
         if crate::fault::fails(|| "hydration-checkpoint") {

@@ -362,108 +362,80 @@ fn a_reading_handle_is_refused_at_every_write_door() {
          it is a door nothing here covers"
     );
 
+    // Functions that call `refuse_unless_writer` and are not doors a test can
+    // hand a reading handle to.
+    let helpers: &[&str] = &[
+        "send_to_view_door",
+        "send_to_folder_door",
+        "working",
+        "keep_relocated_origin",
+        "with_upload",
+        "with_upload_reader",
+        // Makes a core rather than taking one, so no reading handle can
+        // reach it; `replace_tests` claims the role first and is refused.
+        "replace_refused",
+        // Take no core either; `remove_tests` and `damage_tests` hold the
+        // role from another core and are refused.
+        "remove_agreed",
+        "check_store",
+        "read_unsent",
+        "set_aside_damaged",
+        "catch_up_pass",
+        "follow_from",
+        "hydrate_filling",
+        "transition_locally",
+        "tag_write",
+        "extension_write",
+        "write_create",
+        "write_update",
+        "drain_checked",
+        // A folder's core is made only by `opened`, which refuses a
+        // reading lock, so no reading handle reaches a core that calls this.
+        "clear_answered",
+        // Makes a folder's core from a lock rather than taking one.
+        "opened",
+    ];
+
+    // Every file of the crate, so a door in any folder is read, except the
+    // files that hold only tests.
+    fn sources(folder: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != "tests") {
+                    sources(&path, found);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with("_tests.rs"))
+            {
+                found.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+
     let listed: Vec<&str> = refusals.iter().map(|(door, _)| *door).collect();
     let mut guarded = Vec::new();
-    let others: &[&str] = &[];
-    for (source, helpers) in [
-        (include_str!("../blob.rs"), others),
-        (include_str!("../catalog.rs"), others),
-        (include_str!("../catch_up.rs"), others),
-        (include_str!("../error.rs"), others),
-        (include_str!("../lock.rs"), others),
-        (include_str!("../http.rs"), others),
-        (include_str!("../hydrate.rs"), others),
-        (include_str!("../model.rs"), others),
-        (include_str!("../query.rs"), others),
-        (include_str!("../search.rs"), others),
-        (include_str!("../sse.rs"), others),
-        (include_str!("../store/mod.rs"), others),
-        (include_str!("../store/attachments.rs"), others),
-        (include_str!("../store/catalog.rs"), others),
-        (include_str!("../store/completeness.rs"), others),
-        (include_str!("../store/dead.rs"), others),
-        (include_str!("../store/forget.rs"), others),
-        (include_str!("../store/index.rs"), others),
-        (include_str!("../store/laying.rs"), others),
-        (include_str!("../store/marks.rs"), others),
-        (include_str!("../store/meta.rs"), others),
-        (include_str!("../store/open.rs"), others),
-        (include_str!("../store/queue.rs"), others),
-        (include_str!("../store/reach.rs"), others),
-        (include_str!("../store/read_only.rs"), others),
-        (include_str!("../store/reads.rs"), others),
-        (include_str!("../store/rows.rs"), others),
-        (include_str!("../store/stamps.rs"), others),
-        (include_str!("../store/time.rs"), others),
-        (include_str!("../store/unsent.rs"), others),
-        (include_str!("../store/verdicts.rs"), others),
-        (include_str!("../store/write_state.rs"), others),
-        (include_str!("../wire.rs"), others),
-        (
-            include_str!("../view_writes.rs"),
-            &["send_to_view_door"][..],
-        ),
-        (
-            include_str!("../folder_settings.rs"),
-            &["send_to_folder_door"][..],
-        ),
-        (include_str!("../folder/mod.rs"), &["working"][..]),
-        (include_str!("../folder/document.rs"), others),
-        (include_str!("../folder/identity.rs"), others),
-        (include_str!("../folder/pull.rs"), others),
-        (include_str!("../folder/push.rs"), others),
-        (include_str!("../folder/scan.rs"), others),
-        (include_str!("../folder/settings.rs"), others),
-        (include_str!("../folder/state.rs"), others),
-        (include_str!("../lib.rs"), others),
-        (include_str!("../edge_writes.rs"), others),
-        (include_str!("../item_reads.rs"), others),
-        (include_str!("../holds.rs"), others),
-        (include_str!("../sending.rs"), others),
-        (include_str!("../types.rs"), others),
-        (
-            include_str!("../files.rs"),
-            &["keep_relocated_origin", "with_upload", "with_upload_reader"][..],
-        ),
-        (
-            include_str!("../open.rs"),
-            &[
-                // Makes a core rather than taking one, so no reading
-                // handle can reach it; `replace_tests` claims the role
-                // first and is refused.
-                "replace_refused",
-                // Take no core either; `remove_tests` and `damage_tests`
-                // hold the role from another core and are refused.
-                "remove_agreed",
-                "check_store",
-                "read_unsent",
-                "set_aside_damaged",
-            ][..],
-        ),
-        (
-            include_str!("../streams.rs"),
-            &["catch_up_pass", "follow_from", "hydrate_filling"][..],
-        ),
-        (
-            include_str!("../write.rs"),
-            &[
-                "transition_locally",
-                "tag_write",
-                "extension_write",
-                "write_create",
-                "write_update",
-            ][..],
-        ),
-        (include_str!("../drain.rs"), &["drain_checked"][..]),
-    ] {
+    for file in &files {
+        let source = std::fs::read_to_string(file).unwrap();
         let mut current: Option<&str> = None;
         let mut in_tests = false;
+        let mut after_cfg_test = false;
         for line in source.lines() {
             // A test module, top level and closed at column 0, is
             // passed over; anything after it is read again.
-            if line.starts_with("mod tests {") {
+            if line.starts_with("mod tests {")
+                || (after_cfg_test && line.starts_with("mod ") && line.ends_with(" {"))
+            {
                 in_tests = true;
             }
+            after_cfg_test = line == "#[cfg(test)]";
             if in_tests {
                 in_tests = line != "}";
                 continue;
@@ -483,20 +455,23 @@ fn a_reading_handle_is_refused_at_every_write_door() {
             if line.contains("refuse_unless_writer()")
                 && let Some(name) = current
             {
-                guarded.push((name, helpers));
+                guarded.push((name.to_owned(), file.clone()));
             }
         }
     }
-    assert!(
-        guarded.iter().any(|(name, _)| *name == "create_item"),
-        "the scan did not find `create_item`, so it is reading the wrong \
-         source and the check below passes on nothing"
-    );
-    for (name, helpers) in guarded {
+    for witness in ["create_item", "clear_answered"] {
         assert!(
-            listed.contains(&name) || helpers.contains(&name),
-            "{name} calls `refuse_unless_writer` and is not in the list \
-             above, so a reading handle reaching it is never tried"
+            guarded.iter().any(|(name, _)| name == witness),
+            "the scan did not find `{witness}`, so it is not reading the \
+             whole crate and the check below passes on too little"
+        );
+    }
+    for (name, file) in guarded {
+        assert!(
+            listed.contains(&name.as_str()) || helpers.contains(&name.as_str()),
+            "{name} in {} calls `refuse_unless_writer` and is not in the \
+             list above, so a reading handle reaching it is never tried",
+            file.display()
         );
     }
 
