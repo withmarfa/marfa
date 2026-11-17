@@ -607,14 +607,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The parts of the device with a macOS-only side, which only a Mac runs: the
   // command line, with its login keychain, key files by path and launchd
   // autostart, and the core's folder watching and what it reads and writes,
-  // which FSEvents, name case and Finder packages change, and the files with
-  // an Apple-only `cfg` block. `ci/ci-required.test.ts` searches `core/` for
+  // which FSEvents, name case and Finder packages change, the crate root and
+  // the `impl Core` files and tests split out of it, and the files with an
+  // Apple-only `cfg` block. `ci/ci-required.test.ts` searches `core/` for
   // `target_os = "macos"`, `"ios"` and `target_vendor = "apple"` and requires
   // every file it finds here. `marfa-server` depends on neither crate, so the
   // server's shards, MCP conformance and the restore drill have nothing to
   // judge in them.
   [
-    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|stop_tests\.rs$|damage_tests\.rs$|directory[^/]*$))/,
+    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|tests\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|(open|types|streams|holds|item_reads|sending|write|edge_writes|files|forgetting_named_tests)\.rs$|stop_tests\.rs$|damage_tests\.rs$|directory[^/]*$))/,
     DEVICE,
   ],
   // The core's other source is what the live tests (`tests/live*.rs`) run
