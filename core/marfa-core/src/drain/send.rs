@@ -901,7 +901,7 @@ pub(super) fn send_queue(
 
 /// Refuses `row` with the device's own `reason`, nothing sent. Told before
 /// the read it owes, which can end the pass.
-pub(super) fn refuse_unsent(
+fn refuse_unsent(
     core: &Core,
     row: &QueuedWrite,
     reason: String,
@@ -964,7 +964,7 @@ pub(super) fn park_for_credential(
 
 /// What a lookup this pass said of a natural key.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum Known {
+enum Known {
     Held,
     Unheld,
     /// The lookup was refused for good, or the key is one no lookup takes.
@@ -973,7 +973,7 @@ pub(super) enum Known {
 
 /// What lookups this pass answered, by type, source and `source_id`, and the
 /// source a create naming none falls under, once learned.
-pub(super) struct Lookups {
+struct Lookups {
     keys: HashMap<(String, String, String), Known>,
     own: Option<Option<String>>,
 }
@@ -1005,7 +1005,7 @@ impl Lookups {
 }
 
 /// How a request the drain makes on a write's behalf failed.
-pub(super) enum Failed {
+enum Failed {
     /// Ends the drain, as it would on the write itself.
     Fatal(CoreError),
     /// Says nothing yet: the write waits, or the queue parks on a `401`.
@@ -1014,7 +1014,7 @@ pub(super) enum Failed {
     Refused(bool),
 }
 
-pub(super) fn failed(error: CoreError) -> Failed {
+fn failed(error: CoreError) -> Failed {
     match error {
         CoreError::Redirected { .. }
         | CoreError::ContractMismatch { .. }
@@ -1048,7 +1048,7 @@ pub(super) fn failed(error: CoreError) -> Failed {
 /// body decided is saved before the send, so every retry under the write's
 /// key sends it again. The inner error is a lookup that has not answered
 /// yet, which holds the write.
-pub(super) fn payload_to_send(
+fn payload_to_send(
     core: &Core,
     http: &Http,
     row: &QueuedWrite,
@@ -1112,7 +1112,7 @@ pub(super) fn payload_to_send(
 /// The credential's own source, which the server stamps a write naming none
 /// with (`items/source-own`), as `GET /keys/current` answers it, kept for the
 /// credential it was learned for. `None` where that door will not say.
-pub(super) fn own_source(
+fn own_source(
     core: &Core,
     http: &Http,
     lookups: &mut Lookups,
@@ -1147,7 +1147,7 @@ pub(super) fn own_source(
 
 /// Asks in requests no larger than one lookup takes, by its keys and by its
 /// bytes.
-pub(super) fn ask(
+fn ask(
     http: &Http,
     r#type: &str,
     source: &str,
@@ -1181,7 +1181,7 @@ pub(super) fn ask(
 
 /// A batch refused for one key in it, or for its size, is asked again in
 /// halves, so a key refused for good is told apart from the keys beside it.
-pub(super) fn ask_batch(
+fn ask_batch(
     http: &Http,
     r#type: &str,
     source: &str,
@@ -1216,7 +1216,7 @@ pub(super) fn ask_batch(
 
 /// `key`'s `source_id`, and those of the other unsent creates of its type
 /// and source whose tier the slice chose.
-pub(super) fn keys_to_ask(
+fn keys_to_ask(
     core: &Core,
     all: &[QueuedWrite],
     key: &(String, String, String),

@@ -333,7 +333,7 @@ pub(super) fn read_owed(
     }
 }
 
-pub(super) fn read_held(
+fn read_held(
     core: &Core,
     owed: &store::Owed,
     bin: Bin,

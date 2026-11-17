@@ -108,7 +108,7 @@ pub(super) fn move_edits_behind(
     Ok(())
 }
 
-pub(super) fn move_deletes_behind(
+fn move_deletes_behind(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
     answered: &WireItem,
@@ -171,7 +171,7 @@ pub(super) fn move_edits_back(conn: &rusqlite::Connection, row: &QueuedWrite) ->
 /// the server, so on its own base the server would take it as newer than a
 /// value this device never read. On `row`'s base the server merges or
 /// conflicts instead.
-pub(super) fn back_to(
+fn back_to(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
     id: &str,
@@ -202,10 +202,7 @@ pub(super) fn back_to(
 
 /// What an item edit's body sends for `key`: its value, null where it clears
 /// the property, and nothing where it leaves the property alone.
-pub(super) fn sent_value<'a>(
-    body: &'a serde_json::Value,
-    key: &str,
-) -> Option<&'a serde_json::Value> {
+fn sent_value<'a>(body: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
     const CLEARED: serde_json::Value = serde_json::Value::Null;
     body.pointer(&format!("/properties/{}", pointer_token(key)))
         .or_else(|| {
@@ -244,7 +241,7 @@ pub(super) fn holds(conn: &rusqlite::Connection, id: &str, at: &AnsweredAt<'_>) 
 
 /// Whether a conflicted edit collided only with this device's own earlier
 /// write, so the copy set aside holds the newest and the row an older one.
-pub(super) fn against_its_own(
+fn against_its_own(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
     answer: &WireWriteAnswer,
@@ -276,7 +273,7 @@ pub(super) fn against_its_own(
     Ok(kept > 0)
 }
 
-pub(super) fn pointer_token(key: &str) -> String {
+fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
@@ -657,7 +654,7 @@ pub(super) fn settle_success(
 /// An edit of this row the copy refuses is dropped with the clear, since the
 /// same edit would be refused at every later pass. Any other error fails the
 /// settle, which keeps the receipt and the clear for the next drain.
-pub(super) fn queue_owed_time_clear(
+fn queue_owed_time_clear(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
     answered: &WireItem,
@@ -715,7 +712,7 @@ pub(super) fn queue_owed_time_clear(
 
 /// Given to an edit or delete of an edge a create was shown with that the
 /// server did not make.
-pub(super) const UNMADE: &str =
+const UNMADE: &str =
     "the server made no edge to this item when it answered the create the edge was drawn with";
 
 /// The edges a created item was drawn with while its write waited carry
@@ -756,7 +753,7 @@ pub(super) fn drop_projected_edges(
 
 /// The edges the server answered a create with, first page of each type. The
 /// rest are read by [`create_edges::read`].
-pub(super) fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<()> {
+fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<()> {
     for block in item.edges.iter().flat_map(|edges| edges.values()) {
         for edge in &block.data {
             store::take_server_edge(conn, edge)?;
@@ -766,7 +763,7 @@ pub(super) fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) 
 }
 
 /// `queue-and-verdicts/upload-again-bytes-absent`.
-pub(super) fn waits_for_bytes_again(
+fn waits_for_bytes_again(
     core: &Core,
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
@@ -958,7 +955,7 @@ pub(super) fn settle(
 /// of that answer. Like any repeat, it answers the subject as it stands
 /// (`queue-and-verdicts/not-retained-accepted`). Where the read finds
 /// nothing, the write settles with no answer to take a version from.
-pub(super) fn settle_delivered(
+fn settle_delivered(
     core: &Core,
     row: &QueuedWrite,
     shape: Shape,

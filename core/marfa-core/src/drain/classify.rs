@@ -461,15 +461,15 @@ pub(super) fn classify(answer: &std::result::Result<Answer, CoreError>) -> Class
 
 /// The server keeps the status of a first answer it could not keep whole
 /// (`errors/idem-not-retained-status`).
-pub(super) fn first_succeeded(answer: &Answer) -> bool {
+fn first_succeeded(answer: &Answer) -> bool {
     original_status(answer).is_some_and(|status| (200..300).contains(&status))
 }
 
-pub(super) fn first_refused(answer: &Answer) -> bool {
+fn first_refused(answer: &Answer) -> bool {
     original_status(answer).is_some_and(|status| (400..600).contains(&status))
 }
 
-pub(super) fn original_status(answer: &Answer) -> Option<u64> {
+fn original_status(answer: &Answer) -> Option<u64> {
     serde_json::from_str::<serde_json::Value>(&answer.body)
         .ok()
         .and_then(|body| body.pointer("/error/details/original_status")?.as_u64())
