@@ -43,7 +43,11 @@ impl WriterLock {
         };
         let path = lock_path(store);
         crate::owner_only(&path)?;
-        Self::claim_opened(&path.display().to_string(), || Ok(Connection::open(&path)?))
+        Self::claim_opened(
+            &path.display().to_string(),
+            || Ok(Connection::open(&path)?),
+            || std::fs::symlink_metadata(&path).map(drop),
+        )
     }
 
     #[cfg(unix)]
@@ -66,10 +70,11 @@ impl WriterLock {
         if create {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
         }
-        Self::claim_opened(name, || vfs.open(name, flags))
+        Self::claim_opened(name, || vfs.open(name, flags), || vfs.stat(name))
     }
 
-    /// The lock on the file `open` opens, named `file` in an error. Every lock
+    /// The lock on the file `open` opens, named `file` in an error, with
+    /// `stat` looking the name up without opening it. Every lock
     /// is claimed here, so none can be the writer on a connection that cannot
     /// write, or on a file its name no longer reaches.
     ///
@@ -86,6 +91,7 @@ impl WriterLock {
     fn claim_opened(
         file: &str,
         mut open: impl FnMut() -> Result<Connection, CoreError>,
+        stat: impl Fn() -> std::io::Result<()>,
     ) -> Result<Self, CoreError> {
         let mut replaced = false;
         for _ in 0..OPENS {
@@ -93,7 +99,7 @@ impl WriterLock {
             if claim.is_readonly("main")? {
                 continue;
             }
-            match Self::claim_connection(claim)? {
+            match Self::claim_connection(claim, &stat)? {
                 Some(lock) => return Ok(lock),
                 None => replaced = true,
             }
@@ -132,12 +138,15 @@ impl WriterLock {
     }
 
     /// `None` where the name the claim opened no longer reaches its file.
-    fn claim_connection(claim: Connection) -> Result<Option<Self>, CoreError> {
+    fn claim_connection(
+        claim: Connection,
+        stat: &dyn Fn() -> std::io::Result<()>,
+    ) -> Result<Option<Self>, CoreError> {
         // Zero: waiting would make a second opener hang instead of being told
         // it may only read.
         claim.busy_timeout(std::time::Duration::from_millis(0))?;
         match claim.execute_batch("BEGIN EXCLUSIVE") {
-            Ok(()) if moved(&claim)? => Ok(None),
+            Ok(()) if name_moved(&claim, stat)? => Ok(None),
             Ok(()) => Ok(Some(WriterLock {
                 _claim: Mutex::new(Some(claim)),
                 handle: Handle::Writer,
@@ -145,9 +154,12 @@ impl WriterLock {
             })),
             Err(error) if is_busy(&error) => Ok(Some(WriterLock::reader())),
             // SQLite reads the name's mode to make the journal, so a name
-            // that is gone fails the claim instead.
-            Err(_) if moved(&claim)? => Ok(None),
-            Err(error) => Err(error.into()),
+            // that is gone fails the claim instead. A failure the name's
+            // absence does not explain is the claim's own.
+            Err(error) => match name_moved(&claim, stat) {
+                Ok(true) => Ok(None),
+                Ok(false) | Err(_) => Err(error.into()),
+            },
         }
     }
 
@@ -185,6 +197,23 @@ pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
     let mut name = store.as_os_str().to_owned();
     name.push(".writer-lock");
     std::path::PathBuf::from(name)
+}
+
+/// Whether the name `claim` opened is established as gone or as reaching
+/// another file. SQLite reports a name as moved when its own `stat` fails for
+/// any reason, so a report counts only once `stat` finds the name missing, or
+/// finds it and the report still stands. Any other `stat` failure is returned.
+fn name_moved(
+    claim: &Connection,
+    stat: &dyn Fn() -> std::io::Result<()>,
+) -> Result<bool, CoreError> {
+    match stat() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(CoreError::Store(format!(
+            "the writer lock's file could not be checked against its name: {error}"
+        ))),
+        Ok(()) => moved(claim),
+    }
 }
 
 /// Whether the name `claim` opened is gone or reaches another file, by its
@@ -355,14 +384,18 @@ mod tests {
     fn claim_after(store: &Path, mut between: impl FnMut(&Path)) -> Result<WriterLock, CoreError> {
         let path = lock_path(store);
         let mut opens = 0;
-        WriterLock::claim_opened("lock", || {
-            opens += 1;
-            let opened = Connection::open(&path)?;
-            if opens == 1 {
-                between(&path);
-            }
-            Ok(opened)
-        })
+        WriterLock::claim_opened(
+            "lock",
+            || {
+                opens += 1;
+                let opened = Connection::open(&path)?;
+                if opens == 1 {
+                    between(&path);
+                }
+                Ok(opened)
+            },
+            || std::fs::symlink_metadata(&path).map(drop),
+        )
     }
 
     #[cfg(unix)]
@@ -408,11 +441,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("core.sqlite");
         let path = lock_path(&store);
-        let claim = WriterLock::claim_opened("lock", || {
-            let opened = Connection::open(&path)?;
-            std::fs::remove_file(&path).unwrap();
-            Ok(opened)
-        });
+        let claim = WriterLock::claim_opened(
+            "lock",
+            || {
+                let opened = Connection::open(&path)?;
+                std::fs::remove_file(&path).unwrap();
+                Ok(opened)
+            },
+            || std::fs::symlink_metadata(&path).map(drop),
+        );
         assert!(
             matches!(&claim, Err(CoreError::Store(message)) if message.contains("removed or replaced")),
             "{:?}",
@@ -430,20 +467,128 @@ mod tests {
         let flags =
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let mut opens = 0;
-        let claim = WriterLock::claim_opened(name, || {
-            opens += 1;
-            let opened = vfs.open(name, flags)?;
-            if opens == 1 {
-                std::fs::remove_file(temp.path().join(name)).unwrap();
-            }
-            Ok(opened)
-        });
+        let claim = WriterLock::claim_opened(
+            name,
+            || {
+                opens += 1;
+                let opened = vfs.open(name, flags)?;
+                if opens == 1 {
+                    std::fs::remove_file(temp.path().join(name)).unwrap();
+                }
+                Ok(opened)
+            },
+            || vfs.stat(name),
+        );
         assert!(
             claim.is_err(),
             "a claim on a removed lock file was the {:?}",
             claim.map(|lock| lock.handle())
         );
         assert!(!temp.path().join(name).exists());
+    }
+
+    /// A connection whose every statement SQLite refuses with a code that is
+    /// not a busy one.
+    #[cfg(unix)]
+    fn refusing(path: &Path) -> Result<Connection, CoreError> {
+        unsafe extern "C" fn deny(
+            _: *mut std::ffi::c_void,
+            _: std::ffi::c_int,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+            _: *const std::ffi::c_char,
+        ) -> std::ffi::c_int {
+            rusqlite::ffi::SQLITE_DENY
+        }
+        let connection = Connection::open(path)?;
+        // SAFETY: the handle is live, and `deny` matches the authorizer callback.
+        unsafe {
+            rusqlite::ffi::sqlite3_set_authorizer(
+                connection.handle(),
+                Some(deny),
+                std::ptr::null_mut(),
+            );
+        }
+        Ok(connection)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_claim_on_a_name_that_is_still_there_is_returned_not_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = lock_path(&dir.path().join("core.sqlite"));
+        let mut opens = 0;
+        let claim = WriterLock::claim_opened(
+            "lock",
+            || {
+                opens += 1;
+                refusing(&path)
+            },
+            || std::fs::symlink_metadata(&path).map(drop),
+        );
+        assert!(
+            matches!(&claim, Err(CoreError::Store(message)) if message.contains("not authorized")),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
+        assert_eq!(opens, 1, "the failure was retried");
+        // The witness: the name goes, and the same failure is then retried.
+        std::fs::remove_file(&path).unwrap();
+        let mut opens = 0;
+        let claim = WriterLock::claim_opened(
+            "lock",
+            || {
+                opens += 1;
+                let connection = refusing(&path)?;
+                std::fs::remove_file(&path).unwrap();
+                Ok(connection)
+            },
+            || std::fs::symlink_metadata(&path).map(drop),
+        );
+        assert!(claim.is_err());
+        assert_eq!(opens, OPENS, "a failure on a removed name was not retried");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_claim_whose_name_cannot_be_looked_up_is_returned_not_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = lock_path(&dir.path().join("core.sqlite"));
+        let mut opens = 0;
+        let claim = WriterLock::claim_opened(
+            "lock",
+            || {
+                opens += 1;
+                let connection = refusing(&path)?;
+                std::fs::remove_file(&path).unwrap();
+                Ok(connection)
+            },
+            || Err(std::io::Error::from_raw_os_error(libc::EIO)),
+        );
+        assert!(
+            matches!(&claim, Err(CoreError::Store(message)) if message.contains("not authorized")),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
+        assert_eq!(opens, 1, "a lookup failure was taken for a removed name");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_claim_whose_name_cannot_be_looked_up_after_it_locks_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = lock_path(&dir.path().join("core.sqlite"));
+        let claim = WriterLock::claim_opened(
+            "lock",
+            || Ok(Connection::open(&path)?),
+            || Err(std::io::Error::from_raw_os_error(libc::EIO)),
+        );
+        assert!(
+            matches!(&claim, Err(CoreError::Store(message)) if message.contains("could not be checked")),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
     }
 
     #[test]
