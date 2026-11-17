@@ -672,8 +672,7 @@ pub(super) fn snapshots_after(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Every snapshot of the item below `version`, oldest first.
-/// Hands each snapshot to `each` as it is read, so one is held at a time.
+/// Hands `each` every snapshot of the item below `version`, oldest first, as it is read.
 pub(super) fn snapshots_below(
     tx: &Transaction<'_>,
     seq: i64,
