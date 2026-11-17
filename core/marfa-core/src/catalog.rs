@@ -114,6 +114,31 @@ pub(crate) fn item_tables(
     })
 }
 
+/// For each host, as `(type, properties)`, whether it declares `table`: the
+/// type registry is built once for all of them. A host of a type the copy
+/// does not hold, or a copy with no catalog, declares none.
+pub(crate) fn declare_table(
+    conn: &Connection,
+    hosts: &[(String, Map<String, Value>)],
+    table: &str,
+) -> Result<Vec<bool>, CoreError> {
+    store::catalog_scope(conn, |conn| {
+        let held = match held_types(conn) {
+            Ok(held) => held,
+            Err(CoreError::NoCatalog) => return Ok(vec![false; hosts.len()]),
+            Err(error) => return Err(error),
+        };
+        let registry = marfa_rules::schema::Registry::new(held.into_values());
+        Ok(hosts
+            .iter()
+            .map(|(type_id, properties)| {
+                marfa_rules::schema::item_tables(&registry, type_id, properties)
+                    .is_ok_and(|tables| tables.contains_key(table))
+            })
+            .collect())
+    })
+}
+
 fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
     let wire: WireEdgeType = serde_json::from_str(json)
         .map_err(|error| CoreError::Store(format!("the held edge type {id}: {error}")))?;

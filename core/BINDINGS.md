@@ -22,6 +22,12 @@ An app that holds what it shows in memory reads many rows in one call, then rere
 
 The Swift binding exposes these as `get_items`, `edge`, `get_edges`, `body_links_of` and `changes_since`. The `marfa` binary reads them with `device items bulk-get`, `device items bulk-links`, `device edges get`, `device edges bulk-get` and `device changed`.
 
+`Core::counts(ids, counted)` counts linked items or table rows for up to 100 item IDs. It returns one `ItemCount` per distinct ID in first-requested order. For links, `total` includes active items and `status_groups` gives the counts in each of the four groups. For table rows, each answer carries only the ID, total and `held`. A table held whole has `held` set to true. Other tables require a server connection.
+
+In Swift, pass `Counted.backref(edgeType:)` to count the items each anchor links to, `Counted.edge(edgeType:)` to count the items that link to each anchor, or `Counted.table(table:)` to count rows. In Node, pass one of `{ backref: edgeType }`, `{ edge: edgeType }` or `{ table: name }` as the second argument. Node returns an object with a `counts` array.
+
+A local link count can fail with `invalid` if the copy lacks edges or items needed for the count. To request the count from the server, send the same IDs and direction to `POST /items/counts`. If the copy asks the server for row counts and the server omits a requested ID, the whole call fails.
+
 To time these reads and a whole listing over a copy of many notes, run from `core/`:
 
 ```sh

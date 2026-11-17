@@ -1470,6 +1470,30 @@ impl Http {
             .collect())
     }
 
+    /// `POST /items/counts` for the rows each item holds in `table`, by id.
+    pub(crate) fn item_counts(
+        &self,
+        ids: &[&String],
+        table: &str,
+    ) -> Result<std::collections::HashMap<String, i64>, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Count {
+            id: String,
+            total: i64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            counts: Vec<Count>,
+        }
+        let body = serde_json::json!({ "ids": ids, "table": table }).to_string();
+        let answer: Answer = self.read_json(&["items", "counts"], &[], Some(&body))?;
+        Ok(answer
+            .counts
+            .into_iter()
+            .map(|count| (count.id, count.total))
+            .collect())
+    }
+
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, answering only
     /// what each row says of `read_only`.
     pub(crate) fn read_only_of(&self, ids: &[String]) -> Result<Vec<WireReadOnly>, CoreError> {

@@ -351,6 +351,22 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["rows", "undo", item, table, batch]);
   }
 
+  /** `marfa device items counts`: links from the copy, rows from the copy or the server, with `held`. */
+  async counts(
+    ids: string[],
+    counted: { backref: string } | { edge: string } | { table: string },
+  ): Promise<Outcome<{ counts: DeviceCount[] }>> {
+    const [flag, name] = Object.entries(counted)[0] as [string, string];
+    return this.json<{ counts: DeviceCount[] }>([
+      "items",
+      "counts",
+      ...ids,
+      `--${flag}`,
+      name,
+      ...this.server(),
+    ]);
+  }
+
   /** `marfa device rows <command>`, as the copy or the server answers it, with `held`. */
   async tableRead<T>(args: string[]): Promise<Outcome<T & { held: boolean }>> {
     return this.json<T & { held: boolean }>([
@@ -1952,4 +1968,12 @@ function edgeDraftArgs(command: "create" | "check", edge: EdgeDraft): string[] {
   ];
   if (edge.id !== undefined) args.push("--id", edge.id);
   return args;
+}
+
+/** One item's count, as `marfa device items counts` answers it. */
+export interface DeviceCount {
+  id: string;
+  total: number;
+  status_groups?: Record<string, number>;
+  held: boolean;
 }

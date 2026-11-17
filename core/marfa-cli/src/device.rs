@@ -516,6 +516,31 @@ pub enum ItemsCommand {
         #[arg(long)]
         include_bin: bool,
     },
+    /// Count, for each item, the active items an edge type links to it or the
+    /// rows it holds in a table, as `marfa items counts` does.
+    ///
+    /// Links are counted from the copy, and refused `invalid` where it does
+    /// not hold the edge type whole or may lack an item the server counts
+    /// that an edge reaches. Rows are counted from the copy for a table it
+    /// holds whole and by the server for any other; `held` says which. A
+    /// count the copy answers needs no server and no credential.
+    #[command(group(clap::ArgGroup::new("counted").required(true).args(["backref", "edge", "table"])))]
+    Counts {
+        /// The item ids, at most 100.
+        #[arg(required = true, value_name = "ID")]
+        ids: Vec<String>,
+        /// Count the items an edge of this type leaves each item for, such as
+        /// `parent-of` for children.
+        #[arg(long, value_name = "EDGE_TYPE")]
+        backref: Option<String>,
+        /// Count the items with an edge of this type to each item, such as
+        /// `in-collection` for a collection's members.
+        #[arg(long, value_name = "EDGE_TYPE")]
+        edge: Option<String>,
+        /// Count the rows each item holds in this table.
+        #[arg(long, value_name = "TABLE")]
+        table: Option<String>,
+    },
     /// Write a new item into the local copy and queue it for the server.
     Create(CreateArgs),
     /// Change an item in the local copy and queue the change.
@@ -1520,6 +1545,54 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 || format!("purged {id}"),
             )
         }
+        DeviceCommand::Items {
+            command:
+                ItemsCommand::Counts {
+                    ids,
+                    backref,
+                    edge,
+                    table,
+                },
+        } => {
+            let counted = match (backref, edge, table) {
+                (Some(edge_type), None, None) => marfa_core::Counted::Backref(edge_type),
+                (None, Some(edge_type), None) => marfa_core::Counted::Edge(edge_type),
+                (None, None, Some(table)) => marfa_core::Counted::Table(table),
+                _ => {
+                    return Err(CliError::Invalid(
+                        "name exactly one of --backref, --edge and --table".into(),
+                    ));
+                }
+            };
+            let local = {
+                let core = store.open(None)?;
+                core.counts(&ids, &counted)
+            };
+            let counts = match local {
+                Err(marfa_core::CoreError::NoServer) if !store.reader => {
+                    store.open_with_server(named)?.counts(&ids, &counted)?
+                }
+                answered => answered?,
+            };
+            output::report(&serde_json::json!({ "counts": counts }), json, || {
+                counts
+                    .iter()
+                    .map(|count| match count.status_groups {
+                        Some(groups) => format!(
+                            "{}: {} ({} not started, {} in progress, {} completed, {} canceled)",
+                            printable(&count.id),
+                            count.total,
+                            groups.not_started,
+                            groups.in_progress,
+                            groups.completed,
+                            groups.canceled
+                        ),
+                        None => format!("{}: {}", printable(&count.id), count.total),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
         DeviceCommand::Changed { since, most } => {
             let changes = store.open(None)?.changes_since(since.as_deref(), most)?;
             output::report(&changes, json, || changed_lines(&changes))
@@ -1608,7 +1681,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     output::queued_one(&queued, json)
                 }
                 ItemsCommand::Trash { id } => output::queued_one(&core.delete_item(&id)?, json),
-                ItemsCommand::Purge { .. } | ItemsCommand::Bin { .. } => {
+                ItemsCommand::Purge { .. } | ItemsCommand::Bin { .. } | ItemsCommand::Counts { .. } => {
                     unreachable!("answered above, with the server")
                 }
                 ItemsCommand::LinkParts { .. } => unreachable!("answered above, with no copy"),

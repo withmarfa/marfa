@@ -90,7 +90,7 @@ fn value_of(bind: Bind) -> Value {
     }
 }
 
-fn expression_clause(
+pub(crate) fn expression_clause(
     expression: &Expression,
     values: &mut Vec<Value>,
     whole: &[String],

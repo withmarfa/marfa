@@ -1272,7 +1272,11 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
     Ok(Applied::Changed)
 }
 
-fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<String, Value>>> {
+pub(crate) fn local_table(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+) -> Result<Option<Map<String, Value>>> {
     let state: Option<String> = conn
         .query_row(
             "SELECT t.state FROM item_tables t JOIN items i ON i.id = t.item_id
@@ -1290,6 +1294,53 @@ fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<
         Err(error) => return Err(error),
     };
     Ok(tables.get(table).and_then(Value::as_object).cloned())
+}
+
+/// For each id, the rows the copy holds in `table`, or `None` where it does
+/// not hold the table whole. The count is the one stored with the table, and
+/// the type registry is built once for all the ids.
+pub(crate) fn held_row_counts(
+    conn: &Connection,
+    ids: &[String],
+    table: &str,
+) -> Result<Vec<Option<i64>>> {
+    let mut statement = conn.prepare_cached(
+        "SELECT t.state, t.rows, i.type, i.properties FROM item_tables t
+           JOIN items i ON i.id = t.item_id
+          WHERE t.item_id = ?1 AND t.name = ?2 AND i.state <> 'trashed'",
+    )?;
+    let mut whole: Vec<(usize, i64, String, Map<String, Value>)> = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        let row: Option<(String, i64, String, String)> = statement
+            .query_row(params![id, table], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .optional()?;
+        if let Some((state, rows, type_id, properties)) = row
+            && state == WHOLE
+        {
+            let properties = match serde_json::from_str(&properties)? {
+                Value::Object(properties) => properties,
+                _ => Map::new(),
+            };
+            whole.push((index, rows, type_id, properties));
+        }
+    }
+    let mut counts = vec![None; ids.len()];
+    if whole.is_empty() {
+        return Ok(counts);
+    }
+    let hosts: Vec<(String, Map<String, Value>)> = whole
+        .iter()
+        .map(|(_, _, type_id, properties)| (type_id.clone(), properties.clone()))
+        .collect();
+    let declared = crate::catalog::declare_table(conn, &hosts, table)?;
+    for ((index, rows, _, _), declared) in whole.into_iter().zip(declared) {
+        if declared {
+            counts[index] = Some(rows);
+        }
+    }
+    Ok(counts)
 }
 
 fn marked(mut answer: Value, held: bool) -> Value {

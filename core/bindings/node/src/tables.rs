@@ -61,6 +61,17 @@ pub struct RowsAsked {
     pub direction: Option<String>,
 }
 
+/// What a count counts: name exactly one.
+#[napi(object)]
+pub struct Counted {
+    /// An edge type: the items an edge of it leaves each item for.
+    pub backref: Option<String>,
+    /// An edge type: the items with an edge of it to each item.
+    pub edge: Option<String>,
+    /// A table name: the rows each item holds in it.
+    pub table: Option<String>,
+}
+
 type Call = Box<dyn FnOnce(&marfa_core::Core) -> marfa_core::Result<serde_json::Value> + Send>;
 
 /// A JSON answer, handed to JavaScript as the object it is.
@@ -234,6 +245,33 @@ impl MarfaCore {
     ) -> AsyncTask<TableCall> {
         self.table_call(Box::new(move |core| {
             core.table_totals(&item, &table, filter.as_deref())
+        }))
+    }
+
+    /// For each of up to 100 ids, the active items an edge type links to it
+    /// by status group, or the rows it holds in a table, as
+    /// `POST /items/counts` answers. Links are counted from the copy and
+    /// refused `invalid` where it cannot answer; rows come from the copy for
+    /// a table held whole, and `held` says which answered.
+    #[napi(
+        ts_return_type = "Promise<{ counts: { id: string; total: number; status_groups?: { not_started: number; in_progress: number; completed: number; canceled: number }; held: boolean }[] }>"
+    )]
+    pub fn counts(&self, ids: Vec<String>, counted: Counted) -> AsyncTask<TableCall> {
+        self.table_call(Box::new(move |core| {
+            let counted = match (counted.backref, counted.edge, counted.table) {
+                (Some(edge_type), None, None) => marfa_core::Counted::Backref(edge_type),
+                (None, Some(edge_type), None) => marfa_core::Counted::Edge(edge_type),
+                (None, None, Some(table)) => marfa_core::Counted::Table(table),
+                _ => {
+                    return Err(marfa_core::CoreError::Validation {
+                        server: None,
+                        code: "validation_error".into(),
+                        message: "name exactly one of backref, edge and table".into(),
+                        details: None,
+                    });
+                }
+            };
+            Ok(serde_json::json!({ "counts": core.counts(&ids, &counted)? }))
         }))
     }
 }
