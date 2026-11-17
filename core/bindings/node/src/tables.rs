@@ -251,8 +251,9 @@ impl MarfaCore {
     /// For each of up to 100 ids, the active items an edge type links to it
     /// by status group, or the rows it holds in a table, as
     /// `POST /items/counts` answers. Links are counted from the copy and
-    /// refused `invalid` where it cannot answer; rows come from the copy for
-    /// a table held whole, and `held` says which answered.
+    /// refused `not_answerable`, which no other failure gives, where it
+    /// cannot answer; rows come from the copy for a table held whole, and
+    /// `held` says which answered.
     #[napi(
         ts_return_type = "Promise<{ counts: { id: string; total: number; status_groups?: { not_started: number; in_progress: number; completed: number; canceled: number }; held: boolean }[] }>"
     )]

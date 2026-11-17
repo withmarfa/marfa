@@ -1588,6 +1588,11 @@ pub enum MarfaError {
     Invalid {
         message: String,
     },
+    /// The copy does not hold what a count needs, so only the server can
+    /// answer it. No other failure is this case.
+    NotAnswerable {
+        message: String,
+    },
     /// The core panicked, or a listener it called did, and it caught the
     /// panic. A fault in the core, never the caller's input.
     Fault {
@@ -1632,6 +1637,7 @@ impl MarfaError {
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
             | MarfaError::Invalid { message }
+            | MarfaError::NotAnswerable { message }
             | MarfaError::Fault { message } => message,
         }
     }
@@ -1678,6 +1684,7 @@ impl MarfaError {
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
+            MarfaError::NotAnswerable { .. } => marfa_core::CoreErrorKind::NotAnswerable,
             MarfaError::Fault { .. } => marfa_core::CoreErrorKind::Fault,
         };
         kind.code().to_string()
@@ -1839,6 +1846,7 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
             E::Invalid(_) => MarfaError::Invalid { message },
+            E::NotAnswerable(_) => MarfaError::NotAnswerable { message },
             E::Fault(_) => MarfaError::Fault { message },
         }
     }
@@ -3535,6 +3543,7 @@ mod tests {
                 refusal: marfa_core::ContractRefusal::Unread,
             },
             E::Invalid(text()),
+            E::NotAnswerable(text()),
             E::Fault(text()),
             E::Canceled,
         ];

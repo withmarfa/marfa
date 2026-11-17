@@ -26,7 +26,7 @@ The Swift binding exposes these as `get_items`, `edge`, `get_edges`, `body_links
 
 In Swift, pass `Counted.backref(edgeType:)` to count the items each anchor links to, `Counted.edge(edgeType:)` to count the items that link to each anchor, or `Counted.table(table:)` to count rows. In Node, pass one of `{ backref: edgeType }`, `{ edge: edgeType }` or `{ table: name }` as the second argument. Node returns an object with a `counts` array.
 
-A local link count can fail with `invalid` if the copy lacks edges or items needed for the count. To request the count from the server, send the same IDs and direction to `POST /items/counts`. If the copy asks the server for row counts and the server omits a requested ID, the whole call fails.
+A local link count fails with `not_answerable` if the copy lacks edges or items needed for the count. No other failure carries that code, so ask the server for the count on it and on nothing else: send the same IDs and direction to `POST /items/counts`. Any other failure, such as a server's refusal, a failed credential renewal, an ended sign-in or a network failure, keeps its own code. If the copy asks the server for row counts and the answer is not the requested IDs once each in the order requested, the whole call fails with `decoding`.
 
 To time these reads and a whole listing over a copy of many notes, run from `core/`:
 

@@ -114,7 +114,7 @@ fn linked(
         .iter()
         .any(|held| held == edge_type)
     {
-        return Err(CoreError::Invalid(format!(
+        return Err(CoreError::NotAnswerable(format!(
             "a count of {edge_type:?} is not answered from a working copy that does not hold that edge type whole: hydrate with it as an edge type held whole, or ask the server"
         )));
     }
@@ -160,7 +160,7 @@ fn linked(
             .prepare_cached(&gap)?
             .exists(params_from_iter(bound(ids, edge_type)))?
     {
-        return Err(CoreError::Invalid(format!(
+        return Err(CoreError::NotAnswerable(format!(
             "a count of {edge_type:?} reaches an item this working copy does not hold, so it cannot say how many the server counts: ask the server"
         )));
     }
@@ -206,8 +206,8 @@ fn linked(
 impl Core {
     /// Counts linked items or table rows for up to [`MOST_IDS`] IDs, once per distinct ID in request order.
     /// Link counts follow the server's anchored listing with its default state.
-    /// A link count returns `Invalid` if the copy lacks edges or items needed for the count.
-    /// The server counts rows for tables the copy does not hold whole. An omitted ID fails the call.
+    /// A link count returns `NotAnswerable`, and no other refusal, if the copy lacks edges or items needed for the count.
+    /// The server counts rows for tables the copy does not hold whole; an answer that is not the asked IDs once each, in order, fails the call.
     pub fn counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
         let ids = distinct(ids)?;
         match counted {
@@ -240,24 +240,24 @@ impl Core {
                     .filter(|(_, held)| held.is_none())
                     .map(|(id, _)| id)
                     .collect();
-                let mut answered: HashMap<String, i64> = HashMap::new();
-                if !asked.is_empty() {
-                    answered = self.http()?.item_counts(&asked, table)?;
-                    if let Some(missing) = asked.iter().find(|id| !answered.contains_key(**id)) {
-                        return Err(CoreError::Decoding(format!(
-                            "the server's counts leave out {missing}, which was asked"
-                        )));
-                    }
+                let mut served = if asked.is_empty() {
+                    Vec::new()
+                } else {
+                    self.http()?.item_counts(&asked, table)?
                 }
+                .into_iter();
                 ids.iter()
                     .zip(held)
                     .map(|(id, held)| {
+                        let total = match held {
+                            Some(total) => total,
+                            None => served.next().ok_or_else(|| {
+                                CoreError::Decoding("the server's counts end early".into())
+                            })?,
+                        };
                         Ok(ItemCount {
                             id: id.clone(),
-                            total: match held {
-                                Some(total) => total,
-                                None => answered[id],
-                            },
+                            total,
                             status_groups: None,
                             held: held.is_some(),
                         })
@@ -439,7 +439,10 @@ mod tests {
             hold_whole(&conn, held);
             for backref in [true, false] {
                 let refusal = linked(&conn, &catalog, &anchors, "parent-of", backref).unwrap_err();
-                assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+                assert!(
+                    matches!(refusal, CoreError::NotAnswerable(_)),
+                    "{refusal:?}"
+                );
             }
         }
     }
@@ -457,7 +460,10 @@ mod tests {
         // A child outside the slice, held as an edge only.
         store::upsert_edge(&conn, &wire_edge("far", PARENT, "elsewhere", "parent-of")).unwrap();
         let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
         // An anchor with no edge is not a gap.
         assert_eq!(
             linked(&conn, &catalog, &named(&["lone"]), "parent-of", true).unwrap()[0].total,
@@ -471,7 +477,10 @@ mod tests {
         );
         // From the other end the counted item is the one that links to the anchor, which the copy lacks.
         let refusal = linked(&conn, &catalog, &named(&["lone"]), "parent-of", false).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
     }
 
     #[test]
@@ -565,7 +574,10 @@ mod tests {
         // The witness: a counted item the narrow slice lacks is still refused.
         store::upsert_edge(&conn, &wire_edge("b", "outside", "elsewhere", "parent-of")).unwrap();
         let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
     }
 
     #[test]
@@ -577,7 +589,10 @@ mod tests {
         store::upsert_edge(&conn, &wire_edge("far", PARENT, "filtered", "parent-of")).unwrap();
         let anchors = named(&[PARENT]);
         let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
         holding_every_listed_item(&conn);
         assert_eq!(
             linked(&conn, &catalog, &anchors, "parent-of", true).unwrap()[0].total,
@@ -601,7 +616,7 @@ mod tests {
             }
             let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
             assert!(
-                matches!(refusal, CoreError::Invalid(_)),
+                matches!(refusal, CoreError::NotAnswerable(_)),
                 "{types} {tier} {query:?}: {refusal:?}"
             );
             conn.execute("DELETE FROM meta WHERE key = ?1", [store::META_SLICE_QUERY])
@@ -610,23 +625,96 @@ mod tests {
     }
 
     #[test]
-    fn rows_the_server_leaves_out_of_its_answer_are_refused_for_the_whole_batch() {
+    fn a_served_answer_that_is_not_the_asked_ids_once_each_in_order_is_refused_whole() {
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+        let two = "01a1011c-2f86-76b6-9594-050c109f4957";
+        let three = "01a1011c-2f86-76b6-9594-050c109f4958";
+        let row = |id: &str| json!({ "id": id, "total": 3 });
+        let asked = [one.to_string(), two.to_string(), one.to_string()];
+        for (what, answer) in [
+            ("missing", vec![row(one)]),
+            ("reordered", vec![row(two), row(one)]),
+            ("repeated", vec![row(one), row(one)]),
+            ("extra", vec![row(one), row(two), row(three)]),
+            ("repeated after both", vec![row(one), row(two), row(one)]),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            holding_a_catalog(&core);
+            server.on(
+                "/items/counts",
+                vec![scripted::json(
+                    200,
+                    &json!({ "counts": answer }).to_string(),
+                )],
+            );
+            let refusal = core
+                .counts(&asked, &Counted::Table("messages".into()))
+                .unwrap_err();
+            assert!(
+                matches!(refusal, CoreError::Decoding(_)),
+                "{what}: {refusal:?}"
+            );
+        }
+        // The witness: the asked ids once each, in order, are answered.
         let server = Scripted::start();
         let core = copy(&server);
         holding_a_catalog(&core);
-        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
-        let two = "01a1011c-2f86-76b6-9594-050c109f4957".to_string();
         server.on(
             "/items/counts",
             vec![scripted::json(
                 200,
-                &json!({ "counts": [{ "id": one, "total": 3 }] }).to_string(),
+                &json!({ "counts": [row(one), row(two)] }).to_string(),
             )],
         );
-        let refusal = core
-            .counts(&[one, two], &Counted::Table("messages".into()))
-            .unwrap_err();
-        assert!(matches!(refusal, CoreError::Decoding(_)), "{refusal:?}");
+        let answered = core
+            .counts(&asked, &Counted::Table("messages".into()))
+            .unwrap();
+        assert_eq!(
+            answered
+                .iter()
+                .map(|count| count.id.as_str())
+                .collect::<Vec<_>>(),
+            [one, two]
+        );
+    }
+
+    #[test]
+    fn a_failure_asking_the_server_for_rows_is_itself_and_never_not_answerable() {
+        let ids = ["01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string()];
+        let table = Counted::Table("messages".into());
+        let server = Scripted::start();
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        server.on(
+            "/items/counts",
+            vec![scripted::refusal(429, "rate_limited")],
+        );
+        let refusal = core.counts(&ids, &table).unwrap_err();
+        assert!(
+            matches!(refusal, CoreError::RateLimited { .. }),
+            "{refusal:?}"
+        );
+        for failure in [
+            CoreError::Invalid("the renewer could not renew".into()),
+            CoreError::SignedOut {
+                origin: server.url(),
+            },
+            CoreError::Network("offline".into()),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            holding_a_catalog(&core);
+            server.on(
+                "/items/counts",
+                vec![scripted::refusal(401, "unauthorized")],
+            );
+            let expected = failure.clone();
+            core.renew_credential_with(Box::new(move |_| Err(failure.clone())));
+            let refusal = core.counts(&ids, &table).unwrap_err();
+            assert_eq!(refusal, CoreError::RenewalFailed(Box::new(expected)));
+            assert_ne!(refusal.code(), "not_answerable");
+        }
     }
 
     #[test]

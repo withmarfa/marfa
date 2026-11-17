@@ -1647,6 +1647,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::StorageFull(message)
         | E::NoKeychain(message)
         | E::Invalid(message)
+        | E::NotAnswerable(message)
         | E::Fault(message) => message.clone(),
         E::ConnectionRefused { .. }
         | E::Unnamed { .. }
@@ -1759,6 +1760,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::FirstSyncWaiting
         | E::Canceled
         | E::Invalid(_)
+        | E::NotAnswerable(_)
         | E::Fault(_) => Vec::new(),
     };
     if let Some(answer) = error.answer() {

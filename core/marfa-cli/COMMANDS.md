@@ -46,7 +46,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_answerable`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -3187,7 +3187,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Count, for each item, the active items an edge type links to it or the rows it holds in a table, as `marfa items counts` does.
 
-Links are counted from the copy, and refused `invalid` where it does not hold the edge type whole or may lack an item the server counts that an edge reaches. Rows are counted from the copy for a table it holds whole and by the server for any other; `held` says which. A count the copy answers needs no server and no credential.
+Links are counted from the copy, and refused `not_answerable` where it does not hold the edge type whole or may lack an item the server counts that an edge reaches. Rows are counted from the copy for a table it holds whole and by the server for any other; `held` says which. A count the copy answers needs no server and no credential.
 
 ```text
 marfa device items counts [OPTIONS] <--backref <EDGE_TYPE>|--edge <EDGE_TYPE>|--table <TABLE>> <ID>...

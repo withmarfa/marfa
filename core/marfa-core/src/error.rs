@@ -217,6 +217,10 @@ pub enum CoreError {
     FirstSyncWaiting,
     #[error("{0}")]
     Invalid(String),
+    /// The copy does not hold what a count needs, so only the server can
+    /// answer it. No other failure carries this code.
+    #[error("{0}")]
+    NotAnswerable(String),
     /// The core, or a caller's code it ran, panicked, and the core caught it
     /// so that its caller is told the work ended. Never the caller's input
     /// or the server's answer: the core itself went wrong.
@@ -301,6 +305,7 @@ codes! {
     Canceled: CoreError::Canceled => "canceled",
     FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",
     Invalid: CoreError::Invalid(_) => "invalid",
+    NotAnswerable: CoreError::NotAnswerable(_) => "not_answerable",
     Fault: CoreError::Fault(_) => "fault",
 }
 

@@ -1470,12 +1470,9 @@ impl Http {
             .collect())
     }
 
-    /// `POST /items/counts` for the rows each item holds in `table`, by id.
-    pub(crate) fn item_counts(
-        &self,
-        ids: &[&String],
-        table: &str,
-    ) -> Result<std::collections::HashMap<String, i64>, CoreError> {
+    /// `POST /items/counts` for the rows each of `ids` holds in `table`, in
+    /// the order of `ids`, which are distinct. Any other answer is refused.
+    pub(crate) fn item_counts(&self, ids: &[&String], table: &str) -> Result<Vec<i64>, CoreError> {
         #[derive(serde::Deserialize)]
         struct Count {
             id: String,
@@ -1487,11 +1484,19 @@ impl Http {
         }
         let body = serde_json::json!({ "ids": ids, "table": table }).to_string();
         let answer: Answer = self.read_json(&["items", "counts"], &[], Some(&body))?;
-        Ok(answer
-            .counts
-            .into_iter()
-            .map(|count| (count.id, count.total))
-            .collect())
+        if answer.counts.len() != ids.len()
+            || answer
+                .counts
+                .iter()
+                .zip(ids)
+                .any(|(count, id)| count.id != **id)
+        {
+            return Err(CoreError::Decoding(
+                "the server's counts are not the asked ids, once each and in the order asked"
+                    .into(),
+            ));
+        }
+        Ok(answer.counts.into_iter().map(|count| count.total).collect())
     }
 
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, answering only

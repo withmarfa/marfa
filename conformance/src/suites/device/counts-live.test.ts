@@ -60,7 +60,7 @@ let reader: string;
 let shownOnly: string;
 let shownSource = "";
 let counter = 0;
-let proxy: DroppingProxy | undefined;
+let proxy: CountsProxy | undefined;
 const ids: Record<string, string> = {};
 
 beforeAll(async () => {
@@ -316,23 +316,26 @@ function clientOf(key: string): MarfaClient {
   return new MarfaClient({ baseUrl: server.apiUrl, apiKey: key });
 }
 
-/** Passes everything on, leaving the last count out of each answer to `POST /items/counts`. */
-class DroppingProxy {
+type ServedCount = { id: string; total: number };
+
+/** Passes everything on, rewriting each answer to `POST /items/counts` as `answer` says. */
+class CountsProxy {
+  answer:
+    | { counts: (counts: ServedCount[]) => ServedCount[] }
+    | { status: number; code: string } = { counts: (counts) => counts };
+
   private constructor(
     private readonly listener: Server,
     readonly url: string,
   ) {}
 
-  static async start(): Promise<DroppingProxy> {
+  static async start(): Promise<CountsProxy> {
     const listener = createServer();
     await new Promise<void>((resolve) =>
       listener.listen(0, "127.0.0.1", resolve),
     );
     const { port } = listener.address() as AddressInfo;
-    const made = new DroppingProxy(
-      listener,
-      `http://127.0.0.1:${String(port)}`,
-    );
+    const made = new CountsProxy(listener, `http://127.0.0.1:${String(port)}`);
     listener.on("request", (request, response) => {
       made.pass(request, response).catch(() => response.destroy());
     });
@@ -361,12 +364,23 @@ class DroppingProxy {
       body: method === "GET" ? undefined : Buffer.concat(chunks),
     });
     let body = Buffer.from(await forwarded.arrayBuffer());
+    let status = forwarded.status;
     if (method === "POST" && path.startsWith("/items/counts")) {
-      const answer = JSON.parse(body.toString("utf8")) as {
-        counts: unknown[];
-      };
-      answer.counts = answer.counts.slice(0, -1);
-      body = Buffer.from(JSON.stringify(answer));
+      const rewrite = this.answer;
+      if ("counts" in rewrite) {
+        const answer = JSON.parse(body.toString("utf8")) as {
+          counts: ServedCount[];
+        };
+        answer.counts = rewrite.counts(answer.counts);
+        body = Buffer.from(JSON.stringify(answer));
+      } else {
+        status = rewrite.status;
+        body = Buffer.from(
+          JSON.stringify({
+            error: { code: rewrite.code, message: "refused by the proxy" },
+          }),
+        );
+      }
     }
     const answered: Record<string, string> = {};
     forwarded.headers.forEach((sent, name) => {
@@ -380,7 +394,7 @@ class DroppingProxy {
       )
         answered[name] = sent;
     });
-    response.writeHead(forwarded.status, answered);
+    response.writeHead(status, answered);
     response.end(body);
   }
 
@@ -389,7 +403,7 @@ class DroppingProxy {
   }
 }
 
-function refusedInvalid(outcome: Outcome<unknown>, what: string) {
+function refusedNotAnswerable(outcome: Outcome<unknown>, what: string) {
   expect(outcome.ok, `${what} was answered`).toBe(false);
   if (outcome.ok) return;
   const envelope = JSON.parse(outcome.refusal.raw) as {
@@ -398,7 +412,7 @@ function refusedInvalid(outcome: Outcome<unknown>, what: string) {
   expect(
     [envelope.error.code, envelope.error.server?.code ?? null],
     `${what} was refused as though the server refuses it: ${outcome.refusal.raw}`,
-  ).toEqual(["invalid", null]);
+  ).toEqual(["not_answerable", null]);
 }
 
 const EVERY_TYPE = [taskType, memoType, driftType, "core.collection"];
@@ -476,7 +490,10 @@ describe("a device counts as the server does", () => {
       reader,
     );
     const refused = await narrow.counts(two, { edge: "references" });
-    refusedInvalid(refused, "an anchor with a linker the copy does not hold");
+    refusedNotAnswerable(
+      refused,
+      "an anchor with a linker the copy does not hold",
+    );
     expect(
       (await served(two, { edge: "references" }, clientOf(reader)))[0]?.total,
     ).toBe(2);
@@ -510,7 +527,7 @@ describe("a device counts as the server does", () => {
       ["references"],
       shownOnly,
     );
-    refusedInvalid(
+    refusedNotAnswerable(
       await narrow.counts(two, { edge: "references" }),
       "a hidden anchor with a linker the copy does not hold",
     );
@@ -715,12 +732,12 @@ describe("a device counts as the server does", () => {
     if (!missing.ok) expect(missing.refusal.code).toBe("no_server");
   });
 
-  it("refuses a count of rows whose served answer leaves out an id, answering no total", async () => {
+  it("refuses a count of rows whose served answer is not the asked ids once each in order, answering no total", async () => {
     const store = newStore(`counts-incomplete-${String(counter)}`);
     const device = copyOf("incomplete", server.apiUrl, store);
     value(await device.hydrate([heldLedger, servedLedger], "library"));
     const asked = [ids.served, ids.held];
-    // The witness: asked of the server itself, the copy answers both.
+    // The witness: asked of the server itself, and through the proxy unchanged, the copy answers both.
     expect(
       value(await device.counts(asked, { table: "lines" })).counts.map(
         (count) => [count.id, count.total],
@@ -729,11 +746,61 @@ describe("a device counts as the server does", () => {
       [ids.served, 2],
       [ids.held, 3],
     ]);
-    proxy ??= await DroppingProxy.start();
-    const dropping = copyOf("incomplete", proxy.url, store);
-    const refused = await dropping.counts(asked, { table: "lines" });
-    expect(refused.ok, JSON.stringify(refused)).toBe(false);
-    if (!refused.ok) expect(refused.refusal.code).toBe("decoding");
+    proxy ??= await CountsProxy.start();
+    const proxied = copyOf("incomplete", proxy.url, store);
+    proxy.answer = { counts: (counts) => counts };
+    expect(
+      value(await proxied.counts(asked, { table: "lines" })).counts.map(
+        (count) => count.total,
+      ),
+    ).toEqual([2, 3]);
+    const rewrites: [string, (counts: ServedCount[]) => ServedCount[]][] = [
+      ["missing", (counts) => counts.slice(0, -1)],
+      ["reordered", (counts) => [...counts].reverse()],
+      ["repeated", (counts) => [counts[0]!, counts[0]!]],
+      ["extra", (counts) => [...counts, { id: UNKNOWN_ID, total: 0 }]],
+    ];
+    for (const [what, rewrite] of rewrites) {
+      proxy.answer = { counts: rewrite };
+      const refused = await proxied.counts(asked, { table: "lines" });
+      expect(refused.ok, `${what}: ${JSON.stringify(refused)}`).toBe(false);
+      if (!refused.ok) expect(refused.refusal.code, what).toBe("decoding");
+    }
+    proxy.answer = { counts: (counts) => counts };
+  });
+
+  it("refuses a count of rows the server fails with the failure's own code, never not_answerable", async () => {
+    const store = newStore(`counts-failed-${String(counter)}`);
+    const device = copyOf("failed", server.apiUrl, store);
+    value(await device.hydrate([heldLedger, servedLedger], "library"));
+    // The witness: the same count is answered by the server, and a count the copy cannot answer is not_answerable.
+    expect(
+      value(await device.counts([ids.served], { table: "lines" })).counts[0],
+    ).toMatchObject({ total: 2, held: false });
+    refusedNotAnswerable(
+      await device.counts([ids.parent], { backref: "parent-of" }),
+      "a count of an edge type the copy does not hold",
+    );
+    proxy ??= await CountsProxy.start();
+    const proxied = copyOf("failed", proxy.url, store);
+    for (const [status, code] of [
+      [429, "rate_limited"],
+      [401, "unauthorized"],
+      [403, "forbidden"],
+      [503, "server"],
+    ] as const) {
+      proxy.answer = { status, code: status === 503 ? "unavailable" : code };
+      const refused = await proxied.counts([ids.served], { table: "lines" });
+      expect(refused.ok, JSON.stringify(refused)).toBe(false);
+      if (!refused.ok) expect(refused.refusal.code, String(status)).toBe(code);
+    }
+    proxy.answer = { counts: (counts) => counts };
+    const unreachable = await copyOf("failed", NOT_LISTENING, store).counts(
+      [ids.served],
+      { table: "lines" },
+    );
+    expect(unreachable.ok).toBe(false);
+    if (!unreachable.ok) expect(unreachable.refusal.code).toBe("network");
   });
 
   it("gives the server's counts once the copy has caught up, and not before", async () => {
@@ -775,13 +842,13 @@ describe("a device refuses a count its copy cannot answer as the server does", (
       { backref: "in-collection" },
       { edge: "in-collection" },
     ] as Counted[]) {
-      refusedInvalid(
+      refusedNotAnswerable(
         await device.counts([ids.collection], counted),
         JSON.stringify(counted),
       );
     }
     // Whichever the id: an id no item holds is refused too, where the held type answers 0.
-    refusedInvalid(
+    refusedNotAnswerable(
       await device.counts([UNKNOWN_ID], { backref: "in-collection" }),
       "a count of an id no item holds",
     );
@@ -790,7 +857,7 @@ describe("a device refuses a count its copy cannot answer as the server does", (
         .counts[0],
     ).toMatchObject({ total: 0, held: true });
     const bare = await hydrated("none-whole", EVERY_TYPE, []);
-    refusedInvalid(
+    refusedNotAnswerable(
       await bare.counts([ids.parent], { backref: "parent-of" }),
       "a count on a copy that holds no edge type whole",
     );
@@ -799,7 +866,7 @@ describe("a device refuses a count its copy cannot answer as the server does", (
   it("refuses a count of links that reaches an item the copy does not hold, carrying no server code", async () => {
     const slice = await hydrated("gap", [taskType], ["parent-of"]);
     // The parent's children of other types are outside the slice.
-    refusedInvalid(
+    refusedNotAnswerable(
       await slice.counts([ids.parent], { backref: "parent-of" }),
       "a count that reaches the memo and the undeclared-word children",
     );
@@ -819,7 +886,7 @@ describe("a device refuses a count its copy cannot answer as the server does", (
       .map((type) => type.id)
       .filter((id) => !id.startsWith("system."));
     const each = await hydrated("each-type", named, EDGES, shownOnly, "all");
-    refusedInvalid(
+    refusedNotAnswerable(
       await each.counts(asked, counted),
       "a slice that names every type one by one",
     );
@@ -841,7 +908,7 @@ describe("a device refuses a count its copy cannot answer as the server does", (
     const asked = [ids.placed];
     const counted = { backref: "in-folder" };
     const narrow = await hydrated("folder-narrow", [taskType], ["in-folder"]);
-    refusedInvalid(
+    refusedNotAnswerable(
       await narrow.counts(asked, counted),
       "a narrow copy with an edge to a system folder",
     );

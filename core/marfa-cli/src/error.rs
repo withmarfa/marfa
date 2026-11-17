@@ -444,7 +444,8 @@ impl CliError {
                 | CoreError::UnknownType { .. }
                 | CoreError::ContractMismatch { .. }
                 | CoreError::FirstSyncWaiting
-                | CoreError::Invalid(_) => Exit::Refused,
+                | CoreError::Invalid(_)
+                | CoreError::NotAnswerable(_) => Exit::Refused,
                 CoreError::Unauthorized { .. } | CoreError::SignedOut { .. } => Exit::Credential,
                 CoreError::Io(_)
                 | CoreError::StorageFull(_)

@@ -519,9 +519,9 @@ pub enum ItemsCommand {
     /// Count, for each item, the active items an edge type links to it or the
     /// rows it holds in a table, as `marfa items counts` does.
     ///
-    /// Links are counted from the copy, and refused `invalid` where it does
-    /// not hold the edge type whole or may lack an item the server counts
-    /// that an edge reaches. Rows are counted from the copy for a table it
+    /// Links are counted from the copy, and refused `not_answerable` where it
+    /// does not hold the edge type whole or may lack an item the server
+    /// counts that an edge reaches. Rows are counted from the copy for a table it
     /// holds whole and by the server for any other; `held` says which. A
     /// count the copy answers needs no server and no credential.
     #[command(group(clap::ArgGroup::new("counted").required(true).args(["backref", "edge", "table"])))]

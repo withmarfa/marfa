@@ -2426,9 +2426,9 @@ When a caller asks the command line to count what the copy can answer whole, a d
 
 ### `device/counts-refused`
 
-If a caller asks a device to count the links of an edge type the copy does not hold whole, whichever the id, whether or not it is an item, then a device MUST refuse it `invalid` with no server code, as it refuses a `backref` term (`device/filter-backref`).
+If a caller asks a device to count the links of an edge type the copy does not hold whole, whichever the id, whether or not it is an item, then a device MUST refuse it `not_answerable` with no server code.
 
-**Reason:** a copy that holds some of an edge type's edges gives a number lower than the server's, and a wrong number is worse than none. The refusal is the device's own: it asks no server, so it carries none of a server's codes.
+**Reason:** a copy that holds some of an edge type's edges gives a number lower than the server's, and a wrong number is worse than none. The refusal is the device's own and asks no server; an app that meets it asks the server instead.
 
 **Tests:** `device/counts-live.test.ts › refuses a count of an edge type the copy does not hold whole, carrying no server code`.
 
@@ -2450,7 +2450,7 @@ Where the copy holds the named edge type whole, and its slice names `*` among it
 
 ### `device/counts-refused-gap`
 
-Where the copy holds the named edge type whole and its slice does not meet the conditions of `device/counts-every-listed-held`, if an edge of that type at one of the asked ids reaches an item the copy holds no row for, then a device MUST refuse the whole count `invalid` with no server code.
+Where the copy holds the named edge type whole and its slice does not meet the conditions of `device/counts-every-listed-held`, if an edge of that type at one of the asked ids reaches an item the copy holds no row for, then a device MUST refuse the whole count `not_answerable` with no server code.
 
 **Reason:** an edge at an id reaches, for a `backref` count, the item the edge goes to, and for an `edge` count, the item the edge comes from; a pinned item or one in any state counts as a row held. A copy that does not meet the conditions cannot tell an item it lacks from one the server counts, so it refuses rather than undercount, and the caller asks the server. The rule reads the slice's declaration and not the server's data, so it also refuses where the answer was knowable: a slice that names every registered type one by one at tier `all` where a source filter hides a child (the server counts 1), and a slice that holds `in-folder` whole with an edge to a `system.folder` (the server counts 0). A refusal never gives a number.
 
@@ -2458,11 +2458,19 @@ Where the copy holds the named edge type whole and its slice does not meet the c
 
 ### `device/counts-served-complete`
 
-If the server's answer to a count of rows leaves out an id the device asked it about, then a device MUST refuse the whole call, answering a total for no id.
+If the server's answer to a count of rows does not name exactly the ids the device asked it about, each once and in the order asked, then a device MUST refuse the whole call `decoding`, answering a total for no id.
 
-**Reason:** a total of 0 for an id the server did not answer would say the item holds no row, and the server never said so.
+**Reason:** a total of 0 for an id the server did not answer would say the item holds no row, and the server never said so. The server answers in the order asked (`search-and-filters/counts-order`), so an answer out of order, repeated or with an id not asked is not one the device can line up with its ids.
 
-**Tests:** `device/counts-live.test.ts › refuses a count of rows whose served answer leaves out an id, answering no total`.
+**Tests:** `device/counts-live.test.ts › refuses a count of rows whose served answer is not the asked ids once each in order, answering no total`.
+
+### `device/counts-not-answerable-only`
+
+If a count fails for a reason other than the copy not holding what it needs, then a device MUST refuse it with that failure's own code and never `not_answerable`.
+
+**Reason:** an app asks the server when a count is `not_answerable`. A server's refusal, a failed credential renewal, an ended sign-in or a network failure given that code would send the same request again and hide its cause, such as a sign-in the person must give again.
+
+**Tests:** `device/counts-live.test.ts › refuses a count of rows the server fails with the failure's own code, never not_answerable`.
 
 ### `device/counts-agree`
 
@@ -7468,6 +7476,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `contract_mismatch`    | An answer was on a contract this build does not speak.                                                                                                                                                                                                                                                                  |
 | `canceled`             | The caller's stop was raised before the call finished.                                                                                                                                                                                                                                                                  |
 | `first_sync_waiting`   | A folder's first sync waits for confirmation, and nothing is written or sent until it is given.                                                                                                                                                                                                                         |
+| `not_answerable`       | The copy does not hold what a count needs, so only the server can answer it. No other failure carries it, so a caller that asks the server on it never repeats a request that failed for another reason.                                                                                                                |
 | `fault`                | The core itself failed, and a panic it caught ended the call.                                                                                                                                                                                                                                                           |
 
 | Code                     | Meaning                                                                                    |
