@@ -51,7 +51,14 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ("Read the instance's metrics", &["metrics"]),
     ("See what a key can read", &["overview"]),
     ("Read the instance's name and enforcement", &["config get"]),
-    ("Change a setting", &["config update", "config replace"]),
+    (
+        "Change one setting, or return it to its default",
+        &["config set", "config unset"],
+    ),
+    (
+        "Change many settings at once",
+        &["config update", "config replace"],
+    ),
     (
         "List every setting with its default and rule",
         &["config settings"],
@@ -76,10 +83,6 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         &["apps list", "apps narrow", "apps revoke"],
     ),
     (
-        "Read and change the owner's email, name and avatar, or clear the avatar",
-        &["owner show", "owner update", "owner avatar"],
-    ),
-    (
         "Manage the owner's passkeys",
         &[
             "owner passkeys list",
@@ -87,14 +90,15 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
             "owner passkeys delete",
         ],
     ),
-    ("Set a new owner password", &["owner recover"]),
+    ("Change the owner's password", &["owner password"]),
+    ("Recover the owner's password", &["owner recover"]),
     (
         "Claim a new instance",
         &["setup status", "setup code", "setup open", "setup claim"],
     ),
     (
-        "Read and change the profile apps show",
-        &["profile show", "profile update"],
+        "Read and change the owner's email, name and avatar, or clear the avatar",
+        &["profile show", "profile update", "profile avatar"],
     ),
     (
         "See connectors, their runs and their problems",

@@ -2032,6 +2032,26 @@ export interface paths {
         patch: operations["renameSignIn"];
         trace?: never;
     };
+    "/owner/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the password
+         * @description Replaces the owner's password once `current_password` proves right, and ends every browser sign-in. Keys and apps keep their access. Requires `sign_ins.manage`.
+         */
+        put: operations["replaceOwnerPassword"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/owner/passkeys": {
         parameters: {
             query?: never;
@@ -6321,24 +6341,51 @@ export interface components {
              * @example 01a1011e-87bd-7ab7-bbab-538453d75381
              */
             instance_id: string;
-            /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. */
-            version_recent_days?: number;
-            /** @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. */
-            version_daily_snapshot_days?: number;
-            /** @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. */
-            version_weekly_snapshot_days?: number;
-            /** @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. */
-            version_max_versions?: number;
-            /** @description Disconnect apps unused for this many days. Zero disables retirement. */
-            grant_inactivity_days?: number;
-            /** @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. */
-            enrichment_enabled?: boolean;
-            /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. */
-            enrichment_ocr_enabled?: boolean;
-            /** @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. */
-            error_reporting_enabled?: boolean;
-            /** @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. */
-            heartbeat_enabled?: boolean;
+            /**
+             * @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies.
+             * @default 30
+             */
+            version_recent_days: number;
+            /**
+             * @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies.
+             * @default 90
+             */
+            version_daily_snapshot_days: number;
+            /**
+             * @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies.
+             * @default 365
+             */
+            version_weekly_snapshot_days: number;
+            /**
+             * @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults.
+             * @default 500
+             */
+            version_max_versions: number;
+            /**
+             * @description Disconnect apps unused for this many days. Zero disables retirement.
+             * @default 365
+             */
+            grant_inactivity_days: number;
+            /**
+             * @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies.
+             * @default true
+             */
+            enrichment_enabled: boolean;
+            /**
+             * @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies.
+             * @default true
+             */
+            enrichment_ocr_enabled: boolean;
+            /**
+             * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies.
+             * @default true
+             */
+            error_reporting_enabled: boolean;
+            /**
+             * @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies.
+             * @default true
+             */
+            heartbeat_enabled: boolean;
             /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
             name?: string;
             /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
@@ -6347,44 +6394,77 @@ export interface components {
                 source_allowlist?: components["schemas"]["TypeAndSourceLever"] & unknown;
                 source_filter?: components["schemas"]["TypeAndSourceLever"] & unknown;
             };
-            /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
-            audit_retention_days?: number;
-            /** @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
-            event_log_retention_days?: number;
-            /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
-            trash_retention_days?: number;
-            /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies. */
-            row_log_retention_days?: number;
-            /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
-            inbound_handled_retention_days?: number;
-            /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
-            inbound_pending_retention_days?: number;
-            /** @description The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. */
-            addresses?: string[];
+            /**
+             * @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies.
+             * @default 90
+             */
+            audit_retention_days: number;
+            /**
+             * @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies.
+             * @default 30
+             */
+            event_log_retention_days: number;
+            /**
+             * @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies.
+             * @default 60
+             */
+            trash_retention_days: number;
+            /**
+             * @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies.
+             * @default 30
+             */
+            row_log_retention_days: number;
+            /**
+             * @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.
+             * @default 7
+             */
+            inbound_handled_retention_days: number;
+            /**
+             * @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.
+             * @default 30
+             */
+            inbound_pending_retention_days: number;
+            /**
+             * @description The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them.
+             * @default []
+             */
+            addresses: string[];
             /** @description The address people sign in at, an origin with no path. Absent: this computer's own address. */
             sign_in_address?: string;
             /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
             backup_path?: string;
             /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
             object_store_bucket?: string;
-            /** @description The region of the object store. Absent: `us-east-1`. */
-            object_store_region?: string;
+            /**
+             * @description The region of the object store. Absent: `us-east-1`.
+             * @default us-east-1
+             */
+            object_store_region: string;
             /**
              * Format: uri
              * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it.
              */
             object_store_endpoint?: string;
-            /** @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. */
-            object_store_path_style?: boolean;
-            /** @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. */
-            object_store_prefix?: string;
+            /**
+             * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`.
+             * @default true
+             */
+            object_store_path_style: boolean;
+            /**
+             * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`.
+             * @default marfa
+             */
+            object_store_prefix: string;
             /**
              * @description The access key ID for the object store.
              * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
              */
             object_store_access_key_id?: string;
-            /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. */
-            allow_private_addresses?: boolean;
+            /**
+             * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+             * @default false
+             */
+            allow_private_addresses: boolean;
             /**
              * @description The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.
              * @example [
@@ -6393,6 +6473,161 @@ export interface components {
              */
             secrets_set?: string[];
             sign_in_moved?: components["schemas"]["SignInMove"] & unknown;
+            /**
+             * @description The largest request body Marfa accepts, in bytes. Marfa waits 180 seconds for a body, so a body over about 21 MiB can't arrive in time over a 1 Mbit/s link.
+             * @default 1048576
+             */
+            max_request_bytes: number;
+            /**
+             * @description The largest body the bulk operations accept, in bytes, and the largest row a restore reads. The most you can set is 33554432, half the 67108864 bytes a restore reads on one archive line.
+             * @default 16777216
+             */
+            max_bulk_request_bytes: number;
+            /**
+             * @description Free disk space an upload must leave on the blob volume, in bytes. `0` refuses no write for room, and health still reports the disk as degraded below 64 MiB.
+             * @default 134217728
+             */
+            disk_reserve_bytes: number;
+            /**
+             * @description The fewest live copies Marfa keeps of each blob.
+             * @default 1
+             */
+            blob_min_copies: number;
+            /**
+             * @description `true` if the `blob-orphans` job purges blobs nothing references once they have stood in the orphan report for `blob_cleanup_grace_seconds`.
+             * @default true
+             */
+            blob_cleanup_enabled: boolean;
+            /**
+             * @description How long a blob nothing references stands in the orphan report before a later run purges it, in seconds.
+             * @default 86400
+             */
+            blob_cleanup_grace_seconds: number;
+            /**
+             * @description How often Marfa makes a backup when anything it holds has changed, in seconds. `0` turns scheduled backups off.
+             * @default 3600
+             */
+            backup_interval_seconds: number;
+            /**
+             * @description `true` if the rate limiter is on for requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.
+             * @default true
+             */
+            rate_limit_enabled: boolean;
+            /**
+             * @description How many requests one key or app may make in each rate-limit window, across every operation.
+             * @default 4000
+             */
+            rate_limit_requests: number;
+            /**
+             * @description How many requests one key may make in each rate-limit window to the operations under `/keys`.
+             * @default 200
+             */
+            rate_limit_keys_requests: number;
+            /**
+             * @description How long one rate-limit window lasts, in seconds.
+             * @default 60
+             */
+            rate_limit_window_seconds: number;
+            /**
+             * @description Hours Marfa keeps an app that registered itself and holds no grant. `0` keeps it with no age limit.
+             * @default 1
+             */
+            unapproved_app_retention_hours: number;
+            /**
+             * @description Days Marfa keeps a revoked app grant. `0` keeps it with no age limit.
+             * @default 90
+             */
+            revoked_grant_retention_days: number;
+            /**
+             * @description The largest file Marfa reads whole to extract its text, in bytes. Marfa skips a larger file unread, and reads a sound or video from its headers whatever its size.
+             * @default 20971520
+             */
+            enrichment_max_blob_bytes: number;
+            /**
+             * @description The most Unicode characters of extracted text Marfa keeps, counted as characters and not UTF-16 code units. Marfa cuts longer text short.
+             * @default 100000
+             */
+            enrichment_max_text_chars: number;
+            /**
+             * @description The most a document may inflate to when Marfa extracts its text, all its parts together, in bytes. Marfa skips a document that inflates past it.
+             * @default 67108864
+             */
+            enrichment_max_inflated_bytes: number;
+            /**
+             * @description The most memory the process that reads one file may take, in bytes. Marfa skips a file that needs more.
+             * @default 1073741824
+             */
+            enrichment_max_memory_bytes: number;
+            /**
+             * @description How many times Marfa tries to read a file that fails, or that stops the server, before it stops trying.
+             * @default 3
+             */
+            enrichment_max_attempts: number;
+            /**
+             * @description `true` if Marfa checks GitHub for new releases every few hours. When `false`, it makes no request for them and reports no release as newer.
+             * @default true
+             */
+            update_check_enabled: boolean;
+            /**
+             * @description The most event-stream viewers one server serves at once. `0` sets no limit.
+             * @default 0
+             */
+            event_stream_max_viewers: number;
+            /**
+             * @description `true` if MCP tools fetch a file from a web address, or a file a chat attached, to save it. When `false`, a tool asked to fetch one is refused.
+             * @default true
+             */
+            mcp_fetch_enabled: boolean;
+            /**
+             * @description The largest file an MCP tool fetches from a web address to save, in bytes. Marfa refuses a larger file and stores nothing.
+             * @default 52428800
+             */
+            mcp_fetch_max_bytes: number;
+            /**
+             * @description How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds.
+             * @default 60
+             */
+            mcp_fetch_timeout_seconds: number;
+            /**
+             * @description The largest inbound webhook delivery Marfa stores, in bytes.
+             * @default 26214400
+             */
+            inbound_max_bytes: number;
+            /**
+             * @description How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered.
+             * @default 600
+             */
+            rate_limit_inbound_requests: number;
+            /**
+             * @description The most bytes of inbound webhook deliveries Marfa holds in memory at once. One source holds at most half.
+             * @default 104857600
+             */
+            inbound_in_flight_bytes: number;
+            /**
+             * @description The unhandled deliveries one registration may hold before Marfa refuses more for it.
+             * @default 10000
+             */
+            inbound_backlog_deliveries: number;
+            /**
+             * @description The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it.
+             * @default 1073741824
+             */
+            inbound_backlog_bytes: number;
+            /**
+             * @description The most deliveries one registration retains across its live and retired endpoints.
+             * @default 10000
+             */
+            inbound_retained_deliveries: number;
+            /**
+             * @description The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints.
+             * @default 1073741824
+             */
+            inbound_retained_bytes: number;
+            /**
+             * @description The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves. Each is an origin with no path.
+             * @default []
+             */
+            cors_origins: string[];
         };
         /** @description An error response. */
         InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
@@ -33163,6 +33398,176 @@ export interface operations {
             };
         };
     };
+    replaceOwnerPassword: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description The owner's current password. If it is wrong, Marfa answers `401 unauthorized` and changes nothing.
+                     * @example current-example-passphrase
+                     */
+                    current_password: string;
+                    /**
+                     * @description The new password, counted in characters.
+                     * @example new-example-passphrase
+                     */
+                    new_password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns `ok: true`. The password has changed and every browser sign-in has ended. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "ok": true
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+            /**
+             * @description - `missing_required_field`: `current_password` or `new_password` is missing.
+             *     - `validation_error`: `new_password` is shorter than 8 or longer than 128 characters, `current_password` is empty or longer than 1024 characters, or the body has another field. Nothing changes.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, its credential is not valid, or `current_password` is wrong. Nothing changes. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     listOwnerPasskeys: {
         parameters: {
             query?: never;
@@ -34192,23 +34597,50 @@ export interface operations {
                      * @example 01a1011e-87bd-7ab7-bbab-538453d75381
                      */
                     instance_id?: string;
-                    /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. */
+                    /**
+                     * @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies.
+                     * @default 30
+                     */
                     version_recent_days?: number;
-                    /** @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. */
+                    /**
+                     * @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies.
+                     * @default 90
+                     */
                     version_daily_snapshot_days?: number;
-                    /** @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. */
+                    /**
+                     * @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies.
+                     * @default 365
+                     */
                     version_weekly_snapshot_days?: number;
-                    /** @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. */
+                    /**
+                     * @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults.
+                     * @default 500
+                     */
                     version_max_versions?: number;
-                    /** @description Disconnect apps unused for this many days. Zero disables retirement. */
+                    /**
+                     * @description Disconnect apps unused for this many days. Zero disables retirement.
+                     * @default 365
+                     */
                     grant_inactivity_days?: number;
-                    /** @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. */
+                    /**
+                     * @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies.
+                     * @default true
+                     */
                     enrichment_enabled?: boolean;
-                    /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. */
+                    /**
+                     * @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies.
+                     * @default true
+                     */
                     enrichment_ocr_enabled?: boolean;
-                    /** @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. */
+                    /**
+                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies.
+                     * @default true
+                     */
                     error_reporting_enabled?: boolean;
-                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. */
+                    /**
+                     * @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies.
+                     * @default true
+                     */
                     heartbeat_enabled?: boolean;
                     /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
                     name?: string;
@@ -34218,19 +34650,40 @@ export interface operations {
                         source_allowlist?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                         source_filter?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                     };
-                    /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. Absent: the server's default applies.
+                     * @default 90
+                     */
                     audit_retention_days?: number;
-                    /** @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. Absent: the server's default applies.
+                     * @default 30
+                     */
                     event_log_retention_days?: number;
-                    /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /**
+                     * @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies.
+                     * @default 60
+                     */
                     trash_retention_days?: number;
-                    /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /**
+                     * @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies.
+                     * @default 30
+                     */
                     row_log_retention_days?: number;
-                    /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.
+                     * @default 7
+                     */
                     inbound_handled_retention_days?: number;
-                    /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies.
+                     * @default 30
+                     */
                     inbound_pending_retention_days?: number;
-                    /** @description The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. */
+                    /**
+                     * @description The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them.
+                     * @default []
+                     */
                     addresses?: string[];
                     /** @description The address people sign in at, an origin with no path. Absent: this computer's own address. */
                     sign_in_address?: string;
@@ -34242,23 +34695,35 @@ export interface operations {
                     backup_path?: string;
                     /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
                     object_store_bucket?: string;
-                    /** @description The region of the object store. Absent: `us-east-1`. */
+                    /**
+                     * @description The region of the object store. Absent: `us-east-1`.
+                     * @default us-east-1
+                     */
                     object_store_region?: string;
                     /**
                      * Format: uri
                      * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it.
                      */
                     object_store_endpoint?: string;
-                    /** @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. */
+                    /**
+                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`.
+                     * @default true
+                     */
                     object_store_path_style?: boolean;
-                    /** @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. */
+                    /**
+                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`.
+                     * @default marfa
+                     */
                     object_store_prefix?: string;
                     /**
                      * @description The access key ID for the object store.
                      * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
                      */
                     object_store_access_key_id?: string;
-                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. */
+                    /**
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+                     * @default false
+                     */
                     allow_private_addresses?: boolean;
                     /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
                     object_store_secret_access_key?: string;
@@ -34274,6 +34739,161 @@ export interface operations {
                     error_webhook_url?: string;
                     /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
                     secrets_set?: string[];
+                    /**
+                     * @description The largest request body Marfa accepts, in bytes. Marfa waits 180 seconds for a body, so a body over about 21 MiB can't arrive in time over a 1 Mbit/s link. Absent: the server's default applies.
+                     * @default 1048576
+                     */
+                    max_request_bytes?: number;
+                    /**
+                     * @description The largest body the bulk operations accept, in bytes, and the largest row a restore reads. The most you can set is 33554432, half the 67108864 bytes a restore reads on one archive line. Absent: the server's default applies.
+                     * @default 16777216
+                     */
+                    max_bulk_request_bytes?: number;
+                    /**
+                     * @description Free disk space an upload must leave on the blob volume, in bytes. `0` refuses no write for room, and health still reports the disk as degraded below 64 MiB. Absent: the server's default applies.
+                     * @default 134217728
+                     */
+                    disk_reserve_bytes?: number;
+                    /**
+                     * @description The fewest live copies Marfa keeps of each blob. Absent: the server's default applies.
+                     * @default 1
+                     */
+                    blob_min_copies?: number;
+                    /**
+                     * @description `true` if the `blob-orphans` job purges blobs nothing references once they have stood in the orphan report for `blob_cleanup_grace_seconds`. Absent: the server's default applies.
+                     * @default true
+                     */
+                    blob_cleanup_enabled?: boolean;
+                    /**
+                     * @description How long a blob nothing references stands in the orphan report before a later run purges it, in seconds. Absent: the server's default applies.
+                     * @default 86400
+                     */
+                    blob_cleanup_grace_seconds?: number;
+                    /**
+                     * @description How often Marfa makes a backup when anything it holds has changed, in seconds. `0` turns scheduled backups off. Absent: the server's default applies.
+                     * @default 3600
+                     */
+                    backup_interval_seconds?: number;
+                    /**
+                     * @description `true` if the rate limiter is on for requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses. Absent: the server's default applies.
+                     * @default true
+                     */
+                    rate_limit_enabled?: boolean;
+                    /**
+                     * @description How many requests one key or app may make in each rate-limit window, across every operation. Absent: the server's default applies.
+                     * @default 4000
+                     */
+                    rate_limit_requests?: number;
+                    /**
+                     * @description How many requests one key may make in each rate-limit window to the operations under `/keys`. Absent: the server's default applies.
+                     * @default 200
+                     */
+                    rate_limit_keys_requests?: number;
+                    /**
+                     * @description How long one rate-limit window lasts, in seconds. Absent: the server's default applies.
+                     * @default 60
+                     */
+                    rate_limit_window_seconds?: number;
+                    /**
+                     * @description Hours Marfa keeps an app that registered itself and holds no grant. `0` keeps it with no age limit. Absent: the server's default applies.
+                     * @default 1
+                     */
+                    unapproved_app_retention_hours?: number;
+                    /**
+                     * @description Days Marfa keeps a revoked app grant. `0` keeps it with no age limit. Absent: the server's default applies.
+                     * @default 90
+                     */
+                    revoked_grant_retention_days?: number;
+                    /**
+                     * @description The largest file Marfa reads whole to extract its text, in bytes. Marfa skips a larger file unread, and reads a sound or video from its headers whatever its size. Absent: the server's default applies.
+                     * @default 20971520
+                     */
+                    enrichment_max_blob_bytes?: number;
+                    /**
+                     * @description The most Unicode characters of extracted text Marfa keeps, counted as characters and not UTF-16 code units. Marfa cuts longer text short. Absent: the server's default applies.
+                     * @default 100000
+                     */
+                    enrichment_max_text_chars?: number;
+                    /**
+                     * @description The most a document may inflate to when Marfa extracts its text, all its parts together, in bytes. Marfa skips a document that inflates past it. Absent: the server's default applies.
+                     * @default 67108864
+                     */
+                    enrichment_max_inflated_bytes?: number;
+                    /**
+                     * @description The most memory the process that reads one file may take, in bytes. Marfa skips a file that needs more. Absent: the server's default applies.
+                     * @default 1073741824
+                     */
+                    enrichment_max_memory_bytes?: number;
+                    /**
+                     * @description How many times Marfa tries to read a file that fails, or that stops the server, before it stops trying. Absent: the server's default applies.
+                     * @default 3
+                     */
+                    enrichment_max_attempts?: number;
+                    /**
+                     * @description `true` if Marfa checks GitHub for new releases every few hours. When `false`, it makes no request for them and reports no release as newer. Absent: the server's default applies.
+                     * @default true
+                     */
+                    update_check_enabled?: boolean;
+                    /**
+                     * @description The most event-stream viewers one server serves at once. `0` sets no limit. Absent: the server's default applies.
+                     * @default 0
+                     */
+                    event_stream_max_viewers?: number;
+                    /**
+                     * @description `true` if MCP tools fetch a file from a web address, or a file a chat attached, to save it. When `false`, a tool asked to fetch one is refused. Absent: the server's default applies.
+                     * @default true
+                     */
+                    mcp_fetch_enabled?: boolean;
+                    /**
+                     * @description The largest file an MCP tool fetches from a web address to save, in bytes. Marfa refuses a larger file and stores nothing. Absent: the server's default applies.
+                     * @default 52428800
+                     */
+                    mcp_fetch_max_bytes?: number;
+                    /**
+                     * @description How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds. Absent: the server's default applies.
+                     * @default 60
+                     */
+                    mcp_fetch_timeout_seconds?: number;
+                    /**
+                     * @description The largest inbound webhook delivery Marfa stores, in bytes. Absent: the server's default applies.
+                     * @default 26214400
+                     */
+                    inbound_max_bytes?: number;
+                    /**
+                     * @description How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered. Absent: the server's default applies.
+                     * @default 600
+                     */
+                    rate_limit_inbound_requests?: number;
+                    /**
+                     * @description The most bytes of inbound webhook deliveries Marfa holds in memory at once. One source holds at most half. Absent: the server's default applies.
+                     * @default 104857600
+                     */
+                    inbound_in_flight_bytes?: number;
+                    /**
+                     * @description The unhandled deliveries one registration may hold before Marfa refuses more for it. Absent: the server's default applies.
+                     * @default 10000
+                     */
+                    inbound_backlog_deliveries?: number;
+                    /**
+                     * @description The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it. Absent: the server's default applies.
+                     * @default 1073741824
+                     */
+                    inbound_backlog_bytes?: number;
+                    /**
+                     * @description The most deliveries one registration retains across its live and retired endpoints. Absent: the server's default applies.
+                     * @default 10000
+                     */
+                    inbound_retained_deliveries?: number;
+                    /**
+                     * @description The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints. Absent: the server's default applies.
+                     * @default 1073741824
+                     */
+                    inbound_retained_bytes?: number;
+                    /**
+                     * @description The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves. Each is an origin with no path. Absent: the server's default applies.
+                     * @default []
+                     */
+                    cors_origins?: string[];
                 };
             };
         };
@@ -34459,23 +35079,50 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default 30
+                     */
                     version_recent_days?: number | null;
-                    /** @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default 90
+                     */
                     version_daily_snapshot_days?: number | null;
-                    /** @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default 365
+                     */
                     version_weekly_snapshot_days?: number | null;
-                    /** @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. `null` removes it, so the server's default applies.
+                     * @default 500
+                     */
                     version_max_versions?: number | null;
-                    /** @description Disconnect apps unused for this many days. Zero disables retirement. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Disconnect apps unused for this many days. Zero disables retirement. `null` removes it, so the server's default applies.
+                     * @default 365
+                     */
                     grant_inactivity_days?: number | null;
-                    /** @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
                     enrichment_enabled?: boolean | null;
-                    /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
                     enrichment_ocr_enabled?: boolean | null;
-                    /** @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
                     error_reporting_enabled?: boolean | null;
-                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
                     heartbeat_enabled?: boolean | null;
                     /**
                      * @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing.
@@ -34490,19 +35137,40 @@ export interface operations {
                         source_allowlist?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                         source_filter?: components["schemas"]["TypeAndSourceLeverStrict"] & unknown;
                     } | null;
-                    /** @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps audit log entries and outbound webhook delivery history. `0` keeps them with no age limit. `null` removes it, so the server's default applies.
+                     * @default 90
+                     */
                     audit_retention_days?: number | null;
-                    /** @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an `Idempotency-Key`. `0` keeps them with no age limit. `null` removes it, so the server's default applies.
+                     * @default 30
+                     */
                     event_log_retention_days?: number | null;
-                    /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies.
+                     * @default 60
+                     */
                     trash_retention_days?: number | null;
-                    /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies.
+                     * @default 30
+                     */
                     row_log_retention_days?: number | null;
-                    /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies.
+                     * @default 7
+                     */
                     inbound_handled_retention_days?: number | null;
-                    /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies.
+                     * @default 30
+                     */
                     inbound_pending_retention_days?: number | null;
-                    /** @description The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. `null` removes them, so the server's default applies. */
+                    /**
+                     * @description The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. `null` removes them, so the server's default applies.
+                     * @default []
+                     */
                     addresses?: string[] | null;
                     /** @description The address people sign in at, an origin with no path. Absent: this computer's own address. `null` removes it, so the server's default applies. */
                     sign_in_address?: string | null;
@@ -34514,23 +35182,35 @@ export interface operations {
                     backup_path?: string | null;
                     /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies. */
                     object_store_bucket?: string | null;
-                    /** @description The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies.
+                     * @default us-east-1
+                     */
                     object_store_region?: string | null;
                     /**
                      * Format: uri
                      * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it. `null` removes it, so the server's default applies.
                      */
                     object_store_endpoint?: string | null;
-                    /** @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
                     object_store_path_style?: boolean | null;
-                    /** @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies.
+                     * @default marfa
+                     */
                     object_store_prefix?: string | null;
                     /**
                      * @description The access key ID for the object store. `null` removes it, so the server's default applies.
                      * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
                      */
                     object_store_access_key_id?: string | null;
-                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies. */
+                    /**
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
+                     * @default false
+                     */
                     allow_private_addresses?: boolean | null;
                     /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it. */
                     object_store_secret_access_key?: string | null;
@@ -34546,6 +35226,161 @@ export interface operations {
                     error_webhook_url?: string | null;
                     /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
                     secrets_set?: string[];
+                    /**
+                     * @description The largest request body Marfa accepts, in bytes. Marfa waits 180 seconds for a body, so a body over about 21 MiB can't arrive in time over a 1 Mbit/s link. `null` removes it, so the server's default applies.
+                     * @default 1048576
+                     */
+                    max_request_bytes?: number | null;
+                    /**
+                     * @description The largest body the bulk operations accept, in bytes, and the largest row a restore reads. The most you can set is 33554432, half the 67108864 bytes a restore reads on one archive line. `null` removes it, so the server's default applies.
+                     * @default 16777216
+                     */
+                    max_bulk_request_bytes?: number | null;
+                    /**
+                     * @description Free disk space an upload must leave on the blob volume, in bytes. `0` refuses no write for room, and health still reports the disk as degraded below 64 MiB. `null` removes it, so the server's default applies.
+                     * @default 134217728
+                     */
+                    disk_reserve_bytes?: number | null;
+                    /**
+                     * @description The fewest live copies Marfa keeps of each blob. `null` removes it, so the server's default applies.
+                     * @default 1
+                     */
+                    blob_min_copies?: number | null;
+                    /**
+                     * @description `true` if the `blob-orphans` job purges blobs nothing references once they have stood in the orphan report for `blob_cleanup_grace_seconds`. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
+                    blob_cleanup_enabled?: boolean | null;
+                    /**
+                     * @description How long a blob nothing references stands in the orphan report before a later run purges it, in seconds. `null` removes it, so the server's default applies.
+                     * @default 86400
+                     */
+                    blob_cleanup_grace_seconds?: number | null;
+                    /**
+                     * @description How often Marfa makes a backup when anything it holds has changed, in seconds. `0` turns scheduled backups off. `null` removes it, so the server's default applies.
+                     * @default 3600
+                     */
+                    backup_interval_seconds?: number | null;
+                    /**
+                     * @description `true` if the rate limiter is on for requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
+                    rate_limit_enabled?: boolean | null;
+                    /**
+                     * @description How many requests one key or app may make in each rate-limit window, across every operation. `null` removes it, so the server's default applies.
+                     * @default 4000
+                     */
+                    rate_limit_requests?: number | null;
+                    /**
+                     * @description How many requests one key may make in each rate-limit window to the operations under `/keys`. `null` removes it, so the server's default applies.
+                     * @default 200
+                     */
+                    rate_limit_keys_requests?: number | null;
+                    /**
+                     * @description How long one rate-limit window lasts, in seconds. `null` removes it, so the server's default applies.
+                     * @default 60
+                     */
+                    rate_limit_window_seconds?: number | null;
+                    /**
+                     * @description Hours Marfa keeps an app that registered itself and holds no grant. `0` keeps it with no age limit. `null` removes it, so the server's default applies.
+                     * @default 1
+                     */
+                    unapproved_app_retention_hours?: number | null;
+                    /**
+                     * @description Days Marfa keeps a revoked app grant. `0` keeps it with no age limit. `null` removes it, so the server's default applies.
+                     * @default 90
+                     */
+                    revoked_grant_retention_days?: number | null;
+                    /**
+                     * @description The largest file Marfa reads whole to extract its text, in bytes. Marfa skips a larger file unread, and reads a sound or video from its headers whatever its size. `null` removes it, so the server's default applies.
+                     * @default 20971520
+                     */
+                    enrichment_max_blob_bytes?: number | null;
+                    /**
+                     * @description The most Unicode characters of extracted text Marfa keeps, counted as characters and not UTF-16 code units. Marfa cuts longer text short. `null` removes it, so the server's default applies.
+                     * @default 100000
+                     */
+                    enrichment_max_text_chars?: number | null;
+                    /**
+                     * @description The most a document may inflate to when Marfa extracts its text, all its parts together, in bytes. Marfa skips a document that inflates past it. `null` removes it, so the server's default applies.
+                     * @default 67108864
+                     */
+                    enrichment_max_inflated_bytes?: number | null;
+                    /**
+                     * @description The most memory the process that reads one file may take, in bytes. Marfa skips a file that needs more. `null` removes it, so the server's default applies.
+                     * @default 1073741824
+                     */
+                    enrichment_max_memory_bytes?: number | null;
+                    /**
+                     * @description How many times Marfa tries to read a file that fails, or that stops the server, before it stops trying. `null` removes it, so the server's default applies.
+                     * @default 3
+                     */
+                    enrichment_max_attempts?: number | null;
+                    /**
+                     * @description `true` if Marfa checks GitHub for new releases every few hours. When `false`, it makes no request for them and reports no release as newer. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
+                    update_check_enabled?: boolean | null;
+                    /**
+                     * @description The most event-stream viewers one server serves at once. `0` sets no limit. `null` removes it, so the server's default applies.
+                     * @default 0
+                     */
+                    event_stream_max_viewers?: number | null;
+                    /**
+                     * @description `true` if MCP tools fetch a file from a web address, or a file a chat attached, to save it. When `false`, a tool asked to fetch one is refused. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
+                    mcp_fetch_enabled?: boolean | null;
+                    /**
+                     * @description The largest file an MCP tool fetches from a web address to save, in bytes. Marfa refuses a larger file and stores nothing. `null` removes it, so the server's default applies.
+                     * @default 52428800
+                     */
+                    mcp_fetch_max_bytes?: number | null;
+                    /**
+                     * @description How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds. `null` removes it, so the server's default applies.
+                     * @default 60
+                     */
+                    mcp_fetch_timeout_seconds?: number | null;
+                    /**
+                     * @description The largest inbound webhook delivery Marfa stores, in bytes. `null` removes it, so the server's default applies.
+                     * @default 26214400
+                     */
+                    inbound_max_bytes?: number | null;
+                    /**
+                     * @description How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered. `null` removes it, so the server's default applies.
+                     * @default 600
+                     */
+                    rate_limit_inbound_requests?: number | null;
+                    /**
+                     * @description The most bytes of inbound webhook deliveries Marfa holds in memory at once. One source holds at most half. `null` removes it, so the server's default applies.
+                     * @default 104857600
+                     */
+                    inbound_in_flight_bytes?: number | null;
+                    /**
+                     * @description The unhandled deliveries one registration may hold before Marfa refuses more for it. `null` removes it, so the server's default applies.
+                     * @default 10000
+                     */
+                    inbound_backlog_deliveries?: number | null;
+                    /**
+                     * @description The bytes of unhandled deliveries one registration may hold before Marfa refuses more for it. `null` removes it, so the server's default applies.
+                     * @default 1073741824
+                     */
+                    inbound_backlog_bytes?: number | null;
+                    /**
+                     * @description The most deliveries one registration retains across its live and retired endpoints. `null` removes it, so the server's default applies.
+                     * @default 10000
+                     */
+                    inbound_retained_deliveries?: number | null;
+                    /**
+                     * @description The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints. `null` removes it, so the server's default applies.
+                     * @default 1073741824
+                     */
+                    inbound_retained_bytes?: number | null;
+                    /**
+                     * @description The browser origins allowed to call the API across origins with a token, beside the web pages the owner approves. Each is an origin with no path. `null` removes it, so the server's default applies.
+                     * @default []
+                     */
+                    cors_origins?: string[] | null;
                 };
             };
         };

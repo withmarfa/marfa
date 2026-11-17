@@ -2441,25 +2441,23 @@ fn an_avatar_is_put_to_its_door_as_the_file_itself() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("me.png");
     std::fs::write(&file, b"avatar bytes").unwrap();
-    for door in [["owner", "avatar"], ["profile", "avatar"]] {
-        let request = profile::avatar_request(&door, &file).unwrap();
-        assert_eq!(request.method, Method::Put);
-        assert_eq!(request.path(), format!("/{}/avatar", door[0]));
-        assert_eq!(
-            request.body,
-            Body::File {
-                path: file.clone(),
-                content_type: "application/octet-stream".into()
-            }
-        );
-    }
+    let request = profile::avatar_request(&file).unwrap();
+    assert_eq!(request.method, Method::Put);
+    assert_eq!(request.path(), "/profile/avatar");
+    assert_eq!(
+        request.body,
+        Body::File {
+            path: file.clone(),
+            content_type: "application/octet-stream".into()
+        }
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn an_avatar_that_cannot_be_read_is_refused_before_any_request_is_built() {
     let missing = std::env::temp_dir().join(format!("marfa-no-avatar-{}.png", std::process::id()));
-    match profile::avatar_request(&["owner", "avatar"], &missing) {
+    match profile::avatar_request(&missing) {
         Err(CliError::Invalid(message)) => assert!(message.contains("cannot read"), "{message}"),
         other => panic!(
             "expected a refusal, got {:?}",
@@ -2472,7 +2470,7 @@ fn an_avatar_that_cannot_be_read_is_refused_before_any_request_is_built() {
 fn an_avatar_path_that_is_a_directory_is_refused_before_any_request_is_built() {
     let dir = std::env::temp_dir().join(format!("marfa-avatar-dir-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let result = profile::avatar_request(&["profile", "avatar"], &dir);
+    let result = profile::avatar_request(&dir);
     std::fs::remove_dir_all(&dir).unwrap();
     match result {
         Err(CliError::Invalid(message)) => {
@@ -2494,9 +2492,9 @@ fn an_avatar_over_two_mebibytes_is_refused_before_any_request_is_built() {
     // A sparse file: the size is what the check reads, not the bytes.
     let handle = std::fs::File::create(&file).unwrap();
     handle.set_len(limit + 1).unwrap();
-    let over = profile::avatar_request(&["owner", "avatar"], &file);
+    let over = profile::avatar_request(&file);
     handle.set_len(limit).unwrap();
-    let exact = profile::avatar_request(&["owner", "avatar"], &file);
+    let exact = profile::avatar_request(&file);
     std::fs::remove_dir_all(&dir).unwrap();
     match over {
         Err(CliError::Invalid(message)) => assert_eq!(

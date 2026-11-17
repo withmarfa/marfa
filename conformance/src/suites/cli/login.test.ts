@@ -68,7 +68,7 @@ describe("the owner", () => {
     expect(
       (await local.json<{ claimed: boolean }>(["setup", "status"])).claimed,
     ).toBe(true);
-    const shown = await local.json<Owner>(["owner", "show"]);
+    const shown = await local.json<Owner>(["profile", "show"]);
     expect(shown.email).toBe(TEST_OWNER.email);
     const again = await local.refused(["setup", "claim", "--stdin"], {
       stdin: JSON.stringify({
@@ -78,9 +78,9 @@ describe("the owner", () => {
     });
     expect(again.code).toBe(1);
     expect(again.envelope.error.server?.code).toBe("owner_exists");
-    expect(await local.json<Owner>(["owner", "show"])).toEqual(shown);
+    expect(await local.json<Owner>(["profile", "show"])).toEqual(shown);
     for (const ordinary of [c.cli, c.operator]) {
-      const seen = await ordinary.json<Partial<Owner>>(["owner", "show"]);
+      const seen = await ordinary.json<Partial<Owner>>(["profile", "show"]);
       for (const [field, value] of Object.entries(seen)) {
         expect(shown, field).toHaveProperty(field, value);
       }

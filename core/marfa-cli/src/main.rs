@@ -170,12 +170,12 @@ enum Command {
         #[command(subcommand)]
         command: owner::SetupCommand,
     },
-    /// The owner: the one account behind the sign-in surface.
+    /// The owner's way in: passkeys, the password and recovering it.
     Owner {
         #[command(subcommand)]
         command: owner::OwnerCommand,
     },
-    /// The owner's name and avatar, changed with a key or app's profile write permission.
+    /// The owner's email address, name and avatar, with a key or an app's profile permissions.
     Profile {
         #[command(subcommand)]
         command: profile::ProfileCommand,

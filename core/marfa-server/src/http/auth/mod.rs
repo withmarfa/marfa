@@ -19,7 +19,7 @@ use serde_json::{Map, Value};
 
 use super::Routes;
 use super::answer::Stopped;
-use super::doors::{Asks, Doors, get, patch, post};
+use super::doors::{Asks, Doors, get, patch, post, put};
 use super::no_store;
 use super::observe::RequestContext;
 use crate::app::App;
@@ -93,6 +93,7 @@ pub fn owner_doors() -> Routes {
         .route("/owner", post(owner::claim))
         .asking_at(Method::POST, "/owner", Asks::Nothing)
         .route("/owner/passkeys/add-url", get(passkeys::add_url))
+        .route("/owner/password", put(sign_in::replace_password))
         .route("/owner/sign-ins", get(sign_ins::list))
         .route(
             "/owner/sign-ins/{id}",

@@ -930,4 +930,132 @@ mod tests {
         assert!(read(ADDRESSES.entry, Json::from("https://a.example")).is_err());
         assert!(read(ADDRESSES.entry, serde_json::json!([1])).is_err());
     }
+
+    fn document() -> Json {
+        serde_json::from_str(include_str!("../../../../openapi.json"))
+            .expect("openapi.json is JSON")
+    }
+
+    fn property_names(schema: &Json) -> std::collections::BTreeSet<String> {
+        schema["properties"]
+            .as_object()
+            .expect("a configuration schema declares its properties")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// What the document says of `entry` in `schema`, against what the registry holds.
+    fn document_disagrees(
+        entry: &Entry,
+        schema: &Json,
+        nullable: bool,
+        writes: bool,
+    ) -> Vec<String> {
+        let mut problems = Vec::new();
+        let key = entry.key;
+        let kind = match entry.rule {
+            Rule::Whole { .. } => "integer",
+            Rule::Boolean => "boolean",
+            Rule::Addresses => "array",
+            _ => "string",
+        };
+        let kind = if nullable {
+            serde_json::json!([kind, "null"])
+        } else {
+            Json::from(kind)
+        };
+        if schema["type"] != kind {
+            problems.push(format!("{key}: type {} against {kind}", schema["type"]));
+        }
+        match entry.rule {
+            Rule::Whole { min, max } => {
+                if schema["minimum"] != min || schema["maximum"] != max {
+                    problems.push(format!("{key}: range against {min} to {max}"));
+                }
+            }
+            Rule::Text { max } if schema["maxLength"] != max => {
+                problems.push(format!("{key}: maxLength against {max}"));
+            }
+            Rule::Addresses if schema["items"]["type"] != "string" => {
+                problems.push(format!("{key}: items are not text"));
+            }
+            Rule::Endpoint | Rule::Url if schema["format"] != "uri" => {
+                problems.push(format!("{key}: not a uri"));
+            }
+            _ => {}
+        }
+        match (entry.default_json(), schema.get("default")) {
+            (Json::Null, None) => {}
+            (default, Some(declared)) if &default == declared => {}
+            (default, declared) => {
+                problems.push(format!("{key}: default {declared:?} against {default}"));
+            }
+        }
+        if writes && entry.is_secret() && schema["writeOnly"] != true {
+            problems.push(format!("{key}: a secret is not writeOnly"));
+        }
+        if schema["description"].as_str().is_none_or(str::is_empty) {
+            problems.push(format!("{key}: no description"));
+        }
+        problems
+    }
+
+    #[test]
+    fn the_document_declares_every_setting_the_registry_stores_and_no_other() {
+        let document = document();
+        let bodies = [("put", false), ("patch", true)];
+        let fields: std::collections::BTreeSet<String> = crate::app::config::fields()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let mut problems = Vec::new();
+        for (method, nullable) in bodies {
+            let schema = &document["paths"]["/config"][method]["requestBody"]["content"]["application/json"]
+                ["schema"];
+            if property_names(schema) != fields {
+                let declared = property_names(schema);
+                problems.push(format!(
+                    "{method} /config: lacks {:?}, names {:?} the server does not take",
+                    fields.difference(&declared).collect::<Vec<_>>(),
+                    declared.difference(&fields).collect::<Vec<_>>(),
+                ));
+            }
+            for entry in ENTRIES {
+                let property = &schema["properties"][entry.key];
+                problems.extend(document_disagrees(entry, property, nullable, true));
+            }
+        }
+        // No secret is answered; `sign_in_moved` comes only with a write that moved the address.
+        let answer = &document["components"]["schemas"]["InstanceConfig"];
+        let expected: std::collections::BTreeSet<String> = ENTRIES
+            .iter()
+            .filter(|entry| !entry.is_secret())
+            .map(|entry| entry.key.to_string())
+            .chain(
+                [
+                    "instance_id",
+                    "name",
+                    "enforcement",
+                    "secrets_set",
+                    "sign_in_moved",
+                ]
+                .into_iter()
+                .map(String::from),
+            )
+            .collect();
+        let declared = property_names(answer);
+        if declared != expected {
+            problems.push(format!(
+                "InstanceConfig: lacks {:?}, names {:?} the server does not answer",
+                expected.difference(&declared).collect::<Vec<_>>(),
+                declared.difference(&expected).collect::<Vec<_>>(),
+            ));
+        }
+        for entry in ENTRIES.iter().filter(|entry| !entry.is_secret()) {
+            let property = &answer["properties"][entry.key];
+            problems.extend(document_disagrees(entry, property, false, false));
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
 }

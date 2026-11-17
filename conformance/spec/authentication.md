@@ -414,6 +414,84 @@ If a request to `POST /auth/owner/password` that carries the owner's browser ses
 
 **Tests:** `compliance/owner-pages.test.ts › refuses a change from another origin and from none, 403`.
 
+## Replacing the password with a credential
+
+`PUT /owner/password` makes the same change for a key or an app that holds `sign_ins.manage` and for the private local command, none of which has a browser session. It takes the same two fields and holds the new password to the same rules, and it checks the current password as `POST /auth/owner/password` does, in the same code.
+
+### `authentication/password-replace`
+
+When a request to `PUT /owner/password` carries a credential that holds `sign_ins.manage`, or comes over the private local command, and sends the owner's current password as `current_password` and a new password as `new_password`, the server MUST answer `200` with `{"ok": true}` and from then on accept the new password and refuse the replaced one at password sign-in.
+
+**Tests:** `compliance/owner-password.test.ts › replaces the password through a key holding sign_ins.manage, so the new one signs in and the old one does not`, `compliance/owner-password.test.ts › replaces the password through the private local command with the current password`.
+
+### `authentication/password-replace-ends-browsers`
+
+When the server replaces the owner's password through `PUT /owner/password`, the server MUST end every browser session of the owner in the same step.
+
+**Reason:** The request comes from no browser, so no session is the one in front of the person, and a browser signed in with the replaced password would otherwise stay signed in.
+
+**Tests:** `compliance/owner-password.test.ts › ends every browser session when a key replaces the password, and keeps keys and apps`.
+
+### `authentication/password-replace-keeps-apps`
+
+When the server replaces the owner's password through `PUT /owner/password`, the server MUST preserve every key and every connected app's access tokens, refresh grants and consent.
+
+**Tests:** `compliance/owner-password.test.ts › ends every browser session when a key replaces the password, and keeps keys and apps`.
+
+### `authentication/password-replace-rules`
+
+If the new password sent to `PUT /owner/password` is shorter than 8 or longer than 128 characters, then the server MUST answer `400 validation_error` and keep the current password.
+
+**Reason:** A replaced password is held to the rule the claim, the recovery and the passkeys page hold a new password to.
+
+**Tests:** `compliance/owner-password.test.ts › refuses a new password the claim would refuse, and a body without both passwords, and keeps the password`.
+
+### `authentication/password-replace-fields`
+
+If the body of a request to `PUT /owner/password` lacks `current_password` or `new_password`, then the server MUST answer `400 missing_required_field` and keep the current password.
+
+**Tests:** `compliance/owner-password.test.ts › refuses a new password the claim would refuse, and a body without both passwords, and keeps the password`.
+
+### `authentication/password-replace-wrong`
+
+If the current password sent to `PUT /owner/password` is wrong, then the server MUST answer `401 unauthorized` and keep the current password.
+
+**Tests:** `compliance/owner-password.test.ts › answers a wrong current password 401, records it as a refused password sign-in and changes nothing`.
+
+### `authentication/password-replace-wrong-audit`
+
+When the server refuses `PUT /owner/password` because the current password is wrong, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `invalid_credentials`, readable at `GET /audit`.
+
+**Reason:** A wrong current password is a password attempt, whichever door it came by.
+
+**Tests:** `compliance/owner-password.test.ts › answers a wrong current password 401, records it as a refused password sign-in and changes nothing`.
+
+### `authentication/password-replace-lanes`
+
+When a request to `PUT /owner/password` carries a current password, the server MUST count it against the attempt windows `authentication/password-change-lanes` names, as a password sign-in to the owner's account from the same address.
+
+**Reason:** A key that holds `sign_ins.manage` would otherwise be a way round the lockout.
+
+**Tests:** `compliance/owner-password.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
+
+### `authentication/password-replace-locked`
+
+If the attempt windows `authentication/password-replace-lanes` names are spent, then the server MUST answer `429 rate_limited` to `PUT /owner/password` with the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
+
+**Tests:** `compliance/owner-password.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
+
+### `authentication/password-replace-audit`
+
+When `PUT /owner/password` answers `200`, the server MUST already hold an `owner.password.changed` audit record with `resource_type` `owner`, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-password.test.ts › records a replacement in the audit log`.
+
+### `authentication/password-replace-permission`
+
+If a request to `PUT /owner/password` carries a key or an app's token that does not hold `sign_ins.manage`, then the server MUST answer `403 forbidden` with `details.required_scope` `sign_ins.manage` and keep the current password.
+
+**Tests:** `compliance/owner-password.test.ts › refuses a key without sign_ins.manage, naming the permission, and keeps the password`.
+
 ## Where a browser session counts
 
 The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), the root asked for as a page (`GET /`), sign-in (`/auth/sign-in`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the authorization request and the consent screen (`/oauth/authorize` and `/auth/consent`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, its password change `POST /auth/owner/password`, the doors under `/auth/passkeys/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.

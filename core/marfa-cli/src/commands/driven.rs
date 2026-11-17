@@ -193,6 +193,7 @@ fn skipped(words: &[String]) -> bool {
         || socket_only(words)
         // Secret input needs a child process with its own stdin, driven below.
         || words == ["setup", "claim"]
+        || words == ["owner", "password"]
         // Removes this machine's stored key and sends nothing.
         || words == ["keys", "forget"]
 }
@@ -321,6 +322,15 @@ fn file_body(words: &[String]) -> &'static str {
     }
 }
 
+/// What a command is given that the walk's guesses would get wrong: a name the
+/// server's document must know.
+fn given(words: &[String]) -> Vec<(String, Option<String>)> {
+    match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        ["config", "unset"] => vec![("<NAME>".into(), Some("version_recent_days".into()))],
+        _ => Vec::new(),
+    }
+}
+
 #[test]
 fn every_command_refuses_a_redirect_the_same_way() {
     use crate::error::CliError;
@@ -339,7 +349,7 @@ fn every_command_refuses_a_redirect_the_same_way() {
         }
         let name = leaf.words.join(" ");
         std::fs::write(&file, file_body(&leaf.words)).unwrap();
-        let argv = match command_line(&server.url, &leaf.words, &[], &file) {
+        let argv = match command_line(&server.url, &leaf.words, &given(&leaf.words), &file) {
             Ok(argv) => argv,
             Err(error) => {
                 elsewhere.push(format!(
@@ -471,6 +481,77 @@ fn remote_setup_claim_refuses_a_redirect_and_sends_the_documented_body() {
             .unwrap()
             .starts_with("createOwner (")
     );
+}
+
+#[test]
+fn owner_password_stdin_child() {
+    let Ok(url) = std::env::var("MARFA_TEST_OWNER_PASSWORD_URL") else {
+        return;
+    };
+    let cli = crate::Cli::try_parse_from([
+        "marfa",
+        "--json",
+        "--url",
+        &url,
+        "--key",
+        "marfa_k1_x",
+        "owner",
+        "password",
+        "--stdin",
+    ])
+    .unwrap();
+    crate::run(cli).unwrap();
+}
+
+#[test]
+fn owner_password_checks_the_credential_first_and_sends_both_passwords_once() {
+    use std::process::{Command, Stdio};
+    let server = Server::answering("200 OK", "", r#"{"ok":true}"#, false);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "commands::driven::owner_password_stdin_child",
+            "--nocapture",
+        ])
+        .env_remove("MARFA_API_KEY")
+        .env_remove("MARFA_API_URL")
+        .env_remove("MARFA_NO_KEYCHAIN")
+        .env("MARFA_TEST_OWNER_PASSWORD_URL", &server.url)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let body = serde_json::json!({"current_password":"the old passphrase", "new_password":"the new passphrase"});
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(body.to_string().as_bytes())
+        .unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let requests = server.take();
+    let asked: Vec<_> = requests
+        .iter()
+        .map(|request| format!("{} {}", request.method(), request.path()))
+        .collect();
+    assert_eq!(asked, ["GET /owner/passkeys", "PUT /owner/password"]);
+    let put = &requests[1];
+    assert_eq!(put.header("authorization"), Some("Bearer marfa_k1_x"));
+    assert_eq!(serde_json::from_str::<Value>(&put.body).unwrap(), body);
+    assert!(
+        Document::read()
+            .held(put, true)
+            .unwrap()
+            .starts_with("replaceOwnerPassword (")
+    );
+    let printed = String::from_utf8_lossy(&result.stdout);
+    assert!(!printed.contains("passphrase"), "{printed}");
 }
 
 /// The document the server publishes, read as the commands are held to it.
@@ -660,9 +741,10 @@ const MISSED: &[&str] = &[
     "requestDeviceCode",
     "exchangeToken",
     "revokeToken",
-    // `owner update --avatar` and `profile update --avatar`: the walk gives
-    // each command one option, so it stops at the name's door. Both avatars
-    // are driven by cli/profile.test.ts.
+    // `owner password`: secret input is driven by the child-process fixture below.
+    "replaceOwnerPassword",
+    // `profile update --avatar`: the walk gives each command one option, so it
+    // stops at the name's door. The avatar is driven by cli/profile.test.ts.
     "replaceProfileAvatar",
     // `apps narrow` reads the grant before sending the guarded update.
     "narrowAppGrant",
@@ -767,12 +849,13 @@ fn every_request_a_command_sends_is_one_the_document_publishes() {
             if !named && flag.len() == 2 && satisfied.contains(&spelling) {
                 continue;
             }
-            let extra: Vec<(String, Option<String>)> = match flag.as_slice() {
+            let mut extra = given(&leaf.words);
+            extra.extend(match flag.as_slice() {
                 [] => Vec::new(),
                 [spelling] => vec![(spelling.clone(), None)],
                 [spelling, value] => vec![(spelling.clone(), Some(value.clone()))],
                 _ => unreachable!(),
-            };
+            });
             // A flag that cannot stand with what the leaf requires is a
             // combination the parser refuses, which is not the command's.
             let Ok(argv) = command_line(&server.url, &leaf.words, &extra, &file) else {

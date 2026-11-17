@@ -715,6 +715,11 @@ impl Remote {
             Some(check) => http.working(check),
             None => http,
         };
+        let http = if request.proving {
+            http.without_renewal()
+        } else {
+            http
+        };
         if sends_key && self.bearer().is_none() {
             return Err(self.no_credential());
         }
@@ -861,9 +866,16 @@ impl Remote {
     /// The server's refusal as an error. Direct local authority carries no
     /// key, so a `401` through the socket is not a spent or wrong key, and
     /// signing in again would not help: the message says what is missing.
-    fn refusal(&self, status: u16, text: &str, retry_after_seconds: Option<u64>) -> CliError {
+    fn refusal(
+        &self,
+        request: &Request,
+        status: u16,
+        text: &str,
+        retry_after_seconds: Option<u64>,
+    ) -> CliError {
         let mut error = refused(status, text, retry_after_seconds);
         if self.local
+            && !request.proving
             && let CliError::Refused {
                 status: 401,
                 message,
@@ -876,6 +888,11 @@ impl Remote {
                         item, the `blobs` commands, and `items bulk-action job` \
                         and `items bulk-action cancel` work through --socket without one"
                 .into();
+        }
+        if request.proving && status == 401 {
+            return CliError::SecretRefused {
+                error: Box::new(error),
+            };
         }
         error
     }
@@ -891,7 +908,7 @@ impl Remote {
             }
         };
         if !(200..300).contains(&reply.status) {
-            return Err(self.refusal(reply.status, &text, reply.retry_after_seconds));
+            return Err(self.refusal(request, reply.status, &text, reply.retry_after_seconds));
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);
@@ -919,7 +936,7 @@ impl Remote {
                 Ok((reply.content_type, Box::new(Watched::new(reader, idle))))
             }
             ReplyBody::Text(text) => {
-                Err(self.refusal(reply.status, &text, reply.retry_after_seconds))
+                Err(self.refusal(request, reply.status, &text, reply.retry_after_seconds))
             }
         }
     }
@@ -1128,6 +1145,29 @@ mod tests {
         };
         let found = handed(&bare, Some("marfa_at_a"), Some("https://a.example"));
         assert!(matches!(found, Ok(Some(_))), "{found:?}");
+    }
+
+    #[test]
+    fn a_refused_secret_is_not_a_sign_out() {
+        let refusal =
+            r#"{"error":{"code":"unauthorized","message":"Current password is incorrect"}}"#;
+        let door = Door::open(vec![
+            Answer::json("401 Unauthorized", refusal),
+            Answer::json("401 Unauthorized", refusal),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        let proving = Request::put(&["owner", "password"])
+            .proving()
+            .json(serde_json::json!({"current_password":"a","new_password":"b"}));
+        let error = remote.json(&proving).unwrap_err();
+        assert_eq!(error.exit(), Exit::Refused);
+        assert_eq!(error.code(), "unauthorized");
+        assert_eq!(error.envelope()["error"]["server"]["status"], 401);
+        assert_eq!(error.envelope()["error"]["server"]["code"], "unauthorized");
+        // The witness: a request that proves nothing is a credential's refusal.
+        let plain = Request::get(&["items"]);
+        assert_eq!(remote.json(&plain).unwrap_err().exit(), Exit::Credential);
+        door.received();
     }
 
     #[test]

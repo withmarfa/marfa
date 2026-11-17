@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
 use serde_json::{Map, Value, json};
 
 use super::origin::{self, Source};
 use super::{cookies, redirect, require_safe_caller, text_field, with_cookie};
 use crate::app::App;
-use crate::app::access::unauthorized;
+use crate::app::access::{Caller, Permission, unauthorized};
 use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session;
@@ -17,6 +17,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::{JsonBody, only_declared};
 use crate::http::caller::OnPage;
+use crate::http::query;
 
 const PASSWORD_FIELDS: [&str; 2] = ["email", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
@@ -240,10 +241,36 @@ pub async fn change_password(
     let current = current_password(&body)?;
     let new = text_field(&body, "new_password")?.to_string();
     let mark = device_mark(&app, &headers);
-    let device = sign_in::change_password(&app, &caller, current, new, mark, visit).await?;
+    let changed = sign_in::change_password(&app, &caller, current, new, mark, visit).await?;
     let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
     Ok(with_cookie(
         ok,
-        cookies::device(&app.addresses().sign_in(), &device)?,
+        cookies::device(&app.addresses().sign_in(), &changed.device(&app)?)?,
     ))
+}
+
+/// `PUT /owner/password`: the same change, for a key, an app or the private socket.
+pub async fn replace_password(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    visit: Visit,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    caller.require(Permission::SignInsManage)?;
+    query::only(&uri, &[])?;
+    let body = body.object(&CHANGE_FIELDS).await?;
+    for field in CHANGE_FIELDS {
+        if !body.contains_key(field) {
+            return Err(
+                Refusal::new(Code::MissingRequiredField, format!("{field} is required."))
+                    .with_detail("field", field)
+                    .into(),
+            );
+        }
+    }
+    let current = current_password(&body)?;
+    let new = text_field(&body, "new_password")?.to_string();
+    sign_in::change_password(&app, &caller, current, new, None, visit).await?;
+    Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

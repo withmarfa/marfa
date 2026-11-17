@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -8,6 +8,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { png } from "../../utils/avatars.js";
+import { issuerOrigin } from "../../utils/signed-in.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import { Cli, requireBinary } from "./harness.js";
 
 let server: FreshServer;
@@ -89,9 +91,9 @@ it("clears the owner's avatar", async () => {
     const file = join(dir, "me.png");
     await writeFile(file, png(16, 16));
     const owner = () =>
-      local.json<{ avatar: string | null }>(["owner", "show"]);
+      local.json<{ avatar: string | null }>(["profile", "show"]);
     const updated = await local.json<{ avatar: string | null }>([
-      "owner",
+      "profile",
       "update",
       "--avatar",
       file,
@@ -100,14 +102,14 @@ it("clears the owner's avatar", async () => {
     expect((await owner()).avatar).toBe(updated.avatar);
 
     const cleared = await local.json<{ avatar: string | null }>([
-      "owner",
+      "profile",
       "update",
       "--clear-avatar",
     ]);
     expect(cleared.avatar).toBeNull();
     expect((await owner()).avatar).toBeNull();
     const gone = await local.refused([
-      "owner",
+      "profile",
       "avatar",
       "--output",
       join(dir, "gone.png"),
@@ -184,4 +186,195 @@ it("holds a sign-in address change until its flag confirms it, and tells a key a
     "--skip-sign-in-address-check",
   ]);
   expect(moved.sign_in_address).toBe(address);
+});
+
+/** Whether `password` signs the owner in at the sign-in page now. */
+async function signsIn(password: string): Promise<boolean> {
+  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: await issuerOrigin(server),
+    },
+    body: JSON.stringify({ email: TEST_OWNER.email, password }),
+  });
+  await response.body?.cancel();
+  expect([200, 401]).toContain(response.status);
+  return response.status === 200;
+}
+
+/** How many requests to `path` the server has logged so far. */
+async function logged(path: string): Promise<number> {
+  const log = await readFile(join(server.stateDir, "server.log"), "utf8");
+  return log
+    .split("\n")
+    .filter((line) => line.startsWith("{"))
+    .filter((line) => (JSON.parse(line) as { path?: string }).path === path)
+    .length;
+}
+
+interface Setting {
+  key: string;
+  value: unknown;
+  stored: unknown;
+  secret: boolean;
+  set?: boolean;
+}
+
+async function setting(name: string): Promise<Setting> {
+  const listed = await keyed.json<{ data: Setting[] }>(["config", "settings"]);
+  const found = listed.data.find((row) => row.key === name);
+  expect(found, `${name} is listed`).toBeDefined();
+  return found!;
+}
+
+it("replaces the owner's password with a key and with the private socket, asking for no password as an argument", async () => {
+  const forward = JSON.stringify({
+    current_password: TEST_OWNER.password,
+    new_password: "a different long password",
+  });
+  const back = JSON.stringify({
+    current_password: "a different long password",
+    new_password: TEST_OWNER.password,
+  });
+
+  // A password on the command line is refused whole, and changes nothing.
+  for (const argv of [
+    ["owner", "password", "a different long password"],
+    ["owner", "password", "--new-password", "a different long password"],
+  ]) {
+    const refused = await keyed.refused(argv);
+    expect(refused.code).toBe(2);
+    expect(refused.envelope.error.code).toBe("usage");
+  }
+  expect(await signsIn(TEST_OWNER.password)).toBe(true);
+
+  // The witness: a key's `owner passkeys list` is a request the log holds,
+  // and so is the one `owner password` makes before it asks for anything.
+  const seen = await logged("/owner/passkeys");
+  await keyed.json(["owner", "passkeys", "list"]);
+  expect(await logged("/owner/passkeys")).toBe(seen + 1);
+
+  // Without a terminal and without --stdin, the command asks for nothing
+  // and the server sees nothing.
+  const none = await keyed.refused(["owner", "password"]);
+  expect(none.code).toBe(2);
+  expect(none.envelope.error.message).toContain("--stdin");
+  expect(await logged("/owner/passkeys")).toBe(seen + 1);
+
+  const changed = await keyed.json(["owner", "password", "--stdin"], {
+    stdin: forward,
+  });
+  expect(changed).toEqual({ ok: true });
+  expect(await signsIn(TEST_OWNER.password)).toBe(false);
+  expect(await signsIn("a different long password")).toBe(true);
+
+  // The witness: the socket is held to the current password too, and the
+  // refusal it gets is the password's, not a missing key.
+  const wrong = await local.refused(["owner", "password", "--stdin"], {
+    stdin: forward,
+  });
+  expect(wrong.envelope.error.server?.code).toBe("unauthorized");
+  expect(wrong.envelope.error.message).not.toContain("needs a key");
+  expect(wrong.code).toBe(1);
+
+  // A key that just worked is not signed out by a wrong password either.
+  const mistyped = await keyed.refused(["owner", "password", "--stdin"], {
+    stdin: JSON.stringify({
+      current_password: "not the owner's password",
+      new_password: "a different long password",
+    }),
+  });
+  expect(mistyped.envelope.error.server?.code).toBe("unauthorized");
+  expect(mistyped.code).toBe(1);
+  expect(await signsIn("a different long password")).toBe(true);
+
+  const restored = await local.json(["owner", "password", "--stdin"], {
+    stdin: back,
+  });
+  expect(restored).toEqual({ ok: true });
+  expect(await signsIn(TEST_OWNER.password)).toBe(true);
+
+  // A key that cannot manage sign-ins is refused before anything is read:
+  // the input here is not JSON, and the refusal is still the server's.
+  const minted = await local.json<{ key: string }>([
+    "keys",
+    "create",
+    "--label",
+    "cannot manage sign-ins",
+    "--source",
+    "cli-owner-password-narrow",
+    "--permission",
+    "audit.read",
+  ]);
+  const narrow = await keyed
+    .as(minted.key)
+    .refused(["owner", "password", "--stdin"], { stdin: "not json" });
+  expect(narrow.envelope.error.server?.code).toBe("forbidden");
+});
+
+it("sets one setting by name as the kind it holds, and removes it", async () => {
+  const before = await setting("trash_retention_days");
+  expect(typeof before.value).toBe("number");
+
+  expect(
+    await keyed.json(["config", "set", "trash_retention_days", "45"]),
+  ).toMatchObject({});
+  expect((await setting("trash_retention_days")).stored).toBe(45);
+
+  await keyed.json(["config", "set", "enrichment_ocr_enabled", "false"]);
+  expect((await setting("enrichment_ocr_enabled")).stored).toBe(false);
+
+  await keyed.json(["config", "set", "object_store_region", "eu-west-2"]);
+  expect((await setting("object_store_region")).stored).toBe("eu-west-2");
+
+  // A value of another kind, and a name nobody lists, send nothing.
+  for (const [name, value] of [
+    ["trash_retention_days", "many"],
+    ["trash_retention_days", "-1"],
+    ["enrichment_ocr_enabled", "yes"],
+    ["no_such_setting", "1"],
+  ] as const) {
+    const refused = await keyed.refused(["config", "set", name, value]);
+    expect(refused.code, `${name} ${value}`).toBe(2);
+    expect(refused.envelope.error.code).toBe("usage");
+  }
+  expect((await setting("trash_retention_days")).stored).toBe(45);
+
+  await keyed.json(["config", "unset", "trash_retention_days"]);
+  const after = await setting("trash_retention_days");
+  expect(after.stored).toBeNull();
+  expect(after.value).toBe(before.value);
+  await keyed.json(["config", "unset", "enrichment_ocr_enabled"]);
+  await keyed.json(["config", "unset", "object_store_region"]);
+});
+
+it("reads a secret setting from standard input and refuses it as an argument", async () => {
+  const name = "error_webhook_url";
+  expect((await setting(name)).secret).toBe(true);
+  const given = await keyed.refused([
+    "config",
+    "set",
+    name,
+    "https://hooks.example/received",
+  ]);
+  expect(given.code).toBe(2);
+  expect(given.envelope.error.code).toBe("usage");
+  expect(given.envelope.error.message).not.toContain("hooks.example");
+  expect((await setting(name)).set).toBeFalsy();
+
+  await keyed.json(["config", "set", name], {
+    stdin: "https://hooks.example/received\n",
+  });
+  const stored = await setting(name);
+  expect(stored.set).toBe(true);
+  expect(stored.value).toBeNull();
+
+  // Nothing on standard input is no value, not an empty one.
+  const empty = await keyed.refused(["config", "set", name], { stdin: "" });
+  expect(empty.code).toBe(2);
+  expect((await setting(name)).set).toBe(true);
+
+  await keyed.json(["config", "unset", name]);
+  expect((await setting(name)).set).toBeFalsy();
 });

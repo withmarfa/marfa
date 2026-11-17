@@ -331,7 +331,7 @@ impl Caller {
         }
     }
 
-    /// The owner's passkeys, which the passkey page manages as well as any holder of `sign_ins.manage`.
+    /// The owner's passkeys and password, which the passkey page manages as well as any holder of `sign_ins.manage`.
     pub fn require_passkeys(&self) -> Result<()> {
         match self {
             Caller::Owner(_) => Ok(()),
