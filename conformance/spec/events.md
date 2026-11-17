@@ -1463,6 +1463,22 @@ The server MUST NOT have more than one delivery attempt in flight for a subscrip
 
 **Tests:** `compliance/webhook-attempts.test.ts › holds at most one attempt in flight for a subscription, and one for each of two`.
 
+### `events/attempt-settles-own-delivery`
+
+When a delivery attempt ends, the server MUST record its outcome only on the delivery the attempt was made for, and on no delivery made later, including one made for a new subscription after the attempt's subscription was deleted.
+
+**Reason:** a deleted subscription's attempt may still be in flight when a new subscription's delivery is made, and the new delivery must not take its outcome, its attempt count or the loss of its stored event.
+
+**Tests:** `compliance/webhook-attempt-identity.test.ts › counts no attempt on a delivery that did not make it when several attempts to a receiver that never answers end after subscriptions are deleted and made again`.
+
+### `events/attempt-deleted-no-hold`
+
+While an attempt for a deleted subscription is in flight, the server MUST NOT hold back an attempt for a delivery of a subscription made afterwards.
+
+**Reason:** `events/attempt-one-in-flight` limits the attempts of one subscription, and a deleted subscription's attempt is no part of any later subscription.
+
+**Tests:** `compliance/webhook-attempt-identity.test.ts › settles a delivery only by its own attempt after a subscription is deleted during an attempt and made again`, `› counts no attempt on a delivery that did not make it when several attempts to a receiver that never answers end after subscriptions are deleted and made again`.
+
 ### `events/attempt-answer-bound`
 
 If a receiver that has accepted the connection has not answered an attempt 10 seconds after the server started it, then the server MUST end the attempt as not answered in time.

@@ -52,10 +52,10 @@ fn prepare(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     read_only: &ReadOnly,
-    seq: i64,
+    id: &str,
     at: &str,
 ) -> Result<Prepared> {
-    let Some((delivery, payload)) = store::pending(tx, seq)? else {
+    let Some((delivery, payload)) = store::pending(tx, id)? else {
         return Ok(Prepared::Gone);
     };
     let Some(subscription) = store::by_id(tx, &delivery.webhook_id, None)? else {
@@ -223,23 +223,24 @@ pub enum Ended {
 }
 
 /// `spent` means the deferral limit passed, so an unavailable lookup slot counts as an attempt.
-pub async fn attempt(app: Arc<App>, seq: i64, maker: String, spent: bool) -> Result<Ended> {
+pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> Result<Ended> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
     let marked = app.read_only_handle();
+    let looked_up = id.clone();
     let ready = app
         .db
         .read(move |tx| {
             let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
             let read_only = read_only::current(&marked, tx, &at, catalog::Snapshot::Committed)?;
-            prepare(tx, &catalog, &read_only, seq, &at)
+            prepare(tx, &catalog, &read_only, &looked_up, &at)
         })
         .await?;
     let ready = match ready {
         Prepared::Gone => return Ok(Ended::Settled),
         Prepared::Cancel(reason) => {
             let at = app.clock.stamp();
-            write(&app, move |tx| store::cancel(tx, seq, reason, &at)).await?;
+            write(&app, move |tx| store::cancel(tx, &id, reason, &at)).await?;
             return Ok(Ended::Settled);
         }
         Prepared::Send(ready) => ready,
@@ -254,7 +255,7 @@ pub async fn attempt(app: Arc<App>, seq: i64, maker: String, spent: bool) -> Res
     write(&app, move |tx| {
         store::record(
             tx,
-            seq,
+            &id,
             &Recorded {
                 status: settled.status,
                 status_code: settled.status_code,

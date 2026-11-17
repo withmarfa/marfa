@@ -89,7 +89,7 @@ pub fn start(app: &Arc<App>) {
 
 /// A delivery under attempt and the maker whose share it takes.
 struct Attempt {
-    seq: i64,
+    id: String,
     maker: String,
 }
 
@@ -99,7 +99,7 @@ struct Sender {
     commits: watch::Receiver<u64>,
     flying: JoinSet<Result<send::Ended>>,
     busy: HashMap<Id, Attempt>,
-    held_back: HashMap<i64, Instant>,
+    held_back: HashMap<String, Instant>,
     deferred: Deferred,
     released: watch::Receiver<u64>,
     /// The count of lookup slots given back that every waiting delivery has been checked against.
@@ -256,12 +256,12 @@ impl Sender {
         self.deferred.expire(now);
         let free = AT_ONCE.saturating_sub(self.busy.len());
         let beyond_share = (AT_ONCE - HEADROOM).saturating_sub(self.busy.len());
-        let mut excluded: Vec<i64> = self
+        let mut excluded: Vec<String> = self
             .busy
             .values()
-            .map(|attempt| attempt.seq)
-            .chain(self.held_back.keys().copied())
-            .chain(self.deferred.waiting())
+            .map(|attempt| attempt.id.clone())
+            .chain(self.held_back.keys().cloned())
+            .chain(self.deferred.waiting().map(str::to_string))
             .collect();
         let holding: Vec<String> = self
             .busy
@@ -286,7 +286,7 @@ impl Sender {
                 } else {
                     Vec::new()
                 };
-                excluded.extend(due.iter().map(|due| due.seq));
+                excluded.extend(due.iter().map(|due| due.id.clone()));
                 Ok((due, store::next_due(tx, now_ms, &excluded)?))
             })
             .await;
@@ -297,11 +297,11 @@ impl Sender {
                 return None;
             }
         };
-        for store::Due { seq, maker } in due {
-            let spent = self.deferred.spent(seq, now);
-            let attempt = send::attempt(self.app.clone(), seq, maker.clone(), spent);
+        for store::Due { id, maker } in due {
+            let spent = self.deferred.spent(&id, now);
+            let attempt = send::attempt(self.app.clone(), id.clone(), maker.clone(), spent);
             let handle = self.flying.spawn(attempt);
-            self.busy.insert(handle.id(), Attempt { seq, maker });
+            self.busy.insert(handle.id(), Attempt { id, maker });
         }
         next
     }
@@ -314,11 +314,15 @@ impl Sender {
             Ok((id, outcome)) => (id, outcome.map_err(|refused| refused.to_string())),
             Err(error) => (error.id(), Err(error.to_string())),
         };
-        let Some(Attempt { seq, maker }) = self.busy.remove(&id) else {
+        let Some(Attempt {
+            id: delivery,
+            maker,
+        }) = self.busy.remove(&id)
+        else {
             return;
         };
         match outcome {
-            Ok(send::Ended::Settled) => self.deferred.settle(seq),
+            Ok(send::Ended::Settled) => self.deferred.settle(&delivery),
             Ok(send::Ended::Deferred) => {
                 // The count is read before the room is checked, so a slot given back between them is seen.
                 let counted = *self.released.borrow();
@@ -326,12 +330,13 @@ impl Sender {
                 if waiting && !self.deferred.any_waiting() {
                     self.seen_released = counted;
                 }
-                self.deferred.defer(seq, &maker, Instant::now(), waiting);
+                self.deferred
+                    .defer(&delivery, &maker, Instant::now(), waiting);
             }
             Err(error) => {
-                self.deferred.settle(seq);
-                tracing::warn!(%error, seq, "A webhook delivery's attempt did not finish");
-                self.held_back.insert(seq, Instant::now() + HELD_BACK);
+                self.deferred.settle(&delivery);
+                tracing::warn!(%error, delivery, "A webhook delivery's attempt did not finish");
+                self.held_back.insert(delivery, Instant::now() + HELD_BACK);
             }
         }
     }
