@@ -2,7 +2,7 @@
 # Builds the proof program, marfa-enrichment-read, for a target from a finished
 # prefix, as three files in $MARFA_NATIVE_ROOT/out/<target>/:
 #
-#   marfa-enrichment-read        what a release ships, stripped
+#   marfa-enrichment-read        what a release ships
 #   marfa-enrichment-read-proof  the same with the `fault-injection` feature, which makes a
 #                                reader crash on marked bytes, so verify.sh can prove
 #                                that the parent survives. Never ship it.

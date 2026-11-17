@@ -289,11 +289,17 @@ cargo_environment() {
   export CARGO_BUILD_RUSTC_WRAPPER=
   export RUSTC_WRAPPER=
   export CARGO_INCREMENTAL=0
-  export CARGO_PROFILE_RELEASE_STRIP=symbols
   export MARFA_NATIVE_PREFIX="$PREFIX"
 
-  # Paths in the program name the code, not the builder's folders.
-  local flags="--remap-path-prefix=$CORE=/marfa/core --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+  # Paths in the program name the code, not the builder's folders. The `cc` crate
+  # compiles C with full debug information whenever `debug` is on, so C code gets the
+  # same line tables as Rust (`-g1`) and the same path maps.
+  local cargo_home=${CARGO_HOME:-$HOME/.cargo}
+  local flags="--remap-path-prefix=$CORE=/marfa/core --remap-path-prefix=$cargo_home=/cargo"
+  local c_flags="-g1 -ffile-prefix-map=$CORE=/marfa/core -ffile-prefix-map=$cargo_home=/cargo"
+  local target_name=${TARGET//-/_}
+  export "CFLAGS_${target_name}=$c_flags"
+  export "CXXFLAGS_${target_name}=$c_flags"
 
   case "$TARGET" in
     aarch64-apple-darwin)
@@ -316,6 +322,9 @@ cargo_environment() {
       # The toolchain's own C library and start files, which its libstdc++ was built
       # against, in place of the ones rustc carries.
       flags="$flags -C link-self-contained=no"
+      # Compressed, the debug sections take under half the size, and the crash
+      # report's resolver reads them as they are.
+      flags="$flags -C link-arg=-Wl,--compress-debug-sections=zlib"
       need file readelf
       ;;
   esac

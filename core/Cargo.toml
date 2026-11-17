@@ -15,11 +15,15 @@ disallowed_methods = "allow"
 # Unwinding is relied on: marfa reports a panic and goes on unwinding, the
 # device core ends a caught panic with `fault`, and marfa-enrichment turns a
 # parser panic into `Malformed`. `panic = "abort"` would break all three.
-# Line tables give a crash report from a release program its line numbers; a
-# build that strips symbols, as the release's does, drops them again.
+# A shipped program resolves its own crash frames, so it keeps its symbols and
+# line tables: `strip = "none"` and `debug = "line-tables-only"`. Stripping
+# either, including `strip = "debuginfo"`, leaves a report naming no function,
+# file or line. On macOS the linker leaves the line tables in the object files,
+# so a program names its functions there and names a line only beside its `.dSYM`.
 [profile.release]
 panic = "unwind"
 debug = "line-tables-only"
+strip = "none"
 
 [workspace.package]
 version = "0.0.0"
