@@ -316,13 +316,23 @@ function clientOf(key: string): MarfaClient {
   return new MarfaClient({ baseUrl: server.apiUrl, apiKey: key });
 }
 
-type ServedCount = { id: string; total: number };
+type ServedCount = {
+  id: string;
+  total: number;
+  status_groups?: Record<string, number>;
+};
 
-/** Passes everything on, rewriting each answer to `POST /items/counts` as `answer` says. */
+/**
+ * Passes everything on, rewriting each answer to `POST /items/counts` as
+ * `answer` says and the root's `instance_id` to `instance` when set.
+ */
 class CountsProxy {
   answer:
     | { counts: (counts: ServedCount[]) => ServedCount[] }
     | { status: number; code: string } = { counts: (counts) => counts };
+  instance: string | undefined;
+  /** The `POST /items/counts` requests passed on. */
+  counted = 0;
 
   private constructor(
     private readonly listener: Server,
@@ -365,7 +375,13 @@ class CountsProxy {
     });
     let body = Buffer.from(await forwarded.arrayBuffer());
     let status = forwarded.status;
+    if (method === "GET" && path === "/" && this.instance !== undefined) {
+      const root = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
+      root.instance_id = this.instance;
+      body = Buffer.from(JSON.stringify(root));
+    }
     if (method === "POST" && path.startsWith("/items/counts")) {
+      this.counted += 1;
       const rewrite = this.answer;
       if ("counts" in rewrite) {
         const answer = JSON.parse(body.toString("utf8")) as {
@@ -801,6 +817,107 @@ describe("a device counts as the server does", () => {
     );
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) expect(unreachable.refusal.code).toBe("network");
+  });
+
+  it("asks its own server for every count when told to, refusing an answer whose status groups do not fit the count", async () => {
+    const store = newStore(`counts-from-server-${String(counter)}`);
+    const device = copyOf("from-server", server.apiUrl, store);
+    value(await device.hydrate([taskType], "library"));
+    // The witness: the copy, holding no edge type whole, cannot answer the count itself.
+    refusedNotAnswerable(
+      await device.counts([ids.parent], { backref: "parent-of" }),
+      "a count of an edge type the copy does not hold",
+    );
+    const asked = [ids.parent, ids.lone, ids.parent];
+    const remote = await served(asked, { backref: "parent-of" });
+    expect(
+      value(
+        await device.counts(
+          asked,
+          { backref: "parent-of" },
+          { fromServer: true },
+        ),
+      ).counts,
+    ).toEqual(remote.map((count) => ({ ...count, held: false })));
+    expect(
+      value(
+        await device.counts(
+          [ids.held],
+          { table: "lines" },
+          { fromServer: true },
+        ),
+      ).counts,
+    ).toEqual([{ id: ids.held, total: 3, held: false }]);
+    proxy ??= await CountsProxy.start();
+    const proxied = copyOf("from-server", proxy.url, store);
+    const rewrites: [
+      string,
+      Counted,
+      (counts: ServedCount[]) => ServedCount[],
+    ][] = [
+      [
+        "reordered",
+        { backref: "parent-of" },
+        (counts) => [...counts].reverse(),
+      ],
+      [
+        "a link without status groups",
+        { backref: "parent-of" },
+        (counts) => counts.map(({ id, total }) => ({ id, total })),
+      ],
+      [
+        "rows with status groups",
+        { table: "lines" },
+        (counts) =>
+          counts.map((count) => ({ ...count, status_groups: NO_GROUPS })),
+      ],
+    ];
+    for (const [what, counted, rewrite] of rewrites) {
+      proxy.answer = { counts: rewrite };
+      const refused = await proxied.counts([ids.parent, ids.held], counted, {
+        fromServer: true,
+      });
+      expect(refused.ok, `${what}: ${JSON.stringify(refused)}`).toBe(false);
+      if (!refused.ok) expect(refused.refusal.code, what).toBe("decoding");
+    }
+    proxy.answer = { counts: (counts) => counts };
+  });
+
+  it("sends no id to a server that answers as an instance other than its copy's", async () => {
+    const store = newStore(`counts-wrong-server-${String(counter)}`);
+    value(
+      await copyOf("wrong-server", server.apiUrl, store).hydrate(
+        [taskType],
+        "library",
+      ),
+    );
+    proxy ??= await CountsProxy.start();
+    proxy.answer = { counts: (counts) => counts };
+    const proxied = copyOf("wrong-server", proxy.url, store);
+    proxy.instance = UNKNOWN_ID;
+    const before = proxy.counted;
+    const refused = await proxied.counts(
+      [ids.parent],
+      { backref: "parent-of" },
+      {
+        fromServer: true,
+      },
+    );
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("wrong_server");
+    expect(proxy.counted, "an id reached a server that is not the copy's").toBe(
+      before,
+    );
+    // The witness: once the server answers as the copy's own instance, the count is asked of it.
+    proxy.instance = undefined;
+    value(
+      await proxied.counts(
+        [ids.parent],
+        { backref: "parent-of" },
+        { fromServer: true },
+      ),
+    );
+    expect(proxy.counted).toBe(before + 1);
   });
 
   it("gives the server's counts once the copy has caught up, and not before", async () => {

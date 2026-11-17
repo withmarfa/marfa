@@ -67,12 +67,31 @@ impl Core {
     /// Counts linked items or table rows for up to 100 IDs, once per distinct ID in request order.
     /// Link counts use the anchored listing's default state and include status groups.
     /// They throw `NotAnswerable` if the copy lacks edges or items needed for the count,
-    /// and no other failure throws it, so a caller asks the server on it and on nothing else.
+    /// and no other failure throws it, so a caller calls `served_counts` on it and on nothing else.
     /// For row counts, `held` is true when the copy answered and false when the server answered.
     pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
         Ok(self
             .inner
             .counts(&ids, &counted.into())?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Asks the copy's own server for the counts of up to 100 IDs, once per distinct ID in
+    /// request order, with `held` false. The request carries the copy's current key and
+    /// goes only to the server the copy was opened with, after the instance check a moved
+    /// copy makes, so it throws `WrongServer` rather than send an ID elsewhere. It throws
+    /// `Decoding` for an answer that is not the asked IDs once each in order, a link count
+    /// without its four status groups or a count of rows with any.
+    pub fn served_counts(
+        &self,
+        ids: Vec<String>,
+        counted: Counted,
+    ) -> Result<Vec<ItemCount>, MarfaError> {
+        Ok(self
+            .inner
+            .served_counts(&ids, &counted.into())?
             .into_iter()
             .map(Into::into)
             .collect())
@@ -165,6 +184,14 @@ mod tests {
 
     /// A server that refuses every request's credential.
     fn refusing() -> String {
+        answering(
+            "401 Unauthorized",
+            r#"{"error":{"code":"unauthorized","message":"the token expired"}}"#,
+        )
+    }
+
+    /// A server that gives every request `status` and `body`.
+    fn answering(status: &'static str, body: &'static str) -> String {
         use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -181,10 +208,9 @@ mod tests {
                     line.clear();
                 }
                 let _ = reader.read_exact(&mut vec![0; length]);
-                let body = r#"{"error":{"code":"unauthorized","message":"the token expired"}}"#;
                 let _ = stream.write_all(
                     format!(
-                        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len(),
                         marfa_core::contract::CONTRACT_VERSION
                     )
@@ -223,5 +249,45 @@ mod tests {
                 .unwrap_err();
             assert_eq!(refusal.code(), expected, "{refusal:?}");
         }
+    }
+
+    #[test]
+    fn served_counts_cross_the_swift_boundary_typed_and_refuse_an_answer_without_groups() {
+        let open = |url: String| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("copy.sqlite").display().to_string();
+            let core = Core::open(path, Some(url), Some("key".into()), None).unwrap();
+            (dir, core)
+        };
+        let backref = || Counted::Backref {
+            edge_type: "parent-of".into(),
+        };
+        let (_dir, core) = open(answering(
+            "200 OK",
+            r#"{"counts":[{"id":"01a1011a-4902-76cf-a4a9-88e99c038c8d","total":3,"status_groups":{"not_started":1,"in_progress":1,"completed":1,"canceled":0}}]}"#,
+        ));
+        let served = core
+            .served_counts(vec![PARENT.into(), PARENT.into()], backref())
+            .unwrap();
+        assert_eq!(served.len(), 1);
+        assert_eq!(served[0].total, 3);
+        assert!(!served[0].held);
+        assert_eq!(
+            served[0].status_groups,
+            Some(StatusGroups {
+                not_started: 1,
+                in_progress: 1,
+                completed: 1,
+                canceled: 0
+            })
+        );
+        let (_dir, core) = open(answering(
+            "200 OK",
+            r#"{"counts":[{"id":"01a1011a-4902-76cf-a4a9-88e99c038c8d","total":3}]}"#,
+        ));
+        let refusal = core
+            .served_counts(vec![PARENT.into()], backref())
+            .unwrap_err();
+        assert_eq!(refusal.code(), "decoding", "{refusal:?}");
     }
 }

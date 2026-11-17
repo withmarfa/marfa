@@ -3202,6 +3202,7 @@ marfa device items counts [OPTIONS] <--backref <EDGE_TYPE>|--edge <EDGE_TYPE>|--
 | `--backref <EDGE_TYPE>` | Count the items an edge of this type leaves each item for, such as `parent-of` for children. |
 | `--edge <EDGE_TYPE>` | Count the items with an edge of this type to each item, such as `in-collection` for a collection's members. |
 | `--table <TABLE>` | Count the rows each item holds in this table. |
+| `--from-server` | Ask the copy's own server for every count, after the instance check a moved copy makes, and answer `held` false. An answer that is not the asked ids once each in order, a link count without its four status groups and a count of rows with any are refused `decoding`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

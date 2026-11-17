@@ -540,6 +540,12 @@ pub enum ItemsCommand {
         /// Count the rows each item holds in this table.
         #[arg(long, value_name = "TABLE")]
         table: Option<String>,
+        /// Ask the copy's own server for every count, after the instance check
+        /// a moved copy makes, and answer `held` false. An answer that is not
+        /// the asked ids once each in order, a link count without its four
+        /// status groups and a count of rows with any are refused `decoding`.
+        #[arg(long)]
+        from_server: bool,
     },
     /// Write a new item into the local copy and queue it for the server.
     Create(CreateArgs),
@@ -1552,6 +1558,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     backref,
                     edge,
                     table,
+                    from_server,
                 },
         } => {
             let counted = match (backref, edge, table) {
@@ -1564,15 +1571,19 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     ));
                 }
             };
-            let local = {
-                let core = store.open(None)?;
-                core.counts(&ids, &counted)
-            };
-            let counts = match local {
-                Err(marfa_core::CoreError::NoServer) if !store.reader => {
-                    store.open_with_server(named)?.counts(&ids, &counted)?
+            let counts = if from_server {
+                store.open_with_server(named)?.served_counts(&ids, &counted)?
+            } else {
+                let local = {
+                    let core = store.open(None)?;
+                    core.counts(&ids, &counted)
+                };
+                match local {
+                    Err(marfa_core::CoreError::NoServer) if !store.reader => {
+                        store.open_with_server(named)?.counts(&ids, &counted)?
+                    }
+                    answered => answered?,
                 }
-                answered => answered?,
             };
             output::report(&serde_json::json!({ "counts": counts }), json, || {
                 counts

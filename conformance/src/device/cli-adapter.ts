@@ -355,6 +355,7 @@ export class CliDevice implements DeviceUnderTest {
   async counts(
     ids: string[],
     counted: { backref: string } | { edge: string } | { table: string },
+    { fromServer = false }: { fromServer?: boolean } = {},
   ): Promise<Outcome<{ counts: DeviceCount[] }>> {
     const [flag, name] = Object.entries(counted)[0] as [string, string];
     return this.json<{ counts: DeviceCount[] }>([
@@ -363,6 +364,7 @@ export class CliDevice implements DeviceUnderTest {
       ...ids,
       `--${flag}`,
       name,
+      ...(fromServer ? ["--from-server"] : []),
       ...this.server(),
     ]);
   }

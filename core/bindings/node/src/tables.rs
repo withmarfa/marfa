@@ -72,6 +72,22 @@ pub struct Counted {
     pub table: Option<String>,
 }
 
+impl Counted {
+    fn named(self) -> marfa_core::Result<marfa_core::Counted> {
+        match (self.backref, self.edge, self.table) {
+            (Some(edge_type), None, None) => Ok(marfa_core::Counted::Backref(edge_type)),
+            (None, Some(edge_type), None) => Ok(marfa_core::Counted::Edge(edge_type)),
+            (None, None, Some(table)) => Ok(marfa_core::Counted::Table(table)),
+            _ => Err(marfa_core::CoreError::Validation {
+                server: None,
+                code: "validation_error".into(),
+                message: "name exactly one of backref, edge and table".into(),
+                details: None,
+            }),
+        }
+    }
+}
+
 type Call = Box<dyn FnOnce(&marfa_core::Core) -> marfa_core::Result<serde_json::Value> + Send>;
 
 /// A JSON answer, handed to JavaScript as the object it is.
@@ -252,27 +268,29 @@ impl MarfaCore {
     /// by status group, or the rows it holds in a table, as
     /// `POST /items/counts` answers. Links are counted from the copy and
     /// refused `not_answerable`, which no other failure gives, where it
-    /// cannot answer; rows come from the copy for a table held whole, and
+    /// cannot answer, and `servedCounts` asks the server then; rows come from the copy for a table held whole, and
     /// `held` says which answered.
     #[napi(
         ts_return_type = "Promise<{ counts: { id: string; total: number; status_groups?: { not_started: number; in_progress: number; completed: number; canceled: number }; held: boolean }[] }>"
     )]
     pub fn counts(&self, ids: Vec<String>, counted: Counted) -> AsyncTask<TableCall> {
         self.table_call(Box::new(move |core| {
-            let counted = match (counted.backref, counted.edge, counted.table) {
-                (Some(edge_type), None, None) => marfa_core::Counted::Backref(edge_type),
-                (None, Some(edge_type), None) => marfa_core::Counted::Edge(edge_type),
-                (None, None, Some(table)) => marfa_core::Counted::Table(table),
-                _ => {
-                    return Err(marfa_core::CoreError::Validation {
-                        server: None,
-                        code: "validation_error".into(),
-                        message: "name exactly one of backref, edge and table".into(),
-                        details: None,
-                    });
-                }
-            };
-            Ok(serde_json::json!({ "counts": core.counts(&ids, &counted)? }))
+            Ok(serde_json::json!({ "counts": core.counts(&ids, &counted.named()?)? }))
+        }))
+    }
+
+    /// The same counts asked of the copy's own server, with its current key
+    /// and after the instance check a moved copy makes, so a server that is
+    /// not the copy's is refused `wrong_server` and sent no id. Each count
+    /// says `held: false`. An answer that is not the asked ids once each in
+    /// order, a link count without its four status groups and a count of
+    /// rows with any are refused `decoding`.
+    #[napi(
+        ts_return_type = "Promise<{ counts: { id: string; total: number; status_groups?: { not_started: number; in_progress: number; completed: number; canceled: number }; held: boolean }[] }>"
+    )]
+    pub fn served_counts(&self, ids: Vec<String>, counted: Counted) -> AsyncTask<TableCall> {
+        self.table_call(Box::new(move |core| {
+            Ok(serde_json::json!({ "counts": core.served_counts(&ids, &counted.named()?)? }))
         }))
     }
 }

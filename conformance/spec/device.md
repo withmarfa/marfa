@@ -2458,11 +2458,35 @@ Where the copy holds the named edge type whole and its slice does not meet the c
 
 ### `device/counts-served-complete`
 
-If the server's answer to a count of rows does not name exactly the ids the device asked it about, each once and in the order asked, then a device MUST refuse the whole call `decoding`, answering a total for no id.
+If the server's answer to a count the device asked it does not name exactly the ids the device asked it about, each once and in the order asked, then a device MUST refuse the whole call `decoding`, answering a total for no id.
 
-**Reason:** a total of 0 for an id the server did not answer would say the item holds no row, and the server never said so. The server answers in the order asked (`search-and-filters/counts-order`), so an answer out of order, repeated or with an id not asked is not one the device can line up with its ids.
+**Reason:** a total of 0 for an id the server did not answer would say the item holds nothing, and the server never said so. The server answers in the order asked (`search-and-filters/counts-order`), so an answer out of order, repeated or with an id not asked is not one the device can line up with its ids.
 
-**Tests:** `device/counts-live.test.ts › refuses a count of rows whose served answer is not the asked ids once each in order, answering no total`.
+**Tests:** `device/counts-live.test.ts › refuses a count of rows whose served answer is not the asked ids once each in order, answering no total`, `› asks its own server for every count when told to, refusing an answer whose status groups do not fit the count`.
+
+### `device/counts-from-server`
+
+When a caller asks a device to ask the server for a count, a device MUST send the request only to the server the copy was opened with, under the copy's current credential, and answer each asked id once, in the order it first appears, with `held` false.
+
+**Reason:** an app asks the server for a count the copy refuses `not_answerable`. Asked through the copy, the request reaches the copy's own server with the key the copy holds now, and never a server or key the app passed alongside it.
+
+**Tests:** `device/counts-live.test.ts › asks its own server for every count when told to, refusing an answer whose status groups do not fit the count`.
+
+### `device/counts-from-server-instance`
+
+If the copy was opened with a server at an origin other than the one it recorded, and that server answers as an instance other than the copy's, then a device MUST refuse a count asked of the server `wrong_server` and send that server no id.
+
+**Reason:** the ids a copy holds belong to its instance. A server that answers as another instance is not the copy's, whatever its address, and sending it ids would tell it which items the copy holds.
+
+**Tests:** `device/counts-live.test.ts › sends no id to a server that answers as an instance other than its copy's`.
+
+### `device/counts-from-server-groups`
+
+If the server's answer to a count of links lacks any of the four status groups for an asked id, or its answer to a count of rows carries status groups, then a device MUST refuse the whole call `decoding`.
+
+**Reason:** the server answers all four groups for a count of links (`search-and-filters/counts-status-groups`) and none for a table's rows (`search-and-filters/counts-rows`). An answer without them would show an app no item in any group, and the server never said so.
+
+**Tests:** `device/counts-live.test.ts › asks its own server for every count when told to, refusing an answer whose status groups do not fit the count`.
 
 ### `device/counts-not-answerable-only`
 

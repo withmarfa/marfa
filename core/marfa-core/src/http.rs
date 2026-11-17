@@ -1470,19 +1470,42 @@ impl Http {
             .collect())
     }
 
-    /// `POST /items/counts` for the rows each of `ids` holds in `table`, in
-    /// the order of `ids`, which are distinct. Any other answer is refused.
-    pub(crate) fn item_counts(&self, ids: &[&String], table: &str) -> Result<Vec<i64>, CoreError> {
+    /// `POST /items/counts` for `ids`, which are distinct, answering each id's
+    /// total and its status groups. Refused unless the answer is the asked ids
+    /// once each in the order asked, with all four groups for a link count and
+    /// none for a table's rows.
+    pub(crate) fn item_counts(
+        &self,
+        ids: &[&String],
+        counted: &crate::counts::Counted,
+    ) -> Result<Vec<(i64, Option<crate::counts::StatusGroups>)>, CoreError> {
+        use crate::counts::{Counted, StatusGroups};
+        #[derive(serde::Deserialize)]
+        struct Groups {
+            not_started: i64,
+            in_progress: i64,
+            completed: i64,
+            canceled: i64,
+        }
         #[derive(serde::Deserialize)]
         struct Count {
             id: String,
             total: i64,
+            status_groups: Option<Groups>,
         }
         #[derive(serde::Deserialize)]
         struct Answer {
             counts: Vec<Count>,
         }
-        let body = serde_json::json!({ "ids": ids, "table": table }).to_string();
+        let (field, name, linked) = match counted {
+            Counted::Backref(name) => ("backref", name, true),
+            Counted::Edge(name) => ("edge", name, true),
+            Counted::Table(name) => ("table", name, false),
+        };
+        let mut body = serde_json::Map::new();
+        body.insert("ids".into(), serde_json::json!(ids));
+        body.insert(field.into(), serde_json::json!(name));
+        let body = serde_json::Value::Object(body).to_string();
         let answer: Answer = self.read_json(&["items", "counts"], &[], Some(&body))?;
         if answer.counts.len() != ids.len()
             || answer
@@ -1496,7 +1519,28 @@ impl Http {
                     .into(),
             ));
         }
-        Ok(answer.counts.into_iter().map(|count| count.total).collect())
+        answer
+            .counts
+            .into_iter()
+            .map(|count| match (linked, count.status_groups) {
+                (true, Some(groups)) => Ok((
+                    count.total,
+                    Some(StatusGroups {
+                        not_started: groups.not_started,
+                        in_progress: groups.in_progress,
+                        completed: groups.completed,
+                        canceled: groups.canceled,
+                    }),
+                )),
+                (false, None) => Ok((count.total, None)),
+                (true, None) => Err(CoreError::Decoding(
+                    "the server's link counts carry no status groups".into(),
+                )),
+                (false, Some(_)) => Err(CoreError::Decoding(
+                    "the server's counts of rows carry status groups".into(),
+                )),
+            })
+            .collect()
     }
 
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, answering only
