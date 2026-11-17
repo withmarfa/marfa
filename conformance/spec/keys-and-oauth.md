@@ -2835,7 +2835,7 @@ If every address together has made a hundred counted password sign-in attempts i
 
 While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in without a known device cookie names the owner's email and the right password, and fewer than a hundred attempts at the owner's email without a known device cookie have been counted in the hour, the server MUST sign the owner in.
 
-**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. While that limit is spent, an attempt that cannot sign the owner in has no password checked: it waits about as long as a check takes and is answered as a wrong password is, so it takes no place from an attempt at the owner's email.
+**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. While that limit is spent, an attempt that cannot sign the owner in has no password checked: it waits in its email's own queue (`keys-and-oauth/sign-in-decoy-queue`) about as long as a check takes and is answered as a wrong password is, so it takes no place from an attempt at the owner's email.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
 
@@ -2843,7 +2843,7 @@ While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is
 
 If a hundred passwords for the owner without a known device cookie have been counted in an hour, counting password sign-in attempts at the owner's email and passwords sent to `POST /auth/confirm`, `POST /auth/owner/password` and `PUT /owner/password`, then the server MUST answer and count the next password sign-in attempt at the owner's email without a known device cookie that has the right password as it answers and counts the same attempt with a wrong password.
 
-**Reason:** Every password tried for the owner from a browser the server does not know stays within one hundred an hour, whichever door it comes by (`authentication/password-credential-limit`). A right password past that count spends the per-address limits as a wrong one does, so neither the answer nor a later answer shows that it was right.
+**Reason:** Every password tried for the owner from a browser the server does not know stays within one hundred an hour, whichever door it comes by (`authentication/password-credential-limit`). A password past that count is not checked, and is answered, counted and recorded as a wrong one, so neither the answer nor a later answer shows whether it was right.
 
 **Tests:** `compliance/sign-in-limits.test.ts › answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour`, `› counts the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour`, `compliance/owner-password.test.ts › counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's email`.
 
@@ -2921,9 +2921,9 @@ When a password sign-in that carries no known device cookie names an email that 
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
-If the queue of password sign-ins that carry no known device cookie, waiting for their password check, is full, then the server MUST answer the next such sign-in `429` with `Retry-After`, whatever email it names.
+If the queue a password sign-in that carries no known device cookie waits in for its password check is full, then the server MUST answer the sign-in `429` with `Retry-After`, whatever email it names.
 
-**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time or by this queue. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
+**Reason:** Such sign-ins share one queue while the limit every address shares (`keys-and-oauth/sign-in-account-limit`) has room, and after that each email has a queue of its own of the same size. A sign-in at an email with no account still does the work of a password check, and one whose password is not checked still holds its place and its turn in its queue as long as a check takes, so neither its time nor its queue tells it from a wrong password, and sign-ins at other emails take no place from the owner's. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
 
 **Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any email, and answers one alone 401`.
 
