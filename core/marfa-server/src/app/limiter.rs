@@ -207,6 +207,22 @@ impl Limiter {
         }
     }
 
+    /// The ms to the latest end among `lanes` that are spent, counting nothing.
+    pub fn spent(&self, now_ms: i64, lanes: &[Lane]) -> Option<i64> {
+        let windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        lanes
+            .iter()
+            .filter_map(|lane| windows.live(lane, now_ms).filter(|w| w.count >= lane.limit))
+            .map(|window| window.ends_ms - now_ms)
+            .max()
+    }
+
+    #[cfg(test)]
+    pub fn counted(&self, now_ms: i64, lane: &Lane) -> u64 {
+        let windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        windows.live(lane, now_ms).map_or(0, |window| window.count)
+    }
+
     /// Takes one attempt back from each lane whose window was already open at `admitted_ms`,
     /// leaving every window's end where it was.
     pub fn give_back(&self, admitted_ms: i64, now_ms: i64, lanes: &[Lane]) {
@@ -295,6 +311,22 @@ mod tests {
         assert!(limiter.admit(later, &one).is_some(), "the witness");
         assert_eq!(limiter.admit(later - 1, &one), None);
         assert_eq!(limiter.admit(later, &one), Some(MINUTE - 1));
+    }
+
+    #[test]
+    fn a_spent_lane_names_its_end_and_counts_nothing() {
+        let limiter = Limiter::default();
+        let one = [lane("a", "x", 2)];
+        assert_eq!(limiter.spent(0, &one), None);
+        assert_eq!(limiter.admit(0, &one), None);
+        assert_eq!(limiter.spent(1, &one), None);
+        assert_eq!(limiter.admit(0, &one), None);
+        for _ in 0..3 {
+            assert_eq!(limiter.spent(1_000, &one), Some(MINUTE - 1_000));
+        }
+        assert_eq!(limiter.spent(MINUTE, &one), None);
+        assert_eq!(limiter.admit(MINUTE, &one), None);
+        assert_eq!(limiter.admit(MINUTE, &one), None);
     }
 
     #[test]

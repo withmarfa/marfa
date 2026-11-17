@@ -114,6 +114,7 @@ fn metadata_uses_the_shared_public_address_policy() {
 
 pub struct Fetcher {
     faults: Arc<Faults>,
+    asker: Asker<'static>,
     runtime: Handle,
     tls: TlsConfig,
     limit: Duration,
@@ -121,9 +122,10 @@ pub struct Fetcher {
 
 impl Fetcher {
     /// Built inside the runtime; [`Fetcher::fetch`] runs on a blocking thread of it.
-    pub fn new(faults: Arc<Faults>) -> Fetcher {
+    pub fn new(faults: Arc<Faults>, asker: Asker<'static>) -> Fetcher {
         Fetcher {
             faults,
+            asker,
             runtime: Handle::current(),
             tls: TlsConfig::default(),
             limit: TIME_LIMIT,
@@ -199,12 +201,10 @@ impl Fetcher {
         let port = url.port_or_known_default().ok_or(Failure::Unavailable(
             "The client's host could not be resolved.",
         ))?;
-        match self.runtime.block_on(outbound::reach(
-            &self.faults,
-            url,
-            false,
-            Asker::ClientDocument,
-        )) {
+        match self
+            .runtime
+            .block_on(outbound::reach(&self.faults, url, false, self.asker))
+        {
             Reach::Targets(targets) => Ok(targets
                 .into_iter()
                 .take(MOST_ADDRESSES)
@@ -428,6 +428,7 @@ mod tests {
     fn fetcher(faults: Arc<Faults>, trusted: &[u8]) -> Fetcher {
         Fetcher {
             faults,
+            asker: Asker::ClientDocument,
             runtime: RUNTIME.handle().clone(),
             tls: TlsConfig::builder()
                 .root_certs(RootCerts::new_with_certs(&[

@@ -17,16 +17,24 @@ import { TEST_OWNER } from "../../utils/target.js";
 let server: FreshServer;
 let origin: string;
 let addresses = 0;
+let spent: FreshServer;
+let spentOrigin: string;
+let spentAddresses = 0;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  server = await bootFreshServer("sign-in-queue", {
-    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-  });
+  [server, spent] = await Promise.all(
+    ["sign-in-queue", "sign-in-queue-spent"].map((name) =>
+      bootFreshServer(name, {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+    ),
+  );
   origin = new URL(server.apiUrl).origin;
-}, FRESH_SERVER_TIMEOUT_MS);
+  spentOrigin = new URL(spent.apiUrl).origin;
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, FRESH_SERVER_TIMEOUT_MS);
 
@@ -41,6 +49,30 @@ function signIn(email: string): Promise<Response> {
     },
     body: JSON.stringify({ email, password: "not the password" }),
   });
+}
+
+/** A wrong password at `email` on the server whose shared hour is spent, from an address of its own. */
+function signInPastTheHour(email: string): Promise<Response> {
+  spentAddresses += 1;
+  return fetch(`${spent.apiUrl}/auth/sign-in`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: spentOrigin,
+      [CLIENT_HEADER]: `10.20.${String(spentAddresses >> 8)}.${String(spentAddresses & 255)}`,
+    },
+    body: JSON.stringify({ email, password: "not the password" }),
+  });
+}
+
+async function timed(answers: Promise<Response>[]): Promise<number[]> {
+  const statuses: number[] = [];
+  for (const answer of await Promise.all(answers)) {
+    expect(Number(answer.headers.get("retry-after"))).toBeGreaterThan(15 * 60);
+    statuses.push(answer.status);
+    await answer.body?.cancel();
+  }
+  return statuses;
 }
 
 describe("password sign-ins that carry no known device cookie", () => {
@@ -84,4 +116,39 @@ describe("password sign-ins that carry no known device cookie", () => {
     expect(after.status).toBe(401);
     await after.body?.cancel();
   }, 120_000);
+
+  // A failed try leaves the hour spent, which the retry would start from.
+  it(
+    "answers sign-ins at one email 429 with Retry-After past the hour every address shares, and turns away at once those its queue has no place for",
+    { retry: 0, timeout: 120_000 },
+    async () => {
+      for (let n = 0; n < 100; n++) {
+        const counted = await signInPastTheHour(
+          `spender-${String(n)}@example.test`,
+        );
+        expect(counted.status).toBe(401);
+        await counted.body?.cancel();
+      }
+      // The witness: one at a time, each sign-in waits its turn.
+      const oneAtATime = performance.now();
+      const alone: number[] = [];
+      for (let n = 0; n < 8; n++) {
+        alone.push(...(await timed([signInPastTheHour("alone@example.test")])));
+      }
+      const eight = performance.now() - oneAtATime;
+      expect(alone).toEqual(Array<number>(8).fill(429));
+
+      // Ninety-six at once at another email: were each to wait its turn, they
+      // would take twelve times as long as the eight.
+      const together = performance.now();
+      const answers = await timed(
+        Array.from({ length: 96 }, () =>
+          signInPastTheHour("together@example.test"),
+        ),
+      );
+      const all = performance.now() - together;
+      expect(answers).toEqual(Array<number>(96).fill(429));
+      expect(all).toBeLessThan(4 * eight);
+    },
+  );
 });

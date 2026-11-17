@@ -373,4 +373,135 @@ describe("replacing the password with a credential", () => {
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
   });
+
+  it(
+    "counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's email",
+    async () => {
+      // The case spends the owner's hundred, so it has a server of its own.
+      const held = await bootFreshServer("owner-password-owners-count", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      });
+      try {
+        const heldOrigin = await issuerOrigin(held);
+        const signInAt = (email: string, password: string, address: string) =>
+          fetch(`${held.apiUrl}/auth/sign-in`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: heldOrigin,
+              [CLIENT_HEADER]: address,
+            },
+            body: JSON.stringify({ email, password }),
+          });
+        const signedIn = await signInAt(
+          TEST_OWNER.email,
+          TEST_OWNER.password,
+          "10.5.0.1",
+        );
+        expect(signedIn.status).toBe(200);
+        let session = sessionCookie(signedIn)!;
+        expect(session).toBeTruthy();
+        // Strangers spend fifty of the hundred at the owner's email.
+        for (let a = 1; a <= 5; a++) {
+          for (let i = 0; i < 10; i++) {
+            const stranger = await signInAt(
+              TEST_OWNER.email,
+              "not the password",
+              `10.5.${String(a)}.1`,
+            );
+            expect(stranger.status).toBe(401);
+          }
+        }
+
+        const answer = await controlRequest(held.controlSocket, "/keys", {
+          method: "POST",
+          body: {
+            label: "owner password owners count",
+            source: "owner-password-owners-count-key",
+            permissions: ["sign_ins.manage"],
+          },
+        });
+        expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+        const key = (answer.body as { key: string }).key;
+        const replaceAt = (body: unknown, address: string) =>
+          fetch(`${held.apiUrl}/owner/password`, {
+            method: "PUT",
+            headers: {
+              authorization: `Bearer ${key}`,
+              "content-type": "application/json",
+              [CLIENT_HEADER]: address,
+            },
+            body: JSON.stringify(body),
+          });
+        const inBrowser = (path: string, body: unknown, address: string) =>
+          fetch(`${held.apiUrl}${path}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: heldOrigin,
+              cookie: session,
+              [CLIENT_HEADER]: address,
+            },
+            body: JSON.stringify(body),
+          });
+        // A wrong current password spends the count a stranger's wrong
+        // password spends: forty-nine more leave one.
+        for (let n = 0; n < 49; n++) {
+          const wrong = await replaceAt(
+            { current_password: "wrong one", new_password: NEW_PASSWORD },
+            `10.6.${String(Math.floor(n / 10))}.1`,
+          );
+          expect(wrong.status).toBe(401);
+        }
+        // The right password still acts while the count has room.
+        const confirmed = await inBrowser(
+          "/auth/confirm",
+          { password: TEST_OWNER.password },
+          "10.7.0.1",
+        );
+        expect(confirmed.status).toBe(200);
+        session = sessionCookie(confirmed)!;
+        expect(session).toBeTruthy();
+        const last = await inBrowser(
+          "/auth/owner/password",
+          { current_password: "wrong one", new_password: NEW_PASSWORD },
+          "10.7.1.1",
+        );
+        await last.body?.cancel();
+        expect(last.status).toBe(401);
+
+        const locked = await replaceAt(FORWARD, "10.7.2.1");
+        expect(locked.status).toBe(429);
+        expect(await code(locked)).toBe("rate_limited");
+        expect(Number(locked.headers.get("retry-after"))).toBeGreaterThan(
+          15 * 60,
+        );
+        const unconfirmed = await inBrowser(
+          "/auth/confirm",
+          { password: TEST_OWNER.password },
+          "10.7.3.1",
+        );
+        expect(unconfirmed.status).toBe(429);
+        expect(await code(unconfirmed)).toBe("rate_limited");
+        // The same count answers a stranger's right password at the owner's
+        // email as a wrong one.
+        const right = await signInAt(
+          TEST_OWNER.email,
+          TEST_OWNER.password,
+          "10.7.4.1",
+        );
+        const wrong = await signInAt(
+          TEST_OWNER.email,
+          "not the password",
+          "10.7.5.1",
+        );
+        expect(right.status).toBe(401);
+        expect(wrong.status).toBe(401);
+      } finally {
+        await held.stop();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

@@ -3,34 +3,55 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::Semaphore;
 
+use super::Problem;
 use super::client::Registration;
 use super::metadata_document::{self, Failure, Fetcher};
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, covers, narrow};
 use super::store::{self, Client};
-use super::{Answered, Problem};
 use crate::app::App;
 use crate::app::audit::{self, Entry};
-use crate::app::auth::limits::{admit, document_lanes};
+use crate::app::auth::limits::{admit, document_lanes, owner_document_lanes};
 use crate::app::auth::{Visit, configured_origins};
 use crate::app::catalog::{self, Snapshot};
 use crate::app::keys::digest_of;
+use crate::app::outbound::Asker;
 use crate::app::refusal::{Refusal, Result};
 use crate::app::unit::Unit;
 use crate::db::Write;
 
 const MOST_FETCHES_AT_ONCE: usize = 4;
+const OWNER_FETCHES_AT_ONCE: usize = 1;
 const DOCUMENT_FRESH_MS: i64 = 3_600_000;
 pub(super) const CLIENT_CREATED: &str = "auth.client.created";
 
 #[derive(Debug)]
 pub struct Documents {
     permits: Arc<Semaphore>,
+    owner_permits: Arc<Semaphore>,
 }
 
 impl Default for Documents {
     fn default() -> Documents {
         Documents {
             permits: Arc::new(Semaphore::new(MOST_FETCHES_AT_ONCE)),
+            owner_permits: Arc::new(Semaphore::new(OWNER_FETCHES_AT_ONCE)),
+        }
+    }
+}
+
+/// Who a client's metadata document is fetched for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Asking {
+    /// An authorization request that carries the owner's live browser session.
+    Owner,
+    Anyone,
+}
+
+impl Asking {
+    fn asker(self) -> Asker<'static> {
+        match self {
+            Asking::Owner => Asker::OwnerClientDocument,
+            Asking::Anyone => Asker::ClientDocument,
         }
     }
 }
@@ -46,17 +67,36 @@ fn busy() -> Problem {
     )
 }
 
-pub async fn resolve(app: &Arc<App>, id: &str, visit: &Visit) -> Result<Answered<Client>> {
-    let fetcher = Fetcher::new(app.faults.clone());
-    resolve_by(app, id, visit, move |id| fetcher.fetch(id)).await
+/// Why no client was found, and whether a client document limit kept the document from being fetched.
+#[derive(Debug)]
+pub struct Unresolved {
+    pub problem: Problem,
+    pub limited: bool,
+}
+
+impl From<Problem> for Unresolved {
+    fn from(problem: Problem) -> Unresolved {
+        Unresolved {
+            problem,
+            limited: false,
+        }
+    }
+}
+
+pub type Resolved = std::result::Result<Client, Unresolved>;
+
+pub async fn resolve(app: &Arc<App>, id: &str, visit: &Visit, asking: Asking) -> Result<Resolved> {
+    let fetcher = Fetcher::new(app.faults.clone(), asking.asker());
+    resolve_by(app, id, visit, asking, move |id| fetcher.fetch(id)).await
 }
 
 async fn resolve_by<F>(
     app: &Arc<App>,
     id: &str,
     visit: &Visit,
+    asking: Asking,
     fetch: F,
-) -> Result<Answered<Client>>
+) -> Result<Resolved>
 where
     F: FnOnce(&str) -> std::result::Result<Vec<u8>, Failure> + Send + 'static,
 {
@@ -71,20 +111,36 @@ where
         })
         .await?;
     if !metadata_document::is_url(id) {
-        return Ok(stored.ok_or_else(no_such_client));
+        return Ok(stored.ok_or_else(|| no_such_client().into()));
     }
     let now = app.clock.instant();
     if let (Some(client), true) = (&stored, fresh_until.is_some_and(|until| until > now)) {
         return Ok(Ok(client.clone()));
     }
     if is_own_origin(app, id) || metadata_document::check_url(id).is_err() {
-        return Ok(Err(refused_document()));
+        return Ok(Err(refused_document().into()));
     }
-    let keep_or_busy = |stored: Option<Client>| Ok(stored.ok_or_else(busy));
-    let wait = admit(app, &document_lanes(visit.address));
-    let permit = app.documents.permits.clone().try_acquire_owned();
-    let (None, Ok(permit)) = (wait, permit) else {
-        return keep_or_busy(stored);
+    let keep_or_busy = |stored: Option<Client>, limited: bool| {
+        Ok(stored.ok_or_else(|| Unresolved {
+            problem: busy(),
+            limited,
+        }))
+    };
+    let (wait, permits) = match asking {
+        Asking::Owner => (
+            admit(app, &owner_document_lanes()),
+            &app.documents.owner_permits,
+        ),
+        Asking::Anyone => (
+            admit(app, &document_lanes(visit.address)),
+            &app.documents.permits,
+        ),
+    };
+    if wait.is_some() {
+        return keep_or_busy(stored, true);
+    }
+    let Ok(permit) = permits.clone().try_acquire_owned() else {
+        return keep_or_busy(stored, false);
     };
     let owned = id.to_string();
     let fetched = tokio::task::spawn_blocking(move || {
@@ -95,11 +151,11 @@ where
     .map_err(|_| Refusal::internal("a metadata document's fetch ended early"))?;
     let body = match fetched {
         Ok(body) => body,
-        Err(Failure::Unavailable(_)) => return keep_or_busy(stored),
-        Err(Failure::Refused(_)) => return Ok(Err(refused_document())),
+        Err(Failure::Unavailable(_)) => return keep_or_busy(stored, false),
+        Err(Failure::Refused(_)) => return Ok(Err(refused_document().into())),
     };
     let Ok(registration) = metadata_document::parse_document(id, &body) else {
-        return Ok(Err(refused_document()));
+        return Ok(Err(refused_document().into()));
     };
     keep_document(app, id, registration, visit).await.map(Ok)
 }
@@ -420,8 +476,8 @@ mod tests {
         move |_| Ok(body)
     }
 
-    fn error_of(answer: Answered<Client>) -> &'static str {
-        answer.unwrap_err().error
+    fn error_of(answer: Resolved) -> &'static str {
+        answer.unwrap_err().problem.error
     }
 
     async fn refreshed(app: &Arc<App>, id: &str, uris: &[&str]) -> Client {
@@ -440,7 +496,7 @@ mod tests {
         app.clock
             .advance(2 * DOCUMENT_FRESH_MS.unsigned_abs())
             .unwrap();
-        resolve_by(app, id, &visit(), move |_| Ok(body))
+        resolve_by(app, id, &visit(), Asking::Anyone, move |_| Ok(body))
             .await
             .unwrap()
             .unwrap()
@@ -510,7 +566,10 @@ mod tests {
             release_tx.send(()).unwrap();
         };
         let seen = visit();
-        let (answer, ()) = tokio::join!(resolve_by(&app, &id, &seen, parked), meanwhile);
+        let (answer, ()) = tokio::join!(
+            resolve_by(&app, &id, &seen, Asking::Anyone, parked),
+            meanwhile
+        );
         assert_eq!(answer.unwrap().unwrap().id, id);
     }
 
@@ -528,11 +587,11 @@ mod tests {
         };
         for number in 0..10 {
             let id = id_at(number);
-            let answer = resolve_by(&app, &id, &visit(), counted(&id)).await;
+            let answer = resolve_by(&app, &id, &visit(), Asking::Anyone, counted(&id)).await;
             assert!(answer.unwrap().is_ok());
         }
         let id = id_at(10);
-        let answer = resolve_by(&app, &id, &visit(), counted(&id)).await;
+        let answer = resolve_by(&app, &id, &visit(), Asking::Anyone, counted(&id)).await;
         assert_eq!(error_of(answer.unwrap()), "temporarily_unavailable");
         assert_eq!(fetches.load(Ordering::SeqCst), 10);
     }
@@ -553,14 +612,14 @@ mod tests {
                     release.wait();
                     Ok(body)
                 };
-                resolve_by(&app, &id, &visit(), fetch).await
+                resolve_by(&app, &id, &visit(), Asking::Anyone, fetch).await
             }));
         }
         for _ in 0..MOST_FETCHES_AT_ONCE {
             started_rx.recv().await.unwrap();
         }
         let id = id_at(MOST_FETCHES_AT_ONCE);
-        let over = resolve_by(&app, &id, &visit(), |_: &str| {
+        let over = resolve_by(&app, &id, &visit(), Asking::Anyone, |_: &str| {
             panic!("a fetch ran past the cap")
         })
         .await;
@@ -571,17 +630,98 @@ mod tests {
         }
     }
 
+    fn from(n: u8) -> Visit {
+        let address = Some(IpAddr::from([198, 51, 100, n]));
+        Visit {
+            peer: address,
+            address,
+            user_agent: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn strangers_who_spend_every_address_s_fetches_leave_the_owner_s_own() {
+        let (_dir, app) = started().await;
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let counted = |id: &str| {
+            let fetches = fetches.clone();
+            let body = document(id);
+            move |_: &str| {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Ok(body)
+            }
+        };
+        for number in 0..30 {
+            let id = id_at(number);
+            let seen = from(u8::try_from(number / 10).unwrap());
+            let answer = resolve_by(&app, &id, &seen, Asking::Anyone, counted(&id)).await;
+            assert!(answer.unwrap().is_ok());
+        }
+        let id = id_at(30);
+        let stranger = resolve_by(&app, &id, &from(9), Asking::Anyone, counted(&id)).await;
+        assert_eq!(error_of(stranger.unwrap()), "temporarily_unavailable");
+        assert_eq!(fetches.load(Ordering::SeqCst), 30);
+        for number in 31..41 {
+            let id = id_at(number);
+            let owner = resolve_by(&app, &id, &from(0), Asking::Owner, counted(&id)).await;
+            assert_eq!(owner.unwrap().unwrap().id, id);
+        }
+        let id = id_at(41);
+        let past = resolve_by(&app, &id, &from(0), Asking::Owner, counted(&id)).await;
+        assert_eq!(error_of(past.unwrap()), "temporarily_unavailable");
+        let stranger = resolve_by(&app, &id, &from(8), Asking::Anyone, counted(&id)).await;
+        assert_eq!(error_of(stranger.unwrap()), "temporarily_unavailable");
+        assert_eq!(fetches.load(Ordering::SeqCst), 40);
+    }
+
+    #[tokio::test]
+    async fn the_owner_s_fetch_runs_while_strangers_hold_every_fetch_at_once() {
+        let (_dir, app) = started().await;
+        let (started_tx, mut started_rx) = tokio_mpsc::unbounded_channel();
+        let release = Arc::new(Barrier::new(MOST_FETCHES_AT_ONCE + 1));
+        let mut parked = Vec::new();
+        for number in 0..MOST_FETCHES_AT_ONCE {
+            let (app, id) = (app.clone(), id_at(number));
+            let (started_tx, release) = (started_tx.clone(), release.clone());
+            let body = document(&id);
+            parked.push(tokio::spawn(async move {
+                let fetch = move |_: &str| {
+                    started_tx.send(()).unwrap();
+                    release.wait();
+                    Ok(body)
+                };
+                let seen = from(u8::try_from(number).unwrap());
+                resolve_by(&app, &id, &seen, Asking::Anyone, fetch).await
+            }));
+        }
+        for _ in 0..MOST_FETCHES_AT_ONCE {
+            started_rx.recv().await.unwrap();
+        }
+        let id = id_at(MOST_FETCHES_AT_ONCE);
+        let stranger = resolve_by(&app, &id, &from(9), Asking::Anyone, |_: &str| {
+            panic!("a fetch ran past the cap")
+        })
+        .await;
+        assert_eq!(error_of(stranger.unwrap()), "temporarily_unavailable");
+        let owner = resolve_by(&app, &id, &from(9), Asking::Owner, answering(&id)).await;
+        assert_eq!(owner.unwrap().unwrap().id, id);
+        release.wait();
+        for task in parked {
+            assert!(task.await.unwrap().unwrap().is_ok());
+        }
+    }
+
     #[tokio::test]
     async fn a_client_id_on_this_instance_is_never_fetched() {
         let (_dir, app) = started().await;
         let own = format!("{OWN}/clients/1");
-        let answer = resolve_by(&app, &own, &visit(), |_: &str| {
+        let answer = resolve_by(&app, &own, &visit(), Asking::Anyone, |_: &str| {
             panic!("a fetch of this instance ran")
         })
         .await;
         assert_eq!(error_of(answer.unwrap()), "invalid_client");
         let id = id_at(1);
-        let elsewhere = resolve_by(&app, &id, &visit(), answering(&id)).await;
+        let elsewhere = resolve_by(&app, &id, &visit(), Asking::Anyone, answering(&id)).await;
         assert_eq!(elsewhere.unwrap().unwrap().id, id);
     }
 
@@ -590,21 +730,21 @@ mod tests {
         let (_dir, app) = started().await;
         let id = id_at(1);
         let unavailable = || failing_as(Failure::Unavailable("down"));
-        let unknown = resolve_by(&app, &id, &visit(), unavailable()).await;
+        let unknown = resolve_by(&app, &id, &visit(), Asking::Anyone, unavailable()).await;
         assert_eq!(error_of(unknown.unwrap()), "temporarily_unavailable");
 
-        resolve_by(&app, &id, &visit(), answering(&id))
+        resolve_by(&app, &id, &visit(), Asking::Anyone, answering(&id))
             .await
             .unwrap()
             .unwrap();
-        let fresh = resolve_by(&app, &id, &visit(), |_: &str| {
+        let fresh = resolve_by(&app, &id, &visit(), Asking::Anyone, |_: &str| {
             panic!("a fresh copy was fetched again")
         })
         .await;
         assert!(fresh.unwrap().is_ok());
 
         app.clock.advance(2 * 3_600_000).unwrap();
-        let stale = resolve_by(&app, &id, &visit(), unavailable()).await;
+        let stale = resolve_by(&app, &id, &visit(), Asking::Anyone, unavailable()).await;
         assert_eq!(stale.unwrap().unwrap().id, id);
     }
 
@@ -613,12 +753,15 @@ mod tests {
         let (_dir, app) = started().await;
         let id = id_at(1);
         for failure in [Failure::Unavailable("down"), Failure::Refused("no")] {
-            let failed = resolve_by(&app, &id, &visit(), failing_as(failure)).await;
+            let failed = resolve_by(&app, &id, &visit(), Asking::Anyone, failing_as(failure)).await;
             assert!(failed.unwrap().is_err());
         }
-        let bad = resolve_by(&app, &id, &visit(), |_: &str| Ok(b"not json".to_vec())).await;
+        let bad = resolve_by(&app, &id, &visit(), Asking::Anyone, |_: &str| {
+            Ok(b"not json".to_vec())
+        })
+        .await;
         assert_eq!(error_of(bad.unwrap()), "invalid_client");
-        let answer = resolve_by(&app, &id, &visit(), answering(&id)).await;
+        let answer = resolve_by(&app, &id, &visit(), Asking::Anyone, answering(&id)).await;
         assert_eq!(answer.unwrap().unwrap().id, id);
     }
 }

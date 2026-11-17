@@ -23,13 +23,25 @@ let timed: FreshServer;
 let known: FreshServer;
 let noted: FreshServer;
 let uncertain: FreshServer;
+let ownersEmail: FreshServer;
+let ownersCount: FreshServer;
 
 const DAY = 24 * 60 * 60 * 1000;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [shared, account, every, timed, known, noted, uncertain] = await Promise.all([
+  [
+    shared,
+    account,
+    every,
+    timed,
+    known,
+    noted,
+    uncertain,
+    ownersEmail,
+    ownersCount,
+  ] = await Promise.all([
     bootFreshServer("sign-in-limits", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
@@ -58,8 +70,16 @@ beforeAll(async () => {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
+    bootFreshServer("sign-in-limits-owners-email", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-owners-count", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
   ]);
-}, 7 * FRESH_SERVER_TIMEOUT_MS);
+}, 9 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled([
@@ -70,8 +90,10 @@ afterAll(async () => {
     known.stop(),
     noted.stop(),
     uncertain.stop(),
+    ownersEmail.stop(),
+    ownersCount.stop(),
   ]);
-}, 7 * FRESH_SERVER_TIMEOUT_MS);
+}, 9 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(
   server: FreshServer,
@@ -281,7 +303,7 @@ describe("password sign-in", () => {
     expect(bothWait).toBeLessThanOrEqual(60 * 60);
   }, 120_000);
 
-  it("holds attempts at every email together to the same hundred, and a known device still signs in", async () => {
+  it("holds attempts at every email together to the same hundred, and the owner's right password still signs in", async () => {
     const device = await deviceCookie(every, "203.0.113.200");
     // From each of ten addresses, five wrong passwords at the owner's email
     // and five at emails with no account.
@@ -302,7 +324,7 @@ describe("password sign-in", () => {
         expect(response.status).toBe(401);
       }
     }
-    const owner = await signIn(every, OWNER.password, "203.0.113.50");
+    const owner = await signIn(every, "not the password", "203.0.113.50");
     expect(owner.status).toBe(429);
     const stranger = await signIn(
       every,
@@ -317,11 +339,86 @@ describe("password sign-in", () => {
     );
     expect(waits[0]).toBeGreaterThan(15 * 60);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
-    // The witness: the owner's known device still signs in.
+    // Fifty of the hundred were at the owner's email, so the owner's share
+    // has room: the right password signs in from a browser the server does
+    // not know, and so does the known device.
+    expect((await signIn(every, OWNER.password, "203.0.113.53")).status).toBe(
+      200,
+    );
     expect(
       (await signIn(every, OWNER.password, "203.0.113.52", device)).status,
     ).toBe(200);
   }, 120_000);
+
+  it("answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour", async () => {
+    // The witness: with the owner's share left, the right password signs in.
+    expect(
+      (await signIn(ownersEmail, OWNER.password, "10.9.98.1")).status,
+    ).toBe(200);
+    await fillAccount(ownersEmail, 9);
+    const wrong = await signIn(ownersEmail, "not the password", "10.9.97.1");
+    const right = await signIn(ownersEmail, OWNER.password, "10.9.96.1");
+    expect(wrong.status).toBe(429);
+    expect(right.status).toBe(wrong.status);
+    expect(right.headers.getSetCookie()).toEqual([]);
+    const waits = [wrong, right].map((response) =>
+      Number(response.headers.get("retry-after")),
+    );
+    expect(waits[0]).toBeGreaterThan(15 * 60);
+    expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
+  }, 120_000);
+
+  // A failed try leaves the clock moved, which the retry would start from.
+  it(
+    "counts the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour",
+    { retry: 0, timeout: 120_000 },
+    async () => {
+      // Past every window the server's start opened, the hour every address
+      // shares opens first, so it ends while the owner's email still has its
+      // hundred counted.
+      await ownersCount.advanceClock(61 * 60 * 1000);
+      expect(
+        (
+          await signIn(
+            ownersCount,
+            "not the password",
+            "10.8.0.1",
+            undefined,
+            "stranger@example.test",
+          )
+        ).status,
+      ).toBe(401);
+      await ownersCount.advanceClock(59 * 60 * 1000);
+      for (let a = 1; a <= 10; a++) {
+        for (let i = 0; i < 10; i++) {
+          const response = await signIn(
+            ownersCount,
+            "not the password",
+            `10.8.${String(a)}.1`,
+          );
+          expect([401, 429]).toContain(response.status);
+        }
+      }
+      await ownersCount.advanceClock(2 * 60 * 1000);
+      const control: number[] = [];
+      for (let i = 0; i < 11; i++) {
+        control.push(
+          (await signIn(ownersCount, "not the password", "10.8.50.1")).status,
+        );
+      }
+      // The witness: the address's own ten show in the answers.
+      expect(control).toEqual([...Array<number>(10).fill(401), 429]);
+      const right = await signIn(ownersCount, OWNER.password, "10.8.51.1");
+      expect(right.headers.getSetCookie()).toEqual([]);
+      const probe = [right.status];
+      for (let i = 0; i < 10; i++) {
+        probe.push(
+          (await signIn(ownersCount, "not the password", "10.8.51.1")).status,
+        );
+      }
+      expect(probe).toEqual(control);
+    },
+  );
 
   it("records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses", async () => {
     // The witness: each wrong password that fills the window is recorded,
