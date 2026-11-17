@@ -5682,7 +5682,7 @@ mod tests {
         let (columns, row) = {
             let conn = folder.core.conn().unwrap();
             let mut read = conn.prepare("SELECT * FROM items WHERE id = ?1").unwrap();
-            let columns: Vec<String> = read.column_names().iter().map(|c| c.to_string()).collect();
+            let columns: Vec<String> = read.column_names().map(|c| c.to_string()).collect();
             let row = read
                 .query_row([&id], |row| {
                     (0..columns.len())

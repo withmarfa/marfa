@@ -11,7 +11,7 @@ fn main() {
     let bytes = fs::read(source.join("sqlite3.c")).expect("read pinned SQLite amalgamation");
     assert_eq!(
         hex::encode(Sha256::digest(&bytes)),
-        "0a409f1633283fa31a9126b11fbfd64a1991c5d30defad07e5745d4667f5e23d",
+        "0c657666d819f261cc4007526ad57e1669de9949df7a8ea847aa284a2bf0ee52",
         "review the directory extension before changing SQLite"
     );
     let text = String::from_utf8(bytes).unwrap();
@@ -53,6 +53,9 @@ fn main() {
         "marfaTempname(pFile->pVfs, pFile->pVfs->mxPathname, zTFile)",
     );
     unix = unix.replace("statfs(filePath, &fsInfo)", "fstatfs(pNew->h, &fsInfo)");
+    // An O_TMPFILE file lives in the host's temporary folder, outside the retained directory.
+    unix = unix.replace("#if defined(__linux__) && defined(O_TMPFILE)", "#if 0");
+    assert!(!unix.contains("defined(O_TMPFILE)"));
     let insert = unix.find("static int robust_open(").unwrap();
     unix.insert_str(insert, &fs::read_to_string("sqlite/directory.c").unwrap());
     unix.push_str(&fs::read_to_string("sqlite/register.c").unwrap());

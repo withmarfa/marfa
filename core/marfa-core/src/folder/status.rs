@@ -761,7 +761,7 @@ mod tests {
         let changed = Arc::new(AtomicBool::new(false));
         let witnessed = changed.clone();
         let mut type_reads = 0;
-        let conn = folder.core.conn().unwrap();
+        let mut conn = folder.core.conn().unwrap();
         // The authorizer sees a statement only as it is prepared, and a
         // cached statement is prepared once.
         conn.set_prepared_statement_cache_capacity(0);

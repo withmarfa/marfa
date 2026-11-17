@@ -559,7 +559,7 @@ fn a_failed_rewrite_leaves_the_store_as_it_was_and_is_not_tried_in_a_loop() {
     // only once the preliminary reads are done, so it cannot fire on them.
     static REWRITING: AtomicBool = AtomicBool::new(false);
     crate::reclaim::TEST_BEFORE_REWRITE.with(|hook| {
-        *hook.borrow_mut() = Some(Box::new(|conn: &Connection| {
+        *hook.borrow_mut() = Some(Box::new(|conn: &mut Connection| {
             let _ = conn.progress_handler(
                 1,
                 // Interrupts the rewrite once, then lets later statements run.
