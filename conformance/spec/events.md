@@ -1469,7 +1469,7 @@ When a delivery attempt ends, the server MUST record its outcome only on the del
 
 **Reason:** a deleted subscription's attempt may still be in flight when a new subscription's delivery is made, and the new delivery must not take its outcome, its attempt count or the loss of its stored event.
 
-**Tests:** `compliance/webhook-attempt-identity.test.ts › settles a delivery only by its own attempt after a subscription is deleted during an attempt and made again`, `› counts no attempt on a delivery that did not make it when several attempts to a receiver that never answers end after subscriptions are deleted and made again`.
+**Tests:** `compliance/webhook-attempt-identity.test.ts › counts no attempt on a delivery that did not make it when several attempts to a receiver that never answers end after subscriptions are deleted and made again`.
 
 ### `events/attempt-deleted-no-hold`
 
@@ -1477,7 +1477,7 @@ While an attempt for a deleted subscription is in flight, the server MUST NOT ho
 
 **Reason:** `events/attempt-one-in-flight` limits the attempts of one subscription, and a deleted subscription's attempt is no part of any later subscription.
 
-**Tests:** `compliance/webhook-attempt-identity.test.ts › settles a delivery only by its own attempt after a subscription is deleted during an attempt and made again`.
+**Tests:** `compliance/webhook-attempt-identity.test.ts › settles a delivery only by its own attempt after a subscription is deleted during an attempt and made again`, `› counts no attempt on a delivery that did not make it when several attempts to a receiver that never answers end after subscriptions are deleted and made again`.
 
 ### `events/attempt-answer-bound`
 
