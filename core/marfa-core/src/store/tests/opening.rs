@@ -425,13 +425,14 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
 }
 
 /// Append one hash per schema version; never change an existing entry.
-const SHAPES: [&str; 6] = [
+const SHAPES: [&str; 7] = [
     "9a505dc1b14cecc6",
     "115c1d4def4a3d91",
     "2d4e4e1e76ec61dc",
     "c2b64b3a6428a46c",
     "e5029183e86b7c37",
     "195bcf17d74301ef",
+    "917adee5fa567dda",
 ];
 
 #[test]

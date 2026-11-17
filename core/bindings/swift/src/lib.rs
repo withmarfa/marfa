@@ -25,6 +25,7 @@ mod views;
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError};
+use tables::ChangedTable;
 
 /// The tier an item is in: `library` for lasting material, `feed` for an
 /// incoming stream.
@@ -376,6 +377,8 @@ pub struct CatchUpReport {
     pub cursor: String,
     /// The catch-up changed the catalog the copy holds.
     pub catalog_changed: bool,
+    /// Tables whose state or rows changed during catch-up, including fills.
+    pub changed_tables: Vec<ChangedTable>,
 }
 
 /// A catch-up that failed. The copy keeps the catalog a catch-up took
@@ -2664,6 +2667,7 @@ impl Core {
             read_only_held: report.read_only_held,
             cursor: report.cursor,
             catalog_changed: report.catalog_changed,
+            changed_tables: report.changed_tables.into_iter().map(Into::into).collect(),
         })
     }
 
@@ -3719,7 +3723,9 @@ mod tests {
         );
         let sized = marfa_core::Refusal::read(
             "This write is 5 bytes as a request.",
-            Some(r#"{"request_limit":{"size":5,"limit":4}}"#),
+            Some(
+                r#"{"error":{"code":"over_request_limit","message":"This write is 5 bytes as a request."},"request_limit":{"size":5,"limit":4}}"#,
+            ),
         );
         assert_eq!(
             crossed(Some(O::Refused(sized))),
@@ -3727,8 +3733,8 @@ mod tests {
                 Some(Verdict::Refused {
                     refusal: Refusal {
                         reason: "This write is 5 bytes as a request.".into(),
-                        code: None,
-                        message: None,
+                        code: Some("over_request_limit".into()),
+                        message: Some("This write is 5 bytes as a request.".into()),
                         fields: Vec::new(),
                         trashed: false,
                         grant: None,

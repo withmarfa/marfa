@@ -129,9 +129,38 @@ CREATE TABLE IF NOT EXISTS item_tables (
   -- What `table_rows` holds of it, so the cap is judged without a scan.
   rows INTEGER NOT NULL DEFAULT 0,
   bytes INTEGER NOT NULL DEFAULT 0,
+  -- Detects row changes that leave the row count and byte size unchanged.
+  revision INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (item_id, name)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS item_tables_state ON item_tables (state);
+
+-- Retains each table's latest change after removal so callers learn it is gone.
+CREATE TABLE IF NOT EXISTS table_changes (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  PRIMARY KEY (item_id, name)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS table_changes_seq ON table_changes (seq);
+
+CREATE TRIGGER IF NOT EXISTS item_tables_change_insert AFTER INSERT ON item_tables BEGIN
+  INSERT INTO table_changes (item_id, name, seq)
+    VALUES (NEW.item_id, NEW.name, (SELECT coalesce(max(seq), 0) + 1 FROM table_changes))
+    ON CONFLICT (item_id, name) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS item_tables_change_update AFTER UPDATE ON item_tables
+  WHEN OLD.state IS NOT NEW.state OR OLD.rows IS NOT NEW.rows
+    OR OLD.bytes IS NOT NEW.bytes OR OLD.revision IS NOT NEW.revision BEGIN
+  INSERT INTO table_changes (item_id, name, seq)
+    VALUES (NEW.item_id, NEW.name, (SELECT coalesce(max(seq), 0) + 1 FROM table_changes))
+    ON CONFLICT (item_id, name) DO UPDATE SET seq = excluded.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS item_tables_change_delete AFTER DELETE ON item_tables BEGIN
+  INSERT INTO table_changes (item_id, name, seq)
+    VALUES (OLD.item_id, OLD.name, (SELECT coalesce(max(seq), 0) + 1 FROM table_changes))
+    ON CONFLICT (item_id, name) DO UPDATE SET seq = excluded.seq;
+END;
 
 -- `withheld` names columns the server omitted for this key.
 CREATE TABLE IF NOT EXISTS table_rows (

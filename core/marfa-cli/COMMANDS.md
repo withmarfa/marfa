@@ -3073,9 +3073,9 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device changed
 
-The items and edges that changed in the copy since a cursor this command printed, and the cursor to pass next.
+The items, edges and tables that changed in the copy since a cursor this command printed, and the cursor to pass next.
 
-Without `--since`, with a cursor from another store, from beyond what the copy recorded, from before a change to the types or from before a removed edge the copy no longer records, or where more than `--most` items or edges changed, it names none and answers `everything: true`: read the whole copy again. An item is named where its own content, tags, edges, pin or a queued write to it changed; one whose body links read differently only because another item changed is not. Refused `hydration_incomplete` while a hydration is part way or the copy is stale. Take the cursor before reading what it covers, and keep the earlier cursor until that read succeeds.
+Without `--since`, with a cursor from another store, from beyond what the copy recorded, from before a change to the types or from before a removed edge the copy no longer records, or where more than `--most` items, edges or tables changed, it names none and answers `everything: true`: read the whole copy again. An item is named where its own content, tags, edges, pin or a queued write to it changed; one whose body links read differently only because another item changed is not. A table is named where its state or rows changed. Refused `hydration_incomplete` while a hydration is part way or the copy is stale. Take the cursor before reading what it covers, and keep the earlier cursor until that read succeeds.
 
 ```text
 marfa device changed [OPTIONS]

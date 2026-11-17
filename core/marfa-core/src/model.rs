@@ -548,6 +548,8 @@ pub struct CatchUpReport {
     pub catalog_changed: bool,
     /// The fill of the tables the copy holds that were not whole.
     pub tables: crate::tables::FillReport,
+    /// Tables whose state or rows changed during catch-up, including fills.
+    pub changed_tables: Vec<crate::tables::ChangedTable>,
 }
 
 /// A catch-up that failed. A catch-up commits the catalog it reads before it
@@ -1320,7 +1322,14 @@ impl RequestLimit {
 
     /// What the queue stores as the answer to a write refused for its size.
     pub(crate) fn stored(self) -> String {
-        serde_json::json!({ "request_limit": self }).to_string()
+        serde_json::json!({
+            "error": {
+                "code": OVER_REQUEST_LIMIT,
+                "message": format!("{OVER_REQUEST_LIMIT_WRITE}{}", self.words()),
+            },
+            "request_limit": self,
+        })
+        .to_string()
     }
 }
 

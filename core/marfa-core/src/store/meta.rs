@@ -282,6 +282,31 @@ pub(crate) fn changed_since(
     Ok((ids.len() <= most && !ids.contains("")).then_some(ids))
 }
 
+/// The number of the latest change to a held table, 0 for none.
+pub(crate) fn last_table_change(conn: &Connection) -> Result<i64, CoreError> {
+    Ok(conn
+        .prepare_cached("SELECT coalesce(max(seq), 0) FROM table_changes")?
+        .query_row([], |row| row.get(0))?)
+}
+
+/// Changed tables in name order, or `None` when their count exceeds `most`.
+pub(crate) fn tables_changed_since(
+    conn: &Connection,
+    since: i64,
+    most: usize,
+) -> Result<Option<Vec<(String, String)>>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT item_id, name FROM table_changes WHERE seq > ?1 ORDER BY item_id, name LIMIT ?2",
+    )?;
+    let tables = statement
+        .query_map(
+            params![since, i64::try_from(most).unwrap_or(i64::MAX - 1) + 1],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok((tables.len() <= most).then_some(tables))
+}
+
 /// The latest change of an edge the copy let go of from `edge_changes`, 0
 /// for none: the removals up to it are no longer named.
 pub(crate) fn edge_changes_floor(conn: &Connection) -> Result<i64, CoreError> {

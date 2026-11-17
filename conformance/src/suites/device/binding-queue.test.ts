@@ -146,7 +146,7 @@ describe("the queue as a binding shows it", () => {
 });
 
 describe("a write refused unsent for its size, as a binding shows it", () => {
-  it("tells an app the size and the limit as numbers, and names no code the server did not send", async () => {
+  it("tells an app the size and the limit as numbers, and carries the code a refused direct write carries", async () => {
     harness = await bindingHarness("binding-request-limit");
     const { device, server } = harness;
     server.copyAnswer("GET", "/", () =>
@@ -179,7 +179,10 @@ describe("a write refused unsent for its size, as a binding shows it", () => {
     expect(verdict?.verdict).toBe("refused");
     expect(verdict?.refusal?.requestLimit?.limit).toBe(100);
     expect(verdict?.refusal?.requestLimit?.size).toBeGreaterThan(2_000);
-    expect(verdict?.refusal?.code ?? null).toBeNull();
+    expect(
+      verdict?.refusal?.code,
+      "a queued write refused for its size had no code, so an app had to handle it apart from a direct write",
+    ).toBe("over_request_limit");
     expect(verdict?.refusal?.reason).not.toContain("over_request_limit");
     expect(createsSent(server)).toEqual([]);
   });

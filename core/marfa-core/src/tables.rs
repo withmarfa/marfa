@@ -89,6 +89,22 @@ pub struct TableHold {
     pub fill: Option<FillReport>,
 }
 
+/// A table the copy holds, or held, whose state or rows changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChangedTable {
+    pub item: String,
+    pub table: String,
+}
+
+impl ChangedTable {
+    pub(crate) fn of(names: Vec<(String, String)>) -> Vec<ChangedTable> {
+        names
+            .into_iter()
+            .map(|(item, table)| ChangedTable { item, table })
+            .collect()
+    }
+}
+
 /// A read of a table's rows, as `GET /items/{id}/tables/{table}/rows` takes it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RowsAsked {
@@ -191,7 +207,8 @@ fn empty_rows(conn: &Connection, item: &str, table: &str) -> Result<()> {
         params![item, table],
     )?;
     conn.execute(
-        "UPDATE item_tables SET rows = 0, bytes = 0 WHERE item_id = ?1 AND name = ?2",
+        "UPDATE item_tables SET rows = 0, bytes = 0
+          WHERE item_id = ?1 AND name = ?2 AND (rows <> 0 OR bytes <> 0)",
         params![item, table],
     )?;
     Ok(())
@@ -501,7 +518,8 @@ pub(crate) fn hold_row(
     )?
     .execute(params![item, table, id, body, withheld, updated_at])?;
     conn.prepare_cached(
-        "UPDATE item_tables SET rows = rows + ?3, bytes = bytes + ?4 WHERE item_id = ?1 AND name = ?2",
+        "UPDATE item_tables SET rows = rows + ?3, bytes = bytes + ?4, revision = revision + 1
+          WHERE item_id = ?1 AND name = ?2",
     )?
     .execute(params![
         item,
