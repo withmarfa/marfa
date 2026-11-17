@@ -42,8 +42,7 @@ impl Core {
         })
     }
 
-    /// Every item the copy holds, listed by the server or not, as a pass
-    /// over the copy reads them. Answered as `list` answers.
+    /// A folder pull needs every held item, including unlisted pins.
     pub(crate) fn held_items(&self) -> Result<Rows<Item>> {
         let filters = ListFilters {
             all_states: true,

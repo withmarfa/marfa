@@ -5511,6 +5511,9 @@ mod tests {
                 ("01a00000-0000-7000-8000-0000000027b2", "Hidden", false),
             ] {
                 let row = store::testing::note(id, title, "words", "2026-01-01T00:00:00Z");
+                if !listed {
+                    store::pin(&conn, id).unwrap();
+                }
                 crate::reach::set_listed(&conn, id, listed).unwrap();
                 store::put_server_item(&conn, &row, None, &catalog).unwrap();
             }

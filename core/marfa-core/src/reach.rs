@@ -318,8 +318,7 @@ pub(crate) fn expired(conn: &Connection) -> Result<bool> {
     Ok(true)
 }
 
-/// What a refill keeps of a pin's last answer of `listed: false` until the
-/// server answers it again.
+/// A refill keeps the last negative listing answer for each row it has yet to read.
 pub(crate) const UNLISTED_BEFORE: &str = "item_unlisted_before/";
 
 pub(crate) fn listed(conn: &Connection, id: &str) -> Result<bool> {

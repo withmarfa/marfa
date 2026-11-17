@@ -10,8 +10,7 @@ use marfa_rules::catalog::Catalog;
 use marfa_rules::query as rules;
 use marfa_rules::query::escape_like;
 
-/// A local create has no listing mark until the server answers. A refill
-/// clears the marks, so a row it has not yet answered keeps its last `false`.
+/// A local create has no listing mark until the server answers.
 pub(crate) const LISTED: &str = "NOT EXISTS (SELECT 1 FROM meta WHERE value = 'false'
        AND key IN ('item_listed/' || items.id, 'item_unlisted_before/' || items.id))";
 

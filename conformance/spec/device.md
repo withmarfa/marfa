@@ -5296,7 +5296,7 @@ While a device holds a create that the server has not answered, a device MUST an
 
 ### `device/view-read`
 
-When a caller lists views or reads a held view by ID, a device MUST return the held `system.view` items with their IDs, versions, states, and settings without contacting the server, leaving a pinned view the server marked `listed: false` for the credential out of the list alone.
+When a caller lists views or reads a held view by ID, a device MUST return the held `system.view` items with their IDs, versions, states, and settings without contacting the server, omitting pinned views marked `listed: false` for the credential only from the list.
 
 **Tests:** `device/views.test.ts › reads the saved views and their settings offline`, `device/listing-unlisted-pins.test.ts › leaves a pinned view the server did not list out of the views list, and still reads it by id`.
 

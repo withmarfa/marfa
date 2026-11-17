@@ -402,8 +402,8 @@ impl Folder {
             }
             None => {
                 let members = self.members(&settings)?;
-                let listed = self.core.held_items()?;
-                (members.clone(), members, listed.rows, listed.completeness)
+                let held = self.core.held_items()?;
+                (members.clone(), members, held.rows, held.completeness)
             }
         };
         // A row a partial copy has not been given yet, or one a stale copy

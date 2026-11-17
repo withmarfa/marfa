@@ -238,22 +238,24 @@ it("leaves a pinned item the server did not list out of a local view's and a loc
 });
 
 it("leaves a pinned view the server did not list out of the views list, and still reads it by id", async () => {
-  const device = copy(viewFilteredKey);
-  value(await device.hydrate(["system.view"], "all", {}));
-  value(await device.pin(hiddenView));
-  const listed = value(await device.attempt(["views", "list"])) as {
-    data: Array<{ id: string }>;
-  };
-  expect(listed.data.map((row) => row.id)).not.toContain(hiddenView);
-  const read = value(await device.attempt(["views", "get", hiddenView])) as {
-    id: string;
-  };
-  expect(read.id).toBe(hiddenView);
-
   const whole = copy(apiKey);
   value(await whole.hydrate(["system.view"], "all", {}));
   const all = value(await whole.attempt(["views", "list"])) as {
     data: Array<{ id: string }>;
   };
   expect(all.data.map((row) => row.id)).toContain(hiddenView);
+
+  const device = copy(viewFilteredKey);
+  value(await device.hydrate(["system.view"], "all", {}));
+  value(await device.pin(hiddenView));
+  const listed = value(await device.attempt(["views", "list"])) as {
+    data: Array<{ id: string }>;
+  };
+  const listedIds = listed.data.map((row) => row.id);
+  expect(listedIds).toContain(view);
+  expect(listedIds).not.toContain(hiddenView);
+  const read = value(await device.attempt(["views", "get", hiddenView])) as {
+    id: string;
+  };
+  expect(read.id).toBe(hiddenView);
 });
