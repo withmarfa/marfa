@@ -441,7 +441,7 @@ fn a_reading_handle_is_refused_at_every_write_door() {
         for line in source.lines() {
             // A test module, top level and closed at column 0, is
             // passed over; anything after it is read again.
-            if line.starts_with("mod tests") {
+            if line.starts_with("mod tests {") {
                 in_tests = true;
             }
             if in_tests {
