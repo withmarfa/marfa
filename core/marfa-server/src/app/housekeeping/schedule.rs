@@ -11,6 +11,7 @@ pub struct Row {
     pub name: String,
     pub next_run_at: String,
     pub wake_requested: bool,
+    pub wakes_on_files: bool,
     pub running_since: Option<String>,
     pub last_started_at: Option<String>,
     pub last_finished_at: Option<String>,
@@ -24,18 +25,19 @@ fn row_of(row: &Sql<'_>) -> rusqlite::Result<Row> {
         name: row.get(0)?,
         next_run_at: row.get(1)?,
         wake_requested: row.get(2)?,
-        running_since: row.get(3)?,
-        last_started_at: row.get(4)?,
-        last_finished_at: row.get(5)?,
-        last_outcome: row.get(6)?,
-        last_error: row.get(7)?,
-        last_result: row.get(8)?,
+        wakes_on_files: row.get(3)?,
+        running_since: row.get(4)?,
+        last_started_at: row.get(5)?,
+        last_finished_at: row.get(6)?,
+        last_outcome: row.get(7)?,
+        last_error: row.get(8)?,
+        last_result: row.get(9)?,
     })
 }
 
 pub fn rows(tx: &Transaction<'_>) -> Result<Vec<Row>> {
     let mut statement = tx.prepare_cached(
-        "SELECT name, next_run_at, wake_requested, running_since, last_started_at, \
+        "SELECT name, next_run_at, wake_requested, wakes_on_files, running_since, last_started_at, \
          last_finished_at, last_outcome, last_error, last_result FROM housekeeping_jobs",
     )?;
     Ok(statement
@@ -98,6 +100,11 @@ pub enum Step {
         name: &'static str,
         next_ms: i64,
     },
+    /// Sets whether a change to a file's record asks the job to run soon, as the job declares.
+    Declare {
+        name: &'static str,
+        wakes_on_files: bool,
+    },
     /// Answers a request to run soon: the job runs no later than `next_ms`.
     Wake {
         name: &'static str,
@@ -123,6 +130,12 @@ pub fn plan(rows: &[Row], wanted: &[Wanted], now_ms: i64) -> Vec<Step> {
             });
             continue;
         };
+        if row.wakes_on_files != job.wakes_on_files {
+            steps.push(Step::Declare {
+                name,
+                wakes_on_files: job.wakes_on_files,
+            });
+        }
         let Some(next) = parsed_ms(&row.next_run_at) else {
             tracing::warn!(
                 job = name,
@@ -189,6 +202,15 @@ pub fn apply(
                     "UPDATE housekeeping_jobs SET next_run_at = MIN(next_run_at, ?2), \
                      wake_requested = 0 WHERE name = ?1 AND running_since IS NULL",
                     params![name, Stamp::from_ms(*next_ms)?],
+                )?;
+            }
+            Step::Declare {
+                name,
+                wakes_on_files,
+            } => {
+                tx.execute(
+                    "UPDATE housekeeping_jobs SET wakes_on_files = ?2 WHERE name = ?1",
+                    params![name, wakes_on_files],
                 )?;
             }
             Step::Bring { name, next_ms } => {
@@ -355,6 +377,7 @@ mod tests {
             name: name.to_string(),
             next_run_at: next.to_string(),
             wake_requested: false,
+            wakes_on_files: false,
             running_since: running.then(|| at(NOW)),
             last_started_at: None,
             last_finished_at: None,
@@ -510,6 +533,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(asked(&db), ["reader"]);
+    }
+
+    #[test]
+    fn a_job_stored_with_the_wrong_file_flag_is_corrected_by_the_next_plan() {
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        let tx = db.transaction().unwrap();
+        let enter = |wakes_on_files| Step::Enter {
+            name: "job",
+            next_ms: NOW + 30_000,
+            wakes_on_files,
+        };
+        apply(&tx, &[enter(false)], None).unwrap();
+        let reader = Wanted {
+            wakes_on_files: true,
+            ..JOB
+        };
+        let steps = plan(&rows(&tx).unwrap(), std::slice::from_ref(&reader), NOW);
+        assert_eq!(
+            steps,
+            [Step::Declare {
+                name: "job",
+                wakes_on_files: true
+            }]
+        );
+        apply(&tx, &steps, None).unwrap();
+        assert!(rows(&tx).unwrap()[0].wakes_on_files);
+        assert!(plan(&rows(&tx).unwrap(), std::slice::from_ref(&reader), NOW).is_empty());
+        let steps = plan(&rows(&tx).unwrap(), &[JOB], NOW);
+        apply(&tx, &steps, None).unwrap();
+        assert!(!rows(&tx).unwrap()[0].wakes_on_files);
+        assert!(plan(&rows(&tx).unwrap(), &[JOB], NOW).is_empty());
     }
 
     #[test]
