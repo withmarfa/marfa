@@ -2206,7 +2206,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
             })
         }
         DeviceCommand::Unsent => {
-            let unsent = Core::read_unsent(store.path()?)?;
+            let unsent = Core::read_unsent(store.path()?)?.writes;
             output::list_report(&unsent, None, json, || {
                 if unsent.is_empty() {
                     return "the store holds no write the server has not taken".into();

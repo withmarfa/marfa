@@ -563,7 +563,7 @@ fn a_refused_store_lists_each_write_it_holds_unsent() {
         .unwrap();
     }
     let before = files(&path);
-    let listed = Core::read_unsent(&path).unwrap();
+    let listed = Core::read_unsent(&path).unwrap().writes;
     assert_eq!(
         listed
             .iter()
@@ -601,5 +601,5 @@ fn a_store_another_core_writes_is_not_listed() {
     let writer = Core::open(&path, None).unwrap();
     assert_eq!(Core::read_unsent(&path), Err(CoreError::ReadingHandle));
     drop(writer);
-    assert_eq!(Core::read_unsent(&path).unwrap().len(), 1);
+    assert_eq!(Core::read_unsent(&path).unwrap().writes.len(), 1);
 }

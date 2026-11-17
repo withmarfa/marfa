@@ -1,5 +1,5 @@
 //! Removing a store: only under the writer lock, only losing the writes the
-//! caller agreed to lose, named by id, and only the store's own names.
+//! caller was shown, and only the store's own names.
 
 use std::path::{Path, PathBuf};
 
@@ -80,17 +80,36 @@ fn queue(path: &Path, id: &str) {
         .unwrap();
 }
 
-fn ids(ids: &[&str]) -> Vec<String> {
-    ids.iter().map(|id| id.to_string()).collect()
+/// The confirmation `read_unsent` gives, as an app takes it when it shows
+/// the writes.
+fn shown(path: &Path) -> String {
+    Core::read_unsent(path).unwrap().confirmation
 }
 
-/// The ids `read_unsent` lists, as an app shows them.
-fn shown(path: &Path) -> Vec<String> {
-    Core::read_unsent(path)
+/// The confirmation of no writes, which a path with no store answers.
+fn nothing() -> String {
+    crate::store::confirmation(&[])
+}
+
+/// The confirmation of the one write `queue_one` makes.
+fn q1() -> String {
+    crate::store::confirmation(&[crate::UnsentWrite {
+        id: "q1".into(),
+        kind: "create_item".into(),
+        item_id: None,
+        body: "{}".into(),
+        verdict: None,
+    }])
+}
+
+/// Changes the stored write `id` with `set`, as a drain or an edit can
+/// while no app holds the writes it showed.
+fn change(path: &Path, id: &str, set: &str) {
+    let changed = Connection::open(path)
         .unwrap()
-        .into_iter()
-        .map(|write| write.id)
-        .collect()
+        .execute(&format!("UPDATE queue SET {set} WHERE id = ?1"), [id])
+        .unwrap();
+    assert_eq!(changed, 1);
 }
 
 /// A store this build opens, holding one write the server has not taken and
@@ -105,15 +124,15 @@ fn store_with_one_unsent() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
-fn differs(result: crate::Result<()>) -> (Option<Vec<String>>, Vec<String>) {
+fn differs(result: crate::Result<()>) -> Option<u64> {
     match result {
-        Err(CoreError::UnsentDiffers { unsent, agreed, .. }) => (unsent, agreed),
+        Err(CoreError::UnsentDiffers { unsent, .. }) => unsent,
         other => panic!("answered {other:?}"),
     }
 }
 
 #[test]
-fn a_store_whose_unsent_writes_are_the_ones_agreed_is_removed_with_its_names() {
+fn a_store_whose_unsent_writes_are_those_shown_is_removed_with_its_names() {
     let (dir, path) = store_with_one_unsent();
     // Not the store's own names, so they stay.
     let neighbors = [
@@ -125,10 +144,17 @@ fn a_store_whose_unsent_writes_are_the_ones_agreed_is_removed_with_its_names() {
         std::fs::write(neighbor, b"kept").unwrap();
     }
     assert!(!held(&path).is_empty());
-    let agreed = shown(&path);
-    assert_eq!(agreed, ids(&["q1"]));
+    let listed = Core::read_unsent(&path).unwrap();
+    assert_eq!(
+        listed
+            .writes
+            .iter()
+            .map(|write| write.id.as_str())
+            .collect::<Vec<_>>(),
+        ["q1"]
+    );
 
-    Core::remove_store(&path, &agreed).unwrap();
+    Core::remove_store(&path, &listed.confirmation).unwrap();
 
     gone(&path);
     for neighbor in &neighbors {
@@ -146,44 +172,71 @@ fn a_store_whose_unsent_writes_are_the_ones_agreed_is_removed_with_its_names() {
     drop(Core::open(&path, None).unwrap());
 }
 
+/// Each field `read_unsent` shows, changed under the same write id after
+/// the person was shown it, refuses the removal and leaves the store whole.
 #[test]
-fn a_store_holding_other_writes_is_refused_with_its_own_and_left_as_it_was() {
-    let (_dir, path) = store_with_one_unsent();
-    let before = held(&path);
+fn a_write_changed_after_it_was_shown_refuses_the_removal() {
+    for set in [
+        "payload = '{\"properties\":{\"title\":\"changed\"}}'",
+        "verdict = 'blocked', reason = 'record_unread'",
+        "verdict = 'dead'",
+        "kind = 'update_item'",
+        "item_id = 'another'",
+    ] {
+        let (_dir, path) = store_with_one_unsent();
+        change(
+            &path,
+            "q1",
+            "payload = '{\"properties\":{\"title\":\"shown\"}}'",
+        );
+        let agreed = shown(&path);
+        change(&path, "q1", set);
+        let ids: Vec<String> = Core::read_unsent(&path)
+            .unwrap()
+            .writes
+            .into_iter()
+            .map(|write| write.id)
+            .collect();
+        assert_eq!(ids, ["q1"], "{set}: the witness, the same id is held");
+        let before = held(&path);
 
-    for agreed in [ids(&[]), ids(&["q1", "q2"]), ids(&["q2"])] {
         assert_eq!(
             differs(Core::remove_store(&path, &agreed)),
-            (Some(ids(&["q1"])), agreed)
+            Some(1),
+            "{set}"
         );
-        assert_eq!(held(&path), before, "the store changed when refused");
+        assert_eq!(held(&path), before, "{set}: the store changed when refused");
     }
-    assert_eq!(Core::open(&path, None).unwrap().queue().unwrap().len(), 1);
 }
 
-/// The race a count could not see: the write shown is answered and another
-/// is queued before the removal, so the store holds as many writes as the
-/// person agreed to lose, and not the ones they saw.
 #[test]
 fn a_write_queued_after_the_writes_were_shown_refuses_the_removal() {
     let (_dir, path) = store_with_one_unsent();
     let agreed = shown(&path);
-    Connection::open(&path)
-        .unwrap()
-        .execute(
-            "UPDATE queue SET verdict = 'accepted', answered_at = '2026-01-01T00:00:01Z' WHERE id = 'q1'",
-            [],
-        )
-        .unwrap();
     queue(&path, "q2");
-    // The witness: a count agrees with the one write shown.
-    assert_eq!(shown(&path).len(), agreed.len());
     let before = held(&path);
 
-    assert_eq!(
-        differs(Core::remove_store(&path, &agreed)),
-        (Some(ids(&["q2"])), ids(&["q1"]))
+    assert_eq!(differs(Core::remove_store(&path, &agreed)), Some(2));
+    assert_eq!(held(&path), before, "the store changed when refused");
+    assert_eq!(Core::open(&path, None).unwrap().queue().unwrap().len(), 2);
+}
+
+/// The race a count or an id list cannot see together: the write shown is
+/// answered and another queued, so the store holds as many writes as were
+/// shown, and not the ones shown.
+#[test]
+fn a_write_answered_and_another_queued_after_the_writes_were_shown_refuses_the_removal() {
+    let (_dir, path) = store_with_one_unsent();
+    let agreed = shown(&path);
+    change(
+        &path,
+        "q1",
+        "verdict = 'accepted', answered_at = '2026-01-01T00:00:01Z'",
     );
+    queue(&path, "q2");
+    let before = held(&path);
+
+    assert_eq!(differs(Core::remove_store(&path, &agreed)), Some(1));
     assert_eq!(held(&path), before, "the store changed when refused");
     let kept = Core::open(&path, None).unwrap().queue().unwrap();
     assert!(
@@ -193,30 +246,67 @@ fn a_write_queued_after_the_writes_were_shown_refuses_the_removal() {
 }
 
 #[test]
-fn the_ids_agreed_are_matched_in_any_order() {
+fn a_write_answered_after_the_writes_were_shown_refuses_the_removal() {
     let (_dir, path) = store_with_one_unsent();
-    queue(&path, "q2");
-    assert_eq!(shown(&path), ids(&["q1", "q2"]));
+    let agreed = shown(&path);
+    change(
+        &path,
+        "q1",
+        "verdict = 'accepted', answered_at = '2026-01-01T00:00:01Z'",
+    );
 
-    Core::remove_store(&path, &ids(&["q2", "q1"])).unwrap();
+    assert_eq!(differs(Core::remove_store(&path, &agreed)), Some(0));
+    assert!(path.exists());
+    Core::remove_store(&path, &shown(&path)).unwrap();
     gone(&path);
 }
 
 #[test]
-fn a_store_holding_nothing_unsent_is_removed_with_nothing_agreed() {
+fn a_confirmation_that_is_not_one_refuses_the_removal() {
+    let (_dir, path) = store_with_one_unsent();
+    let before = held(&path);
+    for agreed in [
+        String::new(),
+        nothing(),
+        "q1".to_string(),
+        shown(&path).to_uppercase(),
+    ] {
+        assert_eq!(differs(Core::remove_store(&path, &agreed)), Some(1));
+        assert_eq!(held(&path), before, "the store changed when refused");
+    }
+}
+
+/// The confirmation covers what removing the store loses, which is the
+/// writes, so a copy of the store holding the same writes takes it too.
+#[test]
+fn the_same_writes_at_another_path_are_removed_with_their_confirmation() {
+    let (dir, path) = store_with_one_unsent();
+    queue(&path, "q2");
+    let agreed = shown(&path);
+    let copy = dir.path().join("copy-2.sqlite");
+    std::fs::copy(&path, &copy).unwrap();
+
+    Core::remove_store(&copy, &agreed).unwrap();
+    gone(&copy);
+    Core::remove_store(&path, &agreed).unwrap();
+    gone(&path);
+}
+
+#[test]
+fn a_store_holding_nothing_unsent_is_removed_with_the_confirmation_of_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("copy.sqlite");
     drop(Core::open(&path, None).unwrap());
-    assert!(shown(&path).is_empty());
+    let listed = Core::read_unsent(&path).unwrap();
+    assert!(listed.writes.is_empty());
+    assert_eq!(listed.confirmation, nothing());
 
-    // The witness: an id the store does not hold is refused.
-    assert_eq!(
-        differs(Core::remove_store(&path, &ids(&["q1"]))),
-        (Some(ids(&[])), ids(&["q1"]))
-    );
+    // The witness: the confirmation of a store holding a write is refused.
+    let (_other_dir, other) = store_with_one_unsent();
+    assert_eq!(differs(Core::remove_store(&path, &shown(&other))), Some(0));
     assert!(path.exists());
 
-    Core::remove_store(&path, &[]).unwrap();
+    Core::remove_store(&path, &listed.confirmation).unwrap();
     gone(&path);
 }
 
@@ -227,14 +317,14 @@ fn a_store_another_process_writes_is_refused_and_left_as_it_was() {
     let before = held(&path);
 
     assert!(matches!(
-        Core::remove_store(&path, &ids(&["q1"])),
+        Core::remove_store(&path, &q1()),
         Err(CoreError::ReadingHandle)
     ));
     assert_eq!(held(&path), before);
 
     // The witness: once the writer lets go, the same call removes it.
     drop(writer);
-    Core::remove_store(&path, &ids(&["q1"])).unwrap();
+    Core::remove_store(&path, &q1()).unwrap();
     gone(&path);
 }
 
@@ -254,12 +344,9 @@ fn a_store_of_another_schema_is_removed_with_the_writes_it_lists() {
     };
     assert_eq!(shown, 1);
     let listed = self::shown(&path);
-    assert_eq!(listed, ids(&["q1"]));
+    assert_eq!(listed, q1());
 
-    assert_eq!(
-        differs(Core::remove_store(&path, &[])),
-        (Some(ids(&["q1"])), ids(&[]))
-    );
+    assert_eq!(differs(Core::remove_store(&path, &nothing())), Some(1));
     Core::remove_store(&path, &listed).unwrap();
     gone(&path);
 }
@@ -290,12 +377,9 @@ fn a_write_held_only_in_the_log_is_read() {
     // SQLite may make a shared-memory index to read the log, so the check
     // leaves it out.
     let before = held_but_index(&path);
-    assert_eq!(
-        differs(Core::remove_store(&path, &[])),
-        (Some(ids(&["q1"])), ids(&[]))
-    );
+    assert_eq!(differs(Core::remove_store(&path, &nothing())), Some(1));
     assert_eq!(held_but_index(&path), before);
-    Core::remove_store(&path, &ids(&["q1"])).unwrap();
+    Core::remove_store(&path, &q1()).unwrap();
     gone(&path);
 }
 
@@ -306,7 +390,7 @@ fn a_store_whose_writes_cannot_be_read_is_refused() {
     std::fs::write(&path, vec![7u8; 8192]).unwrap();
     let before = std::fs::read(&path).unwrap();
 
-    assert_eq!(differs(Core::remove_store(&path, &[])), (None, ids(&[])));
+    assert_eq!(differs(Core::remove_store(&path, &nothing())), None);
     assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
@@ -319,16 +403,22 @@ fn a_path_with_no_store_is_removed_with_what_is_left_there() {
     std::fs::write(beside(&path, ".blobs").join("fetched"), b"bytes").unwrap();
     std::fs::write(beside(&path, ".writer-lock"), b"").unwrap();
 
-    assert_eq!(
-        differs(Core::remove_store(&path, &ids(&["q1"]))),
-        (Some(ids(&[])), ids(&["q1"]))
-    );
+    assert_eq!(differs(Core::remove_store(&path, &q1())), Some(0));
     assert!(beside(&path, ".blobs").exists());
-    Core::remove_store(&path, &[]).unwrap();
+    // An app reading the path again is shown no writes.
+    let listed = Core::read_unsent(&path).unwrap();
+    assert!(listed.writes.is_empty());
+    Core::remove_store(&path, &listed.confirmation).unwrap();
     gone(&path);
 
     // Nothing at all, not even the folder.
-    Core::remove_store(dir.path().join("absent").join("copy.sqlite"), &[]).unwrap();
+    let absent = dir.path().join("absent").join("copy.sqlite");
+    assert_eq!(Core::read_unsent(&absent).unwrap().confirmation, nothing());
+    // Reading a path with no store makes no lock there.
+    let unmade = dir.path().join("unmade.sqlite");
+    assert_eq!(Core::read_unsent(&unmade).unwrap().confirmation, nothing());
+    assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    Core::remove_store(&absent, &nothing()).unwrap();
     assert!(!dir.path().join("absent").exists());
 }
 
@@ -344,7 +434,7 @@ fn a_folders_store_is_refused() {
     let before = held(&path);
 
     assert!(matches!(
-        Core::remove_store(&path, &ids(&["q1"])),
+        Core::remove_store(&path, &q1()),
         Err(CoreError::Invalid(_))
     ));
     assert_eq!(held(&path), before);
@@ -369,7 +459,7 @@ fn a_symbolic_link_is_removed_and_what_it_leads_to_is_kept() {
     std::os::unix::fs::symlink(&target_bytes, beside(&path, ".blobs")).unwrap();
     std::os::unix::fs::symlink(&outside, beside(&path, "-wal")).unwrap();
 
-    Core::remove_store(&path, &[]).unwrap();
+    Core::remove_store(&path, &nothing()).unwrap();
     gone(&path);
     assert_eq!(std::fs::read(&outside).unwrap(), b"kept");
     assert_eq!(
@@ -382,7 +472,7 @@ fn a_symbolic_link_is_removed_and_what_it_leads_to_is_kept() {
     let (_held, path) = store_with_one_unsent();
     std::os::unix::fs::symlink(&outside, beside(&path, ".blobs").join("link")).unwrap();
     std::os::unix::fs::symlink(&elsewhere, beside(&path, ".blobs").join("folder")).unwrap();
-    Core::remove_store(&path, &ids(&["q1"])).unwrap();
+    Core::remove_store(&path, &q1()).unwrap();
     gone(&path);
     assert_eq!(std::fs::read(&outside).unwrap(), b"kept");
     assert!(target_store.exists());
@@ -402,10 +492,10 @@ fn a_store_a_folder_made_before_it_was_bound_is_refused() {
     // else is removed.
     let elsewhere = dir.path().join("copy.sqlite");
     std::fs::copy(&path, &elsewhere).unwrap();
-    Core::remove_store(&elsewhere, &ids(&["q1"])).unwrap();
+    Core::remove_store(&elsewhere, &q1()).unwrap();
 
     assert!(matches!(
-        Core::remove_store(&path, &ids(&["q1"])),
+        Core::remove_store(&path, &q1()),
         Err(CoreError::Invalid(_))
     ));
     assert_eq!(held(&path), before);
@@ -430,7 +520,7 @@ fn a_removal_that_stopped_after_the_fetched_bytes_is_finished_by_asking_again() 
     }
 
     assert!(matches!(
-        Core::remove_store(&path, &ids(&["q1"])),
+        Core::remove_store(&path, &q1()),
         Err(CoreError::Store(_))
     ));
     assert!(path.exists(), "the store went before the removal stopped");
@@ -440,7 +530,7 @@ fn a_removal_that_stopped_after_the_fetched_bytes_is_finished_by_asking_again() 
     );
 
     std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o700)).unwrap();
-    Core::remove_store(&path, &ids(&["q1"])).unwrap();
+    Core::remove_store(&path, &q1()).unwrap();
     gone(&path);
 
     // A new store at the path keeps none of the old fetched bytes.

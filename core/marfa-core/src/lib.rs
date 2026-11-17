@@ -165,7 +165,7 @@ pub use model::{
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
     ListFilters, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows, SearchFilters,
     SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, TagsWrite, Tier,
-    UnregisteredType, UnsentWrite, Verdict, WriteKind,
+    UnregisteredType, UnsentWrite, UnsentWrites, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};

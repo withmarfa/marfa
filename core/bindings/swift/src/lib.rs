@@ -1516,15 +1516,14 @@ pub enum MarfaError {
         message: String,
     },
     /// A removal of a store was refused, leaving it as it was, because the
-    /// writes it holds that the server has not taken are not exactly the
-    /// ones the caller agreed to lose. Carried so an app can show the person
-    /// the store's own writes and ask again.
+    /// writes it holds that the server has not taken are not those its
+    /// confirmation was given with. An app reads them again with
+    /// `readUnsent`, shows them to the person and asks again.
     UnsentDiffers {
         path: String,
-        /// The ids of the store's own unsent writes; `None` where they
-        /// cannot be read.
-        unsent: Option<Vec<String>>,
-        agreed: Vec<String>,
+        /// How many such writes the store holds; `None` where they cannot be
+        /// read.
+        unsent: Option<u64>,
         message: String,
     },
     /// The copy can no longer be kept current from its cursor: a hydration
@@ -1787,14 +1786,9 @@ impl From<marfa_core::CoreError> for MarfaError {
                 unsent,
                 message,
             },
-            E::UnsentDiffers {
+            E::UnsentDiffers { path, unsent } => MarfaError::UnsentDiffers {
                 path,
                 unsent,
-                agreed,
-            } => MarfaError::UnsentDiffers {
-                path,
-                unsent,
-                agreed,
                 message,
             },
             E::CopyExpired { reason, .. } => MarfaError::CopyExpired {
@@ -3277,19 +3271,19 @@ impl Core {
 /// removed, including one `open` refuses with `WrongSchema`. Drop every `Core`
 /// on the store first.
 ///
-/// `unsent` names, by id as `readUnsent` lists them, the writes the server
-/// has not taken that the person agreed to lose, in any order. Throws
-/// `UnsentDiffers` with the ids of the store's own unsent writes, leaving it
-/// as it was, unless they are exactly those; they are `nil` where they
-/// cannot be read, and such a store is never removed. Throws
-/// `ReadingHandle` while another process, or another `Core` in this one,
-/// writes the store, and `Invalid` for a folder's store. With nothing at
-/// `path`, removes what a removal stopped part way left there when `unsent`
-/// is empty. A process that only reads the store does not stop the removal and
+/// `confirmation` is the one `readUnsent` gave with the writes the person was
+/// shown and agreed to lose. Throws `UnsentDiffers`, leaving the store as it
+/// was, unless the writes it holds that the server has not taken are those,
+/// with every field `readUnsent` shows unchanged; a store whose writes cannot
+/// be read is never removed. Throws `ReadingHandle` while another process,
+/// or another `Core` in this one, writes the store, and `Invalid` for a
+/// folder's store. With nothing at `path`, `readUnsent` shows no writes, and
+/// removing with its confirmation takes what a removal stopped part way left
+/// there. A process that only reads the store does not stop the removal and
 /// keeps showing the old copy until it reopens.
 #[uniffi::export]
-pub fn remove_store(path: String, unsent: Vec<String>) -> Result<(), MarfaError> {
-    Ok(marfa_core::Core::remove_store(path, &unsent)?)
+pub fn remove_store(path: String, confirmation: String) -> Result<(), MarfaError> {
+    Ok(marfa_core::Core::remove_store(path, &confirmation)?)
 }
 
 /// Removes the store at `path` as `removeStore` does, agreeing to lose every
@@ -3325,19 +3319,35 @@ pub struct UnsentWrite {
     pub verdict: Option<String>,
 }
 
-/// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
+/// The writes a store holds that the server has not taken, and the
+/// confirmation `removeStore` takes to lose exactly these.
+#[derive(uniffi::Record)]
+pub struct UnsentWrites {
+    /// In queue order.
+    pub writes: Vec<UnsentWrite>,
+    /// Opaque; pass it to `removeStore` unchanged.
+    pub confirmation: String,
+}
+
+/// Lists the unsent writes of a store of any build, a refused one included,
+/// with the confirmation `removeStore` takes; see BINDINGS.md for refusals.
 #[uniffi::export]
-pub fn read_unsent(path: String) -> Result<Vec<UnsentWrite>, MarfaError> {
-    Ok(marfa_core::Core::read_unsent(path)?
-        .into_iter()
-        .map(|write| UnsentWrite {
-            id: write.id,
-            kind: write.kind,
-            item_id: write.item_id,
-            body: write.body,
-            verdict: write.verdict,
-        })
-        .collect())
+pub fn read_unsent(path: String) -> Result<UnsentWrites, MarfaError> {
+    let unsent = marfa_core::Core::read_unsent(path)?;
+    Ok(UnsentWrites {
+        writes: unsent
+            .writes
+            .into_iter()
+            .map(|write| UnsentWrite {
+                id: write.id,
+                kind: write.kind,
+                item_id: write.item_id,
+                body: write.body,
+                verdict: write.verdict,
+            })
+            .collect(),
+        confirmation: unsent.confirmation,
+    })
 }
 
 /// What `setAsideDamaged` did.
@@ -3488,7 +3498,6 @@ mod tests {
             E::UnsentDiffers {
                 path: text(),
                 unsent: None,
-                agreed: Vec::new(),
             },
             E::CopyExpired {
                 reason: text(),
@@ -3930,8 +3939,7 @@ mod tests {
             (
                 E::UnsentDiffers {
                     path: text(),
-                    unsent: Some(vec![text(), text()]),
-                    agreed: vec![text()],
+                    unsent: Some(2),
                 }
                 .into(),
                 "UnsentDiffers",
@@ -6326,38 +6334,32 @@ mod tests {
     }
 
     #[test]
-    fn a_store_is_removed_only_with_the_ids_of_the_unsent_writes_it_holds() {
+    fn a_store_is_removed_only_with_the_confirmation_of_the_writes_it_holds() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let first = queue_note(&path, "first");
-        let shown: Vec<String> = read_unsent(path.clone())
-            .unwrap()
-            .into_iter()
-            .map(|write| write.id)
-            .collect();
-        assert_eq!(shown, vec![first.clone()]);
+        let shown = read_unsent(path.clone()).unwrap();
+        assert_eq!(shown.writes.len(), 1);
+        assert_eq!(shown.writes[0].id, first);
         let late = queue_note(&path, "late");
 
-        for agreed in [shown.clone(), vec![late.clone()], Vec::new()] {
-            match remove_store(path.clone(), agreed.clone()) {
+        for agreed in [shown.confirmation.clone(), String::new()] {
+            assert!(matches!(
+                remove_store(path.clone(), agreed),
                 Err(MarfaError::UnsentDiffers {
-                    unsent: Some(mut unsent),
-                    agreed: echoed,
+                    unsent: Some(2),
                     ..
-                }) => {
-                    unsent.sort();
-                    let mut both = vec![first.clone(), late.clone()];
-                    both.sort();
-                    assert_eq!(unsent, both);
-                    assert_eq!(echoed, agreed);
-                }
-                other => panic!("the removal was not refused: {other:?}"),
-            }
-            assert_eq!(read_unsent(path.clone()).unwrap().len(), 2);
+                })
+            ));
+            assert_eq!(read_unsent(path.clone()).unwrap().writes.len(), 2);
         }
 
-        remove_store(path.clone(), vec![late, first]).unwrap();
+        let both = read_unsent(path.clone()).unwrap();
+        assert!(both.writes.iter().any(|write| write.id == late));
+        remove_store(path.clone(), both.confirmation).unwrap();
         assert!(!std::path::Path::new(&path).exists());
-        remove_store(path.clone(), Vec::new()).unwrap();
+        let nothing = read_unsent(path.clone()).unwrap();
+        assert!(nothing.writes.is_empty());
+        remove_store(path.clone(), nothing.confirmation).unwrap();
     }
 }

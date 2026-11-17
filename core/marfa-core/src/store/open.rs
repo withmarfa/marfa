@@ -220,12 +220,12 @@ pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
     Some(crate::FileBudget::stored(Some(&text))).filter(|setting| setting.to_stored().is_some())
 }
 
-/// The id of each write the store at `path` holds that the server has not
-/// taken, in queue order, as `read_unsent` lists them, read whatever the
-/// store's shape for the caller that holds its writer lock. A store with no
-/// table holds none. `None` where they cannot be read, as in a file that is
-/// not a store. The caller refuses a folder's store first (`refuse_folders`).
-pub(crate) fn removal_ids(path: &Path) -> Option<Vec<String>> {
+/// The writes the store at `path` holds that the server has not taken, in
+/// queue order, as `read_unsent` lists them, read whatever the store's shape
+/// for the caller that holds its writer lock. A store with no table holds
+/// none. `None` where they cannot be read, as in a file that is not a store.
+/// The caller refuses a folder's store first (`refuse_folders`).
+pub(crate) fn removal_writes(path: &Path) -> Option<Vec<crate::UnsentWrite>> {
     let Ok(conn) = open_refused(path) else {
         return None;
     };
@@ -237,7 +237,7 @@ pub(crate) fn removal_ids(path: &Path) -> Option<Vec<String>> {
     if tables == 0 {
         return Some(Vec::new());
     }
-    untaken(&conn).map(|writes| writes.into_iter().map(|write| write.id).collect())
+    untaken(&conn)
 }
 
 // The path and registry identify folder stores even when their pages do not read.

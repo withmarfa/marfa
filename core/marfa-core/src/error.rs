@@ -161,16 +161,14 @@ pub enum CoreError {
         unsent: Option<u64>,
     },
     /// A removal of a store was refused, leaving it as it was, because the
-    /// writes it holds that the server has not taken are not the ones the
-    /// caller agreed to lose.
-    #[error("{}", unsent_differs(path, unsent.as_deref(), agreed))]
+    /// writes it holds that the server has not taken are not those the
+    /// confirmation was given with.
+    #[error("{}", unsent_differs(path, *unsent))]
     UnsentDiffers {
         path: String,
-        /// The id of each write the store holds that the server has not
-        /// taken, in queue order; `None` where they cannot be read.
-        unsent: Option<Vec<String>>,
-        /// The ids the caller agreed to lose.
-        agreed: Vec<String>,
+        /// How many writes the store holds that the server has not taken;
+        /// `None` where they cannot be read.
+        unsent: Option<u64>,
     },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
@@ -627,29 +625,13 @@ fn store_damaged(path: &str, reason: &str, unsent: Option<u64>) -> String {
     format!("{path} cannot be opened: {reason}. {holds}")
 }
 
-fn unsent_differs(path: &str, unsent: Option<&[String]>, agreed: &[String]) -> String {
-    let writes = |count: usize| if count == 1 { "write" } else { "writes" };
+fn unsent_differs(path: &str, unsent: Option<u64>) -> String {
     match unsent {
-        Some(held) => {
-            let held: std::collections::HashSet<&String> = held.iter().collect();
-            let agreed: std::collections::HashSet<&String> = agreed.iter().collect();
-            let unagreed = held.difference(&agreed).count();
-            let gone = agreed.difference(&held).count();
-            let mut changes = Vec::new();
-            if unagreed > 0 {
-                changes.push(format!(
-                    "it holds {unagreed} {} the server has not taken that the person did not agree to lose",
-                    writes(unagreed)
-                ));
-            }
-            if gone > 0 {
-                changes.push(format!("it no longer holds {gone} of the writes agreed to"));
-            }
-            format!(
-                "{path} was not removed: {}; read its unsent writes again, show them to the person and remove it with their ids once they agree",
-                changes.join(", and ")
-            )
-        }
+        Some(count) => format!(
+            "{path} was not removed: the {count} {} it holds that the server has not taken {} not what the person was shown; read them again, show them to the person and remove it with the new confirmation once they agree",
+            if count == 1 { "write" } else { "writes" },
+            if count == 1 { "is" } else { "are" },
+        ),
         None => format!(
             "{path} was not removed: whether it holds writes the server has not taken cannot be read, so it cannot be known what removing it would lose"
         ),

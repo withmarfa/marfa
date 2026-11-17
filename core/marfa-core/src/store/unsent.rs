@@ -100,6 +100,32 @@ pub(crate) fn untaken(conn: &Connection) -> Option<Vec<crate::UnsentWrite>> {
     read.ok()
 }
 
+/// The confirmation `read_unsent` gives with `writes` and a removal checks:
+/// SHA-256 over every field of every write, in queue order, each field
+/// length-prefixed so no two lists encode alike.
+pub(crate) fn confirmation(writes: &[crate::UnsentWrite]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"marfa unsent writes\0");
+    hash.update((writes.len() as u64).to_be_bytes());
+    let mut field = |value: Option<&str>| match value {
+        None => hash.update([0]),
+        Some(value) => {
+            hash.update([1]);
+            hash.update((value.len() as u64).to_be_bytes());
+            hash.update(value.as_bytes());
+        }
+    };
+    for write in writes {
+        field(Some(&write.id));
+        field(Some(&write.kind));
+        field(write.item_id.as_deref());
+        field(Some(&write.body));
+        field(write.verdict.as_deref());
+    }
+    hex::encode(hash.finalize())
+}
+
 /// The writes a replacement of a folder's store would lose: each not yet
 /// sent, as a folder's removal counts them; each refused or dead one but a
 /// refusal the folder has dealt with; and each answered one a file's state
