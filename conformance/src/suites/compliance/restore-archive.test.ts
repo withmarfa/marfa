@@ -1016,12 +1016,13 @@ describe("restore", () => {
   });
 
   it("refuses a key, which has no sign-in to renew", async () => {
-    // A credential holding write on every type. Restoring takes a person who
+    // A credential holding backups.manage and write on every type. Restoring takes a person who
     // signed in to an app within minutes, or the local command, which a key
     // is neither of.
-    const keyResp = await client.createKey({
+    const keyResp = await owner.createKey({
       label: "archive-working",
       source: `${ctx.source}-archive-working`,
+      permissions: ["backups.manage"],
       type_permissions: { "*": "write" },
     });
     expect(keyResp.ok).toBe(true);
@@ -2093,9 +2094,10 @@ describe("a restore refused while its body is still arriving", () => {
 
   it("reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body", async () => {
     const body = refusedEarly(64 * 1024 * 1024);
-    const keyResp = await client.createKey({
+    const keyResp = await owner.createKey({
       label: "restore-refused-early",
       source: `${ctx.source}-refused-early`,
+      permissions: ["backups.manage"],
       type_permissions: { "*": "write" },
     });
     expect(keyResp.ok).toBe(true);

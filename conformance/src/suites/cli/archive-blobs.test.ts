@@ -203,13 +203,11 @@ describe("an archive that lacks a blob it names", () => {
       expect(late.envelope.error.server?.status).toBe(400);
       expect(late.envelope.error.server?.code).toBe("validation_error");
       expect(late.envelope.error.message).toContain("version 99");
-      // Refused before the body: a working key is not the private local command.
+      // Refused before the body: the working key does not hold backups.manage.
       const early = await cli.refused(["restore", path]);
       expect(early.envelope.error.server?.status).toBe(403);
       expect(early.envelope.error.server?.code).toBe("forbidden");
-      expect(early.envelope.error.message).toContain(
-        "Only the private local command can do this.",
-      );
+      expect(early.envelope.error.message).toContain("backups.manage");
       expect(early.code).not.toBe(3);
     }
   });

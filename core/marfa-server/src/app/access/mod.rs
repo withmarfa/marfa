@@ -268,7 +268,11 @@ impl Caller {
         match self {
             Caller::Local(_) => Ok(()),
             Caller::Owner(_) => self.require(permission),
-            Caller::Key(_) | Caller::Server => Err(Refusal::app_sign_in_required()),
+            Caller::Key(_) => {
+                self.require(permission)?;
+                Err(Refusal::app_sign_in_required())
+            }
+            Caller::Server => Err(Refusal::app_sign_in_required()),
             Caller::App { grant, .. } => {
                 self.require(permission)?;
                 let now = Stamp::read(at)?;

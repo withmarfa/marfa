@@ -3679,11 +3679,11 @@ When the server answers an act in this section `401 insufficient_user_authentica
 
 ### `keys-and-oauth/step-up-permission-first`
 
-If an app's access token that lacks the permission an act in this section takes sends that act, then the server MUST answer `403 forbidden` with that permission in `details.required_scope` and no `WWW-Authenticate` header, however long ago its browser session began.
+If an app's access token or an API key that lacks the permission an act in this section takes sends that act, then the server MUST answer `403 forbidden` with that permission in `details.required_scope` and no `WWW-Authenticate` header, however long ago its browser session began.
 
 **Reason:** a new sign-in would not give the token the permission, so a challenge would send the person to sign in for nothing.
 
-**Tests:** `compliance/step-up.test.ts › refuses an app's token without the permission an act takes, naming it, before any challenge`.
+**Tests:** `compliance/step-up.test.ts › refuses an app's token without the permission an act takes, naming it, before any challenge`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`.
 
 ### `keys-and-oauth/step-up-refresh-keeps`
 
@@ -3701,7 +3701,7 @@ The server MUST date each access token by the browser session of its own authori
 
 ### `keys-and-oauth/step-up-key-refused`
 
-If an API key sends an act in this section, whatever permissions it holds, then the server MUST answer `403 app_sign_in_required` with no `WWW-Authenticate` header.
+If an API key that holds the permission an act in this section takes sends that act, then the server MUST answer `403 app_sign_in_required` with no `WWW-Authenticate` header.
 
 **Reason:** a key is not issued through a sign-in, so it has none to renew, and a challenge would send a client that follows it into a loop. A person makes the act from an app they signed in to, or with the private local command.
 
