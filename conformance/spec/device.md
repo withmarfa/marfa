@@ -2294,7 +2294,7 @@ If a caller asks what changed since text that is not a cursor a device answered,
 
 ## Counting on a device
 
-A device counts what is linked to an item, or what a table of an item holds, as `POST /items/counts` does (`search-and-filters/counts-linked`), for the screen that shows a number beside each item without opening it. Every count is an active item the key may read, and no `system.*` item, so it equals a local list of the same anchored filter with no `state`.
+A device counts linked items or table rows for each requested ID. Link counts follow the server's default item listing (`search-and-filters/counts-linked`). Row counts follow the rules for the host item and its table (`search-and-filters/counts-rows`).
 
 ### `device/counts-linked`
 
