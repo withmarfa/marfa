@@ -2322,35 +2322,43 @@ When a caller asks a device to count linked items, a device MUST NOT count an it
 
 ### `device/counts-edge-anchor`
 
-When a caller asks a device to count the items that link to an id of an edge type the copy holds whole, and the credential does not read the id's type, a device MUST count the readable items the copy holds that link to it, as `POST /items/counts` does (`search-and-filters/counts-edge-anchor`).
+Where the copy holds the named edge type whole and `device/counts-refused-gap` does not refuse the count, when a caller asks a device to count the items that link to an id the credential does not read the type of, a device MUST count the readable items the copy holds that link to it, as `POST /items/counts` does (`search-and-filters/counts-edge-anchor`).
 
-**Reason:** an edge shows its to item to a credential that reads the edge (`edges/to-named`), so the count tells it nothing the edge does not, and the anchor is no item the copy needs to hold.
+**Reason:** an edge shows its to item to a credential that reads the edge (`edges/to-named`), so the count tells it nothing the edge does not, and the anchor is no item the copy needs to hold. A linker the copy does not hold is a gap, which `device/counts-refused-gap` decides.
 
 **Tests:** `device/counts-live.test.ts › counts the readable items that link to an anchor of a type the credential cannot read, as the server does`.
 
 ### `device/counts-edge-anchor-source-filter`
 
-Where a source filter applies to the credential, when a caller asks a device to count the items that link to an id of an edge type the copy holds whole, and the filter hides the id, a device MUST count the readable items the copy holds that link to it, as `POST /items/counts` does (`search-and-filters/counts-edge-anchor-source-filter`).
+Where a source filter applies to the credential, the copy holds the named edge type whole and `device/counts-refused-gap` does not refuse the count, when a caller asks a device to count the items that link to an id the filter hides, a device MUST count the readable items the copy holds that link to it, as `POST /items/counts` does (`search-and-filters/counts-edge-anchor-source-filter`).
 
-**Reason:** the filter narrows the items counted and not the anchor, as it does for the listing with an `edge` filter.
+**Reason:** the filter narrows the items counted and not the anchor, as it does for the listing with an `edge` filter. A linker the copy does not hold is a gap, which `device/counts-refused-gap` decides.
 
 **Tests:** `device/counts-live.test.ts › counts the items that link to an anchor the source filter hides, as the server does`.
 
 ### `device/counts-backref-anchor`
 
-When a caller asks a device to count the items an id links to, and the id is no item or an item the credential does not read, a device MUST answer a `total` of 0 and every group 0.
+Where the copy holds the named edge type whole, when a caller asks a device to count the items an id links to, and the id is no item or an item the credential does not read, a device MUST answer a `total` of 0 and every group 0.
 
-**Reason:** the copy holds no edge from an item the credential cannot read, and the server answers such an id as it answers one no item holds (`search-and-filters/counts-backref-anchor`), so a count never tells a key whether an item exists.
+**Reason:** the copy holds no edge from an item the credential cannot read, and the server answers such an id as it answers one no item holds (`search-and-filters/counts-backref-anchor`), so a count never tells a key whether an item exists. A copy that does not hold the edge type whole refuses instead (`device/counts-refused`).
 
 **Tests:** `device/counts-live.test.ts › answers a missing and an unreadable anchor of a count of links out and of rows as the server does`.
 
 ### `device/counts-rows-anchor`
 
-When a caller asks a device to count the rows of an id that is no item or an item the credential does not read, a device MUST answer a `total` of 0.
+Where a server is configured, when a caller asks a device to count the rows of an id that is no item or an item the credential does not read, a device MUST answer a `total` of 0.
 
 **Reason:** the copy holds no table of an item the credential cannot read, so it asks the server, which answers such a host as it answers one that does not exist (`search-and-filters/counts-rows-anchor`).
 
-**Tests:** `device/counts-live.test.ts › answers a missing and an unreadable anchor of a count of links out and of rows as the server does`.
+**Tests:** `device/counts-live.test.ts › answers a missing and an unreadable anchor of a count of links out and of rows as the server does`, `› answers a count the copy can answer from a closed store with no server and no credential`.
+
+### `device/counts-rows-no-server`
+
+While the working copy names no server, if a caller asks a device to count the rows of an id the copy holds no whole table of, then a device MUST refuse it `no_server`.
+
+**Reason:** the rows the copy does not hold come from the server, and a count of 0 for them would say the item holds none.
+
+**Tests:** `device/counts-live.test.ts › answers a count the copy can answer from a closed store with no server and no credential`.
 
 ### `device/counts-order-ids`
 
@@ -2402,7 +2410,7 @@ When a caller asks the command line to count what the copy can answer whole, a d
 
 ### `device/counts-refused`
 
-If a caller asks a device to count the links of an edge type the copy does not hold whole, then a device MUST refuse it `invalid` with no server code, as it refuses a `backref` term (`device/filter-backref`).
+If a caller asks a device to count the links of an edge type the copy does not hold whole, whichever the id, whether or not it is an item, then a device MUST refuse it `invalid` with no server code, as it refuses a `backref` term (`device/filter-backref`).
 
 **Reason:** a copy that holds some of an edge type's edges gives a number lower than the server's, and a wrong number is worse than none. The refusal is the device's own: it asks no server, so it carries none of a server's codes.
 
@@ -2418,19 +2426,19 @@ Where the copy holds the named edge type whole, when a caller asks a device to c
 
 ### `device/counts-every-listed-held`
 
-Where the copy holds the named edge type whole, every tier, every type and the active state, with no filter or `beneath` on its slice, when an edge of that type reaches an item the copy does not hold, a device MUST answer the count and leave that item out.
+Where the copy holds the named edge type whole, and its slice names `*` among its types, holds the tier `all`, and has no query or a query with no filter, no `beneath` and no state list or one that includes `active`, when an edge of that type at an id reaches an item the copy holds no row for, a device MUST answer the count and leave that item out.
 
-**Reason:** such a copy holds every item the credential lists, so an item it lacks is one the server does not count either, such as one the source filter hides.
+**Reason:** such a copy holds every item the credential lists, so an item it lacks is one the server does not count either, such as one the source filter hides or a `system.*` item. A slice that names each registered type one by one is not this slice, whatever it holds (`device/counts-refused-gap`).
 
 **Tests:** `device/counts-live.test.ts › answers a count that reaches an item the source filter hides when the copy holds every item the credential lists`.
 
 ### `device/counts-refused-gap`
 
-If a count of links reaches an edge whose counted item the copy does not hold, and the copy leaves out a type, a tier or the active state, or narrows its slice by a filter or `beneath`, then a device MUST refuse it `invalid` with no server code.
+Where the copy holds the named edge type whole and its slice does not meet the conditions of `device/counts-every-listed-held`, if an edge of that type at one of the asked ids reaches an item the copy holds no row for, then a device MUST refuse the whole count `invalid` with no server code.
 
-**Reason:** holding every edge of a type does not mean holding every item it reaches, because a slice may name fewer types than the edges link. Such a copy cannot tell an item it lacks from one the server counts, so it refuses rather than undercount. A slice that leaves out archived items does not refuse, since the server counts no archived item.
+**Reason:** an edge at an id reaches, for a `backref` count, the item the edge goes to, and for an `edge` count, the item the edge comes from; a pinned item or one in any state counts as a row held. A copy that does not meet the conditions cannot tell an item it lacks from one the server counts, so it refuses rather than undercount, and the caller asks the server. The rule reads the slice's declaration and not the server's data, so it also refuses where the answer was knowable: a slice that names every registered type one by one at tier `all` where a source filter hides a child (the server counts 1), and a slice that holds `in-folder` whole with an edge to a `system.folder` (the server counts 0). A refusal never gives a number.
 
-**Tests:** `device/counts-live.test.ts › refuses a count of links that reaches an item the copy does not hold, carrying no server code`.
+**Tests:** `device/counts-live.test.ts › refuses a count of links that reaches an item the copy does not hold, carrying no server code`, `› refuses a count the copy could answer when its slice names every type one by one and a source filter hides a child`, `› refuses a count the copy could answer when an edge reaches a system folder and the slice is narrow`.
 
 ### `device/counts-served-complete`
 

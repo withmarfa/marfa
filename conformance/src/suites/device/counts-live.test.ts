@@ -169,6 +169,28 @@ beforeAll(async () => {
   ids.hiddenAnchor = await item(taskType, { stage: "done" }, hiddenWriter);
   ids.pointerToHidden = await item(taskType, { stage: "doing" });
   await link("references", ids.pointerToHidden, ids.hiddenAnchor);
+  // Anchors with two linkers, one of a type a narrow copy leaves out.
+  ids.secretAnchorTwo = await item(secretType, { title: "second anchor" });
+  ids.hiddenAnchorTwo = await item(taskType, { stage: "done" }, hiddenWriter);
+  for (const anchor of [ids.secretAnchorTwo, ids.hiddenAnchorTwo]) {
+    for (const [type, properties] of [
+      [taskType, { stage: "todo" }],
+      [memoType, { title: "linker" }],
+    ] as [string, Record<string, unknown>][]) {
+      await link("references", await item(type, properties), anchor);
+    }
+  }
+  // A task placed in a folder, an edge to an item no slice holds.
+  const folder = await owner.createFolder({ title: "counted folder" });
+  expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+  ids.placed = await item(taskType, { stage: "todo" });
+  const placed = await owner.createEdge({
+    from_id: ids.placed,
+    to_id: folder.data.item.id,
+    edge_type: "in-folder",
+    properties: { path: "counted.md" },
+  });
+  expect(placed.status, JSON.stringify(placed.error)).toBe(201);
   // A parent outside a copy of the task type, whose children are tasks.
   ids.outsideParent = await item(memoType, { title: "outside parent" });
   for (const [role, stage] of [
@@ -367,6 +389,18 @@ class DroppingProxy {
   }
 }
 
+function refusedInvalid(outcome: Outcome<unknown>, what: string) {
+  expect(outcome.ok, `${what} was answered`).toBe(false);
+  if (outcome.ok) return;
+  const envelope = JSON.parse(outcome.refusal.raw) as {
+    error: { code: string; server?: { code: string | null } | null };
+  };
+  expect(
+    [envelope.error.code, envelope.error.server?.code ?? null],
+    `${what} was refused as though the server refuses it: ${outcome.refusal.raw}`,
+  ).toEqual(["invalid", null]);
+}
+
 const EVERY_TYPE = [taskType, memoType, driftType, "core.collection"];
 const linked = () => [
   ids.parent,
@@ -433,6 +467,22 @@ describe("a device counts as the server does", () => {
     expect(local.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
       await served(asked, { edge: "references" }, clientOf(reader)),
     );
+    // With two linkers and one of them not held, the copy refuses where the server counts 2.
+    const two = [ids.secretAnchorTwo];
+    const narrow = await hydrated(
+      "edge-anchor-narrow",
+      [taskType],
+      ["references"],
+      reader,
+    );
+    const refused = await narrow.counts(two, { edge: "references" });
+    refusedInvalid(refused, "an anchor with a linker the copy does not hold");
+    expect(
+      (await served(two, { edge: "references" }, clientOf(reader)))[0]?.total,
+    ).toBe(2);
+    expect(
+      value(await device.counts(two, { edge: "references" })).counts[0]?.total,
+    ).toBe(2);
   });
 
   it("counts the items that link to an anchor the source filter hides, as the server does", async () => {
@@ -452,6 +502,31 @@ describe("a device counts as the server does", () => {
     expect(local.counts.map(({ held: _held, ...rest }) => rest)).toEqual(
       await served(asked, { edge: "references" }, clientOf(shownOnly)),
     );
+    // With two linkers and one of them not held, the copy refuses where the server counts 2.
+    const two = [ids.hiddenAnchorTwo];
+    const narrow = await hydrated(
+      "edge-anchor-source-narrow",
+      [taskType],
+      ["references"],
+      shownOnly,
+    );
+    refusedInvalid(
+      await narrow.counts(two, { edge: "references" }),
+      "a hidden anchor with a linker the copy does not hold",
+    );
+    expect(
+      (await served(two, { edge: "references" }, clientOf(shownOnly)))[0]
+        ?.total,
+    ).toBe(2);
+    const wide = await hydrated(
+      "edge-anchor-source-wide",
+      [taskType, memoType],
+      ["references"],
+      shownOnly,
+    );
+    expect(
+      value(await wide.counts(two, { edge: "references" })).counts[0]?.total,
+    ).toBe(2);
   });
 
   it("answers a missing and an unreadable anchor of a count of links out and of rows as the server does", async () => {
@@ -631,6 +706,13 @@ describe("a device counts as the server does", () => {
     const needs = await closed.counts([ids.served], { table: "lines" });
     expect(needs.ok).toBe(false);
     if (!needs.ok) expect(needs.refusal.code).toBe("no_server");
+    // A host the copy holds no table of is the server's to count: 0 with it, none without.
+    expect(
+      value(await device.counts([UNKNOWN_ID], { table: "lines" })).counts[0],
+    ).toMatchObject({ total: 0, held: false });
+    const missing = await closed.counts([UNKNOWN_ID], { table: "lines" });
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.refusal.code).toBe("no_server");
   });
 
   it("refuses a count of rows whose served answer leaves out an id, answering no total", async () => {
@@ -678,18 +760,6 @@ describe("a device counts as the server does", () => {
 });
 
 describe("a device refuses a count its copy cannot answer as the server does", () => {
-  function refusedInvalid(outcome: Outcome<unknown>, what: string) {
-    expect(outcome.ok, `${what} was answered`).toBe(false);
-    if (outcome.ok) return;
-    const envelope = JSON.parse(outcome.refusal.raw) as {
-      error: { code: string; server?: { code: string | null } | null };
-    };
-    expect(
-      [envelope.error.code, envelope.error.server?.code ?? null],
-      `${what} was refused as though the server refuses it: ${outcome.refusal.raw}`,
-    ).toEqual(["invalid", null]);
-  }
-
   it("refuses a count of an edge type the copy does not hold whole, carrying no server code", async () => {
     const device = await hydrated("not-whole", EVERY_TYPE, ["parent-of"]);
     // The witness: the edge type held whole is counted, from the same copy.
@@ -710,6 +780,15 @@ describe("a device refuses a count its copy cannot answer as the server does", (
         JSON.stringify(counted),
       );
     }
+    // Whichever the id: an id no item holds is refused too, where the held type answers 0.
+    refusedInvalid(
+      await device.counts([UNKNOWN_ID], { backref: "in-collection" }),
+      "a count of an id no item holds",
+    );
+    expect(
+      value(await device.counts([UNKNOWN_ID], { backref: "parent-of" }))
+        .counts[0],
+    ).toMatchObject({ total: 0, held: true });
     const bare = await hydrated("none-whole", EVERY_TYPE, []);
     refusedInvalid(
       await bare.counts([ids.parent], { backref: "parent-of" }),
@@ -729,5 +808,55 @@ describe("a device refuses a count its copy cannot answer as the server does", (
       value(await slice.counts([ids.todo], { backref: "parent-of" })).counts[0]
         ?.total,
     ).toBe(1);
+  });
+
+  it("refuses a count the copy could answer when its slice names every type one by one and a source filter hides a child", async () => {
+    const asked = [ids.sourceParent];
+    const counted = { backref: "parent-of" };
+    const types = await owner.listTypes();
+    expect(types.status, JSON.stringify(types.error)).toBe(200);
+    const named = types.data.data
+      .map((type) => type.id)
+      .filter((id) => !id.startsWith("system."));
+    const each = await hydrated("each-type", named, EDGES, shownOnly, "all");
+    refusedInvalid(
+      await each.counts(asked, counted),
+      "a slice that names every type one by one",
+    );
+    // The witnesses: the server counts 1, and the slice that names `*` answers it.
+    expect((await served(asked, counted, clientOf(shownOnly)))[0]?.total).toBe(
+      1,
+    );
+    const star = await hydrated(
+      "each-type-star",
+      ["*"],
+      EDGES,
+      shownOnly,
+      "all",
+    );
+    expect(value(await star.counts(asked, counted)).counts[0]?.total).toBe(1);
+  });
+
+  it("refuses a count the copy could answer when an edge reaches a system folder and the slice is narrow", async () => {
+    const asked = [ids.placed];
+    const counted = { backref: "in-folder" };
+    const narrow = await hydrated("folder-narrow", [taskType], ["in-folder"]);
+    refusedInvalid(
+      await narrow.counts(asked, counted),
+      "a narrow copy with an edge to a system folder",
+    );
+    // The witnesses: the server counts 0, and a slice that names `*` answers it.
+    expect((await served(asked, counted))[0]?.total).toBe(0);
+    const star = await hydrated(
+      "folder-star",
+      ["*"],
+      ["in-folder"],
+      server.workingKey,
+      "all",
+    );
+    expect(value(await star.counts(asked, counted)).counts[0]).toMatchObject({
+      total: 0,
+      held: true,
+    });
   });
 });
