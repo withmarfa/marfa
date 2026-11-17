@@ -376,6 +376,14 @@ While no hydration has started and not completed, and its copy holds a slice and
 
 **Tests:** `device/reach.test.ts › refuses reads of a stored copy that lost its instance, through a reader as through the writer`.
 
+### `device/one-writer`
+
+While another process holds the writer role for a store, a device MUST NOT take the writer role for the store.
+
+**Reason:** two writers of one store would each queue into it without seeing the other's items, and one could remove the store from under the other.
+
+**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
+
 ### `device/reading-handle-reads`
 
 While another process holds the writer role for a store it opens, a device MUST answer reads from the store.

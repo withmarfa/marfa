@@ -1,6 +1,6 @@
 # Directory-backed folder storage
 
-Folder storage extends the pinned bundled SQLite Unix VFS. The build checks the amalgamation's digest before changing the Unix pathname operations. The native pager, inode lock registry, byte-range locks, WAL mapping, and synchronization remain SQLite's implementation.
+Folder storage extends the pinned bundled SQLite Unix VFS. The build checks the amalgamation's digest before changing the Unix pathname operations. It also makes `SQLITE_FCNTL_HAS_MOVED` compare a file's device as well as its inode, because the writer lock asks it whether its name still reaches the file it locked. The native pager, inode lock registry, byte-range locks, WAL mapping, and synchronization remain SQLite's implementation.
 
 Each registration retains a directory descriptor. Synthetic filenames select that registration and an entry name; they are not operating-system paths. Native files and shared-memory nodes retain the registration until their last close. Ordinary connections continue to use the native VFS and share its lock registry.
 
