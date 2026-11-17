@@ -6,8 +6,6 @@ of the flaky tests to the job summary (`GITHUB_STEP_SUMMARY`) and a warning
 annotation for each to the log. It prints nothing and exits 0 when no test was
 flaky, and also when a file is missing: a run that never got as far as writing
 one has failed in a way the run already shows.
-
-A test that appears here more than once is filed as an issue and fixed.
 """
 import os
 import sys

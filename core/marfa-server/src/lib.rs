@@ -1,5 +1,5 @@
-//! `app` holds what the server does and names no HTTP type, `db` is the only door to
-//! SQLite, and `http` is the only place that names axum.
+//! `app` holds what the server does and names no axum type, `db` is the only code that
+//! opens SQLite, and `http` is the only place that names axum.
 
 pub mod app;
 pub mod control_socket;

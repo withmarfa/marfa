@@ -611,7 +611,7 @@ impl S3 {
     /// with the wait for credentials included.
     pub async fn link(&self, object: &str, ttl: Duration, limit: Duration) -> io::Result<String> {
         let path = self.blob_path(object);
-        let signed = self.client.signed_url(axum::http::Method::GET, &path, ttl);
+        let signed = self.client.signed_url(http::Method::GET, &path, ttl);
         match tokio::time::timeout(limit, signed).await {
             Ok(signed) => signed.map(|url| url.to_string()).map_err(failed),
             Err(_) => Err(io::Error::new(

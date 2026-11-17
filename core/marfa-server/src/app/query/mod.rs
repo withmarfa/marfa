@@ -1,4 +1,6 @@
-//! Every query of the item tables compiles through [`compile::selection`].
+//! [`compile::selection`] compiles the filter, states and reach that a listing, a search, an
+//! export and the event queries share. A module that needs one row, a count or a queue reads
+//! `items` with its own SQL.
 
 mod compile;
 mod cursor;

@@ -4,7 +4,7 @@ mod expiry;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use axum::http::StatusCode;
+use http::StatusCode;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
