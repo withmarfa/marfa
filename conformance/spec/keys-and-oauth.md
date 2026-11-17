@@ -2835,7 +2835,7 @@ If every address together has made a hundred counted password sign-in attempts i
 
 While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in without a known device cookie names the owner's email and the right password, and fewer than a hundred attempts at the owner's email without a known device cookie have been counted in the hour, the server MUST sign the owner in.
 
-**Reason:** Callers with no credential can spend the limit every address shares from many addresses at emails that hold no account. The owner's right password keeps a share they cannot spend, so a new browser can still sign in. The password is judged however the attempt is answered, so its time cannot say which email is the owner's.
+**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. The password is judged however the attempt is answered, so the time an answer takes does not show which email is the owner's.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
 
@@ -2843,7 +2843,7 @@ While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is
 
 If a hundred password sign-in attempts at the owner's email without a known device cookie have been counted in an hour, then the server MUST answer the next such attempt with the right password with the status and `Retry-After` it answers the same attempt with a wrong password.
 
-**Reason:** Attempts at the owner's password from every address together stay held to a hundred an hour, and the answer past that tells no one the password was right.
+**Reason:** Attempts at the owner's email from browsers the server does not know stay held to a hundred an hour, and the answer past that does not show that the password was right.
 
 **Tests:** `compliance/sign-in-limits.test.ts › answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour`.
 
@@ -2955,7 +2955,7 @@ If one address has made ten requests in a minute without the owner's live browse
 
 While the client document limits (`keys-and-oauth/client-document-limits`) are spent, when an authorization request that carries the owner's live browser session names a client ID metadata document the server has no fresh copy of, the server MUST fetch the document.
 
-**Reason:** Callers with no credential can keep the limits every address shares spent, and an app the owner is connecting would then never be read. The owner's own requests have a share of fetches that no caller without the session can spend.
+**Reason:** The owner's own requests have a share of fetches of their own, so an app the owner is connecting is read while the limits every address shares are spent.
 
 **Tests:** `compliance/client-document-limits.test.ts › fetches for the owner's signed-in request while strangers keep every address's fetches spent`.
 

@@ -228,7 +228,7 @@ If the attempt windows `authentication/confirm-lanes` names are spent, then the 
 
 If a hundred passwords sent without a known device cookie to `POST /auth/confirm`, `POST /auth/owner/password` and `PUT /owner/password` together have been counted in an hour, then the server MUST answer the next one `429 rate_limited` with `Retry-After`, without judging the password.
 
-**Reason:** These doors need the owner's credential, so they keep an hour of their own and never meet the limit every address shares at password sign-in (`keys-and-oauth/sign-in-account-limit`), which callers with no credential can spend.
+**Reason:** These doors need the owner's credential, so they count in an hour of their own, apart from the limit every address shares at password sign-in (`keys-and-oauth/sign-in-account-limit`).
 
 **Tests:** `compliance/confirm-sign-in.test.ts › confirms while strangers keep the sign-in limit every address shares spent`, `compliance/owner-password.test.ts › holds the doors that need the owner's credential to a hundred passwords an hour of their own`.
 

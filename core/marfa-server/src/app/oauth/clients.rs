@@ -42,7 +42,7 @@ impl Default for Documents {
 /// Who a client's metadata document is fetched for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Asking {
-    /// The owner's live browser session, which callers without it cannot spend.
+    /// An authorization request that carries the owner's live browser session.
     Owner,
     Anyone,
 }

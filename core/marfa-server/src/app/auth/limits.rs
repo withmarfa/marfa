@@ -91,8 +91,7 @@ impl PasswordLanes {
     }
 }
 
-/// Known devices and the owner's credentials have allowances strangers cannot spend. A stranger's attempt
-/// past the shared hour is still judged, so the owner's right password keeps a share of its own.
+/// A stranger's attempt past the shared hour is still judged, so the owner's right password keeps a share.
 pub fn password_lanes(email: &str, address: Option<IpAddr>, sender: Sender<'_>) -> PasswordLanes {
     let mut before = vec![
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
@@ -177,7 +176,7 @@ pub fn document_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     ]
 }
 
-/// Fetches the owner's own sign-in asks for, which no caller without it can spend.
+/// The fetches of authorization requests that carry the owner's live browser session.
 pub fn owner_document_lanes() -> [Lane; 1] {
     [Lane::pinned(DOCUMENT_OWNER, ALL.to_string(), 10, MINUTE_MS)]
 }
