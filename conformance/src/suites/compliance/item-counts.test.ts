@@ -239,8 +239,6 @@ describe("POST /items/counts", () => {
       ids: [ids.parent],
       backref: "parent-of",
     });
-    // Nine items count: the four words, the valueless, memo, secret, drifted
-    // and other-source children. The bin and the archive do not.
     expect(answer).toEqual({
       id: ids.parent,
       total: 9,
@@ -254,7 +252,6 @@ describe("POST /items/counts", () => {
         count,
       );
     }
-    // The witness: the listing sees the bin and the archive under their states.
     const binned = await owner.rawRequest<{ data: unknown[] }>(
       `/items?state=trashed&filter=${encodeURIComponent(filter)}`,
     );

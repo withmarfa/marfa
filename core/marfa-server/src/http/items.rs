@@ -634,7 +634,6 @@ fn many_of(sent: &Map<String, Value>) -> Result<Many> {
     Ok(many)
 }
 
-/// The ids a body names under `ids`, at most `MAX_BULK_IDS`, each a well-formed id.
 fn ids_of(sent: &Map<String, Value>) -> Result<Vec<String>> {
     let Some(ids) = sent.get("ids") else {
         return Err(missing_field("ids"));
@@ -675,7 +674,6 @@ pub async fn bulk_get(
     Ok(text_answer(StatusCode::OK, answer))
 }
 
-/// Each id once, in the order first named.
 fn distinct(ids: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     ids.into_iter()

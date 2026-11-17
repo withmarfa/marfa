@@ -206,8 +206,6 @@ pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String>
     .await
 }
 
-/// How many rows each item of `ids` holds in the table `name`, in order: none for an item the
-/// tables door answers missing, and for one whose type declares no such table.
 pub(crate) fn row_counts(read: &Reader<'_, '_>, ids: &[String], name: &str) -> Result<Vec<i64>> {
     ids.iter()
         .map(|id| {
