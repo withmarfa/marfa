@@ -79,6 +79,7 @@ fn in_group(sql: &mut Sql, read: &Reader<'_, '_>, group: &str) -> Result<()> {
 }
 
 /// Joined from the edges so a request costs what its anchors link, not what the instance holds.
+/// Each filter is the listing's own, so a count and its listing cannot differ.
 fn linked(
     read: &Reader<'_, '_>,
     ids: Vec<String>,
@@ -102,16 +103,21 @@ fn linked(
             sql.push(" THEN 1 ELSE 0 END)");
         }
         sql.push(&format!(
-            " FROM edges e CROSS JOIN items i ON i.id = e.{other} \
-             CROSS JOIN items a ON a.id = e.{anchor} WHERE e.edge_type = "
+            " FROM edges e CROSS JOIN items i ON i.id = e.{other}"
         ));
+        if backref {
+            sql.push(" CROSS JOIN items a ON a.id = e.from_id");
+        }
+        sql.push(" WHERE e.edge_type = ");
         sql.bind(edge_type.to_string());
         sql.push(&format!(" AND e.{anchor} IN ("));
         sql.list(&ids);
         sql.push(") AND +i.state = 'active' AND ");
         counted.clause(&mut sql, "i", true);
-        sql.push(" AND ");
-        reach.clause(&mut sql, "a", true);
+        if backref {
+            sql.push(" AND ");
+            reach.clause(&mut sql, "a", true);
+        }
         sql.push(&format!(" GROUP BY e.{anchor}"));
         let mut statement = read.tx.prepare_cached(&sql.text)?;
         let rows = statement.query_map(params_from_iter(&sql.values), |row| {

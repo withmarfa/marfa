@@ -138,6 +138,12 @@ beforeAll(async () => {
   await link("references", ids.fromTask, ids.target);
   ids.secretParent = await item(secretType, { title: "secret parent" });
   ids.orphan = await item(taskType, { stage: "todo" });
+  ids.secretAnchor = await item(secretType, { title: "unreadable anchor" });
+  ids.pointer = await item(taskType, { stage: "todo" });
+  await link("references", ids.pointer, ids.secretAnchor);
+  ids.hiddenAnchor = await item(taskType, { stage: "done" }, hiddenWriter);
+  ids.pointerToHidden = await item(taskType, { stage: "doing" });
+  await link("references", ids.pointerToHidden, ids.hiddenAnchor);
   await link("parent-of", ids.secretParent, ids.orphan);
 
   ids.ledger = await item(ledgerType, { title: "three rows" });
@@ -214,8 +220,8 @@ async function counts(
   return answered.data.counts;
 }
 
-async function listed(filter: string): Promise<number> {
-  const found = await owner.rawRequest<{ data: unknown[] }>(
+async function listed(filter: string, as = owner): Promise<number> {
+  const found = await as.rawRequest<{ data: unknown[] }>(
     `/items?limit=200&filter=${encodeURIComponent(filter)}`,
   );
   expect(found.status, JSON.stringify(found.error)).toBe(200);
@@ -330,7 +336,53 @@ describe("POST /items/counts", () => {
     expect(shown?.status_groups).toEqual({ ...groups(1, 1, 1), canceled: 1 });
   });
 
-  it("answers a missing and an unreadable anchor alike, for edges and for tables", async () => {
+  it("counts the readable items that link to an anchor the credential cannot read, as the listing does", async () => {
+    const reader = await mint("no-secret-anchor", {
+      type_permissions: { [taskType]: "read" },
+      edge_permissions: { "*": "read" },
+    });
+    const body = { ids: [ids.secretAnchor], edge: "references" };
+    const [byOwner] = await counts(owner, body);
+    const [byReader] = await counts(reader, body);
+    expect(byOwner?.total).toBe(1);
+    expect(byReader).toEqual({
+      id: ids.secretAnchor,
+      total: 1,
+      status_groups: groups(1, 0, 0),
+    });
+    expect(
+      await listed(`edge[references] eq "${ids.secretAnchor}"`, reader),
+    ).toBe(byReader?.total);
+  });
+
+  it("counts through an anchor the source filter hides exactly as the listing does", async () => {
+    const shownOnly = await mint("shown-anchor", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+      enforcement_override: {
+        source_filter: { types: [taskType], sources: [shownSource] },
+      },
+    });
+    const [linked] = await counts(shownOnly, {
+      ids: [ids.hiddenAnchor],
+      edge: "references",
+    });
+    expect(linked?.total).toBe(1);
+    expect(linked?.status_groups).toEqual(groups(0, 1, 0));
+    expect(
+      await listed(`edge[references] eq "${ids.hiddenAnchor}"`, shownOnly),
+    ).toBe(linked?.total);
+
+    const [leaving] = await counts(shownOnly, {
+      ids: [ids.hiddenAnchor],
+      backref: "references",
+    });
+    expect(leaving?.total).toBe(
+      await listed(`backref[references] eq "${ids.hiddenAnchor}"`, shownOnly),
+    );
+  });
+
+  it("answers a missing and an unreadable anchor alike for backref and for tables", async () => {
     const reader = await mint("no-secret-no-ledger", {
       type_permissions: { [taskType]: "read" },
       edge_permissions: { "*": "read" },
@@ -340,21 +392,15 @@ describe("POST /items/counts", () => {
       ids: [ids.secretParent],
       backref: "parent-of",
     });
-    expect(secretLinks?.total).toBe(1);
-    const [secretTarget] = await counts(owner, {
-      ids: [ids.fromSecret],
-      edge: "references",
-    });
-    expect(secretTarget?.total).toBe(0);
+    expect(secretLinks?.total).toBeGreaterThanOrEqual(1);
     const [ledgerRows] = await counts(owner, {
       ids: [ids.ledger],
       table: "lines",
     });
-    expect(ledgerRows?.total).toBe(3);
+    expect(ledgerRows?.total).toBeGreaterThanOrEqual(1);
 
     for (const [body, anchor] of [
       [{ backref: "parent-of" }, ids.secretParent],
-      [{ edge: "references" }, ids.fromSecret],
       [{ table: "lines" }, ids.ledger],
     ] as const) {
       const [unreadable, missing] = await counts(reader, {

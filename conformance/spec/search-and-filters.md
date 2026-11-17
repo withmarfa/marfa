@@ -1672,13 +1672,37 @@ When `POST /items/counts` counts linked items, the server MUST count only the it
 
 **Tests:** `compliance/item-counts.test.ts › counts only what the credential reads, through the edges it reads, under its source filter`.
 
-### `search-and-filters/counts-unreadable-anchor`
+### `search-and-filters/counts-edge-anchor`
 
-When an id in `ids` names no item or an item the credential does not read, the server MUST answer it exactly as it answers an item with nothing linked: `total` as `0` and, for linked items, every group as `0`.
+When an id in `ids` of a `POST /items/counts` that names `edge` is an item the credential does not read, the server MUST count the readable items that link to it, as the `GET /items` listing with the filter `edge[<edge type>]` anchored on it lists them.
 
-**Reason:** the answer must not tell a credential that an item exists when it cannot read it. This holds for `edge` as well, where the `edge` filter alone still matches the readable edges to an item its credential cannot read.
+**Reason:** `GET /edges` already shows a readable edge's to item to the credential that reads the edge, so the count tells it nothing the listing does not.
 
-**Tests:** `compliance/item-counts.test.ts › answers a missing and an unreadable anchor alike, for edges and for tables`.
+**Tests:** `compliance/item-counts.test.ts › counts the readable items that link to an anchor the credential cannot read, as the listing does`.
+
+### `search-and-filters/counts-edge-anchor-source-filter`
+
+Where a source filter applies to the key, when an id in `ids` of a `POST /items/counts` that names `edge` is an item the filter leaves out, the server MUST NOT leave out the readable items that link to it, as the listing does not.
+
+**Reason:** the source filter narrows the items counted, and the listing with the `edge` filter applies it to those and not to the anchor.
+
+**Tests:** `compliance/item-counts.test.ts › counts through an anchor the source filter hides exactly as the listing does`.
+
+### `search-and-filters/counts-backref-anchor`
+
+When an id in `ids` of a `POST /items/counts` that names `backref` is no item or an item the credential does not read, the server MUST answer `total` as `0` and every group as `0`, exactly as for an item with nothing linked.
+
+**Reason:** edges from an item the credential cannot read are never counted (`edges/filter-backref`), so the answer for such an item is the answer for an id no item holds, and tells the credential nothing of whether the item exists.
+
+**Tests:** `compliance/item-counts.test.ts › answers a missing and an unreadable anchor alike for backref and for tables`.
+
+### `search-and-filters/counts-rows-anchor`
+
+When an id in `ids` of a `POST /items/counts` that names `table` is no item or an item the credential does not read, the server MUST answer `total` as `0`, exactly as for an item that holds no row.
+
+**Reason:** the tables door answers a host the credential cannot read as it answers one that does not exist, so a count that differed would tell the credential the item exists.
+
+**Tests:** `compliance/item-counts.test.ts › answers a missing and an unreadable anchor alike for backref and for tables`.
 
 ### `search-and-filters/counts-rows`
 
