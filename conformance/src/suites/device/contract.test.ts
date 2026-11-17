@@ -1061,6 +1061,7 @@ const invocations: Record<string, () => string[]> = {
   "items create": () => ["--type", "core.note"],
   "items list": () => [],
   "items stats": () => [],
+  "items counts": () => ["--backref", "parent-of", ID],
   "items get": () => [ID],
   "items update": () => ["--version", "1", "--properties", "{}", ID],
   "items trash": () => [ID],
