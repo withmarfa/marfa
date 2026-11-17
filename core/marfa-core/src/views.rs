@@ -55,7 +55,10 @@ impl Core {
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let rows = crate::query::list_where(
                 conn,
-                &["items.type = 'system.view'".into()],
+                &[
+                    "items.type = 'system.view'".into(),
+                    crate::query::LISTED.into(),
+                ],
                 &[],
                 Sort::default(),
                 None,
@@ -327,7 +330,7 @@ fn scope(conn: &Connection, id: &str, completeness: Completeness) -> Result<Scop
     settings
         .refuse_unless_answerable(conn, &catalog)
         .map_err(view_error)?;
-    let (mut clauses, mut values) = (Vec::new(), Vec::new());
+    let (mut clauses, mut values) = (vec![crate::query::LISTED.to_string()], Vec::new());
     settings
         .narrow(
             &catalog,
@@ -1219,5 +1222,43 @@ mod tests {
             core.view_groups("view", None).unwrap().rows[0].key,
             json!("x")
         );
+    }
+
+    #[test]
+    fn a_view_leaves_out_an_item_the_server_did_not_list_in_its_items_search_and_groups() {
+        let core = copy();
+        for id in ["shown", "hidden"] {
+            put(&core, id, json!({"title": "zebra"}), &["x"]);
+        }
+        view(&core, json!({"group":{"by":"tags"}}));
+        let sorted = |core: &Core| {
+            let mut ids = ids(core);
+            ids.sort();
+            ids
+        };
+        let groups = |core: &Core| core.view_groups("view", None).unwrap().rows[0].count;
+        let found = |core: &Core| -> Vec<String> {
+            let mut ids: Vec<String> = core
+                .search_in_view("zebra", "view", 10)
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(|(hit, _)| hit.item.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let conn = core.conn().unwrap();
+        crate::reach::set_listed(&conn, "hidden", true).unwrap();
+        drop(conn);
+        assert_eq!(sorted(&core), ["hidden", "shown"]);
+        assert_eq!(found(&core), ["hidden", "shown"]);
+        assert_eq!(groups(&core), 2);
+        let conn = core.conn().unwrap();
+        crate::reach::set_listed(&conn, "hidden", false).unwrap();
+        drop(conn);
+        assert_eq!(sorted(&core), ["shown"]);
+        assert_eq!(found(&core), ["shown"]);
+        assert_eq!(groups(&core), 1);
     }
 }

@@ -19,6 +19,7 @@ pub(crate) fn search(
 ) -> Result<Vec<SearchHit>> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
+    clauses.push(query::LISTED.into());
     query::narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
     query::narrow_by_states(
         filters.states.as_deref(),
@@ -327,5 +328,34 @@ mod tests {
             )),
             ["two"]
         );
+    }
+
+    #[test]
+    fn a_search_leaves_out_an_item_the_server_did_not_list() {
+        let conn = conn();
+        for id in ["shown", "hidden"] {
+            store::upsert_item(
+                &conn,
+                &note(id, "Zebra", "zebra", "2026-01-01T00:00:00Z"),
+                None,
+                &Indexing::default(),
+            )
+            .unwrap();
+        }
+        let catalog = crate::catalog::load(&conn).unwrap();
+        let found = |conn: &Connection| -> Vec<String> {
+            let mut ids: Vec<String> =
+                search(conn, &catalog, "zebra", &SearchFilters::default(), 10)
+                    .unwrap()
+                    .into_iter()
+                    .map(|hit| hit.item.id)
+                    .collect();
+            ids.sort();
+            ids
+        };
+        crate::reach::set_listed(&conn, "hidden", true).unwrap();
+        assert_eq!(found(&conn), ["hidden", "shown"]);
+        crate::reach::set_listed(&conn, "hidden", false).unwrap();
+        assert_eq!(found(&conn), ["shown"]);
     }
 }

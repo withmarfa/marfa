@@ -430,7 +430,7 @@ fn folder_scope(
     let settings = Settings::of(&row)?;
     let catalog = crate::catalog::load(conn)?;
     settings.refuse_unless_answerable(conn, &catalog)?;
-    let (mut clauses, mut values) = (Vec::new(), Vec::new());
+    let (mut clauses, mut values) = (vec![query::LISTED.to_string()], Vec::new());
     settings.narrow(&catalog, &[], &mut clauses, &mut values)?;
     Ok((catalog, clauses, values))
 }
@@ -900,5 +900,38 @@ mod tests {
             offline.create_folder(settings.as_object().unwrap(), None),
             Err(CoreError::NoServer)
         ));
+    }
+
+    #[test]
+    fn a_folder_leaves_out_an_item_the_server_did_not_list_in_its_list_and_search() {
+        let core = copy(None, &["core.note", FOLDER_TYPE], "all", &[]);
+        folder(
+            &core,
+            "active",
+            json!({ "title": "Notes", "query": { "types": ["core.note"] } }),
+        );
+        put(&core, "shown", "core.note", "active", "library", &[]);
+        put(&core, "hidden", "core.note", "active", "library", &[]);
+        let found = |core: &Core| -> Vec<String> {
+            let mut ids: Vec<String> = core
+                .search_in_folder("pasta", FOLDER, 10)
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(|(hit, _)| hit.item.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let conn = core.conn().unwrap();
+        reach::set_listed(&conn, "hidden", true).unwrap();
+        drop(conn);
+        assert_eq!(listed(&core).unwrap(), ["hidden", "shown"]);
+        assert_eq!(found(&core), ["hidden", "shown"]);
+        let conn = core.conn().unwrap();
+        reach::set_listed(&conn, "hidden", false).unwrap();
+        drop(conn);
+        assert_eq!(listed(&core).unwrap(), ["shown"]);
+        assert_eq!(found(&core), ["shown"]);
     }
 }

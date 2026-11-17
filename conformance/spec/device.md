@@ -1922,6 +1922,22 @@ When a local list names a `source`, a device MUST answer only the items stamped 
 
 **Tests:** `device/item-fields-live.test.ts › lists by source as the server does`.
 
+### `device/list-unlisted-pin`
+
+When a local list or a local search runs on a copy that holds a pinned item the server did not list to the credential, a device MUST leave that item out of the answer.
+
+**Reason:** a pin keeps an item the credential can read by ID but its source filter leaves out of listings (`reach/listed-by-id`), and a local listing answers as the server's listing does, so a device must not show a count or a row the server does not. The item stays readable by ID.
+
+**Tests:** `device/listing-unlisted-pins.test.ts › leaves a pinned item the server did not list out of a local list and search, and still reads it by id`.
+
+### `device/view-folder-unlisted-pin`
+
+When a local listing of a saved view's items, a folder's items, or a search in a folder runs on a copy that holds a pinned item the server did not list to the credential, a device MUST leave that item out of the answer.
+
+**Reason:** the view's and the folder's listings answer as the server's do (`device/view-items-parity`), which never include an item the credential's source filter hides.
+
+**Tests:** `device/listing-unlisted-pins.test.ts › leaves a pinned item the server did not list out of a local view's and a local folder's listing`.
+
 ### `device/list-updated-range`
 
 When a local list names `updated_after` or `updated_before`, a device MUST answer only the items whose `updated_at` is at or after the `updated_after` bound and before the `updated_before` bound, narrowing by one bound alone when only one is named.
