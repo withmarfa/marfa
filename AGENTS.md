@@ -2,6 +2,15 @@
 
 Marfa's server, the Rust core every native client embeds and the `marfa` command line, all under `core/`, and the contract they are held to, under `conformance/`. `packages/` holds the TypeScript client and the shipped type definitions. The Swift SDK lives in `withmarfa/marfa-swift`.
 
+## What Marfa promises its owner
+
+These hold for every change to what an owner, an app or a key can do.
+
+- Marfa depends on no app. Every app reaches it the same way, through the API, the SDKs and the command line, and no app holds a power another app lacks.
+- The command line does every owner task. Only approving an app's access and adding a passkey need a browser.
+- Only claiming a new instance and recovering a lost password start where the server runs. Everything else works from any app or key the owner approves.
+- Nothing is restricted without a reason a person would accept: a standard, a hard fact, or clear harm to the owner's data or security. Safety comes from approval and confirmation, not from making things hard.
+
 ## Where an area's rules are
 
 Read the file for an area before you work there. Your tool may not load it for you.
