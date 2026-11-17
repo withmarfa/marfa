@@ -20,6 +20,9 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zbus 6 replaces zvariant; keyring on Linux reaches it through secret-service, which uses zbus 5" },
     { id = "RUSTSEC-2026-0371", reason = "zbus 6 replaces zbus_names; keyring on Linux reaches it through secret-service, which uses zbus 5" },
     { id = "RUSTSEC-2026-0372", reason = "zbus 6 replaces zvariant_derive; keyring on Linux reaches it through secret-service, which uses zbus 5" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained with no vulnerability; no maintained release replaces it in the crates that use it yet" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained with no vulnerability; no maintained release replaces it in the crates that use it yet" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained only because it wraps chrono; no maintained release replaces it in the crates that use it yet" },
 ]
 
 [licenses]
