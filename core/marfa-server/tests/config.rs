@@ -428,6 +428,7 @@ async fn a_sign_in_change_on_a_claimed_instance_asks_first_and_a_tidier_spelling
         .patch(json!({
             "sign_in_address": "https://b.example",
             "confirm_sign_in_address_change": true,
+            "skip_sign_in_address_check": true,
         }))
         .await;
     assert_eq!(confirmed.status, StatusCode::OK, "{}", confirmed.text);
@@ -478,7 +479,7 @@ async fn a_key_holding_config_manage_changes_the_trusted_origins() {
 }
 
 #[tokio::test]
-async fn only_direct_authority_moves_the_sign_in_address() {
+async fn a_key_never_moves_the_sign_in_address() {
     let instance = Instance::start(&[]).await;
     let key = instance.manager().await;
     let a = "https://a.example";
@@ -487,7 +488,7 @@ async fn only_direct_authority_moves_the_sign_in_address() {
     let confirmed = json!({ "sign_in_address": a, "confirm_sign_in_address_change": true });
     let first = instance.as_key(&key, Method::PATCH, confirmed).await;
     assert_eq!(first.status, StatusCode::FORBIDDEN, "{}", first.text);
-    assert_eq!(first.code(), "forbidden");
+    assert_eq!(first.code(), "app_sign_in_required");
     assert_eq!(instance.row("sign_in_address").await, None);
     assert_eq!(instance.row("addresses").await, None);
 
@@ -502,7 +503,7 @@ async fn only_direct_authority_moves_the_sign_in_address() {
     let tidier = instance.as_key(&key, Method::PATCH, tidier).await;
     assert_eq!(tidier.status, StatusCode::OK, "{}", tidier.text);
 
-    // Keep the fallback address so only authority can refuse clearing sign-in.
+    // Keep the fallback address so only the caller can refuse clearing sign-in.
     let list = json!({ "addresses": [a, "https://b.example", own] });
     let list = instance.as_key(&key, Method::PATCH, list).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.text);
@@ -521,6 +522,7 @@ async fn only_direct_authority_moves_the_sign_in_address() {
             "{label}: {}",
             refused.text
         );
+        assert_eq!(refused.code(), "app_sign_in_required", "{label}");
     }
     assert_eq!(instance.app.addresses().sign_in().origin(), a);
 }

@@ -598,19 +598,11 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 
 ## Restoring an archive
 
-`POST /restore` takes an archive that `GET /export?format=archive` wrote, with local authority, and answers counts of what it wrote and skipped.
-
-### `archive/restore-working-key-refused`
-
-If a working key sends `POST /restore`, then the server MUST answer `403 forbidden`.
-
-**Reason:** full restoration can write server-managed records, so ordinary app and key permissions cannot authorize it.
-
-**Tests:** `compliance/restore-archive.test.ts › requires local authority`.
+`POST /restore` takes an archive that `GET /export?format=archive` wrote, from a caller that `keys-and-oauth/step-up-recent` or `keys-and-oauth/step-up-socket` admits, and answers counts of what it wrote and skipped.
 
 ### `archive/restore-roundtrip`
 
-When local authority sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
+When a caller the operation admits sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
 
 **Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
 
@@ -1214,7 +1206,7 @@ When the server refuses `POST /restore` after it has started to read the body, t
 
 When the server refuses `POST /restore` before it has started to read the body, the server MUST answer with `Connection: close` within 2 seconds, after reading at most `max_request_bytes` of the body.
 
-**Reason:** a caller without local authority has proved nothing, so the server reads no more of what it sends than a client already sending a small archive has in flight, which lets that client hear the refusal instead of a reset. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body, and the server reads none.
+**Reason:** a caller the operation refuses has proved nothing, so the server reads no more of what it sends than a client already sending a small archive has in flight, which lets that client hear the refusal instead of a reset. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body, and the server reads none.
 
 **Tests:** `compliance/restore-archive.test.ts › answers a caller with no credential within two seconds and closes the connection while it keeps sending`, `› reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body`.
 
@@ -1334,7 +1326,7 @@ If the `instance.ndjson.gz` of an archive registers the same type ID, or the sam
 
 ### `archive/restore-no-count-limit`
 
-When local authority restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
+When the server restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
 
 **Reason:** an export that the same build cannot restore is not a usable backup.
 

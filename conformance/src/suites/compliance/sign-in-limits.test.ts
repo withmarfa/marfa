@@ -654,6 +654,7 @@ describe("a confirmed move of the sign-in address", () => {
         body: {
           sign_in_address: "https://moved.example",
           confirm_sign_in_address_change: true,
+          skip_sign_in_address_check: true,
         },
       });
       expect(moved.status, JSON.stringify(moved.body)).toBe(200);

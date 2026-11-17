@@ -17,7 +17,11 @@ beforeAll(async () => {
   server = await bootFreshServer("session-cookie-https");
   const moved = await controlRequest(server.controlSocket, "/config", {
     method: "PATCH",
-    body: { sign_in_address: ADDRESS, confirm_sign_in_address_change: true },
+    body: {
+      sign_in_address: ADDRESS,
+      confirm_sign_in_address_change: true,
+      skip_sign_in_address_check: true,
+    },
   });
   expect(moved.status, JSON.stringify(moved.body)).toBe(200);
 }, FRESH_SERVER_TIMEOUT_MS);

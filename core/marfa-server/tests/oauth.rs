@@ -1563,9 +1563,10 @@ async fn a_pass_works_through_more_than_one_batch() {
                 [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             tx.execute(
-                "INSERT INTO oauth_codes (digest, client_id, owner_id, session_id, grant_id, \
-                 redirect_uri, scopes, challenge, resources, expires_at) \
-                 SELECT client_id, client_id, ?1, 's', client_id, 'r', '[]', 'c', '[]', ?2 \
+                "INSERT INTO oauth_codes (digest, client_id, owner_id, session_id, \
+                 authenticated_at, grant_id, redirect_uri, scopes, challenge, resources, \
+                 expires_at) \
+                 SELECT client_id, client_id, ?1, 's', ?2, client_id, 'r', '[]', 'c', '[]', ?2 \
                  FROM oauth_clients",
                 [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;

@@ -402,11 +402,12 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         &json!({
             "sign_in_address": "https://marfa.example",
             "confirm_sign_in_address_change": true,
+            "skip_sign_in_address_check": true,
         }),
     );
     *set.method_mut() = Method::PATCH;
     let moved = send(instance.control.clone(), set).await;
-    assert_eq!(moved.status, StatusCode::OK);
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.body);
     let away = send(
         instance.public.clone(),
         from(AWAY, sign_in_at("https://marfa.example")),

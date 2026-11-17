@@ -2195,7 +2195,7 @@ export interface paths {
         put?: never;
         /**
          * Check an address change
-         * @description Returns what changing the addresses would do and whether a write needs confirmation, and writes nothing. Requires `config.manage`.
+         * @description Returns what changing the addresses would do, whether a write needs confirmation and whether a new sign-in address answers as this instance, and writes nothing. Requires `config.manage`.
          */
         post: operations["checkAddressChange"];
         delete?: never;
@@ -2399,7 +2399,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away at once and tells them when to try again. Requires the private local command.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away. Requires `backups.manage` and a sign-in from the last five minutes.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -2463,7 +2463,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. While it writes, Marfa turns other writes away at once. Requires the private local command.
+         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires `backups.manage` and a sign-in from the last five minutes.
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -6383,7 +6383,7 @@ export interface components {
              * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
              */
             object_store_access_key_id?: string;
-            /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. */
+            /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. */
             allow_private_addresses?: boolean;
             /**
              * @description The key of each secret setting stored with a value Marfa can read, present only while one is. Marfa never returns a secret's value.
@@ -6392,6 +6392,7 @@ export interface components {
              *     ]
              */
             secrets_set?: string[];
+            sign_in_moved?: components["schemas"]["SignInMove"] & unknown;
         };
         /** @description An error response. */
         InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
@@ -7413,14 +7414,14 @@ export interface components {
             size_bytes: number;
         };
         /** @description An error response. */
-        InstanceChangedOrSignInAddressChangeUnconfirmedRefusal: {
+        ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "instance_changed" | "sign_in_address_change_unconfirmed";
+                code: "conflict" | "instance_changed" | "sign_in_address_change_unconfirmed" | "sign_in_address_check_failed";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -7451,6 +7452,18 @@ export interface components {
             requires_confirmation: boolean;
             /** @description Everything the change does, empty if it does nothing. */
             consequences: components["schemas"]["AddressConsequence"][];
+            /** @description What the owner would do after the change, in order. Empty unless the sign-in address moves. */
+            next_steps: components["schemas"]["AddressNextStep"][];
+            /** @description Whether the new sign-in address answers as this instance, as a write of the change checks it. Present when `requires_confirmation` is `true`. */
+            sign_in_address_check?: {
+                /** @description `true` if the new sign-in address answered `GET /` as this instance, `false` if it didn't, and `null` if Marfa didn't ask it. */
+                passed: boolean | null;
+                /**
+                 * @description Why it didn't pass: `unreachable`, nothing answered; `timed_out`, no answer in 5 seconds; `not_this_instance`, something else answered; `needs_recent_sign_in`, the address isn't public and you couldn't make the move. Present if `passed` isn't `true`.
+                 * @enum {string}
+                 */
+                reason?: "unreachable" | "timed_out" | "not_this_instance" | "needs_recent_sign_in";
+            };
         };
         /** @description The address change to check, written as `PATCH /config` writes it. */
         AddressCheckRequest: {
@@ -8102,6 +8115,62 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        InsufficientUserAuthenticationOrUnauthorizedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "insufficient_user_authentication" | "unauthorized";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        AppSignInRequiredOrForbiddenRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "app_sign_in_required" | "forbidden";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description One thing the owner does after the sign-in address moves. */
+        AddressNextStep: {
+            /**
+             * @description What the owner does: `sign_in` signs in again at the new address, and `add_passkey` adds a passkey there.
+             * @enum {string}
+             */
+            code: "sign_in" | "add_passkey";
+            /** @description The step, in a sentence for a person to read. */
+            sentence: string;
+            /**
+             * Format: uri
+             * @description Where the owner takes the step, at the new sign-in address. It carries no credential.
+             */
+            url: string;
+        };
+        /** @description What moving the sign-in address did: every browser session and every app's sign-in ended, and API keys kept working. */
+        SignInMove: {
+            /** @description What the move did, as `POST /config/address-check` reported it beforehand. */
+            consequences: components["schemas"]["AddressConsequence"][];
+            /** @description What the owner does next, in order. */
+            next_steps: components["schemas"]["AddressNextStep"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -8119,6 +8188,8 @@ export interface components {
         "Retry-After": number;
         /** @description Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read: the header says where the answer came from, not that anything went wrong. */
         "Idempotency-Replayed": "true";
+        /** @description The step-up challenge of RFC 9470, sent with `insufficient_user_authentication`: `Bearer error="insufficient_user_authentication", max_age="300"`, where `max_age` is how many seconds old the owner's sign-in may be. */
+        "WWW-Authenticate": string;
     };
     pathItems: never;
 }
@@ -31134,6 +31205,11 @@ export interface operations {
                 resource?: string;
                 /** @description `login` asks the person to sign in again; `none` returns `login_required` or `consent_required` instead of showing a page. */
                 prompt?: "login" | "none" | "consent";
+                /**
+                 * @description How many seconds ago the person may have signed in. If they signed in longer ago, Marfa asks them to sign in again before it answers, as `401 insufficient_user_authentication` asks; `0` always asks.
+                 * @example 300
+                 */
+                max_age?: number;
             };
             header?: never;
             path?: never;
@@ -31261,6 +31337,11 @@ export interface operations {
                     client_id: string;
                     /** @description Space-separated scopes to ask for. Defaults to the scopes the app registered for. */
                     scope?: string;
+                    /**
+                     * @description Seconds since the owner last signed in that the approval accepts. An older browser session is asked to sign in again before it approves. `0` asks for a sign-in after this request.
+                     * @example 0
+                     */
+                    max_age?: string;
                 };
             };
         };
@@ -34155,6 +34236,8 @@ export interface operations {
                     sign_in_address?: string;
                     /** @description `true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing. */
                     confirm_sign_in_address_change?: boolean;
+                    /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
+                    skip_sign_in_address_check?: boolean;
                     /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
                     backup_path?: string;
                     /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
@@ -34175,7 +34258,7 @@ export interface operations {
                      * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
                      */
                     object_store_access_key_id?: string;
-                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. */
+                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. */
                     allow_private_addresses?: boolean;
                     /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
                     object_store_secret_access_key?: string;
@@ -34195,7 +34278,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the configuration as stored. */
+            /** @description Returns the configuration as stored, with `sign_in_moved` when the write moved the sign-in address. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -34227,21 +34310,25 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
-             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or changes `allow_private_addresses`, which only the private local command can do.
+             * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
+             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {
@@ -34251,7 +34338,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["AppSignInRequiredOrForbiddenRefusal"];
                 };
             };
             /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
@@ -34267,8 +34354,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
-             *     - `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.
+             * @description - `conflict`: the settings changed during the address check. Send it again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
+             *     - `sign_in_address_check_failed`: the new sign-in address did not answer as this instance. `details.reason` says why.
              */
             409: {
                 headers: {
@@ -34278,7 +34367,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedOrSignInAddressChangeUnconfirmedRefusal"];
+                    "application/json": components["schemas"]["ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -34419,6 +34508,8 @@ export interface operations {
                     sign_in_address?: string | null;
                     /** @description `true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing. */
                     confirm_sign_in_address_change?: boolean;
+                    /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
+                    skip_sign_in_address_check?: boolean;
                     /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. `null` removes it, so the server's default applies. */
                     backup_path?: string | null;
                     /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies. */
@@ -34439,7 +34530,7 @@ export interface operations {
                      * @example 01a1d0c4-3b2e-7f10-9a4c-6e2d8b1f0a37
                      */
                     object_store_access_key_id?: string | null;
-                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Only the private local command can change it. Absent: `false`. `null` removes it, so the server's default applies. */
+                    /** @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies. */
                     allow_private_addresses?: boolean | null;
                     /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it. */
                     object_store_secret_access_key?: string | null;
@@ -34459,7 +34550,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the configuration as stored. */
+            /** @description Returns the configuration as stored, with `sign_in_moved` when the write moved the sign-in address. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -34491,21 +34582,25 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
-             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or changes `allow_private_addresses`, which only the private local command can do.
+             * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
+             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {
@@ -34515,7 +34610,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["AppSignInRequiredOrForbiddenRefusal"];
                 };
             };
             /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
@@ -34531,8 +34626,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
-             *     - `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.
+             * @description - `conflict`: the settings changed during the address check. Send it again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
+             *     - `sign_in_address_check_failed`: the new sign-in address did not answer as this instance. `details.reason` says why.
              */
             409: {
                 headers: {
@@ -34542,7 +34639,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedOrSignInAddressChangeUnconfirmedRefusal"];
+                    "application/json": components["schemas"]["ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -34830,11 +34927,31 @@ export interface operations {
                      *       "requires_confirmation": true,
                      *       "consequences": [
                      *         {
-                     *           "code": "address_removed",
-                     *           "sentence": "Links that use https://marfa.example.com stop working.",
-                     *           "count": null
+                     *           "code": "browser_sessions_end",
+                     *           "sentence": "Everyone signed in on a browser is signed out.",
+                     *           "count": 1
+                     *         },
+                     *         {
+                     *           "code": "apps_sign_in_again",
+                     *           "sentence": "Apps connected to this instance have to sign in again.",
+                     *           "count": 2
                      *         }
-                     *       ]
+                     *       ],
+                     *       "next_steps": [
+                     *         {
+                     *           "code": "sign_in",
+                     *           "sentence": "Sign in again at the new address.",
+                     *           "url": "https://marfa.example.com/auth/sign-in"
+                     *         },
+                     *         {
+                     *           "code": "add_passkey",
+                     *           "sentence": "Add a passkey at the new address. Passkeys made for the old address work again only if the sign-in address moves back.",
+                     *           "url": "https://marfa.example.com/auth/sign-in?prompt=login&return_to=/auth/owner/passkeys"
+                     *         }
+                     *       ],
+                     *       "sign_in_address_check": {
+                     *         "passed": true
+                     *       }
                      *     }
                      */
                     "application/json": components["schemas"]["AddressCheck"];
@@ -36716,19 +36833,26 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the private local command. `details.needs` is `local`. */
+            /**
+             * @description - `forbidden`: you don't hold `backups.manage`. `details.required_scope` names it.
+             *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -36737,7 +36861,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["AppSignInRequiredOrForbiddenRefusal"];
                 };
             };
             /** @description - `request_timeout`: no bytes of the archive arrived for 60 seconds. Nothing was written. An upload has no other time limit while bytes keep arriving. */
@@ -37516,19 +37640,26 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the private local command. `details.needs` is `local`. */
+            /**
+             * @description - `forbidden`: you don't hold `backups.manage`. `details.required_scope` names it.
+             *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -37537,7 +37668,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["AppSignInRequiredOrForbiddenRefusal"];
                 };
             };
             /** @description `backup_not_found`: the backup folder or object store holds no backup by that name from that instance. */

@@ -37,9 +37,8 @@ pub async fn restore(
     Path((instance, name)): Path<(String, String)>,
     uri: Uri,
 ) -> Answer {
-    caller.require_local()?;
     let started_at = app.clock.stamp();
-    caller.require_recent(&started_at)?;
+    caller.require_step_up(Permission::BackupsManage, &started_at)?;
     query::only(&uri, &[ALLOW_MISSING_FILES])?;
     let whole = !query::flag(&uri, ALLOW_MISSING_FILES)?.unwrap_or(false);
     let answer = app

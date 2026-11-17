@@ -7,6 +7,7 @@ use super::client::GrantType;
 use super::clients::{self, ceiling_lacks, destinations_digest, judge, registries_in};
 use super::grant::{self, DEVICE_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::offer::{self, Decision, Offer, Post, Request};
+use super::reprompt;
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, narrow, needs_recent_sign_in};
 use super::store::{self, DeviceCode, DeviceStatus};
 use super::token::{Form, credential_refused};
@@ -72,11 +73,22 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
             format!("This client cannot ask for {literal}."),
         )));
     }
+    let now = app.clock.instant();
+    let max_age = form.pairs.iter().find(|(key, _)| key == "max_age");
+    let signed_in_after = match max_age.map(|(_, text)| reprompt::max_age(text)) {
+        None => None,
+        Some(Some(limit)) => now.earlier_by(limit),
+        Some(None) => {
+            return Ok(Err(Problem::new(
+                "invalid_request",
+                "max_age is a whole number of seconds.",
+            )));
+        }
+    };
 
     let device_code = new_device_code()?;
     let user_code = new_user_code()?;
     let salt = &app.settings.start.key_salt;
-    let now = app.clock.instant();
     let row = DeviceCode {
         digest: digest_of(salt, &device_code)?,
         user_code_digest: digest_of(salt, &normalize_user_code(&user_code))?,
@@ -85,6 +97,8 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         destinations: destinations_digest(app, &client)?,
         status: DeviceStatus::Pending,
         owner_id: None,
+        authenticated_at: None,
+        signed_in_after,
         interval_seconds: DEVICE_INTERVAL_SECONDS,
         last_polled_at: None,
         expires_at: now.plus_ms(DEVICE_CODE_SECONDS * MS_PER_SECOND)?,
@@ -179,10 +193,11 @@ pub async fn screen(
     owner: &Caller,
 ) -> Result<std::result::Result<Box<Offer>, Blocked>> {
     let digest = digest_of_typed(app, typed)?;
-    let owner_id = owner
+    let session = owner
         .session()
-        .map(|session| session.owner_id.clone())
+        .cloned()
         .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
+    let owner_id = session.owner_id.clone();
     let cache = app.catalog_handle();
     let now = app.clock.instant();
     app.db
@@ -192,6 +207,9 @@ pub async fn screen(
             let (Lookup::Pending, Some(code)) = (lookup, found) else {
                 return Ok(Err(Blocked::Code(lookup)));
             };
+            if !reprompt::began_since(&session, code.signed_in_after, now) {
+                return Ok(Err(Blocked::SignInAgain));
+            }
             let Some(client) = store::client(tx, &code.client_id)? else {
                 return Ok(Err(Blocked::ClientGone));
             };
@@ -218,6 +236,8 @@ pub async fn screen(
 pub enum Blocked {
     Code(Lookup),
     ClientGone,
+    /// The code's `max_age` asks for a browser session begun since.
+    SignInAgain,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -225,6 +245,7 @@ pub enum Answer {
     Approved,
     Denied,
     Code(Lookup),
+    SignInAgain,
 }
 
 /// Reads again inside the write so an answer lands only on a pending code.
@@ -246,13 +267,23 @@ pub async fn answer(
         let (Lookup::Pending, Some(code)) = (lookup, found) else {
             return Ok(Answer::Code(lookup));
         };
-        let owner_id = unit
+        let session = unit
             .caller
             .session()
-            .map(|session| session.owner_id.clone())
             .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
+        if !reprompt::began_since(session, code.signed_in_after, now) {
+            return Ok(Answer::SignInAgain);
+        }
+        let (owner_id, signed_in) = (session.owner_id.clone(), session.created_at);
         let deny = |scopes: &ScopeSet| {
-            store::decide_device_code(tx, &code.digest, DeviceStatus::Denied, &owner_id, scopes)?;
+            store::decide_device_code(
+                tx,
+                &code.digest,
+                DeviceStatus::Denied,
+                &owner_id,
+                signed_in,
+                scopes,
+            )?;
             Ok(Answer::Denied)
         };
         if !approve {
@@ -292,6 +323,7 @@ pub async fn answer(
             &code.digest,
             DeviceStatus::Approved,
             &owner_id,
+            signed_in,
             &approved,
         )?;
         unit.audit_also(

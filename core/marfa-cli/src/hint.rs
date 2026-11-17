@@ -41,17 +41,20 @@ pub fn for_error(error: &CliError, aim: &Aim) -> Option<String> {
     match error {
         CliError::Core(CoreError::ConnectionRefused { origin }) => Some(not_listening(origin)),
         CliError::Refused {
-            status: 403,
-            details,
-            ..
-        } if details
-            .as_deref()
-            .and_then(|details| details.get("needs"))
-            .and_then(Value::as_str)
-            == Some("local") =>
-        {
-            Some(needs_local(aim))
-        }
+            status: 403, code, ..
+        } if code == "app_sign_in_required" => Some(needs_person(aim)),
+        CliError::Refused {
+            status: 401, code, ..
+        } if code == "insufficient_user_authentication" => Some(
+            "This needs a sign-in from the last five minutes. Run `marfa login --fresh-sign-in`, sign in again in the browser, then repeat the command within five minutes; or run it on the server's private local command (`--socket`)."
+                .into(),
+        ),
+        CliError::Refused {
+            status: 409, code, ..
+        } if code == "sign_in_address_check_failed" => Some(
+            "Nothing was changed. Check the address, and that it reaches this server. For a host that answers only once the address has moved, run the same command on the server's private local command (`--socket`) with `--skip-sign-in-address-check`."
+                .into(),
+        ),
         CliError::Refused {
             status: 409,
             code,
@@ -88,13 +91,12 @@ fn not_listening(origin: &str) -> String {
     }
 }
 
-fn needs_local(aim: &Aim) -> String {
+fn needs_person(aim: &Aim) -> String {
     let install = Remote::url_named(&aim.named)
         .ok()
         .and_then(|origin| crate::server::serving(&origin));
     let private = install.as_ref().and_then(crate::server::Serving::private);
-    let cannot =
-        "A key or an app's sign-in cannot do this: it needs the server's private local command";
+    let cannot = "A key cannot do this: a person does it from an app they signed in to within the last five minutes, or on the server's private local command";
     if let Some(prefix) = private.as_ref().and_then(PrivateCommand::prefix) {
         let mut text = format!(
             "{cannot}, which this machine can run:\n  {prefix} {}",

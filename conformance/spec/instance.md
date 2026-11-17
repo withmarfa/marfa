@@ -1164,14 +1164,6 @@ Where neither `object_store_bucket` nor `backup_path` is set, when a caller the 
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
-### `instance/backup-restore-local`
-
-When a key or an app's token sends `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `403 forbidden` with `details.needs` set to `local`.
-
-**Reason:** a restore replaces every item of the instance, so it waits for the owner to confirm it is them, which for now only the private local command proves.
-
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`.
-
 ### `instance/backups-list`
 
 When a caller holding `backups.manage` sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<object_store_prefix>/backups/` or `<backup_path>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.
@@ -1188,7 +1180,7 @@ If a credential without `backups.manage` sends `GET /backups`, `POST /backups` o
 
 ### `instance/backup-restore`
 
-When the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST restore the backup of that name in that instance's folder from the object store or the backup folder as `POST /restore` restores the archive its manifest and parts make.
+When a caller the operation admits sends `POST /backups/{instance_id}/{name}/restore`, the server MUST restore the backup of that name in that instance's folder from the object store or the backup folder as `POST /restore` restores the archive its manifest and parts make.
 
 **Reason:** the server reads the backup itself, so a restore after a move needs no copy of the backup on the owner's computer.
 
@@ -1204,7 +1196,7 @@ Where `object_store_bucket` is set, if a file the backup names, which the instan
 
 ### `instance/backup-folder-restore-files`
 
-Where `backup_path` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST read each file the backup names that the instance does not hold from `<backup_path>/files/<instance_id>/`.
+Where `backup_path` is set, when a caller the operation admits sends `POST /backups/{instance_id}/{name}/restore`, the server MUST read each file the backup names that the instance does not hold from `<backup_path>/files/<instance_id>/`.
 
 **Tests:** `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
 
@@ -1226,7 +1218,7 @@ Where `backup_path` is set, if the server answers `POST /backups/{instance_id}/{
 
 ### `instance/backup-folder-restore-held`
 
-Where `backup_path` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST NOT read from the backup folder a file of which an attached store of the restoring instance holds a copy whole.
+Where `backup_path` is set, when a caller the operation admits sends `POST /backups/{instance_id}/{name}/restore`, the server MUST NOT read from the backup folder a file of which an attached store of the restoring instance holds a copy whole.
 
 **Reason:** a restore over the instance that took the backup then needs room only for the files it lacks.
 
@@ -1248,7 +1240,7 @@ If `POST /backups/{instance_id}/{name}/restore` names no backup the object store
 
 ### `instance/backup-restore-allow-missing`
 
-When the private local command sends `POST /backups/{instance_id}/{name}/restore` with `allow_missing_files` `true`, the server MUST restore the backup without each file that `instance/backup-bucket-restore-lacking` or `instance/backup-folder-restore-lacking` would refuse it for, and name each such file in `blobs_missing`.
+When a caller the operation admits sends `POST /backups/{instance_id}/{name}/restore` with `allow_missing_files` `true`, the server MUST restore the backup without each file that `instance/backup-bucket-restore-lacking` or `instance/backup-folder-restore-lacking` would refuse it for, and name each such file in `blobs_missing`.
 
 **Reason:** an owner whose destination lost some files restores every item, edge and setting the backup holds, and learns which files are gone.
 
@@ -2759,7 +2751,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `object_store_secret_access_key` | None               | A secret: text of 1 to 4096 characters with no whitespace around it, or empty | The secret access key for the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `error_webhook_url`              | None               | A secret: an absolute `http` or `https` URL, or empty                         | The URL the server posts a notice to when a request fails with a 500 error, while `error_reporting_enabled` is true. When empty, no notice is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `heartbeat_url`                  | None               | A secret: an absolute `http` or `https` URL, or empty                         | The URL the server requests on a schedule while `heartbeat_enabled` is true, so that something else can notice when the requests stop. When empty, there is no heartbeat.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `allow_private_addresses`        | `false`            | `true` or `false`                                                             | Whether the server may send to loopback, private and other addresses that are not public: webhooks, `heartbeat_url`, `error_webhook_url` and `object_store_endpoint`. Only the private local process changes it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `allow_private_addresses`        | `false`            | `true` or `false`                                                             | Whether the server may send to loopback, private and other addresses that are not public: webhooks, `heartbeat_url`, `error_webhook_url` and `object_store_endpoint`. Changing it needs a sign-in from the last five minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `enrichment_enabled`             | `true`             | `true` or `false`                                                             | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `enrichment_ocr_enabled`         | `true`             | `true` or `false`                                                             | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `enrichment_max_blob_bytes`      | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                                     | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -2886,14 +2878,6 @@ When a write sets `sign_in_address` and does not name `addresses`, the server MU
 
 **Tests:** `compliance/instance-addresses.test.ts › is always among the addresses, whether or not the list names it`.
 
-### `instance/sign-in-address-authority`
-
-If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address`, then the server MUST answer `403 forbidden` and store none of the write.
-
-**Reason:** the sign-in address decides where sign-in cookies are valid, so moving it waits for the owner to confirm it is them, which for now only the private local command proves.
-
-**Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
-
 ### `instance/cors-origins-permission`
 
 When a key holding `config.manage` sends `PATCH /config` that changes `cors_origins`, the server MUST store the change.
@@ -2904,13 +2888,13 @@ When a key holding `config.manage` sends `PATCH /config` that changes `cors_orig
 
 If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` at the value it already has, then the server MUST apply the write as it would for any other setting.
 
-**Reason:** a client that sends the whole configuration back does not move the sign-in address, and refusing it would make every such client need direct authority.
+**Reason:** a client that sends the whole configuration back does not move the sign-in address, and refusing it would refuse every key that does so.
 
-**Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
+**Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which has no sign-in to renew`.
 
 ### `instance/sign-in-address-unconfirmed`
 
-If the private local process moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
+If a write moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
 
 **Reason:** the change signs everyone out and can strand passkeys and apps, so the person is told what it will do before it does it.
 
@@ -2918,21 +2902,101 @@ If the private local process moves the sign-in address of a claimed instance, th
 
 ### `instance/sign-in-address-confirmed`
 
-When the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
+When a caller that `keys-and-oauth/step-up-recent` or `keys-and-oauth/step-up-socket` admits sends `confirm_sign_in_address_change` set to `true` with a new sign-in address that passes the check `instance/sign-in-address-check-passed` states, or that `instance/sign-in-address-check-skip` lets through, the server MUST store the address.
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 
+### `instance/sign-in-address-check-refused`
+
+If a write moves the sign-in address of a claimed instance with `confirm_sign_in_address_change` set to `true` and without the skip `instance/sign-in-address-check-skip` states, and the new address does not answer `GET /` within 5 seconds with `200` and this instance's `instance_id`, then the server MUST answer `409 sign_in_address_check_failed` and store none of the write.
+
+**Reason:** a mistyped or unready address would end every sign-in, and only the machine the server runs on could put it back. The server asks at a fixed path and follows no redirect, so a redirect answers as another server.
+
+**Tests:** `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`, `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
+### `instance/sign-in-address-check-reason`
+
+When the server names why a new sign-in address failed its check, the server MUST name `unreachable` when nothing answered, `timed_out` when nothing answered within 5 seconds of being asked, and `not_this_instance` when an answer came that was not `200` with this instance's `instance_id`.
+
+**Tests:** `compliance/step-up.test.ts › names why an address failed the check while private addresses are allowed: unreachable, timed_out or not_this_instance`.
+
+### `instance/sign-in-address-check-private`
+
+Where `allow_private_addresses` is `false`, if a new sign-in address leads to an address that is not public and fails its check, then the server MUST name `not_this_instance` as the reason, whatever happened.
+
+**Reason:** the instance's own address is often on the loopback or a private network, so the check of a move reaches such an address whatever `allow_private_addresses` says, and tells no more about it than whether this instance answers there.
+
+**Tests:** `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`.
+
+### `instance/sign-in-address-check-passed`
+
+When a write moves the sign-in address with `confirm_sign_in_address_change` set to `true`, and the new address answers `GET /` with `200` and this instance's `instance_id`, the server MUST store the address, whether or not the address is on the loopback or a private network.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
+### `instance/sign-in-address-check-skip`
+
+When the private local command sends `skip_sign_in_address_check` set to `true` with a move of the sign-in address that `confirm_sign_in_address_change` confirms, the server MUST store the address without asking it.
+
+**Reason:** a host can be set up to answer only once the instance answers to its name.
+
+**Tests:** `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
+### `instance/sign-in-address-check-skip-refused`
+
+If a caller other than the private local command sends `skip_sign_in_address_check` set to `true`, then the server MUST answer `403 forbidden` and store none of the write.
+
+**Tests:** `compliance/step-up.test.ts › is skipped for the private local command when the body sets skip_sign_in_address_check, and that field is refused to an app with 403 forbidden`.
+
 ### `instance/sign-in-address-ends-sessions`
 
-When the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST end every browser session in the write that stores the address, so that no session cookie made before it opens anything afterward.
+When a write moves the sign-in address with `confirm_sign_in_address_change` set to `true`, the server MUST end every browser session in the write that stores the address, so that no session cookie made before it opens anything afterward.
 
-**Reason:** the confirmation tells the person that everyone signed in on a browser is signed out (`browser_sessions_end`). Only the private local process makes the change, so no browser session confirms it and none is kept: the owner signs in again at the new address. Keys and app grants are not browser sessions, and the change leaves them as they were.
+**Reason:** the confirmation tells the person that everyone signed in on a browser is signed out (`browser_sessions_end`). A session's cookie belongs to the old address, so none is kept: the owner signs in again at the new address.
 
 **Tests:** `compliance/instance-addresses.test.ts › ends every browser session, so a session token from before the move opens nothing under either cookie name`.
 
+### `instance/sign-in-address-ends-apps`
+
+When a write moves the sign-in address with `confirm_sign_in_address_change` set to `true`, the server MUST end every app's access tokens and refresh tokens in the write that stores the address, so that none issued before it is accepted afterward, the token that sent the write included.
+
+**Reason:** the confirmation tells the person that apps sign in again (`apps_sign_in_again`): their tokens were issued by the old address, and an app reconnects at the new issuer.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `instance/sign-in-address-keeps-grants`
+
+When a write moves the sign-in address, the server MUST keep every app's grant, so that an authorization the grant covers is answered with a code once the person signs in at the new address, without the consent screen.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `instance/sign-in-address-keeps-keys`
+
+When a write moves the sign-in address, the server MUST keep every API key working.
+
+**Reason:** a key is not issued by the sign-in address, so moving the address leaves it as it was.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `instance/sign-in-address-moved-answer`
+
+When a write moves the sign-in address, the server MUST answer the configuration with `sign_in_moved` holding `consequences`, as `POST /config/address-check` names them for the same change before it, and `next_steps`.
+
+**Reason:** the app that made the move guides the person through what follows from the answer alone, since the move ended the app's own sign-in.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `instance/sign-in-address-next-steps`
+
+When the server names the next steps of a move of the sign-in address, the server MUST name `sign_in`, with the sign-in page at the new address as `url`, and then `add_passkey`, with the link `GET /owner/passkeys/add-url` answers at the new address as `url`, each with a `sentence`.
+
+**Reason:** a passkey belongs to the address it was made for, and the server keeps it for that address (`passkeys_unusable` counts those that stop working), so the owner adds one at the new address. A password sign-in works at the new address, so nobody is locked out.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
 ### `instance/sign-in-address-forgets-devices`
 
-When the private local process confirms a move of the sign-in address, the server MUST count each later password sign-in that carries a device cookie set before the move as one with no device cookie.
+When a write confirms a move of the sign-in address, the server MUST count each later password sign-in that carries a device cookie set before the move as one with no device cookie.
 
 **Reason:** a device cookie is signed for the owner's credentials as they stand, and the move renews them with the browser sessions it ends, so no browser stays known.
 
@@ -2948,11 +3012,35 @@ While no sign-in address is set, if a caller sends `POST /auth/sign-in` over a c
 
 ### `instance/address-check`
 
-When a key holding `config.manage` sends `POST /config/address-check` with `sign_in_address`, `addresses` or both, the server MUST answer `200` with the `sign_in_address` and the `addresses` as they would be after the change, `requires_confirmation`, and `consequences`, each of them `code`, `sentence` and `count`.
+When a key holding `config.manage` sends `POST /config/address-check` with `sign_in_address`, `addresses` or both, the server MUST answer `200` with the `sign_in_address` and the `addresses` as they would be after the change, `requires_confirmation`, `consequences`, each of them `code`, `sentence` and `count`, `next_steps`, empty unless the sign-in address moves, and `sign_in_address_check` while `requires_confirmation` is `true`.
 
-**Reason:** an app shows the person what a change does before it asks for the write. `requires_confirmation` is `true` when a write of the same change needs `confirm_sign_in_address_change`.
+**Reason:** an app shows the person what a change does before it asks for the write. `requires_confirmation` is `true` when a write of the same change needs `confirm_sign_in_address_change`, and `next_steps` are what `instance/sign-in-address-next-steps` names.
 
-**Tests:** `compliance/instance-addresses.test.ts › writes nothing, and answers the addresses after the change, whether it needs confirming and what it does`.
+**Tests:** `compliance/instance-addresses.test.ts › writes nothing, and answers the addresses after the change, whether it needs confirming and what it does`, `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `instance/address-check-instance`
+
+When the server asks the new sign-in address in an address check, the server MUST answer `sign_in_address_check` with `passed` set to `true` when the address passes the check `instance/sign-in-address-check-passed` states, and otherwise `passed` set to `false` with the `reason` that a write of the same change would be refused for.
+
+**Reason:** an app shows the person whether the address reaches this instance before it asks them to confirm a move that ends every sign-in.
+
+**Tests:** `compliance/step-up.test.ts › is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/step-up.test.ts › refuses a move to an address that answers as another instance, redirects, answers nothing or never answers, with 409 sign_in_address_check_failed, and changes nothing`, `compliance/step-up.test.ts › names why an address failed the check while private addresses are allowed: unreachable, timed_out or not_this_instance`.
+
+### `instance/address-check-private-unasked`
+
+Where `allow_private_addresses` is `false`, if a caller that neither `keys-and-oauth/step-up-recent` nor `keys-and-oauth/step-up-socket` admits sends `POST /config/address-check` with a new sign-in address that leads to an address that is not public, then the server MUST NOT send a request to that address.
+
+**Reason:** the server asks an address on the loopback or a private network only for a caller who could move the sign-in address there.
+
+**Tests:** `compliance/step-up.test.ts › sends no request to an address that is not public for a caller that could not make the move, and answers needs_recent_sign_in, while an app whose owner signed in just now has it asked`.
+
+### `instance/address-check-private-reason`
+
+When the server does not ask a new sign-in address in an address check, as `instance/address-check-private-unasked` states, the server MUST answer `sign_in_address_check` with `passed` set to `null` and `reason` set to `needs_recent_sign_in`.
+
+**Reason:** the app tells the person to sign in again before the address can be checked, since the move itself would ask the same.
+
+**Tests:** `compliance/step-up.test.ts › sends no request to an address that is not public for a caller that could not make the move, and answers needs_recent_sign_in, while an app whose owner signed in just now has it asked`.
 
 ### `instance/address-check-writes-nothing`
 
@@ -3186,21 +3274,13 @@ When a write to `/config` sets `error_webhook_url`, the server MUST post its not
 
 ## Where the server may send
 
-The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `error_webhook_url` and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on, so only the private local process changes the switch.
-
-### `instance/private-addresses-authority`
-
-If a key or app token, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `allow_private_addresses`, then the server MUST answer `403 forbidden` with `details.needs` `local` and store none of the write.
-
-**Reason:** with the switch on, a credential that may change the configuration could point the heartbeat, the error webhook, the object store or a webhook at a service on the owner's own network.
-
-**Tests:** `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which the private local process changes`.
+The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `error_webhook_url` and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
 
 ### `instance/private-addresses-local`
 
-When the private local process sets `allow_private_addresses` to `true` through `/config`, the server MUST send to destinations at addresses that are not public from then on, without a restart.
+When a write sets `allow_private_addresses` to `true` through `/config`, the server MUST send to destinations at addresses that are not public from then on, without a restart.
 
-**Tests:** `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which the private local process changes`, `› takes an object store on a private address once the private local process turns the switch on, and not before`.
+**Tests:** `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which an app whose owner signed in just now changes`, `› takes an object store on a private address once the private local process turns the switch on, and not before`.
 
 ### `instance/destination-private-refused`
 
@@ -3212,7 +3292,7 @@ Where `allow_private_addresses` is `false`, if a write to `/config` sets `heartb
 
 ### `instance/private-switch-off-refused`
 
-If the private local process sends a write to `/config` that sets `allow_private_addresses` to `false` while `heartbeat_url`, `error_webhook_url` or `object_store_endpoint` holds a URL whose host is an address that is not public, then the server MUST answer `400 validation_error` naming that setting.
+If a write to `/config` sets `allow_private_addresses` to `false` while `heartbeat_url`, `error_webhook_url` or `object_store_endpoint` holds a URL whose host is an address that is not public, then the server MUST answer `400 validation_error` naming that setting.
 
 **Tests:** `compliance/destination-addresses.test.ts › refuses a heartbeat_url, error_webhook_url or object_store_endpoint written as a private address while the switch is off`.
 
@@ -3247,7 +3327,7 @@ The environment variables below are read once, when the server starts. Each is n
 | `MARFA_DATABASE_PATH`                | `./data/marfa.db`                                    | Any text                                                           | The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.                                                                                                                                                                                                                                                                                                                                                                                  |
 | `MARFA_CONTROL_SOCKET`               | None                                                 | Any text                                                           | Absolute private Unix socket path. Defaults to control/marfa.sock beside the database. Its directory must belong to the server account with mode 0700.                                                                                                                                                                                                                                                                                                                                                                              |
 | `MARFA_CONTROL_ONLY`                 | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Start only the private control listener, without public HTTP or background jobs, for local recovery.                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `MARFA_CLAIM_ADDRESS`                | None                                                 | An `https` origin, or an `http` one on a loopback name             | The sign-in address of an instance with no owner, for one that is claimed from another host. As it starts, the server stores it as `sign_in_address`, judged by that setting's rule, which also allows `http` only on `localhost`, `127.0.0.1` or `[::1]`. Once the instance has an owner, the server ignores it and logs that it did, and the address changes only through `/config` on the private socket.                                                                                                                        |
+| `MARFA_CLAIM_ADDRESS`                | None                                                 | An `https` origin, or an `http` one on a loopback name             | The sign-in address of an instance with no owner, for one that is claimed from another host. As it starts, the server stores it as `sign_in_address`, judged by that setting's rule, which also allows `http` only on `localhost`, `127.0.0.1` or `[::1]`. Once the instance has an owner, the server ignores it and logs that it did, and the address changes only through `/config`.                                                                                                                                              |
 | `MARFA_OWNER_RECOVERY`               | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether each start of an instance with an owner prints a recovery code in the server's own log, with which the owner chooses a new password at `/setup` without a shell. The code works once, for 60 minutes, and the next start replaces it. Off, a start removes any code an earlier start printed. Behind a platform proxy or shared edge, set `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS`, or every caller shares one attempt limit and wrong guesses can block the owner's code for a while.                  |
 | `MARFA_TEST_HOOKS`                   | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener. A server built without test hooks refuses to start when it is true. Leave off on every instance that holds real data.                                                                                                                                                                                                                                                                                    |
 | `MARFA_TEST_CLOCK_OFFSET_MS`         | `0` ms                                               | Whole number of milliseconds, 0 to 3153600000000                   | How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.                                                                                                                                                                                                                                                                                                                                                        |

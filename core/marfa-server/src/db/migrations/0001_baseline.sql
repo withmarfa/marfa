@@ -758,11 +758,13 @@ CREATE TABLE IF NOT EXISTS oauth_consent_destinations (
 
 -- `session_id` names no table: the row outlives the session it asks about. A
 -- spent row stays until `expires_at`, so a replay can end its `chain_id`.
+-- Every token of the chain a code leads to carries its `authenticated_at`.
 CREATE TABLE IF NOT EXISTS oauth_codes (
     digest TEXT PRIMARY KEY NOT NULL,
     client_id TEXT NOT NULL REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
     owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     session_id TEXT NOT NULL,
+    authenticated_at TEXT NOT NULL,
     grant_id TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
     scopes TEXT NOT NULL,
@@ -785,6 +787,8 @@ CREATE TABLE IF NOT EXISTS oauth_device_codes (
     destinations TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'spent')),
     owner_id TEXT REFERENCES owner (id) ON DELETE CASCADE,
+    authenticated_at TEXT,
+    signed_in_after TEXT,
     interval_seconds INTEGER NOT NULL,
     last_polled_at TEXT,
     expires_at TEXT NOT NULL
@@ -799,6 +803,7 @@ CREATE TABLE IF NOT EXISTS oauth_access_tokens (
     client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
     owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     chain_id TEXT NOT NULL,
+    authenticated_at TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
     created_at TEXT NOT NULL,
@@ -816,6 +821,7 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
     client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
     owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     chain_id TEXT NOT NULL,
+    authenticated_at TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
     created_at TEXT NOT NULL,

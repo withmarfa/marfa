@@ -90,11 +90,20 @@ pub async fn enter(
     }
 }
 
-fn to_sign_in(app: &App, typed: Option<&str>) -> Answer {
-    let back = typed.map_or(CONSENT.to_string(), |typed| {
+fn back_to(typed: Option<&str>) -> String {
+    typed.map_or(CONSENT.to_string(), |typed| {
         format!("{CONSENT}?user_code={}", encoded(typed))
-    });
-    redirect(StatusCode::FOUND, &sign_in_then(app, &back))
+    })
+}
+
+fn to_sign_in(app: &App, typed: Option<&str>) -> Answer {
+    redirect(StatusCode::FOUND, &sign_in_then(app, &back_to(typed)))
+}
+
+/// The sign-in page shows its form to a browser already signed in only under `prompt=login`.
+fn to_sign_in_again(app: &App, typed: &str) -> Answer {
+    let page = sign_in_then(app, &back_to(Some(typed)));
+    redirect(StatusCode::FOUND, &format!("{page}&prompt=login"))
 }
 
 fn signed_in(owner: Option<Caller>) -> Option<Caller> {
@@ -132,6 +141,7 @@ pub async fn screen(
             Ok(pages::consent(&view)?.into_response())
         }
         Err(Blocked::Code(lookup)) => blocked(lookup, &typed),
+        Err(Blocked::SignInAgain) => to_sign_in_again(&app, &typed),
         Err(Blocked::ClientGone) => {
             Err(Refusal::new(Code::InvalidClient, "This app is gone.").into())
         }
@@ -169,5 +179,6 @@ pub async fn answer(
             Err(Refusal::new(Code::NotFound, "No code matches this one.").into())
         }
         Answered::Code(lookup) => blocked(lookup, typed),
+        Answered::SignInAgain => to_sign_in_again(&app, typed),
     }
 }

@@ -58,6 +58,8 @@ codes! {
     ValidationError = "validation_error", 400;
     SetupProofInvalid = "setup_proof_invalid", 401;
     Unauthorized = "unauthorized", 401;
+    InsufficientUserAuthentication = "insufficient_user_authentication", 401;
+    AppSignInRequired = "app_sign_in_required", 403;
     CoreTypeImmutable = "core_type_immutable", 403;
     EdgeTypeNotPermitted = "edge_type_not_permitted", 403;
     Forbidden = "forbidden", 403;
@@ -106,6 +108,7 @@ codes! {
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;
+    SignInAddressCheckFailed = "sign_in_address_check_failed", 409;
     SourceIdConflict = "source_id_conflict", 409;
     TrashPlanChanged = "trash_plan_changed", 409;
     TypeExists = "type_exists", 409;
@@ -224,6 +227,23 @@ impl Refusal {
     pub fn needs_recent_sign_in() -> Refusal {
         Refusal::new(Code::Forbidden, "Sign in again to perform this operation")
             .with_detail("needs", "recent_sign_in")
+    }
+
+    /// RFC 9470 section 3.
+    pub fn insufficient_user_authentication(max_age: i64) -> Refusal {
+        Refusal::new(
+            Code::InsufficientUserAuthentication,
+            "Sign in again to perform this operation.",
+        )
+        .with_detail("max_age", max_age)
+    }
+
+    /// `403` for an act only a person makes: a key has no sign-in to renew.
+    pub fn app_sign_in_required() -> Refusal {
+        Refusal::new(
+            Code::AppSignInRequired,
+            "Only a person signed in to an app, or the private local command, can do this.",
+        )
     }
 
     pub fn with_detail(mut self, name: &str, value: impl Into<Value>) -> Refusal {

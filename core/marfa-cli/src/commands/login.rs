@@ -42,6 +42,11 @@ pub struct LoginArgs {
     /// binary again.
     #[arg(long, value_name = "NAME", conflicts_with = "client_id")]
     pub name: Option<String>,
+    /// Ask the owner to sign in again in the browser before approving, so
+    /// the sign-in counts as recent for five minutes: restoring over the
+    /// data and changing the sign-in address ask for one.
+    #[arg(long)]
+    pub fresh_sign_in: bool,
 }
 
 pub fn run(
@@ -101,14 +106,16 @@ pub fn run(
         None => auth::default_scope(&discovery)?,
     };
     let (client_id, code) = match held {
-        Some(client_id) => match auth::device_code(&discovery, &client_id, &scope) {
-            Ok(code) => (client_id, code),
-            Err(CliError::Refused { code, .. }) if code == "invalid_client" => {
-                register_and_ask(&discovery, &origin, &scope, args.name.as_deref())?
+        Some(client_id) => {
+            match auth::device_code(&discovery, &client_id, &scope, args.fresh_sign_in) {
+                Ok(code) => (client_id, code),
+                Err(CliError::Refused { code, .. }) if code == "invalid_client" => {
+                    register_and_ask(&discovery, &origin, &scope, &args)?
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
-        },
-        None => register_and_ask(&discovery, &origin, &scope, args.name.as_deref())?,
+        }
+        None => register_and_ask(&discovery, &origin, &scope, &args)?,
     };
 
     auth::pages_on_issuer(&discovery, &code)?;
@@ -216,16 +223,16 @@ fn register_and_ask(
     discovery: &Discovery,
     origin: &str,
     scope: &str,
-    name: Option<&str>,
+    args: &LoginArgs,
 ) -> Result<(String, DeviceCode), CliError> {
-    let client_id = auth::register(discovery, name)?;
+    let client_id = auth::register(discovery, args.name.as_deref())?;
     if !credentials::is_off() {
         match credentials::keep_client_id(origin, &client_id) {
             Ok(()) | Err(CliError::NoKeychain(_)) => {}
             Err(error) => return Err(error),
         }
     }
-    let code = auth::device_code(discovery, &client_id, scope)?;
+    let code = auth::device_code(discovery, &client_id, scope, args.fresh_sign_in)?;
     Ok((client_id, code))
 }
 
@@ -278,7 +285,45 @@ mod tests {
             print_token,
             client_id: Some("client".into()),
             name: None,
+            fresh_sign_in: false,
         }
+    }
+
+    fn device_form(fresh_sign_in: bool) -> String {
+        let door = Door::open_at(|origin| {
+            vec![
+                Answer::json("200 OK", &discovery(origin)),
+                Answer::json("200 OK", &device_code(origin)),
+                Answer::json(
+                    "200 OK",
+                    r#"{"access_token":"marfa_at_1","refresh_token":"marfa_rt_1","expires_in":3600,"token_type":"Bearer","scope":"*:read"}"#,
+                ),
+            ]
+        });
+        let origin = crate::remote::Remote::public_at(&door.url)
+            .unwrap()
+            .origin()
+            .to_string();
+        let _keychain = credentials::hold(&origin);
+        let named = Named {
+            url: Some(door.url.clone()),
+            key: None,
+            profile: None,
+        };
+        let asked = LoginArgs {
+            fresh_sign_in,
+            ..args(true)
+        };
+        run(asked, &named, &Printer { json: true }, &|_| {}).unwrap();
+        let sent = door.received();
+        assert_eq!(sent[1].path(), "/oauth/device-authorization");
+        sent[1].body.clone()
+    }
+
+    #[test]
+    fn a_fresh_sign_in_asks_for_max_age_0_and_a_plain_one_asks_for_none() {
+        assert!(device_form(true).contains("max_age=0"));
+        assert!(!device_form(false).contains("max_age"));
     }
 
     #[test]

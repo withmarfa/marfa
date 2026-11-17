@@ -154,7 +154,7 @@ If `MARFA_CLAIM_ADDRESS` is not an origin that starts with `https://` or names `
 
 While an instance has an owner, the server MUST leave its stored sign-in address unchanged by `MARFA_CLAIM_ADDRESS`.
 
-**Reason:** The owner moves the sign-in address through the private socket, and a setting left in a host's environment must not undo that move or a restored backup's address.
+**Reason:** The owner moves the sign-in address through `/config`, and a setting left in a host's environment must not undo that move or a restored backup's address.
 
 **Tests:** `compliance/remote-claim.test.ts › leaves an owned instance's sign-in address as the owner set it, and logs at each start that MARFA_CLAIM_ADDRESS is ignored`.
 

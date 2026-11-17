@@ -39,6 +39,7 @@ pub mod query;
 pub mod refusal;
 mod reindex;
 pub mod restore_running;
+pub mod sign_in_check;
 pub mod sources;
 pub mod stored;
 pub mod tables;

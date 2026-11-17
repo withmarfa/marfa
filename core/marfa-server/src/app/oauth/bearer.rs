@@ -21,6 +21,8 @@ pub struct Granted {
     pub owner_id: String,
     /// The `system.connection` item the grant is shown as.
     pub grant_id: String,
+    /// When the owner signed in for the token; none for work a grant started.
+    pub authenticated_at: Option<Stamp>,
 }
 
 /// A token's own scopes are what it reaches, which may be fewer than its grant holds.
@@ -52,6 +54,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
         client_id: token.client_id,
         owner_id: token.owner_id,
         grant_id: consent.grant_id.clone(),
+        authenticated_at: Some(token.authenticated_at),
     };
     Ok(Some((
         Caller::App {
@@ -87,6 +90,7 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
         client_id: consent.client_id,
         owner_id: consent.owner_id,
         grant_id: consent.grant_id,
+        authenticated_at: None,
     };
     Ok(Some(Caller::App {
         key: Box::new(key),

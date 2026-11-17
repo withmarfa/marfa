@@ -310,13 +310,13 @@ If a connection to a server is refused and `--json` is set, then the CLI MUST NO
 
 **Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
 
-### `cli/command-local-only-refusal`
+### `cli/command-person-refusal`
 
-If the server refuses a command with `details.needs` set to `local`, then the CLI MUST tell a person that the private local command can do it.
+If the server refuses a command `403 app_sign_in_required`, then the CLI MUST tell a person that a person can do it from an app they signed in to, or on the private local command.
 
-**Reason:** the server says which refusals only the private local command can mend, so the CLI decides by that detail and not by the words of the message.
+**Reason:** the server names the refusals no key can mend, so the CLI decides by the code and not by the words of the message.
 
-**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key a person is the way`.
 
 ### `cli/command-local-only-refusal-details`
 
@@ -324,7 +324,7 @@ If the server refuses a command with `details`, then the CLI MUST carry `details
 
 **Reason:** a script decides what to do from the server's own detail, not from the CLI's advice.
 
-**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key a person is the way`.
 
 ### `cli/command-address-change-flag`
 
@@ -332,7 +332,15 @@ If a person runs `config update` or `config replace` with `--confirm-address-cha
 
 **Reason:** the server holds a sign-in address change until it is confirmed, and a person confirms it by naming the flag after reading what the change does.
 
-**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key a person is the way`.
+
+### `cli/command-address-check-flag`
+
+If a person runs `config update` or `config replace` with `--skip-sign-in-address-check`, then the CLI MUST send `skip_sign_in_address_check` set to `true` with the body.
+
+**Reason:** a host that answers only once the sign-in address has moved fails the server's check (`instance/sign-in-address-check-refused`), and the private local command may skip it (`instance/sign-in-address-check-skip`).
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key a person is the way`.
 
 ### `cli/command-upload-refusal-reported`
 
@@ -775,6 +783,14 @@ If the server answers the poll of the device code that `login` waits on with `in
 **Reason:** the server removes an unentered device code when 1000 newer ones are held (`keys-and-oauth/device-code-unentered-bound`), and answers one that ran out `expired_token`. A new `login` can succeed where the same code cannot, so the refusal is not one a retry fails to change (exit 1).
 
 **Tests:** `cli/login.test.ts › ends a login whose device code the server removed with exit 3, saying to run marfa login again`, `› ends a login whose device code ran out with exit 3, saying to run marfa login again`.
+
+### `cli/login-fresh-sign-in`
+
+When a person runs `login` with `--fresh-sign-in`, the CLI MUST send `max_age=0` with its device authorization request.
+
+**Reason:** the approval page then asks the owner to sign in again (`keys-and-oauth/device-max-age-sign-in`), so the token meets an act that asks for a recent sign-in (`keys-and-oauth/step-up-recent`).
+
+**Tests:** `cli/login.test.ts › asks the owner to sign in again under --fresh-sign-in before the code is approved`.
 
 ### `cli/command-cleartext-loopback`
 

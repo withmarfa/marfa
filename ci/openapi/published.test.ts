@@ -499,8 +499,8 @@ describe("the committed OpenAPI document", () => {
 
   it("declares a credential on every operation but the public ones", () => {
     // A door with no `security` is reachable without a credential, so each is
-    // named here with why. A door only the private socket answers is marked
-    // instead, since no security scheme describes the socket.
+    // named here with why. A door the private socket also answers is marked,
+    // since no security scheme describes the socket.
     const PUBLIC = new Set([
       "GET /",
       "GET /health",
@@ -523,7 +523,9 @@ describe("the committed OpenAPI document", () => {
 
     // The witnesses: the check reads declarations and marks that exist.
     expect(published.get("GET /items")?.security).toEqual([{ bearerAuth: [] }]);
-    expect(published.get("POST /restore")?.security).toBeUndefined();
+    expect(published.get("POST /restore")?.security).toEqual([
+      { bearerAuth: [] },
+    ]);
     expect(published.get("POST /restore")?.["x-marfa-local-command"]).toBe(
       true,
     );

@@ -118,14 +118,36 @@ it("clears the owner's avatar", async () => {
   }
 });
 
-it("holds a sign-in address change until its flag confirms it, and tells a key the private command is the way", async () => {
+it("holds a sign-in address change until its flag confirms it, and tells a key a person is the way", async () => {
   const address = "https://moved.example";
   const body = JSON.stringify({ sign_in_address: address });
   const keyedTry = await keyed.run(["config", "update", "--body", body]);
   expect(keyedTry.code).toBe(1);
+  expect(keyedTry.stderr).toContain("a person does it from an app");
   expect(keyedTry.stderr).toContain("private local command");
   const keyedJson = await keyed.refused(["config", "update", "--body", body]);
-  expect(keyedJson.envelope.error.server?.details).toEqual({ needs: "local" });
+  expect(keyedJson.envelope.error.server?.code).toBe("app_sign_in_required");
+  // A refusal's details reach the envelope as the server sent them.
+  const malformed = JSON.stringify({
+    sign_in_address: "https://a.example/path",
+  });
+  const sent = await fetch(`${server.apiUrl}/config`, {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${server.managementKey}`,
+      "content-type": "application/json",
+    },
+    body: malformed,
+  });
+  const direct = (await sent.json()) as { error: { details?: unknown } };
+  expect(direct.error.details).toBeDefined();
+  const detailed = await keyed.refused([
+    "config",
+    "update",
+    "--body",
+    malformed,
+  ]);
+  expect(detailed.envelope.error.server?.details).toEqual(direct.error.details);
 
   const held = await local.run(["config", "update", "--body", body]);
   expect(held.code).toBe(1);
@@ -137,12 +159,29 @@ it("holds a sign-in address change until its flag confirms it, and tells a key t
   ]);
   expect(stored.sign_in_address).toBeUndefined();
 
+  // The address answers nothing, so the server's check refuses the move.
+  const unchecked = await local.run([
+    "config",
+    "update",
+    "--body",
+    body,
+    "--confirm-address-change",
+  ]);
+  expect(unchecked.code).toBe(1);
+  expect(unchecked.stderr).toContain("sign_in_address_check_failed");
+  expect(unchecked.stderr).toContain("--skip-sign-in-address-check");
+  expect(
+    (await local.json<{ sign_in_address?: string }>(["config", "get"]))
+      .sign_in_address,
+  ).toBeUndefined();
+
   const moved = await local.json<{ sign_in_address?: string }>([
     "config",
     "update",
     "--body",
     body,
     "--confirm-address-change",
+    "--skip-sign-in-address-check",
   ]);
   expect(moved.sign_in_address).toBe(address);
 });

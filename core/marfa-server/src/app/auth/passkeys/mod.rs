@@ -530,6 +530,14 @@ pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
     .await
 }
 
+/// The owner's passkey page, which a browser signs in to first.
+pub const PAGE: &str = "/auth/owner/passkeys";
+
+/// Where the owner signs in at `origin` and then adds a passkey. It carries no credential.
+pub fn add_url(origin: &str) -> String {
+    format!("{origin}/auth/sign-in?prompt=login&return_to={PAGE}")
+}
+
 pub fn stranded_by(tx: &Transaction<'_>, host: &str) -> Result<i64> {
     store::count_beyond(tx, host)
 }

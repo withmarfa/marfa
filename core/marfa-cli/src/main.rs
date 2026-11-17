@@ -280,7 +280,8 @@ enum Command {
     /// refuses when that is a terminal: save it with `--output <PATH>`, such as
     /// `marfa-export.tar`, or redirect it.
     Export(export::ExportArgs),
-    /// Restore an archive with local authority.
+    /// Restore an archive. Needs `backups.manage` and a sign-in from the last
+    /// five minutes, or the private local command (`--socket`).
     ///
     /// Preserves item and edge IDs, created_at and updated_at dates, current
     /// versions, tags, extensions, and the item's earlier versions carried in

@@ -1141,6 +1141,12 @@ The server MUST serve its authorization server metadata at `/.well-known/oauth-a
 
 **Tests:** `compliance/oauth.test.ts › serves the authorization server metadata at the root, naming the instance's origin as its issuer`.
 
+### `keys-and-oauth/as-metadata-prompts`
+
+The server MUST name `none`, `login` and `consent` in `prompt_values_supported` in its authorization server metadata.
+
+**Tests:** `compliance/step-up.test.ts › advertises prompt=login in the authorization server metadata`.
+
 ### `keys-and-oauth/discovery-one-path`
 
 If a request asks for the authorization server metadata at a path other than `/.well-known/oauth-authorization-server`, such as `/auth/.well-known/oauth-authorization-server` or `/.well-known/oauth-authorization-server/auth`, then the server MUST answer it as it answers a path it does not serve.
@@ -1652,6 +1658,38 @@ When the server sends the browser to a redirect URI with an authorization error,
 When a person accepts an authorization request that names a private-use redirect URI the client registered, the server MUST send the browser to that URI, with the scheme and path as registered, carrying the code and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends the code to the private-use redirect URI the app registered, which the app exchanges there`.
+
+### `keys-and-oauth/authorize-max-age`
+
+When an authorization request names `max_age`, and nobody is signed in or the person's browser session began more than `max_age` seconds before the request, the server MUST send the browser to sign in before it issues a code.
+
+**Reason:** OpenID Connect Core section 3.1.2.1 and RFC 9470 section 4: an app asks for a fresh sign-in this way to meet `keys-and-oauth/step-up-challenge`. `max_age=0` asks for a new sign-in whatever the session's age.
+
+**Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again, and the code it then issues carries the new sign-in`, `› sends a browser that signed in this moment to sign in again under max_age=0`.
+
+### `keys-and-oauth/authorize-max-age-met`
+
+When an authorization request names `max_age` and the person's browser session began at most `max_age` seconds before the request, the server MUST answer the request as it would one that names no `max_age`.
+
+**Tests:** `compliance/step-up.test.ts › issues a code at once to a browser that signed in within max_age`.
+
+### `keys-and-oauth/authorize-max-age-signed-in`
+
+When a person signs in again for an authorization request that named `max_age`, and the app's standing consent covers the request, the server MUST send the browser to the redirect URI with a code, without the consent screen.
+
+**Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again, and the code it then issues carries the new sign-in`.
+
+### `keys-and-oauth/authorize-max-age-none`
+
+Where the redirect URI is on the loopback or in a private-use scheme, if an authorization request names `prompt=none` and a `max_age` that the person's browser session began more than that many seconds before, then the server MUST send the browser to the redirect URI with `error=login_required` and no code.
+
+**Tests:** `compliance/step-up.test.ts › answers login_required under prompt=none to a browser that signed in longer ago than max_age`.
+
+### `keys-and-oauth/authorize-max-age-invalid`
+
+Where the redirect URI is on the loopback or in a private-use scheme, if an authorization request names a `max_age` that is not a whole number of seconds written in digits alone, then the server MUST send the browser to the redirect URI with `error=invalid_request`, the request's `state` and no code.
+
+**Tests:** `compliance/step-up.test.ts › refuses a max_age that is not a whole number of seconds with invalid_request at the redirect URI`.
 
 ### `keys-and-oauth/prompt-none-login`
 
@@ -2663,19 +2701,19 @@ If a browser session that signed in more than five minutes ago approves a device
 
 ### `keys-and-oauth/device-recent-held`
 
-When a browser session that signed in more than five minutes ago approves a device code with only scopes the app's standing consent covers, the server MUST approve the code.
+When a browser session that signed in more than five minutes ago approves a device code requested without `max_age` with only scopes the app's standing consent covers, the server MUST approve the code.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before`, `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`.
 
 ### `keys-and-oauth/device-page-confirm`
 
-When a signed-in owner opens `/auth/device/consent` for a code whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the approval screen holding the "Confirm it's you" dialog, whatever the age of the session.
+When a signed-in owner opens `/auth/device/consent` for a code requested without `max_age` whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the approval screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them`.
 
 ### `keys-and-oauth/device-page-reads`
 
-When a browser session that signed in more than five minutes ago opens `/auth/device/consent` for a code whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
+When a browser session that signed in more than five minutes ago opens `/auth/device/consent` for a code requested without `max_age` whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago a request that only reads, with no question`.
 
@@ -2684,6 +2722,26 @@ When a browser session that signed in more than five minutes ago opens `/auth/de
 If a signed-in person opens the device approval page for a pending code whose client is no longer registered, then the server MUST answer `400 invalid_client`.
 
 **Tests:** `compliance/oauth-refusals.test.ts › answers 400 invalid_client for a pending code whose client is no longer registered`.
+
+### `keys-and-oauth/device-max-age-invalid`
+
+If `POST /oauth/device-authorization` names a `max_age` that is not a whole number of seconds written in digits alone, then the server MUST answer `400 invalid_request`.
+
+**Tests:** `compliance/step-up.test.ts › refuses a max_age that is not a whole number of seconds with 400 invalid_request`.
+
+### `keys-and-oauth/device-max-age-sign-in`
+
+Where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested opens `/auth/device/consent` for the code or posts a decision on it, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and a `return_to` of the code's approval page.
+
+**Reason:** OpenID Connect Core section 3.1.2.1 and RFC 9470 section 4, with the device authorization request as the authorization request: a device asks for a fresh sign-in this way to meet `keys-and-oauth/step-up-challenge`. `max_age=0` asks for a sign-in made after the code was requested.
+
+**Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`, `› sends a browser that signed in before the code was asked for to sign in again under max_age=0, and approves from a sign-in made after it`.
+
+### `keys-and-oauth/device-max-age-pending`
+
+Where a device code was requested with `max_age`, if a browser session that began more than `max_age` seconds before the code was requested posts a decision on it, then the server MUST leave the code pending.
+
+**Tests:** `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`.
 
 ## The sign-in surface
 
@@ -3588,6 +3646,72 @@ If the audit record of a browser session's end cannot be committed, then the ser
 If the audit record of a browser session's end cannot be committed, then the server MUST answer `500`.
 
 **Tests:** `compliance/credential-faults.test.ts › whose end cannot be audited answers 500 and leaves the session signed in, and a retry signs out`.
+
+## Acts that need a recent sign-in
+
+Four acts replace the instance's data or move where people sign in, so they ask that a person signed in within the last five minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address` or changes `allow_private_addresses`, which take `config.manage`. An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
+
+### `keys-and-oauth/step-up-recent`
+
+When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 300 seconds before the request, sends that act, the server MUST make the act as it would for the private local command.
+
+**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+
+### `keys-and-oauth/step-up-challenge`
+
+If an app's access token that holds the permission an act in this section takes, and whose browser session began more than 300 seconds before the request or after it, sends that act, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `300`.
+
+**Reason:** RFC 9470 section 3: the app sends the person through the authorization endpoint with `max_age`, or asks for a device code with `max_age` (`keys-and-oauth/device-max-age-sign-in`), and asks again with the new token. A session dated after the request is one the server's clock cannot place, so it is not taken as recent.
+
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`.
+
+### `keys-and-oauth/step-up-challenge-header`
+
+When the server answers `401 insufficient_user_authentication`, the server MUST carry `WWW-Authenticate: Bearer error="insufficient_user_authentication", max_age="300"`.
+
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`.
+
+### `keys-and-oauth/step-up-writes-nothing`
+
+When the server answers an act in this section `401 insufficient_user_authentication`, the server MUST NOT store any part of the act.
+
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `› writes no item at a challenged archive restore or a challenged backup restore, though the same restores by a token whose owner signed in just now write it`.
+
+### `keys-and-oauth/step-up-permission-first`
+
+If an app's access token or an API key that lacks the permission an act in this section takes sends that act, then the server MUST answer `403 forbidden` with that permission in `details.required_scope` and no `WWW-Authenticate` header, however long ago its browser session began.
+
+**Reason:** a new sign-in would not give the token the permission, so a challenge would send the person to sign in for nothing.
+
+**Tests:** `compliance/step-up.test.ts › refuses an app's token without the permission an act takes, naming it, before any challenge`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`.
+
+### `keys-and-oauth/step-up-refresh-keeps`
+
+When the server issues an access token in exchange for a refresh token, the server MUST date the new token by the browser session that dated the refresh token, not by the refresh.
+
+**Reason:** a refresh proves the app still holds its grant, not that a person is present.
+
+**Tests:** `compliance/step-up.test.ts › keeps its owner's sign-in time through a refresh, so the refreshed token is challenged five minutes after the sign-in`.
+
+### `keys-and-oauth/step-up-own-session`
+
+The server MUST date each access token by the browser session of its own authorization, whatever another token of the same app was dated by.
+
+**Tests:** `compliance/step-up.test.ts › is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`.
+
+### `keys-and-oauth/step-up-key-refused`
+
+If an API key that holds the permission an act in this section takes sends that act, then the server MUST answer `403 app_sign_in_required` with no `WWW-Authenticate` header.
+
+**Reason:** a key is not issued through a sign-in, so it has none to renew, and a challenge would send a client that follows it into a loop. A person makes the act from an app they signed in to, or with the private local command.
+
+**Tests:** `compliance/step-up.test.ts › refuses a key, even one holding every permission the acts take, with 403 app_sign_in_required and never a challenge`, `compliance/instance-addresses.test.ts › is refused to a key, which has no sign-in to renew`, `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which an app whose owner signed in just now changes`, `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/restore-archive.test.ts › refuses a key, which has no sign-in to renew`.
+
+### `keys-and-oauth/step-up-socket`
+
+When the private local command sends an act in this section, the server MUST make it without asking for any sign-in.
+
+**Tests:** `compliance/step-up.test.ts › keeps the four acts on the private socket with no challenge`.
 
 ## Audit records
 

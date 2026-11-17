@@ -102,6 +102,9 @@ pub fn refusal_answer(refusal: &Refusal) -> Response {
     if let Some(seconds) = wait {
         headers.insert(header::RETRY_AFTER, HeaderValue::from(seconds));
     }
+    if let Some(challenge) = step_up_challenge(refusal) {
+        headers.insert(header::WWW_AUTHENTICATE, challenge);
+    }
     response.extensions_mut().insert(Page {
         code: refusal.code,
         message: refusal.message.to_string(),
@@ -114,6 +117,21 @@ pub fn refusal_answer(refusal: &Refusal) -> Response {
         response.extensions_mut().insert(Unhandled(fault));
     }
     response
+}
+
+/// RFC 9470 section 3.
+fn step_up_challenge(refusal: &Refusal) -> Option<HeaderValue> {
+    if refusal.code != Code::InsufficientUserAuthentication {
+        return None;
+    }
+    let max_age = refusal
+        .details
+        .as_ref()
+        .and_then(|details| details.get("max_age").and_then(Value::as_i64))?;
+    HeaderValue::from_str(&format!(
+        "Bearer error=\"insufficient_user_authentication\", max_age=\"{max_age}\""
+    ))
+    .ok()
 }
 
 impl IntoResponse for Stopped {
