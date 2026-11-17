@@ -18,9 +18,9 @@ ignore = [
     { id = "RUSTSEC-2026-0459", reason = "fixed in rusqlite 0.41, whose upgrade is a change of its own" },
     { id = "RUSTSEC-2023-0071", reason = "webauthn-rs links a release candidate of rsa that no stable release replaces yet, and uses it to check public-key signatures only" },
     { id = "RUSTSEC-2026-0374", reason = "basic-toml is read only when askama's macros run at build time" },
-    { id = "RUSTSEC-2026-0370", reason = "zvariant has no replacement release; keyring on Linux reaches it through secret-service" },
-    { id = "RUSTSEC-2026-0371", reason = "zbus_names has no replacement release; keyring on Linux reaches it through secret-service" },
-    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive has no replacement release; keyring on Linux reaches it through secret-service" },
+    { id = "RUSTSEC-2026-0370", reason = "zbus 6 replaces zvariant; keyring on Linux reaches it through secret-service, which uses zbus 5" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus 6 replaces zbus_names; keyring on Linux reaches it through secret-service, which uses zbus 5" },
+    { id = "RUSTSEC-2026-0372", reason = "zbus 6 replaces zvariant_derive; keyring on Linux reaches it through secret-service, which uses zbus 5" },
 ]
 
 [licenses]
