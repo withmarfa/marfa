@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
-use super::{
-    Classified, Readiness, Settled, limited_by_server, readiness, recorded, same_attempt,
-    store_fault, unavailable, verdict_of,
-};
+use super::address::{Readiness, readiness};
+use super::classify::{Classified, limited_by_server};
+use super::send::{store_fault, unavailable};
+use super::settle::{Settled, recorded, same_attempt, verdict_of};
 use crate::error::CoreError;
 use crate::http::{Answer, REQUEST_LIMIT};
 use crate::model::{QueuedWrite, RowConflict, Verdict, WriteKind};

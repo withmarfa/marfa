@@ -18,13 +18,14 @@ use std::sync::atomic::AtomicBool;
 
 use serde::Deserialize;
 
-use super::{
-    Bin, Classified, DrainReport, ReachChange, ReadBack, Readiness, Settled, Shape, Unreadable,
-    apply_read_back, classify, committed, ends_the_drain, failure_of, limited_by_server,
-    not_the_writes, park_for_credential, put_verdict, rate_limited, read_owed, readiness,
-    receipt_key, same_attempt, settle_success, store_fault, unavailable, unavailable_by,
-    verdict_of, waited,
+use super::address::{Readiness, Shape, ends_the_drain, readiness};
+use super::classify::{
+    Classified, classify, failure_of, limited_by_server, not_the_writes, put_verdict, rate_limited,
 };
+use super::read_back::{Bin, ReachChange, ReadBack, Unreadable, apply_read_back, read_owed};
+use super::report::DrainReport;
+use super::send::{park_for_credential, store_fault, unavailable, unavailable_by, waited};
+use super::settle::{Settled, committed, receipt_key, same_attempt, settle_success, verdict_of};
 use crate::error::CoreError;
 use crate::http::{Answer, BULK_GET_LIMIT, Http, INSTANCE_CHANGED, REQUEST_LIMIT};
 use crate::model::{ItemState, QueuedWrite, Subject, Verdict, WriteKind};
