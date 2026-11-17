@@ -86,6 +86,7 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         "Manage the owner's passkeys",
         &[
             "owner passkeys list",
+            "owner passkeys add",
             "owner passkeys rename",
             "owner passkeys delete",
         ],
@@ -104,7 +105,10 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         "See connectors, their runs and their problems",
         &["connectors list", "connectors get", "connectors runs"],
     ),
-    ("Remove a connector", &["connectors delete"]),
+    (
+        "Remove a connector, or only its state",
+        &["connectors delete", "connectors state delete"],
+    ),
     (
         "Manage a connector's inbound endpoints and deliveries",
         &[
@@ -140,8 +144,25 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ),
     ("Read the audit log", &["audit"]),
     (
-        "List and run the housekeeping jobs",
-        &["housekeeping list", "housekeeping run"],
+        "List and run the housekeeping jobs, and confirm the server's clock",
+        &[
+            "housekeeping list",
+            "housekeeping run",
+            "housekeeping confirm-clock",
+        ],
+    ),
+    (
+        "See whether a newer release exists, and update the server",
+        &["update status", "update start"],
+    ),
+    (
+        "List, take and restore backups, and start afresh on a replaced backup disk",
+        &[
+            "backups list",
+            "backups run",
+            "backups restore",
+            "backups folder adopt",
+        ],
     ),
     (
         "Manage blob stores and copies",
@@ -160,6 +181,8 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
             "items purge",
             "items bin list",
             "items bin empty",
+            "items bulk-action purge",
+            "device items purge",
         ],
     ),
     ("Export and restore the instance", &["export", "restore"]),
@@ -667,6 +690,80 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The permissions that open an owner's task, from `GLOSSARY.md`.
+    const OWNER_PERMISSIONS: &[&str] = &[
+        "keys.mint",
+        "keys.manage",
+        "grants.manage",
+        "config.manage",
+        "instance.read",
+        "instance.maintain",
+        "blobs.manage",
+        "webhooks.manage",
+        "connectors.manage",
+        "audit.read",
+        "items.purge",
+        "backups.manage",
+        "sign_ins.manage",
+    ];
+
+    /// Every command with no subcommand, with its path and its own help
+    /// together with its parents', which a subcommand's permission comes from.
+    fn leaves(command: &Command, path: &str, parents: &str, found: &mut Vec<(String, String)>) {
+        let own = text(command.get_long_about().or_else(|| command.get_about()));
+        let help = format!("{parents}\n{own}").to_lowercase();
+        let mut any = false;
+        for sub in visible(command) {
+            any = true;
+            leaves(sub, &format!("{path} {}", sub.get_name()), &help, found);
+        }
+        if !any {
+            found.push((path.to_string(), help));
+        }
+    }
+
+    #[test]
+    fn every_command_that_needs_the_socket_or_an_owner_permission_has_an_owner_task_row() {
+        let mut root = Cli::command();
+        root.build();
+        let mut all = Vec::new();
+        for area in visible(&root) {
+            leaves(area, area.get_name(), "", &mut all);
+        }
+        let listed: Vec<&str> = OWNER_TASKS
+            .iter()
+            .flat_map(|(_, commands)| commands.iter().copied())
+            .collect();
+        // A sentence that says the command "needs" or "requires" the permission; a
+        // permission named only as one way among others, such as a connector's
+        // own key, is not a need.
+        let owner_text = |help: &str| {
+            help.contains("private socket required")
+                || help.contains("private socket only")
+                || help
+                    .split("needs ")
+                    .skip(1)
+                    .chain(help.split("requires ").skip(1))
+                    .any(|rest| {
+                        let sentence = rest.split(". ").next().unwrap_or(rest);
+                        OWNER_PERMISSIONS
+                            .iter()
+                            .any(|permission| sentence.contains(&format!("`{permission}`")))
+                    })
+        };
+        // The witness: the test sees owner commands at all.
+        assert!(all.iter().any(|(_, help)| owner_text(help)));
+        let missing: Vec<&str> = all
+            .iter()
+            .filter(|(path, help)| owner_text(help) && !listed.contains(&path.as_str()))
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these commands need the socket or an owner permission and have no row in OWNER_TASKS: {missing:?}"
+        );
     }
 
     #[test]

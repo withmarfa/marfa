@@ -580,6 +580,36 @@ If the server answers `401` to a request that a command other than `owner passwo
 
 **Tests:** `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
 
+### `cli/command-refusal-same-exit`
+
+If the server answers a command's request with a `4xx` other than `401`, `408`, `425` or `429`, then the CLI MUST exit 1 with the code that status names, whether the command sends the request itself or through the device core.
+
+**Reason:** exit 3 tells a script to retry, and a refusal such as a stale version is one no retry changes.
+
+**Tests:** `cli/refusals.test.ts › ends a stale-version refusal the same way from a command that goes through the device core as from a direct one`.
+
+### `cli/keys-create-socket-names-access`
+
+If `keys create` is given `--socket PATH` and no permission, no map entry, no claim, `--no-permissions` and `--all-access`, then the CLI MUST exit 2 with `usage`, naming each of those flags, and send no request.
+
+**Reason:** a mint that names nothing takes the caller's set, and the private socket's authority has no limit, so it would hold every permission and map without anyone having said so.
+
+**Tests:** `cli/owner-commands.test.ts › refuses a mint through the private socket that names no access, and mints every permission and map for --all-access`.
+
+### `cli/keys-create-all-access`
+
+When `keys create` is given `--all-access`, the CLI MUST send every one of the fourteen permissions and `*` at `write` in each of the five maps.
+
+**Reason:** a claim says which source the key writes as, not what it may reach, so a `--claim` given with `--all-access` is sent as usual.
+
+**Tests:** `cli/owner-commands.test.ts › refuses a mint through the private socket that names no access, and mints every permission and map for --all-access`.
+
+### `cli/keys-create-all-access-alone`
+
+If `keys create` is given `--all-access` with a permission, a map entry, or `--no-permissions`, then the CLI MUST exit 2 with `usage` and send no request.
+
+**Tests:** `cli/owner-commands.test.ts › refuses a mint through the private socket that names no access, and mints every permission and map for --all-access`.
+
 ### `cli/redeliver-request`
 
 When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` using its selected credential or private socket and no body, each identifier encoded as a path segment of its own.
