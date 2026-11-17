@@ -11422,7 +11422,7 @@
                   "boolean",
                   "null"
                 ],
-                "description": "`true` if the new sign-in address answered `GET /` as this instance, and `null` if Marfa didn't ask it."
+                "description": "`true` if the new sign-in address answered `GET /` as this instance, `false` if it didn't, and `null` if Marfa didn't ask it."
               },
               "reason": {
                 "type": "string",

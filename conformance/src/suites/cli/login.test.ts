@@ -126,11 +126,9 @@ describe("the owner", () => {
     login.stderr!.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    const started = Date.now();
-    while (!stdout.includes("\n") && Date.now() - started < 15_000) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    while (!stdout.includes("\n")) {
+      await new Promise((resolve) => login.stdout!.once("data", resolve));
     }
-    expect(stdout.includes("\n"), `no code line: ${stderr}`).toBe(true);
     const first = JSON.parse(stdout.split("\n")[0]!) as {
       user_code: string;
       verification_uri: string;
@@ -281,11 +279,9 @@ describe("a fresh sign-in", () => {
       stderr += chunk.toString();
     });
     const ended = once(login, "close");
-    const started = Date.now();
-    while (!stdout.includes("\n") && Date.now() - started < 15_000) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    while (!stdout.includes("\n")) {
+      await new Promise((resolve) => login.stdout!.once("data", resolve));
     }
-    expect(stdout.includes("\n"), `no code line: ${stderr}`).toBe(true);
     const first = JSON.parse(stdout.split("\n")[0]!) as {
       user_code: string;
       verification_uri_complete: string;
@@ -370,11 +366,9 @@ describe("a sign-in whose device code is no longer valid", () => {
     login.stderr!.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    const started = Date.now();
-    while (!stdout.includes("\n") && Date.now() - started < 15_000) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    while (!stdout.includes("\n")) {
+      await new Promise((resolve) => login.stdout!.once("data", resolve));
     }
-    expect(stdout.includes("\n"), `no code line: ${stderr}`).toBe(true);
     return {
       ended: once(login, "close"),
       stderr: () => stderr,
