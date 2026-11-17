@@ -16,8 +16,10 @@ pub enum KeysCommand {
     ///
     /// The key holds exactly what the flags name. A permission, a map entry
     /// or a claim each names a part of what it holds, and a part left
-    /// unnamed is held as nothing. With none named, the key takes the
-    /// caller's whole set.
+    /// unnamed is held as nothing. `--all-access` names every permission and
+    /// every map at its widest. With none named, a key sent to a server takes
+    /// the caller's whole set, and through `--socket` the command is refused,
+    /// since the socket's authority has no limit to take.
     Create(KeyCreateArgs),
     /// List key metadata. Needs `keys.manage`, `keys.mint` (the keys within
     /// the caller's reach) or local authority.
@@ -215,8 +217,30 @@ pub struct KeyCreateArgs {
     pub expiry: ExpiryArgs,
 
     /// A key that holds nothing at all, asked for out loud.
-    #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions"])]
+    #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions", "all_access"])]
     pub no_permissions: bool,
+    /// A key that holds every permission and, in each of the five maps,
+    /// `*=write`, asked for out loud.
+    #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions", "no_permissions"])]
+    pub all_access: bool,
+}
+
+impl KeyCreateArgs {
+    /// Whether a flag names a part of what the key holds, which is what lets a
+    /// mint stand without taking the caller's set.
+    fn names_access(&self) -> bool {
+        let maps = &self.maps;
+        self.no_permissions
+            || self.all_access
+            || !maps.permissions.is_empty()
+            || !maps.type_permissions.is_empty()
+            || !maps.extension_permissions.is_empty()
+            || !maps.edge_permissions.is_empty()
+            || !maps.metadata_permissions.is_empty()
+            || !maps.profile_permissions.is_empty()
+            || !self.claims.claims.is_empty()
+            || self.claims.no_claims
+    }
 }
 
 #[derive(Debug, Default, Args)]
@@ -271,6 +295,28 @@ fn hold_nothing(body: &mut Map<String, Value>) {
         "profile_permissions",
     ] {
         body.insert(map.into(), json!({}));
+    }
+}
+
+/// Names every permission and `*` at `write` in each map.
+fn hold_everything(body: &mut Map<String, Value>) {
+    body.insert(
+        "permissions".into(),
+        json!(
+            Permission::value_variants()
+                .iter()
+                .map(|permission| permission.as_str())
+                .collect::<Vec<_>>()
+        ),
+    );
+    for map in [
+        "type_permissions",
+        "extension_permissions",
+        "edge_permissions",
+        "metadata_permissions",
+        "profile_permissions",
+    ] {
+        body.insert(map.into(), json!({ "*": "write" }));
     }
 }
 
@@ -386,7 +432,19 @@ fn format_instant(now: u64, after: u64) -> Result<String, CliError> {
     Ok(instant.format("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
-pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
+/// `local` is a command sent through the private socket, whose authority has
+/// no caller's set for a mint to take.
+pub fn create_request(args: &KeyCreateArgs, local: bool) -> Result<Request, CliError> {
+    if local && !args.names_access() {
+        return Err(CliError::Usage(
+            "keys create through --socket names no access, and local authority has no limit to take: \
+             name what the key holds with --permission, --type-permission, --extension-permission, \
+             --edge-permission, --metadata-permission, --profile-permission or --claim, \
+             --no-permissions for a key that holds nothing, or --all-access for every permission \
+             and every map at its widest"
+                .into(),
+        ));
+    }
     let mut body = Map::new();
     body.insert("label".into(), Value::String(args.label.clone()));
     body.insert("source".into(), Value::String(args.source.clone()));
@@ -394,6 +452,9 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     args.claims.apply(&mut body);
     if args.no_permissions {
         hold_nothing(&mut body);
+    }
+    if args.all_access {
+        hold_everything(&mut body);
     }
     insert_opt(
         &mut body,
@@ -454,7 +515,7 @@ pub fn run(
     resume: &dyn Fn(&str),
 ) -> Result<(), CliError> {
     let request = match &command {
-        KeysCommand::Create(args) => create_request(args)?,
+        KeysCommand::Create(args) => create_request(args, remote.is_local())?,
         KeysCommand::List => list_request(),
         KeysCommand::Current => current_request(),
         KeysCommand::Update(args) => update_request(args)?,

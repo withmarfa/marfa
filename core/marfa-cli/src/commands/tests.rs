@@ -901,28 +901,34 @@ fn a_type_move_that_left_the_old_type_in_use_says_why() {
 
 #[test]
 fn a_key_is_minted_with_exactly_the_reach_named() {
-    let inherited = keys::create_request(&keys::KeyCreateArgs {
-        label: "laptop".into(),
-        source: "laptop-1".into(),
-        ..Default::default()
-    })
+    let inherited = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "laptop".into(),
+            source: "laptop-1".into(),
+            ..Default::default()
+        },
+        false,
+    )
     .unwrap();
     assert_eq!(
         body(&inherited),
         &json!({ "label": "laptop", "source": "laptop-1" })
     );
-    let narrowed = keys::create_request(&keys::KeyCreateArgs {
-        label: "app".into(),
-        source: "app-1".into(),
-        maps: keys::PermissionMapArgs {
-            permissions: vec![keys::Permission::KeysMint],
-            type_permissions: vec!["core.note=write".into()],
-            profile_permissions: vec!["*=read".into()],
+    let narrowed = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "app".into(),
+            source: "app-1".into(),
+            maps: keys::PermissionMapArgs {
+                permissions: vec![keys::Permission::KeysMint],
+                type_permissions: vec!["core.note=write".into()],
+                profile_permissions: vec!["*=read".into()],
+                ..Default::default()
+            },
+            default_tier: Some(Tier::Feed),
             ..Default::default()
         },
-        default_tier: Some(Tier::Feed),
-        ..Default::default()
-    })
+        false,
+    )
     .unwrap();
     assert_eq!(
         body(&narrowed),
@@ -935,12 +941,15 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
             "default_tier": "feed",
         })
     );
-    let inert = keys::create_request(&keys::KeyCreateArgs {
-        label: "inert".into(),
-        source: "audit-1".into(),
-        no_permissions: true,
-        ..Default::default()
-    })
+    let inert = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "inert".into(),
+            source: "audit-1".into(),
+            no_permissions: true,
+            ..Default::default()
+        },
+        false,
+    )
     .unwrap();
     assert_eq!(
         body(&inert),
@@ -955,26 +964,32 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
             "profile_permissions": {},
         })
     );
-    let claiming = keys::create_request(&keys::KeyCreateArgs {
-        label: "folder".into(),
-        source: "laptop-2".into(),
-        claims: keys::ClaimArgs {
-            claims: vec!["notes".into(), "photos".into()],
-            no_claims: false,
+    let claiming = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "folder".into(),
+            source: "laptop-2".into(),
+            claims: keys::ClaimArgs {
+                claims: vec!["notes".into(), "photos".into()],
+                no_claims: false,
+            },
+            ..Default::default()
         },
-        ..Default::default()
-    })
+        false,
+    )
     .unwrap();
     assert_eq!(body(&claiming)["sources"], json!(["notes", "photos"]));
-    let claiming_none = keys::create_request(&keys::KeyCreateArgs {
-        label: "plain".into(),
-        source: "laptop-3".into(),
-        claims: keys::ClaimArgs {
-            claims: vec![],
-            no_claims: true,
+    let claiming_none = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "plain".into(),
+            source: "laptop-3".into(),
+            claims: keys::ClaimArgs {
+                claims: vec![],
+                no_claims: true,
+            },
+            ..Default::default()
         },
-        ..Default::default()
-    })
+        false,
+    )
     .unwrap();
     assert_eq!(body(&claiming_none)["sources"], json!([]));
     assert_eq!(body(&inherited).get("sources"), None);
@@ -1145,12 +1160,15 @@ fn a_key_is_given_an_expiry_on_a_mint_and_on_an_update_and_loses_it_on_request()
         expires_in: None,
         expires_at: Some(text.into()),
     };
-    let minted = keys::create_request(&keys::KeyCreateArgs {
-        label: "script".into(),
-        source: "script-1".into(),
-        expiry: at("2030-01-31T12:00:00Z"),
-        ..Default::default()
-    })
+    let minted = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "script".into(),
+            source: "script-1".into(),
+            expiry: at("2030-01-31T12:00:00Z"),
+            ..Default::default()
+        },
+        false,
+    )
     .unwrap();
     assert_eq!(
         body(&minted),
@@ -1160,15 +1178,18 @@ fn a_key_is_given_an_expiry_on_a_mint_and_on_an_update_and_loses_it_on_request()
             "expires_at": "2030-01-31T12:00:00Z",
         })
     );
-    let relative = keys::create_request(&keys::KeyCreateArgs {
-        label: "script".into(),
-        source: "script-1".into(),
-        expiry: keys::ExpiryArgs {
-            expires_in: Some("7d".into()),
-            expires_at: None,
+    let relative = keys::create_request(
+        &keys::KeyCreateArgs {
+            label: "script".into(),
+            source: "script-1".into(),
+            expiry: keys::ExpiryArgs {
+                expires_in: Some("7d".into()),
+                expires_at: None,
+            },
+            ..Default::default()
         },
-        ..Default::default()
-    })
+        false,
+    )
     .unwrap();
     let sent = body(&relative)["expires_at"].as_str().unwrap();
     assert_eq!(sent.len(), 20, "{sent}");
@@ -2651,5 +2672,106 @@ fn any_beside_another_state_is_refused_before_a_request() {
                 "{door} {flags:?} was let through"
             );
         }
+    }
+}
+
+#[test]
+fn a_key_minted_through_the_socket_must_name_its_access() {
+    let named = |args: keys::KeyCreateArgs| keys::create_request(&args, true);
+    let bare = || keys::KeyCreateArgs {
+        label: "bare".into(),
+        source: "bare-1".into(),
+        ..Default::default()
+    };
+    let refused = named(bare()).unwrap_err();
+    assert!(
+        matches!(refused, crate::error::CliError::Usage(_)),
+        "{refused}"
+    );
+    for flag in [
+        "--permission",
+        "--type-permission",
+        "--no-permissions",
+        "--all-access",
+        "--claim",
+    ] {
+        assert!(refused.to_string().contains(flag), "{flag}: {refused}");
+    }
+    // The witness: the same mint sent to a server names nothing and is sent.
+    let remote = keys::create_request(&bare(), false).unwrap();
+    assert_eq!(
+        body(&remote),
+        &json!({ "label": "bare", "source": "bare-1" })
+    );
+    // Naming only a tier or an expiry names no access.
+    assert!(
+        named(keys::KeyCreateArgs {
+            default_tier: Some(Tier::Feed),
+            ..bare()
+        })
+        .is_err()
+    );
+    let held = named(keys::KeyCreateArgs {
+        maps: keys::PermissionMapArgs {
+            type_permissions: vec!["core.note=read".into()],
+            ..Default::default()
+        },
+        ..bare()
+    })
+    .unwrap();
+    assert_eq!(
+        body(&held)["type_permissions"],
+        json!({ "core.note": "read" })
+    );
+    let claims = named(keys::KeyCreateArgs {
+        claims: keys::ClaimArgs {
+            claims: vec!["notes".into()],
+            no_claims: false,
+        },
+        ..bare()
+    })
+    .unwrap();
+    assert_eq!(body(&claims)["sources"], json!(["notes"]));
+    let nothing = named(keys::KeyCreateArgs {
+        no_permissions: true,
+        ..bare()
+    })
+    .unwrap();
+    assert_eq!(body(&nothing)["permissions"], json!([]));
+}
+
+#[test]
+fn all_access_names_every_permission_and_every_map_at_its_widest() {
+    use clap::ValueEnum;
+    for local in [true, false] {
+        let request = keys::create_request(
+            &keys::KeyCreateArgs {
+                label: "all".into(),
+                source: "all-1".into(),
+                all_access: true,
+                ..Default::default()
+            },
+            local,
+        )
+        .unwrap();
+        let sent = body(&request);
+        let permissions: Vec<&str> = sent["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|permission| permission.as_str().unwrap())
+            .collect();
+        assert_eq!(permissions.len(), keys::Permission::value_variants().len());
+        assert_eq!(permissions.len(), 14);
+        for map in [
+            "type_permissions",
+            "extension_permissions",
+            "edge_permissions",
+            "metadata_permissions",
+            "profile_permissions",
+        ] {
+            assert_eq!(sent[map], json!({ "*": "write" }), "{map}");
+        }
+        assert_eq!(sent.get("sources"), None);
     }
 }

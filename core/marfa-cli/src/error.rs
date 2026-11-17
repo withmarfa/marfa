@@ -241,6 +241,20 @@ impl From<CoreError> for CliError {
                 CoreError::NoKeychain(reason) => Self::NoKeychain(reason),
                 other => Self::direct(other),
             },
+            // The core keeps a `409` and a `413` as `Server` for its drain; to a
+            // command they are refusals, the same as a direct request's.
+            CoreError::Server {
+                status: status @ 400..=499,
+                code,
+                message,
+                details,
+            } => Self::Refused {
+                status,
+                code,
+                message,
+                retry_after_seconds: None,
+                details,
+            },
             CoreError::Redirected {
                 origin,
                 status,
@@ -1387,6 +1401,42 @@ mod tests {
         assert_eq!(refused(502).exit(), Exit::Environment);
         for status in [400, 403, 404, 409, 413, 422] {
             assert_eq!(refused(status).exit(), Exit::Refused, "{status}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_ends_the_same_from_the_core_as_from_a_direct_request() {
+        let through_core = |status: u16| {
+            CliError::from(CoreError::Server {
+                status,
+                code: "ancestor_unavailable".into(),
+                message: "the server said no".into(),
+                details: None,
+            })
+        };
+        for (status, code) in [
+            (400, "validation"),
+            (403, "forbidden"),
+            (404, "not_found"),
+            (405, "server"),
+            (409, "conflict"),
+            (413, "too_large"),
+            (422, "validation"),
+        ] {
+            let core = through_core(status);
+            let direct = refused(status);
+            assert_eq!(core.code(), code, "{status}");
+            assert_eq!(core.code(), direct.code(), "{status}");
+            assert_eq!(core.exit(), Exit::Refused, "{status}");
+            assert_eq!(core.exit(), direct.exit(), "{status}");
+            let server = &core.envelope()["error"]["server"];
+            assert_eq!(server["status"], status, "{status}");
+            assert_eq!(server["code"], "ancestor_unavailable", "{status}");
+        }
+        // The witnesses: what is not a refusal by design still ends in the environment.
+        for status in [408, 425, 500, 502, 503] {
+            assert_eq!(through_core(status).exit(), Exit::Environment, "{status}");
+            assert_eq!(through_core(status).code(), "server", "{status}");
         }
     }
 

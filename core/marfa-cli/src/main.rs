@@ -296,9 +296,9 @@ enum Command {
     /// comes back only where this instance has none of its own. After a restore
     /// of another instance's archive, the command names where the backup
     /// destination keeps that instance's backups: delete them only once that
-    /// instance no longer runs and nothing else restores from them. Items in
-    /// the bin are absent unless explicitly exported, for example with
-    /// `export --format archive --state any`.
+    /// instance no longer runs and nothing else restores from them. An archive
+    /// holds the items in the bin only if its export did: `marfa export` carries
+    /// them unless `--state` names other states.
     ///
     /// A build restores every archive version up to its own and refuses a later
     /// one, or one written before Marfa 0.1, naming the build that wrote it.
@@ -851,6 +851,22 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["marfa", "keys", "bootstrap"]).is_err());
         assert!(Cli::try_parse_from(["marfa", "keys", "create", "--operator"]).is_err());
+        let mint = |extra: &[&str]| {
+            let mut argv = vec!["marfa", "keys", "create", "--label", "l", "--source", "s"];
+            argv.extend_from_slice(extra);
+            Cli::try_parse_from(argv)
+        };
+        assert!(mint(&["--all-access"]).is_ok());
+        for narrower in [
+            ["--permission", "audit.read"],
+            ["--type-permission", "core.note=read"],
+            ["--profile-permission", "*=read"],
+        ] {
+            let mut argv = vec!["--all-access"];
+            argv.extend(narrower);
+            assert!(mint(&argv).is_err(), "{narrower:?}");
+        }
+        assert!(mint(&["--all-access", "--no-permissions"]).is_err());
     }
 
     #[test]
