@@ -4,7 +4,9 @@ use rusqlite::{Connection, Transaction};
 use serde_json::json;
 
 use super::client::GrantType;
-use super::clients::{self, ceiling_lacks, destinations_digest, judge, registries_in};
+use super::clients::{
+    self, Asking, BUSY, ceiling_lacks, destinations_digest, judge, registries_in,
+};
 use super::grant::{self, CONSENT_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::metadata_document;
 use super::offer::{self, Decision, Offer, Post, Request};
@@ -135,9 +137,22 @@ pub async fn begin(
     let Some(client_id) = only(&pairs, "client_id") else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
     };
-    let client = match clients::resolve(app, client_id, visit).await? {
+    let session = owner.as_ref().and_then(Caller::session);
+    let asking = match session {
+        Some(_) => Asking::Owner,
+        None => Asking::Anyone,
+    };
+    let client = match clients::resolve(app, client_id, visit, asking).await? {
         Ok(client) => client,
         Err(_) if !metadata_document::is_url(client_id) => return Ok(Ok(NO_CLIENT.to_string())),
+        // Signed in, the browser asks again with the owner's own share of fetches.
+        Err(problem)
+            if problem.error == BUSY
+                && session.is_none()
+                && !reprompt::asks_none(only(&pairs, "prompt")) =>
+        {
+            return Ok(Ok(sign_in_then(app, &format!("{REQUEST_PATH}?{query}"))));
+        }
         Err(problem) => return Ok(Err(problem)),
     };
     let origin = app.addresses().sign_in().origin().to_string();
@@ -184,7 +199,6 @@ pub async fn begin(
         let standing = stands_for(app, owner.as_ref(), &asked).await?;
         return Ok(Ok(asked.refused(standing, &problem)));
     }
-    let session = owner.as_ref().and_then(Caller::session);
     let too_old = reprompt::signed_in_too_long_ago(app, only(&pairs, "max_age"), session);
     if too_old && reprompt::asks_none(asked.prompt.as_deref()) {
         let standing = stands_for(app, owner.as_ref(), &asked).await?;

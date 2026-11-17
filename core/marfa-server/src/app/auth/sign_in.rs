@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::allowance::{self, CHANGE_REFUSED, CONFIRM_REFUSED, Door, SIGN_IN_REFUSED};
 use super::device::{Holder, Known};
-use super::limits::{self, too_many_passwords};
+use super::limits::{self, PasswordLanes, Sender, too_many_passwords};
 use super::owner::{self, Owner};
 use super::password::{self, Checked, Queue};
 use super::session::{self, New, Opened};
@@ -17,6 +17,7 @@ use super::{Note, Visit, note};
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::clock::Stamp;
+use crate::app::limiter::Lane;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
@@ -45,22 +46,36 @@ impl<T> Tried<T> {
     }
 }
 
+/// Where an attempt stands once it is counted.
+#[derive(Clone, Copy, Debug)]
+struct Gate {
+    /// The wait while every stranger's hour is spent; a judged attempt is still answered `429`.
+    spent: Option<i64>,
+    /// Whether a right password may act.
+    opens: bool,
+}
+
 /// Counts the attempt before `attempt` runs, and takes it back once its password proved right.
-async fn counted<T>(
+async fn counted<T, F>(
     app: &App,
-    email: &str,
-    device: Option<&Known>,
-    visit: &Visit,
-    attempt: impl Future<Output = Tried<T>>,
-) -> Result<std::result::Result<T, i64>> {
-    let lanes = limits::password_lanes(email, visit.address, device);
+    lanes: &PasswordLanes,
+    attempt: impl FnOnce(Gate) -> F,
+) -> Result<std::result::Result<T, i64>>
+where
+    F: Future<Output = Tried<T>>,
+{
     let admitted_ms = app.clock.now_ms();
-    if let Some(wait) = app.limiter.admit(admitted_ms, &lanes) {
+    if let Some(wait) = app.limiter.admit(admitted_ms, &lanes.before) {
         return Ok(Err(wait));
     }
-    let tried = attempt.await;
+    let one = |lane: &Lane| app.limiter.admit(admitted_ms, std::slice::from_ref(lane));
+    let gate = Gate {
+        spent: lanes.shared.as_ref().and_then(one),
+        opens: lanes.owner.as_ref().is_none_or(|lane| one(lane).is_none()),
+    };
+    let tried = attempt(gate).await;
     if tried.proven {
-        limits::give_back(app, admitted_ms, &lanes);
+        limits::give_back(app, admitted_ms, &lanes.all());
     }
     tried.outcome.map(Ok)
 }
@@ -243,8 +258,15 @@ pub async fn with_password(
     } else {
         Queue::Open
     };
-    let attempt = open_with_password(app, &email, password, queue, &visit);
-    match counted(app, &email, known.as_ref(), &visit, attempt).await? {
+    let sender = match &known {
+        Some(known) => Sender::Known(known),
+        None => Sender::Stranger {
+            owners_email: current.as_ref().is_some_and(|now| now.owner.email == email),
+        },
+    };
+    let lanes = limits::password_lanes(&email, visit.address, sender);
+    let attempt = |gate| open_with_password(app, &email, password, queue, &visit, gate);
+    match counted(app, &lanes, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
             limited(
@@ -319,13 +341,16 @@ async fn open_with_password(
     password: String,
     queue: Queue,
     visit: &Visit,
+    gate: Gate,
 ) -> Tried<Opening> {
-    let proven = match prove(app, email, password, true, queue).await {
-        Ok(Some(proven)) => proven,
-        Ok(None) => {
-            return Tried::unproven(
-                refused(app, None, email, INVALID, visit, wrong_credentials()).await,
-            );
+    let proven = match prove(app, email, password, gate.opens, queue).await {
+        Ok(Some(proven)) if gate.opens => proven,
+        Ok(found) => {
+            let right = found.is_some();
+            return Tried {
+                proven: right,
+                outcome: answered_wrong(app, email, visit, gate, right).await,
+            };
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
             return Tried::unproven(
@@ -338,6 +363,31 @@ async fn open_with_password(
         proven: true,
         outcome: open(app, email, proven, visit).await,
     }
+}
+
+/// A right password the owner's share cannot take is answered as a wrong one.
+async fn answered_wrong<T>(
+    app: &Arc<App>,
+    email: &str,
+    visit: &Visit,
+    gate: Gate,
+    right: bool,
+) -> Result<T> {
+    let refusal = match gate.spent {
+        Some(wait) => too_many_passwords(wait),
+        None if right => wrong_credentials(),
+        None => return refused(app, None, email, INVALID, visit, wrong_credentials()).await,
+    };
+    limited(app, None, email, SIGN_IN_REFUSED, visit, refusal).await
+}
+
+/// The lanes of a door only a caller holding the owner's credential reaches.
+fn owner_lanes(current: &Current, known: Option<&Known>, visit: &Visit) -> PasswordLanes {
+    let sender = match known {
+        Some(known) => Sender::Known(known),
+        None => Sender::Credential(&current.owner.id),
+    };
+    limits::password_lanes(&current.owner.email, visit.address, sender)
 }
 
 async fn open(app: &App, email: &str, proven: Proven, visit: &Visit) -> Result<Opening> {
@@ -399,8 +449,9 @@ pub async fn confirm(
     let current = current(app).await?.ok_or_else(unauthorized)?;
     let known = known(app, Some(&current), mark);
     let email = current.owner.email.clone();
-    let attempt = reopen(app, caller, session, &email, password, visit.clone());
-    match counted(app, &email, known.as_ref(), &visit, attempt).await? {
+    let lanes = owner_lanes(&current, known.as_ref(), &visit);
+    let attempt = |_| reopen(app, caller, session, &email, password, visit.clone());
+    match counted(app, &lanes, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
             let refusal = too_many_passwords(wait);
@@ -522,15 +573,18 @@ pub async fn change_password(
     let current = current(app).await?.ok_or_else(unauthorized)?;
     let known = known(app, Some(&current), mark);
     let email = current.owner.email.clone();
-    let attempt = replace(
-        app,
-        caller,
-        &email,
-        current_password,
-        new_password,
-        visit.clone(),
-    );
-    match counted(app, &email, known.as_ref(), &visit, attempt).await? {
+    let lanes = owner_lanes(&current, known.as_ref(), &visit);
+    let attempt = |_| {
+        replace(
+            app,
+            caller,
+            &email,
+            current_password,
+            new_password,
+            visit.clone(),
+        )
+    };
+    match counted(app, &lanes, attempt).await? {
         Ok((owner_id, credentials)) => {
             limits::clear_for_new_password(&app.limiter);
             Ok(Changed {

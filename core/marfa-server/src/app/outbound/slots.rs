@@ -17,6 +17,7 @@ const DELIVERY_PER_MAKER: usize = 4;
 const REGISTRATION_TOTAL: usize = 8;
 const REGISTRATION_PER_MAKER: usize = 2;
 const CLIENT_DOCUMENT_TOTAL: usize = 4;
+const OWNER_CLIENT_DOCUMENT_TOTAL: usize = 1;
 const MCP_FETCH_TOTAL: usize = 4;
 const RELEASE_TOTAL: usize = 1;
 const SIGN_IN_ADDRESS_TOTAL: usize = 2;
@@ -29,6 +30,8 @@ pub enum Asker<'a> {
     /// A webhook registration or change, by the maker.
     Registration(&'a str),
     ClientDocument,
+    /// A client's document the owner's own sign-in asks for.
+    OwnerClientDocument,
     McpFetch,
     /// The release check and an update's downloads.
     Release,
@@ -95,6 +98,8 @@ static REGISTRATION: LazyLock<Lane> =
     LazyLock::new(|| Lane::new(REGISTRATION_TOTAL, Some(REGISTRATION_PER_MAKER), false));
 static CLIENT_DOCUMENT: LazyLock<Lane> =
     LazyLock::new(|| Lane::new(CLIENT_DOCUMENT_TOTAL, None, false));
+static OWNER_CLIENT_DOCUMENT: LazyLock<Lane> =
+    LazyLock::new(|| Lane::new(OWNER_CLIENT_DOCUMENT_TOTAL, None, false));
 static MCP_FETCH: LazyLock<Lane> = LazyLock::new(|| Lane::new(MCP_FETCH_TOTAL, None, false));
 static RELEASE: LazyLock<Lane> = LazyLock::new(|| Lane::new(RELEASE_TOTAL, None, false));
 static SIGN_IN_ADDRESS: LazyLock<Lane> =
@@ -106,6 +111,7 @@ impl<'a> Asker<'a> {
             Asker::Delivery(_) => &DELIVERY,
             Asker::Registration(_) => &REGISTRATION,
             Asker::ClientDocument => &CLIENT_DOCUMENT,
+            Asker::OwnerClientDocument => &OWNER_CLIENT_DOCUMENT,
             Asker::McpFetch => &MCP_FETCH,
             Asker::Release => &RELEASE,
             Asker::SignInAddress => &SIGN_IN_ADDRESS,
@@ -115,7 +121,11 @@ impl<'a> Asker<'a> {
     pub(super) fn maker(self) -> Option<&'a str> {
         match self {
             Asker::Delivery(maker) | Asker::Registration(maker) => Some(maker),
-            Asker::ClientDocument | Asker::McpFetch | Asker::Release | Asker::SignInAddress => None,
+            Asker::ClientDocument
+            | Asker::OwnerClientDocument
+            | Asker::McpFetch
+            | Asker::Release
+            | Asker::SignInAddress => None,
         }
     }
 }

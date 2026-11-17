@@ -2825,11 +2825,27 @@ When a password sign-in attempt, or a password sent to `POST /auth/confirm`, pro
 
 ### `keys-and-oauth/sign-in-account-limit`
 
-If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any emails, then the server MUST answer the next such attempt from any address `429` with `Retry-After`.
+If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any emails, then the server MUST answer the next such attempt from any address `429` with `Retry-After`, unless the owner's share (`keys-and-oauth/sign-in-owners-share`) signs it in.
 
 **Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot fill it. The count is the same whatever email an attempt names (`keys-and-oauth/sign-in-limits-alike`), and a known device (`keys-and-oauth/sign-in-known-device`) and a passkey still sign the owner in while it is spent.
 
-**Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`, `› holds attempts at every email together to the same hundred, and a known device still signs in`.
+**Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`, `› holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
+
+### `keys-and-oauth/sign-in-owners-share`
+
+While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in without a known device cookie names the owner's email and the right password, and fewer than a hundred attempts at the owner's email without a known device cookie have been counted in the hour, the server MUST sign the owner in.
+
+**Reason:** Callers with no credential can spend the limit every address shares from many addresses at emails that hold no account. The owner's right password keeps a share they cannot spend, so a new browser can still sign in. The password is judged however the attempt is answered, so its time cannot say which email is the owner's.
+
+**Tests:** `compliance/sign-in-limits.test.ts › holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
+
+### `keys-and-oauth/sign-in-owners-email-limit`
+
+If a hundred password sign-in attempts at the owner's email without a known device cookie have been counted in an hour, then the server MUST answer the next such attempt with the right password with the status and `Retry-After` it answers the same attempt with a wrong password.
+
+**Reason:** Attempts at the owner's password from every address together stay held to a hundred an hour, and the answer past that tells no one the password was right.
+
+**Tests:** `compliance/sign-in-limits.test.ts › answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour`.
 
 ### `keys-and-oauth/sign-in-device-cookie`
 
@@ -2929,17 +2945,41 @@ Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /oaut
 
 ### `keys-and-oauth/client-document-limits`
 
-If one address has made ten requests in a minute that fetch a client ID metadata document, or every address together thirty, then the server MUST NOT fetch the document for the next such request.
+If one address has made ten requests in a minute without the owner's live browser session that fetch a client ID metadata document, or every address together thirty, then the server MUST NOT fetch the document for the next such request.
 
 **Reason:** Each request makes the server fetch from an address the caller names, so the count holds what one caller can make the server send.
 
-**Tests:** waiting on #2892.
+**Tests:** `compliance/client-document-limits.test.ts › holds one address to ten fetches a minute and every address together to thirty`.
+
+### `keys-and-oauth/client-document-owner-share`
+
+While the client document limits (`keys-and-oauth/client-document-limits`) are spent, when an authorization request that carries the owner's live browser session names a client ID metadata document the server has no fresh copy of, the server MUST fetch the document.
+
+**Reason:** Callers with no credential can keep the limits every address shares spent, and an app the owner is connecting would then never be read. The owner's own requests have a share of fetches that no caller without the session can spend.
+
+**Tests:** `compliance/client-document-limits.test.ts › fetches for the owner's signed-in request while strangers keep every address's fetches spent`.
+
+### `keys-and-oauth/client-document-owner-limit`
+
+If authorization requests that carry the owner's live browser session have made ten fetches of client ID metadata documents in a minute, then the server MUST NOT fetch the document for the next such request.
+
+**Reason:** The owner's share adds at most ten fetches a minute to the thirty callers without a session can make the server send.
+
+**Tests:** `compliance/client-document-limits.test.ts › holds the owner's signed-in requests to ten fetches a minute of their own`.
 
 ### `keys-and-oauth/client-document-limit-answer`
 
-If a client document limit keeps the server from fetching a client's metadata document, then the server MUST answer the request as it would with the copy it keeps of that client, or, with none kept, refuse it with `temporarily_unavailable`.
+If a client document limit keeps the server from fetching a client's metadata document, then the server MUST answer the request as it would with the copy it keeps of that client, or, with none kept, refuse it with `temporarily_unavailable`, except where `keys-and-oauth/client-document-sign-in-first` applies.
 
-**Tests:** waiting on #2892.
+**Tests:** `compliance/client-document-limits.test.ts › holds one address to ten fetches a minute and every address together to thirty`.
+
+### `keys-and-oauth/client-document-sign-in-first`
+
+If a client document limit keeps the server from fetching a client's metadata document for an authorization request that carries no browser session and does not ask for `prompt=none`, and the server keeps no copy of that client, then the server MUST redirect the browser to the sign-in page with the authorization request as its `return_to`.
+
+**Reason:** Once the owner signs in, the same request carries the session and uses the owner's own share of fetches (`keys-and-oauth/client-document-owner-share`).
+
+**Tests:** `compliance/client-document-limits.test.ts › sends a signed-out browser to sign in first, and the request then fetches with the owner's share`.
 
 ### `keys-and-oauth/device-lookup-address-limit`
 

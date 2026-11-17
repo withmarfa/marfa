@@ -224,6 +224,14 @@ If the attempt windows `authentication/confirm-lanes` names are spent, then the 
 
 **Tests:** `compliance/confirm-sign-in.test.ts › counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`.
 
+### `authentication/password-credential-limit`
+
+If a hundred passwords sent without a known device cookie to `POST /auth/confirm`, `POST /auth/owner/password` and `PUT /owner/password` together have been counted in an hour, then the server MUST answer the next one `429 rate_limited` with `Retry-After`, without judging the password.
+
+**Reason:** These doors need the owner's credential, so they keep an hour of their own and never meet the limit every address shares at password sign-in (`keys-and-oauth/sign-in-account-limit`), which callers with no credential can spend.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › confirms while strangers keep the sign-in limit every address shares spent`, `compliance/owner-password.test.ts › holds the doors that need the owner's credential to a hundred passwords an hour of their own`.
+
 ### `authentication/confirm-wrong-password-audit`
 
 When the server refuses `POST /auth/confirm` because the password is wrong, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `invalid_credentials`, readable at `GET /audit`.

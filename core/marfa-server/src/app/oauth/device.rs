@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::client::GrantType;
-use super::clients::{self, ceiling_lacks, destinations_digest, judge, registries_in};
+use super::clients::{self, Asking, ceiling_lacks, destinations_digest, judge, registries_in};
 use super::grant::{self, DEVICE_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::offer::{self, Decision, Offer, Post, Request};
 use super::reprompt;
@@ -42,7 +42,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
     let Some(client_id) = form.get("client_id") else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
     };
-    let client = match clients::resolve(app, client_id, visit).await? {
+    let client = match clients::resolve(app, client_id, visit, Asking::Anyone).await? {
         Ok(client) => client,
         Err(problem) => return Ok(Err(problem)),
     };
