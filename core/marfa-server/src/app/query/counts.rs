@@ -79,7 +79,6 @@ fn in_group(sql: &mut Sql, read: &Reader<'_, '_>, group: &str) -> Result<()> {
 }
 
 /// Joined from the edges so a request costs what its anchors link, not what the instance holds.
-/// Each filter is the listing's own, so a count and its listing cannot differ.
 fn linked(
     read: &Reader<'_, '_>,
     ids: Vec<String>,
