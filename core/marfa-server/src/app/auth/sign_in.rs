@@ -933,7 +933,7 @@ mod tests {
         spend_the_shared_hour(&app);
         let places = app.passwords.open_places_left();
         let n = u8::try_from(places + 4).unwrap();
-        let check = Duration::from_micros(app.passwords.check_us());
+        let check = app.passwords.turn_budget();
         let owners = together(&app, EMAIL, n, 0).await;
         let others = together(&app, "someone@example.test", n, n).await;
         assert_eq!(app.passwords.stand_ins_held(), 0);

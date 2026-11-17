@@ -1,7 +1,9 @@
 //! Password hashes, made and checked off the writer thread and few at a time,
 //! since each one takes real memory and time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -62,7 +64,7 @@ pub enum Queue {
 pub enum Turn<'a> {
     /// Checked, in this queue.
     Check(Queue),
-    /// Not checked: holds a place as long as a check takes, in the open queue, or with an
+    /// Not checked: holds a place and a turn as a check does, in the open queue, or with an
     /// email, in that email's own queue shaped like it.
     StandIn(Option<&'a str>),
 }
@@ -74,39 +76,51 @@ pub enum Checked {
     RightButDated,
 }
 
-/// A queue shaped like the open queue: `OPEN_AT_ONCE` at a time, `OPEN_PLACES` places.
-struct OpenShaped {
+/// How long a turn may take before it is due to end, from the checks seen lately: the longest
+/// of the last `RECENT` plus a quarter, at least `FLOOR`, rounded up to a whole millisecond.
+const RECENT: usize = 32;
+const FLOOR: Duration = Duration::from_millis(10);
+
+type TurnEnds = Arc<Mutex<Option<Instant>>>;
+
+/// A queue of password turns.
+struct Line {
     lane: Arc<Semaphore>,
-    places: Arc<Semaphore>,
-    /// When the last turn ended or is due to.
-    turn_ends: Arc<Mutex<Option<Instant>>>,
+    places: Option<Arc<Semaphore>>,
+    /// When the last turn ended, in a line that takes one at a time.
+    turn_ends: Option<TurnEnds>,
 }
 
-impl Default for OpenShaped {
-    fn default() -> OpenShaped {
-        OpenShaped {
-            lane: Arc::new(Semaphore::new(OPEN_AT_ONCE)),
-            places: Arc::new(Semaphore::new(OPEN_PLACES)),
-            turn_ends: Arc::default(),
+impl Line {
+    fn owner() -> Line {
+        Line {
+            lane: Arc::new(Semaphore::new(AT_ONCE)),
+            places: None,
+            turn_ends: None,
         }
     }
-}
 
-fn mark_turn_end(turn_ends: &Mutex<Option<Instant>>, at: Instant) {
-    *turn_ends.lock().unwrap_or_else(PoisonError::into_inner) = Some(at);
-}
+    fn open() -> Line {
+        Line {
+            lane: Arc::new(Semaphore::new(OPEN_AT_ONCE)),
+            places: Some(Arc::new(Semaphore::new(OPEN_PLACES))),
+            turn_ends: Some(TurnEnds::default()),
+        }
+    }
 
-impl OpenShaped {
-    fn place(&self) -> Result<OwnedSemaphorePermit> {
-        self.places
-            .clone()
-            .try_acquire_owned()
+    fn place(&self) -> Result<Option<OwnedSemaphorePermit>> {
+        let Some(places) = &self.places else {
+            return Ok(None);
+        };
+        let place = places.clone().try_acquire_owned();
+        place
+            .map(Some)
             .map_err(|_| too_many_passwords(OPEN_WAIT_MS))
     }
 
-    /// A turn that stands in for a check of `lasts`, and when it ends. One that waited starts
-    /// where the turn before it ended, so a late wake-up is not carried down the queue.
-    async fn stand_in_turn(&self, lasts: Duration) -> Result<(OwnedSemaphorePermit, Instant)> {
+    /// A turn, and when it is due to end. One that waited starts where the turn before it ended,
+    /// so a late wake-up is not carried down the queue.
+    async fn turn(&self, budget: Duration) -> Result<(OwnedSemaphorePermit, Instant)> {
         let (turn, waited) = match self.lane.clone().try_acquire_owned() {
             Ok(turn) => (turn, false),
             Err(_) => {
@@ -117,39 +131,62 @@ impl OpenShaped {
             }
         };
         let now = Instant::now();
-        let mut turn_ends = self
+        let ended = self
             .turn_ends
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let starts = match *turn_ends {
+            .as_ref()
+            .and_then(|ends| *ends.lock().unwrap_or_else(PoisonError::into_inner));
+        let starts = match ended {
             Some(ended) if waited => ended.min(now),
             _ => now,
         };
-        let ends = starts.checked_add(lasts).unwrap_or(starts);
-        *turn_ends = Some(ends);
-        Ok((turn, ends))
+        Ok((turn, starts.checked_add(budget).unwrap_or(starts)))
+    }
+
+    /// Runs `work` in a turn and answers at `due`, or when `work` ends if that is later. The turn
+    /// and what `held` holds are kept until then even if the caller goes.
+    async fn answer<T, H, W>(&self, held: H, due: Instant, work: W) -> Result<T>
+    where
+        T: Send + 'static,
+        H: Send + 'static,
+        W: Future<Output = Result<T>> + Send + 'static,
+    {
+        let turn_ends = self.turn_ends.clone();
+        tokio::spawn(async move {
+            let done = work.await;
+            let ends = due.max(Instant::now());
+            if let Some(turn_ends) = &turn_ends {
+                *turn_ends.lock().unwrap_or_else(PoisonError::into_inner) = Some(ends);
+            }
+            tokio::time::sleep_until(ends.into()).await;
+            drop(held);
+            done
+        })
+        .await
+        .map_err(|_| Refusal::internal("a password check did not finish"))?
     }
 }
 
-/// Each email's stand-in queue, with how many attempts hold it.
-type StandIns = Arc<Mutex<HashMap<String, (Arc<OpenShaped>, usize)>>>;
+/// Each email's stand-in line, with how many attempts hold it.
+type StandIns = Arc<Mutex<HashMap<String, (Arc<Line>, usize)>>>;
 
-/// A hold on one email's stand-in queue; the last one out removes it.
+/// A hold on one email's stand-in line; the last one out removes it.
 struct StandIn {
     stand_ins: StandIns,
     key: String,
-    queue: Arc<OpenShaped>,
+    line: Arc<Line>,
 }
 
 impl StandIn {
     fn take(stand_ins: &StandIns, key: &str) -> StandIn {
         let mut held = stand_ins.lock().unwrap_or_else(PoisonError::into_inner);
-        let (queue, holders) = held.entry(key.to_string()).or_default();
+        let (line, holders) = held
+            .entry(key.to_string())
+            .or_insert_with(|| (Arc::new(Line::open()), 0));
         *holders += 1;
         StandIn {
             stand_ins: stand_ins.clone(),
             key: key.to_string(),
-            queue: queue.clone(),
+            line: line.clone(),
         }
     }
 }
@@ -170,11 +207,11 @@ impl Drop for StandIn {
 }
 
 pub struct Passwords {
-    owner: Arc<Semaphore>,
-    open: OpenShaped,
+    owner: Arc<Line>,
+    open: Arc<Line>,
     stand_ins: StandIns,
     decoy: OnceCell<String>,
-    check_us: AtomicU64,
+    recent: Mutex<VecDeque<Duration>>,
     #[cfg(test)]
     checks: AtomicU64,
 }
@@ -182,11 +219,11 @@ pub struct Passwords {
 impl Default for Passwords {
     fn default() -> Passwords {
         Passwords {
-            owner: Arc::new(Semaphore::new(AT_ONCE)),
-            open: OpenShaped::default(),
+            owner: Arc::new(Line::owner()),
+            open: Arc::new(Line::open()),
             stand_ins: StandIns::default(),
             decoy: OnceCell::new(),
-            check_us: AtomicU64::new(0),
+            recent: Mutex::new(VecDeque::with_capacity(RECENT)),
             #[cfg(test)]
             checks: AtomicU64::new(0),
         }
@@ -216,7 +253,7 @@ impl Passwords {
 
     pub async fn hash(&self, password: String) -> Result<String> {
         let (hash, _) = self
-            .off_thread(&self.owner, move || hashed(&password))
+            .off_thread(&self.owner.lane, move || hashed(&password))
             .await?;
         Ok(hash)
     }
@@ -230,7 +267,7 @@ impl Passwords {
                     .map_err(|_| Refusal::internal("no randomness was available"))?;
                 let password = hex::encode(bytes);
                 let (hash, took) = self
-                    .off_thread(&self.owner, move || hashed(&password))
+                    .off_thread(&self.owner.lane, move || hashed(&password))
                     .await?;
                 self.note_check(took);
                 Ok::<_, Refusal>(hash)
@@ -240,37 +277,40 @@ impl Passwords {
     }
 
     fn note_check(&self, took: Duration) {
-        let us = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
-        let _ = self
-            .check_us
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
-                Some(match held {
-                    0 => us,
-                    held => held.saturating_mul(3).saturating_add(us) / 4,
-                })
-            });
+        let mut recent = self.recent.lock().unwrap_or_else(PoisonError::into_inner);
+        if recent.len() == RECENT {
+            recent.pop_front();
+        }
+        recent.push_back(took);
     }
 
-    /// Holds a place and a turn in the queue `at` names about as long as a check takes, and
-    /// keeps them until then even if the caller goes, as a check does.
+    fn budget(&self) -> Duration {
+        let recent = self.recent.lock().unwrap_or_else(PoisonError::into_inner);
+        let longest = recent.iter().max().copied().unwrap_or_default();
+        let budget = longest.saturating_add(longest / 4).max(FLOOR);
+        let ms = u64::try_from(budget.as_micros().div_ceil(1_000)).unwrap_or(u64::MAX);
+        Duration::from_millis(ms)
+    }
+
+    /// Holds a place and a turn in the line `at` names, and answers when a check would.
     pub async fn wait_as_a_check(&self, at: Option<&str>) -> Result<()> {
         self.decoy().await?;
         let stand_in = at.map(|key| StandIn::take(&self.stand_ins, key));
-        let queue = stand_in.as_ref().map_or(&self.open, |held| &held.queue);
-        let place = queue.place()?;
-        let lasts = Duration::from_micros(self.check_us.load(Ordering::Relaxed));
-        let (turn, ends) = queue.stand_in_turn(lasts).await?;
-        tokio::spawn(async move {
-            let _held = (stand_in, place, turn);
-            tokio::time::sleep_until(ends.into()).await;
-        })
-        .await
-        .map_err(|_| Refusal::internal("a password check did not finish"))
+        let line = stand_in
+            .as_ref()
+            .map_or_else(|| self.open.clone(), |held| held.line.clone());
+        let place = line.place()?;
+        let (turn, due) = line.turn(self.budget()).await?;
+        line.answer((stand_in, place, turn), due, async { Ok(()) })
+            .await
     }
 
     #[cfg(test)]
     pub fn open_places_left(&self) -> usize {
-        self.open.places.available_permits()
+        self.open
+            .places
+            .as_ref()
+            .map_or(0, |places| places.available_permits())
     }
 
     #[cfg(test)]
@@ -289,8 +329,8 @@ impl Passwords {
     }
 
     #[cfg(test)]
-    pub fn check_us(&self) -> u64 {
-        self.check_us.load(Ordering::Relaxed)
+    pub fn turn_budget(&self) -> Duration {
+        self.budget()
     }
 
     /// Missing hashes still require a password check to hide account existence.
@@ -301,27 +341,22 @@ impl Passwords {
         queue: Queue,
     ) -> Result<Checked> {
         let today = self.decoy().await?.to_string();
-        let (place, lane, turn_ends) = match queue {
-            Queue::Owner => (None, &self.owner, None),
-            Queue::Open => (
-                Some(self.open.place()?),
-                &self.open.lane,
-                Some(self.open.turn_ends.clone()),
-            ),
+        let line = match queue {
+            Queue::Owner => self.owner.clone(),
+            Queue::Open => self.open.clone(),
         };
         let dated = stored.is_some_and(|stored| shape(stored) != shape(&today));
         let against = stored.map_or(today, str::to_string);
         let held = stored.is_some();
-        let (matched, took) = self
-            .off_thread(lane, move || {
-                let _place = place;
-                let matched = verified(&password, &against);
-                if let Some(turn_ends) = turn_ends {
-                    mark_turn_end(&turn_ends, Instant::now());
-                }
-                Ok(matched)
-            })
-            .await?;
+        let place = line.place()?;
+        let (turn, due) = line.turn(self.budget()).await?;
+        let turned = Instant::now();
+        let work = async move {
+            tokio::task::spawn_blocking(move || (verified(&password, &against), turned.elapsed()))
+                .await
+                .map_err(|_| Refusal::internal("a password check did not finish"))
+        };
+        let (matched, took) = line.answer((place, turn), due, work).await?;
         self.note_check(took);
         #[cfg(test)]
         self.checks.fetch_add(1, Ordering::Relaxed);
@@ -348,7 +383,7 @@ mod tests {
         let most = Arc::new(AtomicUsize::new(0));
         for _ in 0..4 * AT_ONCE {
             let (running, most) = (running.clone(), most.clone());
-            let job = passwords.off_thread(&passwords.owner, move || {
+            let job = passwords.off_thread(&passwords.owner.lane, move || {
                 most.fetch_max(running.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
                 std::thread::sleep(Duration::from_millis(300));
                 running.fetch_sub(1, Ordering::SeqCst);
@@ -382,7 +417,7 @@ mod tests {
                 .spawn(async move { passwords.check(None, "a guess".into(), Queue::Open).await });
         }
         let filled = async {
-            while passwords.open.places.available_permits() > 0 {
+            while passwords.open_places_left() > 0 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         };
@@ -400,6 +435,34 @@ mod tests {
         let owner = passwords.check(Some(&hash), "a good long password".into(), Queue::Owner);
         let checked = tokio::time::timeout(Duration::from_secs(20), owner).await;
         assert_eq!(checked.unwrap().unwrap(), Checked::Right);
+    }
+
+    #[tokio::test]
+    async fn a_check_and_a_stand_in_both_answer_once_their_turn_is_due() {
+        let passwords = Passwords::default();
+        for _ in 0..4 {
+            passwords
+                .check(None, "a guess".into(), Queue::Open)
+                .await
+                .unwrap();
+        }
+        for at in [None, Some("someone@example.test")] {
+            let budget = passwords.budget();
+            assert_eq!(budget.subsec_micros() % 1_000, 0);
+            let started = Instant::now();
+            passwords
+                .check(None, "a guess".into(), Queue::Open)
+                .await
+                .unwrap();
+            let checked = started.elapsed();
+            let budget_now = passwords.budget();
+            let started = Instant::now();
+            passwords.wait_as_a_check(at).await.unwrap();
+            let stood_in = started.elapsed();
+            assert!(checked >= budget, "{checked:?} {budget:?}");
+            assert!(stood_in >= budget_now, "{stood_in:?} {budget_now:?}");
+        }
+        assert_eq!(passwords.stand_ins_held(), 0);
     }
 
     #[tokio::test]
