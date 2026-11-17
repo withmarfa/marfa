@@ -22,7 +22,7 @@ const NOTES = 96;
 const BIG_BYTES = 990_000;
 const VERSIONS = 40;
 /** Well under what a page of 500 items, or every version of one, held. */
-const BOUND_MIB = 48;
+const BOUND_MIB = 32;
 const SAMPLE_MS = 20;
 
 let server: FreshServer | undefined;

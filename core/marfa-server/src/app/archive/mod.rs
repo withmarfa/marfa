@@ -324,7 +324,11 @@ fn print(value: &impl serde::Serialize) -> Result<String> {
 fn page(read: &Reader<'_, '_>, ask: &Ask, after: i64, limit: i64) -> Result<Vec<i64>> {
     let chosen = query::selected(read, ask, after, limit)?;
     let taken = cut(chosen.iter().map(|next| next.stored));
-    Ok(chosen.into_iter().take(taken).map(|next| next.seq).collect())
+    Ok(chosen
+        .into_iter()
+        .take(taken)
+        .map(|next| next.seq)
+        .collect())
 }
 
 /// How many of the items, of these stored sizes, one page takes.
@@ -1119,7 +1123,10 @@ mod tests {
                     .iter()
                     .map(|&at| sizes[at] + LINE_BYTES)
                     .sum();
-                assert!(before_last < PAGE_BYTES, "page held {before_last} before its last");
+                assert!(
+                    before_last < PAGE_BYTES,
+                    "page held {before_last} before its last"
+                );
                 if taken < chosen.len() {
                     assert!(before_last + sizes[last] + LINE_BYTES >= PAGE_BYTES);
                 }
