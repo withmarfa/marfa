@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Unreadable, ends_the_pass, names_no_row, unreadable};
+use super::read_back::{Unreadable, ends_the_pass, names_no_row, unreadable};
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::model::{Draft, QueuedWrite, WriteKind, projected_edge_id};
