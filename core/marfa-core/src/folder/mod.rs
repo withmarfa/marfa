@@ -2397,7 +2397,7 @@ impl Folder {
             .get_or_init(|| executable::kept(&self.state_dir))
     }
 
-    /// Answered as a list in the folder is, so the two hold the same items.
+    /// The pass includes pinned members that the credential's source filter hides from listings.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
         Ok(self
             .core

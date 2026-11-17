@@ -10,7 +10,7 @@ use marfa_rules::catalog::Catalog;
 use marfa_rules::query as rules;
 use marfa_rules::query::escape_like;
 
-/// Leaves out an item the server did not list, which a pin keeps readable by id only.
+/// A local create has no listing mark until the server answers.
 pub(crate) const LISTED: &str =
     "NOT EXISTS (SELECT 1 FROM meta WHERE key = 'item_listed/' || items.id AND value = 'false')";
 
@@ -894,7 +894,6 @@ mod tests {
             all_states: true,
             ..Default::default()
         };
-        // The witness: the same item, marked listed or not marked, is answered.
         let before = ids(&conn, all.clone(), Sort::default());
         assert!(before.contains(&"a".to_string()));
         crate::reach::set_listed(&conn, "a", true).unwrap();

@@ -54,7 +54,7 @@ impl Core {
         self.get(id)?.as_ref().map(FolderRow::of).transpose()
     }
 
-    /// The items the folder's query holds, as its own pass holds them. A
+    /// The listed items that match the folder's query. A
     /// query the slice cannot answer whole is refused `Invalid`, never
     /// answered in part: a type or tier outside the slice, `beneath` without
     /// `parent-of` held whole, and a `backref` condition, whatever edge
@@ -522,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn a_list_in_a_folder_holds_what_the_folders_own_pass_holds() {
+    fn a_folder_list_and_its_own_pass_apply_the_same_query_settings() {
         let core = copy(
             None,
             &["core.note", "core.task", FOLDER_TYPE],

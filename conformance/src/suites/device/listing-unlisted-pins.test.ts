@@ -27,6 +27,7 @@ let shown: string;
 let hidden: string;
 let view: string;
 let folder: string;
+let word: string;
 const stores: string[] = [];
 
 function value<T>(answer: Outcome<T>): T {
@@ -41,6 +42,7 @@ beforeAll(async () => {
     "listing-unlisted-pins",
   ));
   const excluded = `${ctx.source}-excluded`;
+  word = `marmalade${ctx.runId.replaceAll("-", "")}`;
   const minted = await client.createKey({
     label: `${ctx.source}-filter`,
     source: `${ctx.source}-filter`,
@@ -70,7 +72,7 @@ beforeAll(async () => {
       type: "core.note",
       source,
       tier: "library",
-      properties: { title, body: "marmalade" },
+      properties: { title, body: word },
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
     trackItem(ctx, made.data.item.id);
@@ -132,14 +134,16 @@ async function inFolder(device: CliDevice, read: string, ...args: unknown[]) {
 const ids = (items: Item[]) => items.map((item) => item.id).sort();
 
 it("leaves a pinned item the server did not list out of a local list and search, and still reads it by id", async () => {
-  const server = await client.listItems({ type: "core.note", state: "any" });
+  const under = `backref[parent-of] eq "${parent}"`;
+  const server = await client.listItems({
+    type: "core.note",
+    state: "any",
+    filter: under,
+  });
   expect(server.ok, JSON.stringify(server.error)).toBe(true);
-  // The witness: the unfiltered credential lists both children, so the
-  // hidden one is there to be pinned and listed.
   expect(server.data.data.map((item) => item.id)).toEqual(
     expect.arrayContaining([shown, hidden]),
   );
-  const under = `backref[parent-of] eq "${parent}"`;
   const whole = copy(apiKey);
   value(
     await whole.hydrate(["core.note"], "library", { edgeTypes: ["parent-of"] }),
@@ -147,6 +151,11 @@ it("leaves a pinned item the server did not list out of a local list and search,
   value(await whole.pin(hidden));
   expect(ids(value(await whole.list({ filter: under })))).toEqual(
     [shown, hidden].sort(),
+  );
+  expect(ids(value(await whole.list({ beneath: parent })))).toContain(hidden);
+  expect(ids(value(await whole.list({ type: "core.note" })))).toContain(hidden);
+  expect(value(await whole.search(word)).map((hit) => hit.item.id)).toContain(
+    hidden,
   );
 
   const device = copy(filteredKey);
@@ -165,38 +174,44 @@ it("leaves a pinned item the server did not list out of a local list and search,
   expect(ids(value(await device.list({ type: "core.note" })))).not.toContain(
     hidden,
   );
-  const hits = value(await device.search("marmalade"));
+  const hits = value(await device.search(word));
   expect(hits.map((hit) => hit.item.id)).not.toContain(hidden);
-  // The witness for the search: the same word finds the shown child.
   expect(hits.map((hit) => hit.item.id)).toContain(shown);
 });
 
 it("leaves a pinned item the server did not list out of a local view's and a local folder's listing", async () => {
-  const device = copy(filteredKey);
-  value(
-    await device.hydrate(["core.note", "system.view", "system.folder"], "all", {
-      edgeTypes: ["parent-of"],
-    }),
-  );
-  value(await device.pin(hidden));
-  expect(value(await device.get(hidden)).id).toBe(hidden);
-
   const served = await client.listViewItems(view);
   expect(served.ok, JSON.stringify(served.error)).toBe(true);
   expect(served.data.data.map((item) => item.id)).toContain(hidden);
 
-  const viewed = value(
-    await device.attempt(["items", "list", "--view", view]),
-  ) as { data: Item[] };
-  expect(ids(viewed.data)).toEqual([shown, parent].sort());
+  for (const key of [apiKey, filteredKey]) {
+    const device = copy(key);
+    value(
+      await device.hydrate(
+        ["core.note", "system.view", "system.folder"],
+        "all",
+        {
+          edgeTypes: ["parent-of"],
+        },
+      ),
+    );
+    value(await device.pin(hidden));
+    expect(value(await device.get(hidden)).id).toBe(hidden);
+    const expected = (
+      key === apiKey ? [shown, parent, hidden] : [shown, parent]
+    ).sort();
+    const viewed = value(
+      await device.attempt(["items", "list", "--view", view]),
+    ) as { data: Item[] };
+    expect(ids(viewed.data)).toEqual(expected);
 
-  const listed = value(
-    await inFolder(device, "listInFolder", folder, null, null, null),
-  ) as unknown as { items: Item[] };
-  expect(ids(listed.items)).toEqual([shown, parent].sort());
-  const found = value(
-    await inFolder(device, "searchInFolder", "marmalade", folder, 20),
-  ) as unknown as { hits: Array<{ item: Item }> };
-  expect(found.hits.map((hit) => hit.item.id)).not.toContain(hidden);
-  expect(found.hits.map((hit) => hit.item.id)).toContain(shown);
+    const listed = value(
+      await inFolder(device, "listInFolder", folder, null, null, null),
+    ) as unknown as { items: Item[] };
+    expect(ids(listed.items)).toEqual(expected);
+    const found = value(
+      await inFolder(device, "searchInFolder", word, folder, 20),
+    ) as unknown as { hits: Array<{ item: Item }> };
+    expect(ids(found.hits.map((hit) => hit.item))).toEqual(expected);
+  }
 });

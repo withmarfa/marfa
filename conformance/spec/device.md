@@ -1924,17 +1924,17 @@ When a local list names a `source`, a device MUST answer only the items stamped 
 
 ### `device/list-unlisted-pin`
 
-When a local list or a local search runs on a copy that holds a pinned item the server did not list to the credential, a device MUST leave that item out of the answer.
+When a local list or search runs on a copy that holds a pinned item the server marked `listed: false` for the credential, a device MUST omit that item from the result.
 
-**Reason:** a pin keeps an item the credential can read by ID but its source filter leaves out of listings (`reach/listed-by-id`), and a local listing answers as the server's listing does, so a device must not show a count or a row the server does not. The item stays readable by ID.
+**Reason:** the credential's source filter applies to listings. The pin keeps the item readable by ID (`reach/listed-by-id`).
 
 **Tests:** `device/listing-unlisted-pins.test.ts › leaves a pinned item the server did not list out of a local list and search, and still reads it by id`.
 
 ### `device/view-folder-unlisted-pin`
 
-When a local listing of a saved view's items, a folder's items, or a search in a folder runs on a copy that holds a pinned item the server did not list to the credential, a device MUST leave that item out of the answer.
+When a caller lists items in a saved view or folder, or searches in a folder, a device MUST omit any pinned item the server marked `listed: false` for the credential.
 
-**Reason:** the view's and the folder's listings answer as the server's do (`device/view-items-parity`), which never include an item the credential's source filter hides.
+**Reason:** applying a view or folder query keeps the credential's source filter in effect.
 
 **Tests:** `device/listing-unlisted-pins.test.ts › leaves a pinned item the server did not list out of a local view's and a local folder's listing`.
 
@@ -5550,7 +5550,7 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 When a caller lists or searches in a folder, a device MUST answer the items of the query's types and their subtypes, in the tiers the query holds, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` item.
 
-**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folder-setup/search-match`).
+**Reason:** an app uses the same query settings as the folder on disk (`folder-setup/search-match`). The credential's source filter also applies to the app's listing (`device/view-folder-unlisted-pin`).
 
 **Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's query holds`.
 
