@@ -72,7 +72,7 @@ pub fn instant_of(stamp: &str) -> Option<i128> {
 /// The store's clock. A debug build moves it by the milliseconds the
 /// `clock-offset` fault names, negative to put it back, so a fixture can pass
 /// minutes between two drains, or have the clock go backward, without waiting.
-pub(super) fn clock() -> std::time::SystemTime {
+fn clock() -> std::time::SystemTime {
     let now = std::time::SystemTime::now();
     match crate::fault::named("clock-offset").and_then(|ms| ms.parse::<i64>().ok()) {
         Some(ms) if ms >= 0 => now + std::time::Duration::from_millis(ms.unsigned_abs()),
