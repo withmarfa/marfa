@@ -93,11 +93,12 @@ fn a_write_over_the_limit_the_root_names_is_refused_unsent_and_one_at_it_goes() 
             limit: size as u64 - 1
         })
     );
-    assert_eq!(refusal.code, None);
+    assert_eq!(refusal.code.as_deref(), Some(OVER_REQUEST_LIMIT));
+    assert_eq!(refusal.message.as_deref(), Some(reason));
     let stored = core.queue().unwrap();
     assert_eq!(
-        stored[0].refusal.as_ref().unwrap().request_limit,
-        refusal.request_limit,
+        stored[0].refusal.as_ref().unwrap(),
+        refusal,
         "the queue forgot why the write was refused"
     );
     // The witness: a refusal the server sent names no request limit.

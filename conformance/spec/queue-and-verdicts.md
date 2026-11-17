@@ -1482,11 +1482,19 @@ When a device does not send a write under `queue-and-verdicts/request-over-limit
 
 ### `queue-and-verdicts/request-over-limit-numbers`
 
-When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST give the refusal the size of the request and the server's limit as two numbers of bytes, and no `code` of a server's envelope.
+When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST give the refusal the size of the request and the server's limit as two numbers of bytes.
 
-**Reason:** an app tells a person how much to remove from the numbers, and a code in the envelope's place would be one the server never sent.
+**Reason:** an app tells a person how much to remove from the numbers.
 
-**Tests:** `device/binding-queue.test.ts › tells an app the size and the limit as numbers, and names no code the server did not send`.
+**Tests:** `device/binding-queue.test.ts › tells an app the size and the limit as numbers, and carries the code a refused direct write carries`.
+
+### `queue-and-verdicts/request-over-limit-code`
+
+When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST give the refusal the `code` `over_request_limit`, the code a write refused as it is made carries.
+
+**Reason:** an app then handles a queued write and a direct one that the size refused in the same way. The code is the device's own, so the refusal still names no reason the server did not give (`queue-and-verdicts/request-over-limit-own-word`).
+
+**Tests:** `device/binding-queue.test.ts › tells an app the size and the limit as numbers, and carries the code a refused direct write carries`.
 
 ### `queue-and-verdicts/request-over-limit-own-word`
 

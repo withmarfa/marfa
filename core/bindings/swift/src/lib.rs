@@ -3719,7 +3719,9 @@ mod tests {
         );
         let sized = marfa_core::Refusal::read(
             "This write is 5 bytes as a request.",
-            Some(r#"{"request_limit":{"size":5,"limit":4}}"#),
+            Some(
+                r#"{"error":{"code":"over_request_limit","message":"This write is 5 bytes as a request."},"request_limit":{"size":5,"limit":4}}"#,
+            ),
         );
         assert_eq!(
             crossed(Some(O::Refused(sized))),
@@ -3727,8 +3729,8 @@ mod tests {
                 Some(Verdict::Refused {
                     refusal: Refusal {
                         reason: "This write is 5 bytes as a request.".into(),
-                        code: None,
-                        message: None,
+                        code: Some("over_request_limit".into()),
+                        message: Some("This write is 5 bytes as a request.".into()),
                         fields: Vec::new(),
                         trashed: false,
                         grant: None,

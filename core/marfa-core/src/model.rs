@@ -1320,7 +1320,14 @@ impl RequestLimit {
 
     /// What the queue stores as the answer to a write refused for its size.
     pub(crate) fn stored(self) -> String {
-        serde_json::json!({ "request_limit": self }).to_string()
+        serde_json::json!({
+            "error": {
+                "code": OVER_REQUEST_LIMIT,
+                "message": format!("{OVER_REQUEST_LIMIT_WRITE}{}", self.words()),
+            },
+            "request_limit": self,
+        })
+        .to_string()
     }
 }
 
