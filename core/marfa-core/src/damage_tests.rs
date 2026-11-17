@@ -365,7 +365,7 @@ fn a_damaged_store_is_removed_only_when_every_write_is_agreed_lost() {
     let (_dir, path, _) = store_with(1);
     damage_table(&path, "queue");
     assert!(matches!(
-        Core::remove_store(&path, 1),
+        Core::remove_store(&path, &["q1".to_string()]),
         Err(CoreError::UnsentDiffers { unsent: None, .. })
     ));
     assert!(path.exists());
@@ -489,7 +489,7 @@ fn a_folders_store_whose_header_is_damaged_is_not_removed_or_replaced() {
         Err(CoreError::Invalid(said)) if said.contains("folder's store")
     ));
     assert!(matches!(
-        Core::remove_store(&path, 0),
+        Core::remove_store(&path, &[]),
         Err(CoreError::Invalid(_))
     ));
     assert!(matches!(
@@ -572,7 +572,7 @@ fn a_store_whose_set_aside_stopped_is_not_removed_or_replaced_until_it_finishes(
     assert!(held());
 
     for refused in [
-        Core::remove_store(&path, 0).err(),
+        Core::remove_store(&path, &[]).err(),
         Core::remove_store_losing_all(&path).err(),
         Core::replace_refused(&path, None).err(),
     ] {

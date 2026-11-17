@@ -161,16 +161,16 @@ pub enum CoreError {
         unsent: Option<u64>,
     },
     /// A removal of a store was refused, leaving it as it was, because the
-    /// writes it holds that the server has not taken are not the number the
+    /// writes it holds that the server has not taken are not the ones the
     /// caller agreed to lose.
-    #[error("{}", unsent_differs(path, *unsent, *agreed))]
+    #[error("{}", unsent_differs(path, unsent.as_deref(), agreed))]
     UnsentDiffers {
         path: String,
-        /// The writes the store holds that the server has not taken, as
-        /// `WrongSchema` counts them; `None` where they cannot be counted.
-        unsent: Option<u64>,
-        /// The count the caller agreed to lose.
-        agreed: u64,
+        /// The id of each write the store holds that the server has not
+        /// taken, in queue order; `None` where they cannot be read.
+        unsent: Option<Vec<String>>,
+        /// The ids the caller agreed to lose.
+        agreed: Vec<String>,
     },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
@@ -627,13 +627,31 @@ fn store_damaged(path: &str, reason: &str, unsent: Option<u64>) -> String {
     format!("{path} cannot be opened: {reason}. {holds}")
 }
 
-fn unsent_differs(path: &str, unsent: Option<u64>, agreed: u64) -> String {
-    let writes = |count: u64| if count == 1 { "write" } else { "writes" };
+fn unsent_differs(path: &str, unsent: Option<&[String]>, agreed: &[String]) -> String {
+    let writes = |count: usize| if count == 1 { "write" } else { "writes" };
     match unsent {
-        Some(count) => format!(
-            "{path} was not removed: it holds {count} {} the server has not taken, not the {agreed} agreed to; show the person the {count} and remove it with that count once they agree",
-            writes(count)
-        ),
+        Some(held) => {
+            let held: std::collections::HashSet<&String> = held.iter().collect();
+            let agreed: std::collections::HashSet<&String> = agreed.iter().collect();
+            let unagreed = held.difference(&agreed).count();
+            let gone = agreed.difference(&held).count();
+            let mut changes = Vec::new();
+            if unagreed > 0 {
+                changes.push(format!(
+                    "it holds {unagreed} {} the server has not taken that the person did not agree to lose",
+                    writes(unagreed)
+                ));
+            }
+            if gone > 0 {
+                changes.push(format!(
+                    "it no longer holds {gone} of the writes agreed to"
+                ));
+            }
+            format!(
+                "{path} was not removed: {}; read its unsent writes again, show them to the person and remove it with their ids once they agree",
+                changes.join(", and ")
+            )
+        }
         None => format!(
             "{path} was not removed: whether it holds writes the server has not taken cannot be read, so it cannot be known what removing it would lose"
         ),

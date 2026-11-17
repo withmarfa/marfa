@@ -1,7 +1,7 @@
 //! Opening a store: making it, checking its shape, and setting aside or replacing one this build cannot use.
 
 use super::meta::{META_STORE_ID, meta_get, meta_set};
-use super::unsent::{folder_unsent, unsendable, untaken_count};
+use super::unsent::{folder_unsent, unsendable, untaken, untaken_count};
 use crate::error::CoreError;
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -220,12 +220,12 @@ pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
     Some(crate::FileBudget::stored(Some(&text))).filter(|setting| setting.to_stored().is_some())
 }
 
-/// The writes the store at `path` holds that the server has not taken, as
-/// `wrong_schema` counts them, read whatever the store's shape for the caller
-/// that holds its writer lock. A store with no table holds none. `None` where
-/// they cannot be counted, as in a file that is not a store. The caller
-/// refuses a folder's store first (`refuse_folders`).
-pub(crate) fn removal_count(path: &Path) -> Option<u64> {
+/// The id of each write the store at `path` holds that the server has not
+/// taken, in queue order, as `read_unsent` lists them, read whatever the
+/// store's shape for the caller that holds its writer lock. A store with no
+/// table holds none. `None` where they cannot be read, as in a file that is
+/// not a store. The caller refuses a folder's store first (`refuse_folders`).
+pub(crate) fn removal_ids(path: &Path) -> Option<Vec<String>> {
     let Ok(conn) = open_refused(path) else {
         return None;
     };
@@ -235,9 +235,9 @@ pub(crate) fn removal_count(path: &Path) -> Option<u64> {
         return None;
     };
     if tables == 0 {
-        return Some(0);
+        return Some(Vec::new());
     }
-    untaken_count(&conn)
+    untaken(&conn).map(|writes| writes.into_iter().map(|write| write.id).collect())
 }
 
 // The path and registry identify folder stores even when their pages do not read.

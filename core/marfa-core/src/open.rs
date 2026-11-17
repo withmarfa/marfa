@@ -264,39 +264,42 @@ impl Core {
     /// Removes the store at `path`, of any build's shape: the store file,
     /// its logs, the folder of fetched bytes beside it and its writer lock,
     /// and nothing else. A symbolic link at one of those names is removed,
-    /// never what it leads to. `unsent` is the count of writes the server has
-    /// not taken that the person agreed to lose, as `WrongSchema` counts
+    /// never what it leads to. `unsent` names, by id, the writes the server
+    /// has not taken that the person agreed to lose, as `read_unsent` lists
     /// them. Refuses, leaving everything as it is, with `ReadingHandle` while
     /// another process, or another `Core` in this one, holds the writer role,
-    /// with `UnsentDiffers` and the store's own count where it holds another
-    /// number of such writes or one that cannot be counted, and with
-    /// `Invalid` where the store is a folder's, bound or not, and with
-    /// `StoreDamaged` while a set-aside of the store is unfinished, which
-    /// asking for the set-aside again finishes. A process that only reads the
-    /// store does not hold the writer role, so it does not stop the removal.
-    /// A path with no store holds none, so it answers as removed, taking any
-    /// lock or bytes left there.
-    pub fn remove_store(path: impl AsRef<Path>, unsent: u64) -> Result<()> {
+    /// with `UnsentDiffers` and the store's own ids where it holds other such
+    /// writes or ones that cannot be read, and with `Invalid` where the store
+    /// is a folder's, bound or not, and with `StoreDamaged` while a set-aside
+    /// of the store is unfinished, which asking for the set-aside again
+    /// finishes. The writes are read and the store removed under one hold of
+    /// the writer lock. A process that only reads the store does not hold the
+    /// writer role, so it does not stop the removal. A path with no store
+    /// holds none, so it answers as removed, taking any lock or bytes left
+    /// there.
+    pub fn remove_store(path: impl AsRef<Path>, unsent: &[String]) -> Result<()> {
         Self::remove_agreed(path.as_ref(), Some(unsent))
     }
 
     /// Removes the store at `path` as `remove_store` does, agreeing to lose
     /// every write it holds that the server has not taken, however many there
-    /// are and whether or not they can be counted, as for a store SQLite
-    /// cannot read. Refuses as `remove_store` does but for the count.
+    /// are and whether or not they can be read, as for a store SQLite cannot
+    /// read. Refuses as `remove_store` does but for the writes.
     pub fn remove_store_losing_all(path: impl AsRef<Path>) -> Result<()> {
         Self::remove_agreed(path.as_ref(), None)
     }
 
     /// `agreed` is `None` where every write is agreed to be lost.
-    fn remove_agreed(path: &Path, agreed: Option<u64>) -> Result<()> {
-        let differs = |held: Option<u64>| match agreed {
+    fn remove_agreed(path: &Path, agreed: Option<&[String]>) -> Result<()> {
+        let differs = |held: Option<Vec<String>>| match agreed {
             None => Ok(()),
-            Some(unsent) if held == Some(unsent) => Ok(()),
-            Some(unsent) => Err(CoreError::UnsentDiffers {
+            Some(agreed) if held.as_deref().is_some_and(|held| same_writes(held, agreed)) => {
+                Ok(())
+            }
+            Some(agreed) => Err(CoreError::UnsentDiffers {
                 path: path.display().to_string(),
                 unsent: held,
-                agreed: unsent,
+                agreed: agreed.to_vec(),
             }),
         };
         let holder = path
@@ -304,19 +307,19 @@ impl Core {
             .filter(|holder| !holder.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
         if !holder.is_dir() {
-            return differs(Some(0));
+            return differs(Some(Vec::new()));
         }
-        // Held from the count until the lock's own name is gone, so no
-        // process can queue a write the count missed, or make a store at the
-        // path that the removal would then take.
+        // Held from the read of the writes until the lock's own name is gone,
+        // so no process can queue a write the read missed, or make a store at
+        // the path that the removal would then take.
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
         store::refuse_folders(path)?;
         // The missing store a stopped set-aside leaves is no store with no writes.
         damage::refuse_unfinished(path)?;
         let held = match path.metadata() {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(0),
-            _ => store::removal_count(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Vec::new()),
+            _ => store::removal_ids(path),
         };
         differs(held)?;
         // The store goes after the fetched bytes, so a removal that stops
@@ -459,4 +462,11 @@ impl Core {
             damage_seen,
         })
     }
+}
+
+/// Whether `held` and `agreed` name the same writes, in any order.
+fn same_writes(held: &[String], agreed: &[String]) -> bool {
+    let held: std::collections::BTreeSet<&str> = held.iter().map(String::as_str).collect();
+    let agreed: std::collections::BTreeSet<&str> = agreed.iter().map(String::as_str).collect();
+    held == agreed
 }
