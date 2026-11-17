@@ -1,11 +1,6 @@
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { tempFolder } from "../../utils/temp-folder.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -400,7 +395,9 @@ describe("backups of the file cache on a Mac", ON_MACOS, () => {
   it("keeps the bytes it fetched out of backups, and the bytes of an upload in them", async () => {
     // The system excludes its own temporary folders, so the store has to sit
     // under the home folder for the verdict to be the device's.
-    const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
+    const area = tempFolder(".marfa-conformance-backup-", {
+      parent: homedir(),
+    });
     scratch.push(area);
     harness = await started("backup");
     const device = new CliDevice({
@@ -456,7 +453,9 @@ describe("backups of the file cache on a Mac", ON_MACOS, () => {
   }
 
   it("keeps the partial file of a fetch that stopped out of backups", async () => {
-    const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
+    const area = tempFolder(".marfa-conformance-backup-", {
+      parent: homedir(),
+    });
     scratch.push(area);
     harness = await started("backup-partial");
     const device = new CliDevice({

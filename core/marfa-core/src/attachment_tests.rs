@@ -353,7 +353,7 @@ fn a_fetch_of_attachments_goes_on_past_a_held_file_it_cannot_read() {
     hold(&core, dir.path(), b"sealed");
     serve(&server, b"fetched later");
     let path = dir.path().join("core.sqlite.blobs").join(hex(&sealed));
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _sealed = crate::test_folders::locked(&path, 0o000);
     let unreadable = std::fs::File::open(&path).is_err();
     let report = core.fetch_kept_until(&AtomicBool::new(false));
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -472,7 +472,7 @@ fn removing_fetched_files_takes_nothing_from_a_cache_it_cannot_read_and_says_so(
     let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
     let fetched = hold(&core, dir.path(), b"fetched once");
     let folder = dir.path().join("core.sqlite.blobs");
-    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _shut = crate::test_folders::locked(&folder, 0o000);
     let sealed = std::fs::read_dir(&folder).is_err();
     let taken = core.remove_fetched_files();
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();

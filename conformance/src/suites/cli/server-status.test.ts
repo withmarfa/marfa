@@ -1,17 +1,11 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import {
-  chmodSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Cli, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * `marfa server status` says how the server answered `/health`, and leaves by
@@ -27,7 +21,7 @@ let answer: { status: number; body: string } = { status: 200, body: "{}" };
 let cli: Cli;
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-server-status-"));
+  dir = tempFolder("marfa-cli-server-status-");
   health = createServer((request, response) => {
     if (request.url === "/health") {
       response.writeHead(answer.status, { "content-type": "application/json" });

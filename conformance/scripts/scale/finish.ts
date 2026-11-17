@@ -12,12 +12,10 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { benchmarkEvent, captureUrl } from "../../src/utils/scale/posthog.js";
 import {
@@ -35,6 +33,7 @@ import {
 } from "../../src/utils/scale/report.js";
 import type { Fragment } from "../../src/utils/scale/figures.js";
 import { log, readFragment, REPORTS_DIR, targetItems } from "./context.js";
+import { tempFolder } from "../../src/utils/temp-folder.js";
 
 /** One id for every night, so the event is a series and not a person. */
 const DISTINCT_ID = "marfa-nightly-benchmarks";
@@ -87,7 +86,7 @@ function previousNight(): FiguresFile | null {
       }
     }
     if (found === undefined) return null;
-    directory = mkdtempSync(resolve(tmpdir(), "scale-previous-"));
+    directory = tempFolder("scale-previous-");
     execFileSync(
       "gh",
       [

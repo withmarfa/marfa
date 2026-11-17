@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createServer, type RequestListener, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -26,6 +24,7 @@ import {
   type App,
 } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The four acts that ask the owner to have signed in within five minutes:
@@ -39,7 +38,7 @@ import { TEST_OWNER } from "../../utils/target.js";
  */
 let server: FreshServer;
 let origin: string;
-const backups = mkdtempSync(join(tmpdir(), "marfa-step-up-"));
+const backups = tempFolder("marfa-step-up-");
 const CLIENT_HEADER = "x-conformance-client";
 const MINUTE = 60 * 1000;
 const SCOPE = "backups.manage config.manage offline_access";

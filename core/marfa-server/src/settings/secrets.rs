@@ -371,6 +371,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let held = dir.path().join("held");
         fs::create_dir(&held).unwrap();
+        let _held = marfa_acl::testing::unlocked_after(&held);
         let data = DatabasePath::File(held.join("marfa.db"));
         let private = |mode| fs::set_permissions(&held, fs::Permissions::from_mode(mode)).unwrap();
 

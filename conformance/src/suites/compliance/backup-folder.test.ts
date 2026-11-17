@@ -1,7 +1,6 @@
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -10,7 +9,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -49,6 +47,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { diskHolds, inspectStores } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Backups to a folder the owner names with `backup_path`: one manifest
@@ -57,7 +56,7 @@ import { waitFor } from "../../utils/wait.js";
  * under `files/<instance id>/`, and a restore from the folder alone into a
  * fresh server on another data path.
  */
-const folder = mkdtempSync(join(tmpdir(), "marfa-backup-folder-"));
+const folder = tempFolder("marfa-backup-folder-");
 const away = `${folder}-away`;
 const YEAR_SECONDS = "31536000";
 const FOLDER_ONLY = {
@@ -416,7 +415,7 @@ describe("a backup folder that lacks a file or its disk", () => {
     label: string,
     body: (server: FreshServer, root: string) => Promise<void>,
   ): Promise<void> {
-    const root = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
+    const root = tempFolder(`marfa-${label}-`);
     const server = await bootFreshServer(label, {
       ...FOLDER_ONLY,
       MARFA_BACKUP_PATH: root,
@@ -699,7 +698,7 @@ describe("a backup folder that lacks a file or its disk", () => {
   });
 
   it("says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put", async () => {
-    const root = mkdtempSync(join(tmpdir(), "marfa-backup-folder-off-"));
+    const root = tempFolder("marfa-backup-folder-off-");
     const server = await bootFreshServer("backup-folder-off", {
       ...FOLDER_ONLY,
       MARFA_BACKUP_PATH: root,
@@ -743,7 +742,7 @@ describe("a backup folder that lacks a file or its disk", () => {
   });
 
   it("says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them", async () => {
-    const root = mkdtempSync(join(tmpdir(), "marfa-backup-folder-off-away-"));
+    const root = tempFolder("marfa-backup-folder-off-away-");
     const server = await bootFreshServer("backup-folder-off-away", {
       ...FOLDER_ONLY,
       MARFA_BACKUP_PATH: root,
@@ -891,7 +890,7 @@ describe("a backup folder that lacks a file or its disk", () => {
   });
 
   it("refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store", async () => {
-    const parent = mkdtempSync(join(tmpdir(), "marfa-backup-folder-adopt-"));
+    const parent = tempFolder("marfa-backup-folder-adopt-");
     const root = join(parent, "disk");
     const replaced = join(parent, "old disk");
     mkdirSync(root);
@@ -1047,12 +1046,12 @@ describe("where backups may go", () => {
   });
 
   it("refuses a backup folder inside its data directory or its blob folder, judged where links lead, and makes none", async () => {
-    const blobs = mkdtempSync(join(tmpdir(), "marfa-backup-blobs-"));
+    const blobs = tempFolder("marfa-backup-blobs-");
     const server = await bootFreshServer("backup-folder-inside", {
       ...DISK,
       MARFA_BLOB_PATH: blobs,
     });
-    const outside = mkdtempSync(join(tmpdir(), "marfa-backup-outside-"));
+    const outside = tempFolder("marfa-backup-outside-");
     try {
       const { operator } = clientsFor(server);
       const data = dirname(server.sqlitePath);
@@ -1090,7 +1089,7 @@ describe("where backups may go", () => {
 
   it("reports a backup folder that does not exist as unusable, keeps serving files, makes none, and takes it once it exists", async () => {
     const server = await bootFreshServer("backup-folder-missing", DISK);
-    const parent = mkdtempSync(join(tmpdir(), "marfa-backup-later-"));
+    const parent = tempFolder("marfa-backup-later-");
     const missing = join(parent, "not mounted");
     try {
       const { operator, working } = clientsFor(server);

@@ -3,9 +3,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -13,7 +11,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { CliFolder } from "../../device/cli-adapter.js";
@@ -21,6 +18,7 @@ import type { HeldCommand } from "../../device/cli-adapter.js";
 import { KEY, folderHarness, requireBinary } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 import { put, scriptFolderWrites, sentTitles } from "./folders.shared.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A watch noticing that a new build of marfa is installed at the path it was
@@ -46,9 +44,7 @@ afterEach(async () => {
 });
 
 function scratchDir(label: string): string {
-  const dir = mkdtempSync(
-    join(realpathSync(tmpdir()), `marfa-new-build-${label}-`),
-  );
+  const dir = tempFolder(`marfa-new-build-${label}-`);
   scratch.push(dir);
   return dir;
 }

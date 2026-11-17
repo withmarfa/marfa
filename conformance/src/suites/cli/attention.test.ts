@@ -1,6 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import {
   bootFreshServer,
@@ -11,12 +9,13 @@ import { controlRequest } from "../../utils/control-request.js";
 import { Cli, requireBinary } from "./harness.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { DISK_ONLY } from "../../utils/own-blob-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let server: FreshServer;
 let local: Cli;
 // A backup folder, so that an instance with nothing to report has a place to
 // put its backups, and the empty list below is the whole of what it checks.
-const backups = mkdtempSync(join(tmpdir(), "marfa-cli-attention-"));
+const backups = tempFolder("marfa-cli-attention-");
 beforeAll(async () => {
   server = await bootFreshServer("cli-attention", {
     ...DISK_ONLY,

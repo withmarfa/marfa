@@ -5,7 +5,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -13,7 +12,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { request as httpRequest } from "node:http";
 import { gunzipSync } from "node:zlib";
@@ -27,6 +25,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
 } from "../../utils/fresh-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 // The regular harness requires hooks, so release behavior needs a separate process.
 
@@ -62,7 +61,7 @@ const folders: string[] = [];
 const running: Run[] = [];
 
 function folder(prefix: string): string {
-  const made = realpathSync(mkdtempSync(resolve(tmpdir(), prefix)));
+  const made = tempFolder(prefix);
   chmodSync(made, 0o700);
   folders.push(made);
   return made;

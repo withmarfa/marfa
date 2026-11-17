@@ -20,11 +20,10 @@ import {
 } from "../../utils/own-blob-server.js";
 import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 import { v7 as uuidv7 } from "uuid";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { backupInFolder } from "../../utils/backups.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * What a restore says about itself: the enforcement settings an archive
@@ -42,7 +41,7 @@ const ENFORCEMENT = {
 let origin: FreshServer;
 let target: FreshServer;
 let heard: ReturnType<typeof createServer>;
-const backupFolder = mkdtempSync(join(tmpdir(), "restore-says-backups-"));
+const backupFolder = tempFolder("restore-says-backups-");
 
 beforeAll(async () => {
   heard = createServer((_req, res) => res.writeHead(200).end());
@@ -168,7 +167,7 @@ describe("what a restore says", () => {
   });
 
   it("refuses an export while the enforcement settings do not read, and a backup holds the items and names them", async () => {
-    const folder = mkdtempSync(join(tmpdir(), "restore-says-unread-"));
+    const folder = tempFolder("restore-says-unread-");
     const spoiled = await bootFreshServer("restore-says-unread", {
       ...DISK_ONLY,
       MARFA_BACKUP_PATH: folder,

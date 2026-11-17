@@ -1,13 +1,4 @@
-import {
-  chmod,
-  link,
-  mkdtemp,
-  realpath,
-  rm,
-  stat,
-  symlink,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, link, rm, stat, symlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
@@ -25,6 +16,7 @@ import {
   DISK_ONLY,
 } from "../../utils/own-blob-server.js";
 import { inspectStores } from "../../utils/store-faults.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A database and a blob folder belong to one running server at a time. A
@@ -69,7 +61,7 @@ const spool = async () => (await inspectStores(first.controlSocket)).spool;
 
 /** The ways a second server can name the first's database. */
 async function waysToTheDatabase(): Promise<string[]> {
-  const links = await mkdtemp(join(await realpath(tmpdir()), "marfa-link-"));
+  const links = tempFolder("marfa-link-");
   removals.push(links);
   const through = join(links, "through");
   await symlink(first.stateDir, through);
@@ -107,7 +99,7 @@ describe("a second server on a running server's files", () => {
 
   it("is refused on the database, not the control socket, when both have the socket beside the database", async () => {
     // Short, because the socket's path must fit in a socket address.
-    const dir = await mkdtemp(join(await realpath(tmpdir()), "marfa-ds-"));
+    const dir = tempFolder("marfa-ds-");
     removals.push(dir);
     const database = join(dir, "marfa.db");
     // Where the server puts its control socket when it is given none.
@@ -137,7 +129,7 @@ describe("a second server on a running server's files", () => {
   it(
     "is refused on a second hard link to the database, and says why",
     async () => {
-      const dir = await mkdtemp(join(await realpath(tmpdir()), "marfa-hard-"));
+      const dir = tempFolder("marfa-hard-");
       removals.push(dir);
       const other = join(dir, "marfa.db");
       await link(first.sqlitePath, other);
@@ -226,7 +218,7 @@ describe("a restart on lock files opened to the server's group", () => {
 
 describe("a database that cannot keep a write-ahead log", () => {
   it("is refused, saying so, and the same file is opened when it can keep one", async () => {
-    const dir = await mkdtemp(join(await realpath(tmpdir()), "marfa-no-log-"));
+    const dir = tempFolder("marfa-no-log-");
     removals.push(dir);
     const file = join(dir, "marfa.db");
     // SQLite's dot-file locking keeps no shared memory, so it cannot keep the log.

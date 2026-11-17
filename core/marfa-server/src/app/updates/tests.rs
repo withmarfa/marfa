@@ -369,7 +369,7 @@ async fn a_program_folder_the_account_cannot_write_is_refused_with_the_programs_
     use std::os::unix::fs::PermissionsExt;
     let case = Case::new("readonly");
     let job = case.release(&good(OPENS), None, None);
-    fs::set_permissions(case.bin(), fs::Permissions::from_mode(0o555)).unwrap();
+    let _locked = marfa_acl::testing::locked(case.bin(), 0o555);
     let refused = case.run(job).await;
     fs::set_permissions(case.bin(), fs::Permissions::from_mode(0o755)).unwrap();
     // A superuser can write anywhere, so the refusal is only owed to everyone else.

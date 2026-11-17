@@ -12,8 +12,7 @@
  * does not depend on a download during a sweep.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
@@ -25,6 +24,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let server: FreshServer;
 let client: MarfaClient;
@@ -32,7 +32,7 @@ let operator: MarfaClient;
 let tessdata: string;
 
 beforeAll(async () => {
-  tessdata = mkdtempSync(join(tmpdir(), "malformed-image-tessdata-"));
+  tessdata = tempFolder("malformed-image-tessdata-");
   const model = createRequire(import.meta.url).resolve(
     "@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
   );

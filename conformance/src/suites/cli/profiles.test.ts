@@ -4,18 +4,17 @@ import type { AddressInfo } from "node:net";
 import {
   chmodSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { Cli, CliContext, ItemEnvelope } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A person names servers in `profiles.toml`, each with where its key comes
@@ -137,7 +136,7 @@ class Listener {
 beforeAll(async () => {
   c = await cliContext("profiles");
   listener = await Listener.start();
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-profiles-"));
+  dir = tempFolder("marfa-cli-profiles-");
   home = join(dir, "home");
   file =
     process.platform === "darwin"

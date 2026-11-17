@@ -337,7 +337,7 @@ fn a_quiet_watch_over_a_directory_it_cannot_read_pulls_at_most_once_an_interval(
     let shut = dir.path().join("shut");
     std::fs::create_dir(&shut).unwrap();
     std::fs::write(shut.join("inside.md"), "inside\n").unwrap();
-    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _shut = crate::test_folders::locked(&shut, 0o000);
     let open = |shut: &Path| {
         std::fs::set_permissions(shut, std::fs::Permissions::from_mode(0o700)).unwrap();
     };
@@ -490,7 +490,7 @@ fn a_quiet_watch_over_a_kept_file_and_an_unreadable_directory_passes_at_most_onc
     let shut = dir.path().join("shut");
     std::fs::create_dir(&shut).unwrap();
     std::fs::write(shut.join("inside.md"), "inside\n").unwrap();
-    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _shut = crate::test_folders::locked(&shut, 0o000);
     let open = |shut: &Path| {
         std::fs::set_permissions(shut, std::fs::Permissions::from_mode(0o700)).unwrap();
     };

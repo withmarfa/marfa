@@ -1,6 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   bootFreshServer,
@@ -16,6 +14,7 @@ import {
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("profile");
@@ -260,7 +259,7 @@ describe("owner and delegated profile changes", () => {
   it(
     "refuses a profile update and an avatar upload from the local command while the instance is unclaimed",
     async () => {
-      const state = await mkdtemp(join(tmpdir(), "marfa-profile-unclaimed-"));
+      const state = tempFolder("marfa-profile-unclaimed-");
       try {
         const unclaimed = await bootUnclaimedServer({ state });
         const local = (

@@ -1,15 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { Readable } from "node:stream";
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -28,6 +20,7 @@ import {
   trackItem,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 // The links and embeds in a body written through a working copy, against the
 // run's server.
@@ -157,7 +150,7 @@ function targets(names: BodyLinks["links"]): BodyTarget[] {
 }
 
 function scratch(): string {
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-body-edges-"));
+  const dir = tempFolder("marfa-body-edges-");
   dirs.push(dir);
   return dir;
 }

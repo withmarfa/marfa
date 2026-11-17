@@ -1,13 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { dirname, join } from "node:path";
-import {
-  mkdtempSync,
-  realpathSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { MarfaClient } from "../../client/api.js";
 import type { ApiKeyRequest, TestContext } from "../../client/types.js";
 import { CliDevice, CliFolder, newStore } from "../../device/cli-adapter.js";
@@ -20,6 +13,7 @@ import {
   trackFolder,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -197,7 +191,7 @@ it("keeps a folder's edit and create and sends both when its grant returns", asy
   });
   expect(settings.ok, JSON.stringify(settings.error)).toBe(true);
   trackFolder(ctx, settings.data.item.id);
-  const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-grant-folder-"));
+  const dir = tempFolder("marfa-grant-folder-");
   const folder = new CliFolder(dir, {
     binary: requireBinary(),
     url: apiUrl,

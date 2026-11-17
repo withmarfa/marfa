@@ -334,7 +334,7 @@ fn a_removal_that_stopped_after_the_fetched_bytes_is_finished_by_asking_again() 
     let stuck = beside(&path, "-shm");
     std::fs::create_dir_all(stuck.join("inner")).unwrap();
     std::fs::write(stuck.join("inner").join("file"), b"").unwrap();
-    std::fs::set_permissions(stuck.join("inner"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let _stuck = crate::test_folders::locked(stuck.join("inner"), 0o500);
     if std::fs::remove_dir_all(&stuck).is_ok() {
         // Permissions do not bind this user, so the stop cannot be made.
         return;

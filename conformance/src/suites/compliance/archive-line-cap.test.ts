@@ -1,5 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
@@ -15,6 +14,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { clientsFor } from "../../utils/own-blob-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The most one archive line may hold, lowered with `limit:archive-line` so
@@ -22,7 +22,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
  * the fault holds every export and backup on the instance while it is set.
  */
 const LOWERED = 2048;
-const folder = mkdtempSync(join(tmpdir(), "marfa-archive-line-"));
+const folder = tempFolder("marfa-archive-line-");
 let server: FreshServer;
 let working: MarfaClient;
 let backups: string;

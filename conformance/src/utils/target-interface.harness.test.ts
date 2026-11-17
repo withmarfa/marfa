@@ -1,5 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -9,6 +8,7 @@ import {
 } from "./fresh-server.js";
 import { QUIET_SCHEDULE, runJob } from "./moved-clock.js";
 import { readRequestLog } from "./status-declarations.js";
+import { tempFolder } from "./temp-folder.js";
 
 /**
  * The target interface as the harness uses it (`conformance/TARGET-INTERFACE.md`): a
@@ -32,7 +32,7 @@ let server: FreshServer;
 let preload: string;
 
 beforeAll(async () => {
-  scratch = mkdtempSync(join(tmpdir(), "marfa-target-interface-"));
+  scratch = tempFolder("marfa-target-interface-");
   preload = join(scratch, "probe.cjs");
   writeFileSync(
     preload,
@@ -193,7 +193,7 @@ describe("a fault", () => {
   });
 
   it("is cleared by stop, before the server is told to end", async () => {
-    const kept = mkdtempSync(join(tmpdir(), "marfa-target-interface-logs-"));
+    const kept = tempFolder("marfa-target-interface-logs-");
     const own = await bootFreshServer("target-interface-stop");
     const before = process.env.MARFA_STATUS_LOGS;
     process.env.MARFA_STATUS_LOGS = kept;

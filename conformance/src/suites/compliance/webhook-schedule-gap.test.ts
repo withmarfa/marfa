@@ -9,8 +9,7 @@ import {
 import { streamHead } from "../../utils/stream-tap.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   bootControlServer,
@@ -19,11 +18,12 @@ import {
 } from "../../../scripts/marfa-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER, parseEnvFile, renderEnvFile } from "../../utils/target.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 it(
   "starts scheduling after a fresh control-only instance writes its first event",
   async () => {
-    const state = mkdtempSync(join(tmpdir(), "marfa-webhook-control-"));
+    const state = tempFolder("marfa-webhook-control-");
     const receiver = await startReceiver();
     try {
       const local = await bootControlServer({ state });

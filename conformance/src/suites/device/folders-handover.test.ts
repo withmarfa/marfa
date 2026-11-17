@@ -3,13 +3,11 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -29,6 +27,7 @@ import {
   withFault,
 } from "./folders.shared.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A command that works a folder asks a running `folders watch` for it, and
@@ -76,7 +75,7 @@ function listedDirs(harness: FolderHarness): string[] {
 /** A keychain file of the test's own, unlocked; an item in it lets any
  *  application read it, so the binary reads it without a dialog. */
 function ownKeychain(): { path: string; lock: () => void } {
-  const folder = mkdtempSync(join(tmpdir(), "marfa-handover-keychain-"));
+  const folder = tempFolder("marfa-handover-keychain-");
   const path = join(folder, "credentials.keychain-db");
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);
@@ -102,7 +101,7 @@ async function takenByAnother(
   holder: HeldCommand,
   dir?: string,
 ): Promise<HeldCommand> {
-  const gateDir = mkdtempSync(join(tmpdir(), "marfa-handover-gate-"));
+  const gateDir = tempFolder("marfa-handover-gate-");
   cleanups.push(() => rmSync(gateDir, { recursive: true, force: true }));
   const gate = join(gateDir, "command");
   const scanning = hold(
@@ -623,7 +622,7 @@ describe("handing a folder to a command", () => {
 
   it("keeps watching a folder named through a linked parent after letting it go", async () => {
     const harness = await oneFolder("handover-linked");
-    const links = mkdtempSync(join(tmpdir(), "marfa-handover-link-"));
+    const links = tempFolder("marfa-handover-link-");
     cleanups.push(() => rmSync(links, { recursive: true, force: true }));
     const parent = join(links, "parent");
     symlinkSync(dirname(harness.dir), parent);

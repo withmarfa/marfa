@@ -2,15 +2,12 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -23,6 +20,7 @@ import {
   trackItem,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A folder's store that another build of the core made, at another schema
@@ -65,7 +63,7 @@ function value<T>(result: Outcome<T>): T {
 
 /** A directory for the test's folders and the registry of their machine. */
 function machine(label: string): { base: string; registry: string } {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), `marfa-${label}-`));
+  const base = tempFolder(`marfa-${label}-`);
   bases.push(base);
   return { base, registry: join(base, "folders.json") };
 }

@@ -1,6 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -9,6 +7,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { operatorOf } from "../../utils/moved-clock.js";
 import { DISK_ONLY, ownObjectStore } from "../../utils/own-blob-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Which jobs `GET /housekeeping` lists. Thirteen are listed on every instance.
@@ -78,7 +77,7 @@ describe("the jobs the listing holds", () => {
   it(
     "lists each job that something switches on, where it is switched on, and leaves it out where it is not",
     async () => {
-      const folder = mkdtempSync(join(tmpdir(), "marfa-listing-"));
+      const folder = tempFolder("marfa-listing-");
       folders.push(folder);
       const everything = { ...ownObjectStore(), ...RECEIVER };
       const all = [

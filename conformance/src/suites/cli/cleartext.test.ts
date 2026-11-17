@@ -1,14 +1,15 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
-import { networkInterfaces, tmpdir } from "node:os";
+import { rmSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup } from "../../utils/setup.js";
 import { cliContext, once, releaseHeld } from "./harness.js";
 import type { Cli, CliContext } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A key goes to a plain `http` address on another host only after the CLI
@@ -30,7 +31,7 @@ const listeners: Listener[] = [];
 
 beforeAll(async () => {
   c = await cliContext("cleartext");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-cleartext-"));
+  dir = tempFolder("marfa-cli-cleartext-");
 });
 
 afterAll(async () => {

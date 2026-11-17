@@ -2,7 +2,6 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -11,7 +10,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -19,6 +17,7 @@ import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The folder round trip, from the terminal: a note dropped in a folder
@@ -31,7 +30,7 @@ let dir: string;
 
 beforeEach(async () => {
   c = await cliContext("folder");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-folder-"));
+  dir = tempFolder("marfa-cli-folder-");
 });
 
 afterEach(async () => {
@@ -592,7 +591,7 @@ describe("a folder round trip", () => {
     renameSync(join(dir, "a"), join(dir, "a-moved"));
     symlinkSync(join(dir, "b"), join(dir, "a"));
     // A link above both folders, as `/tmp` and `/var` are on macOS.
-    const elsewhere = mkdtempSync(join(tmpdir(), "marfa-cli-alias-"));
+    const elsewhere = tempFolder("marfa-cli-alias-");
     symlinkSync(dir, join(elsewhere, "base"));
     const store = join(second, ".marfa", "core.sqlite");
     try {
@@ -661,7 +660,7 @@ describe("a folder round trip", () => {
     renameSync(first, join(dir, "a", "notes-moved"));
     symlinkSync(second, first);
     // A link above the folder, as `/tmp` and `/var` are on macOS.
-    const elsewhere = mkdtempSync(join(tmpdir(), "marfa-cli-alias-"));
+    const elsewhere = tempFolder("marfa-cli-alias-");
     symlinkSync(dir, join(elsewhere, "base"));
     const through = join(elsewhere, "base", "a", "notes");
     const store = join(second, ".marfa", "core.sqlite");

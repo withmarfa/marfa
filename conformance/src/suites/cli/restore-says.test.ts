@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   bootFreshServer,
@@ -9,6 +8,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { DISK_ONLY, everythingClient } from "../../utils/own-blob-server.js";
 import { Cli, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * What `marfa restore` prints of what the archive left out, and of the
@@ -21,7 +21,7 @@ let dir: string;
 
 beforeAll(async () => {
   origin = await bootFreshServer("cli-restore-says-origin", DISK_ONLY);
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-restore-says-"));
+  dir = tempFolder("marfa-cli-restore-says-");
   target = await bootFreshServer("cli-restore-says-target", {
     ...DISK_ONLY,
     MARFA_BACKUP_PATH: dir,
