@@ -109,7 +109,12 @@ pub(super) fn edge_brought(id: &str) -> String {
 const EDGE_BROUGHT: &str = "edge_brought/";
 
 fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
-    for prefix in ["item_listed/", "item_early/", EDGE_BROUGHT] {
+    for prefix in [
+        "item_listed/",
+        crate::reach::UNLISTED_BEFORE,
+        "item_early/",
+        EDGE_BROUGHT,
+    ] {
         meta_delete_under(conn, prefix)?;
     }
     Ok(())
@@ -120,7 +125,20 @@ fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
 /// its end takes out unless the walk or the replay brings it again.
 pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch("DELETE FROM rows_reread;")?;
-    forget_marks_of_the_walk(conn)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value)
+         SELECT ?2 || substr(key, length(?1) + 1), 'false' FROM meta
+          WHERE key >= ?1 AND key < ?3 AND value = 'false'",
+        rusqlite::params![
+            "item_listed/",
+            crate::reach::UNLISTED_BEFORE,
+            super::meta::prefix_end("item_listed/")
+        ],
+    )?;
+    meta_delete_under(conn, "item_listed/")?;
+    meta_delete_under(conn, "item_early/")?;
+    meta_delete_under(conn, EDGE_BROUGHT)?;
+    Ok(())
 }
 
 /// The ids a waiting write names: as its item or its to item, or as an end

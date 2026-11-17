@@ -42,6 +42,21 @@ impl Core {
         })
     }
 
+    /// Every item the copy holds, listed by the server or not, as a pass
+    /// over the copy reads them. Answered as `list` answers.
+    pub(crate) fn held_items(&self) -> Result<Rows<Item>> {
+        let filters = ListFilters {
+            all_states: true,
+            ..Default::default()
+        };
+        store::read_marked(&mut *self.conn()?, |conn, completeness| {
+            Ok(Rows {
+                rows: query::list_where(conn, &[], &[], Sort::unnamed(&filters), None, None)?,
+                completeness,
+            })
+        })
+    }
+
     /// `list`, each item with the title and body it shows (`Catalog::shown`),
     /// all read under one snapshot of the catalog.
     pub fn list_shown(

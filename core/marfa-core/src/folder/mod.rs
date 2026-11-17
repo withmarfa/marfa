@@ -5491,6 +5491,38 @@ mod tests {
     }
 
     #[test]
+    fn a_pull_writes_a_file_for_a_pinned_item_the_server_did_not_list() {
+        use crate::store::{self, meta_set};
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-0000000000c2",
+            serde_json::json!({ "query": {} }),
+            None,
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
+            meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+            meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
+            for (id, title, listed) in [
+                ("01a00000-0000-7000-8000-0000000027b1", "Shown", true),
+                ("01a00000-0000-7000-8000-0000000027b2", "Hidden", false),
+            ] {
+                let row = store::testing::note(id, title, "words", "2026-01-01T00:00:00Z");
+                crate::reach::set_listed(&conn, id, listed).unwrap();
+                store::put_server_item(&conn, &row, None, &catalog).unwrap();
+            }
+        }
+        let pulled = folder.pull().unwrap();
+        assert!(
+            dir.path().join("Shown.md").is_file() && dir.path().join("Hidden.md").is_file(),
+            "{pulled:?}"
+        );
+    }
+
+    #[test]
     fn a_pull_writes_back_no_missing_file_the_sweep_holds_as_unsure() {
         let (registry, _registry) = registry::tests::own_registry();
         let (dir, folder) = folder_with(

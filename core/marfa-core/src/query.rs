@@ -10,9 +10,10 @@ use marfa_rules::catalog::Catalog;
 use marfa_rules::query as rules;
 use marfa_rules::query::escape_like;
 
-/// A local create has no listing mark until the server answers.
-pub(crate) const LISTED: &str =
-    "NOT EXISTS (SELECT 1 FROM meta WHERE key = 'item_listed/' || items.id AND value = 'false')";
+/// A local create has no listing mark until the server answers. A refill
+/// clears the marks, so a row it has not yet answered keeps its last `false`.
+pub(crate) const LISTED: &str = "NOT EXISTS (SELECT 1 FROM meta WHERE value = 'false'
+       AND key IN ('item_listed/' || items.id, 'item_unlisted_before/' || items.id))";
 
 pub(crate) fn list(
     conn: &Connection,
@@ -903,5 +904,25 @@ mod tests {
         assert!(!after.contains(&"a".to_string()));
         assert_eq!(after.len(), before.len() - 1);
         assert!(store::item_by_id(&conn, "a").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_refill_keeps_an_items_last_unlisted_answer_until_the_server_answers_again() {
+        let conn = seeded();
+        let all = ListFilters {
+            all_states: true,
+            ..Default::default()
+        };
+        let listed = |conn: &Connection| ids(conn, all.clone(), Sort::default());
+        let before = listed(&conn);
+        crate::reach::set_listed(&conn, "a", false).unwrap();
+        crate::reach::set_listed(&conn, "b", true).unwrap();
+        store::start_refill(&conn).unwrap();
+        let during = listed(&conn);
+        assert!(!during.contains(&"a".to_string()));
+        assert!(during.contains(&"b".to_string()));
+        assert_eq!(during.len(), before.len() - 1);
+        crate::reach::set_listed(&conn, "a", true).unwrap();
+        assert_eq!(listed(&conn), before);
     }
 }

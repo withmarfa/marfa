@@ -402,13 +402,7 @@ impl Folder {
             }
             None => {
                 let members = self.members(&settings)?;
-                let listed = self.core.list(
-                    &crate::model::ListFilters {
-                        all_states: true,
-                        ..Default::default()
-                    },
-                    crate::model::Sort::default(),
-                )?;
+                let listed = self.core.held_items()?;
                 (members.clone(), members, listed.rows, listed.completeness)
             }
         };

@@ -22,11 +22,13 @@ let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
 let filteredKey: string;
+let viewFilteredKey: string;
 let parent: string;
 let shown: string;
 let hidden: string;
 let view: string;
 let folder: string;
+let hiddenView: string;
 let word: string;
 const stores: string[] = [];
 
@@ -60,6 +62,18 @@ beforeAll(async () => {
   expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
   trackKey(ctx, minted.data.id);
   filteredKey = minted.data.key;
+  const viewMinted = await client.createKey({
+    label: `${ctx.source}-view-filter`,
+    source: `${ctx.source}-view-filter`,
+    type_permissions: { "system.view": "read" },
+    enforcement_override: {
+      source_filter: { types: ["system.view"], sources: [ctx.source] },
+    },
+    default_tier: "library",
+  });
+  expect(viewMinted.ok, JSON.stringify(viewMinted.error)).toBe(true);
+  trackKey(ctx, viewMinted.data.id);
+  viewFilteredKey = viewMinted.data.key;
   const writer = await client.createKey({ label: excluded, source: excluded });
   expect(writer.ok, JSON.stringify(writer.error)).toBe(true);
   trackKey(ctx, writer.data.id);
@@ -104,6 +118,13 @@ beforeAll(async () => {
   expect(folded.ok, JSON.stringify(folded.error)).toBe(true);
   folder = folded.data.item.id;
   trackFolder(ctx, folder);
+  const unlistedView = await excludedClient.createView({
+    title: "Hidden marmalade",
+    query: { types: ["core.note"] },
+  });
+  expect(unlistedView.ok, JSON.stringify(unlistedView.error)).toBe(true);
+  hiddenView = unlistedView.data.item.id;
+  trackView(ctx, hiddenView);
 });
 
 afterAll(async () => {
@@ -214,4 +235,25 @@ it("leaves a pinned item the server did not list out of a local view's and a loc
     ) as unknown as { hits: Array<{ item: Item }> };
     expect(ids(found.hits.map((hit) => hit.item))).toEqual(expected);
   }
+});
+
+it("leaves a pinned view the server did not list out of the views list, and still reads it by id", async () => {
+  const device = copy(viewFilteredKey);
+  value(await device.hydrate(["system.view"], "all", {}));
+  value(await device.pin(hiddenView));
+  const listed = value(await device.attempt(["views", "list"])) as {
+    data: Array<{ id: string }>;
+  };
+  expect(listed.data.map((row) => row.id)).not.toContain(hiddenView);
+  const read = value(await device.attempt(["views", "get", hiddenView])) as {
+    id: string;
+  };
+  expect(read.id).toBe(hiddenView);
+
+  const whole = copy(apiKey);
+  value(await whole.hydrate(["system.view"], "all", {}));
+  const all = value(await whole.attempt(["views", "list"])) as {
+    data: Array<{ id: string }>;
+  };
+  expect(all.data.map((row) => row.id)).toContain(hiddenView);
 });
