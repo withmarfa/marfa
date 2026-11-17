@@ -373,6 +373,28 @@ mod tests {
             .unwrap();
     }
 
+    // An unnamed O_TMPFILE file would show as `/var/tmp/#<inode> (deleted)`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_open_temp_file_is_named_in_the_retained_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let vfs = DirectoryVfs::new(&File::open(directory.path()).unwrap()).unwrap();
+        let conn = vfs.open("core.sqlite", rw()).unwrap();
+        conn.execute_batch("PRAGMA temp_store=FILE; PRAGMA cache_size=5; CREATE TEMP TABLE spill(value TEXT); WITH RECURSIVE seq(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM seq WHERE x<5000) INSERT INTO spill SELECT printf('%01000d',x) FROM seq").unwrap();
+        let open: Vec<String> = std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .map(|target| target.display().to_string())
+            .filter(|target| target.ends_with(" (deleted)"))
+            .collect();
+        assert!(!open.is_empty(), "the temp table spilled to a file");
+        let retained = directory.path().display().to_string();
+        assert!(
+            open.iter().all(|target| target.starts_with(&retained)),
+            "{open:?}"
+        );
+    }
+
     #[test]
     fn temp_spills_and_multiple_registrations_stay_in_original_storage() {
         let directory = tempfile::tempdir().unwrap();
