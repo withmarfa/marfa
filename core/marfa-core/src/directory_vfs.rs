@@ -15,6 +15,7 @@ unsafe extern "C" {
 
 pub(crate) struct DirectoryVfs {
     name: CString,
+    directory: File,
 }
 
 impl DirectoryVfs {
@@ -39,7 +40,20 @@ impl DirectoryVfs {
                 "cannot register directory storage: SQLite {result}"
             )));
         }
-        Ok(Self { name })
+        Ok(Self {
+            name,
+            directory: directory.try_clone().map_err(|error| {
+                CoreError::Store(format!("cannot keep the folder open: {error}"))
+            })?,
+        })
+    }
+
+    /// Looks `name` up in the folder without opening it, so no lock of this
+    /// process on the file is dropped.
+    pub(crate) fn stat(&self, name: &str) -> std::io::Result<()> {
+        rustix::fs::statat(&self.directory, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+            .map(drop)
+            .map_err(std::io::Error::from)
     }
 
     pub(crate) fn open(&self, name: &str, flags: OpenFlags) -> Result<Connection> {

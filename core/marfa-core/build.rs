@@ -78,6 +78,13 @@ fn main() {
         "statfs(filePath, &fsInfo)",
         "fstatfs(pNew->h, &fsInfo)",
     );
+    // The writer lock asks whether its name still reaches the file it locked;
+    // an inode number alone can match a file on another device.
+    unix = rewrite(
+        &unix,
+        "|| (u64)buf.st_ino!=pFile->pInode->fileId.ino);",
+        "|| (u64)buf.st_ino!=pFile->pInode->fileId.ino\n         || buf.st_dev!=pFile->pInode->fileId.dev);",
+    );
     // An O_TMPFILE file lives in the host's temporary folder, outside the retained directory.
     unix = rewrite(
         &unix,
