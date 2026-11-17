@@ -23,43 +23,49 @@ let timed: FreshServer;
 let known: FreshServer;
 let noted: FreshServer;
 let uncertain: FreshServer;
+let ownersEmail: FreshServer;
 
 const DAY = 24 * 60 * 60 * 1000;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [shared, account, every, timed, known, noted, uncertain] = await Promise.all([
-    bootFreshServer("sign-in-limits", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-    bootFreshServer("sign-in-limits-account", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-    bootFreshServer("sign-in-limits-every-email", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-    bootFreshServer("sign-in-limits-timed", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-    bootFreshServer("sign-in-limits-known-device", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-    bootFreshServer("sign-in-limits-noted", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-    bootFreshServer("sign-in-limits-uncertain", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    }),
-  ]);
-}, 7 * FRESH_SERVER_TIMEOUT_MS);
+  [shared, account, every, timed, known, noted, uncertain, ownersEmail] =
+    await Promise.all([
+      bootFreshServer("sign-in-limits", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-account", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-every-email", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-timed", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-known-device", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-noted", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-uncertain", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+      bootFreshServer("sign-in-limits-owners-email", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      }),
+    ]);
+}, 8 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled([
@@ -70,8 +76,9 @@ afterAll(async () => {
     known.stop(),
     noted.stop(),
     uncertain.stop(),
+    ownersEmail.stop(),
   ]);
-}, 7 * FRESH_SERVER_TIMEOUT_MS);
+}, 8 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(
   server: FreshServer,
@@ -281,7 +288,7 @@ describe("password sign-in", () => {
     expect(bothWait).toBeLessThanOrEqual(60 * 60);
   }, 120_000);
 
-  it("holds attempts at every email together to the same hundred, and a known device still signs in", async () => {
+  it("holds attempts at every email together to the same hundred, and the owner's right password still signs in", async () => {
     const device = await deviceCookie(every, "203.0.113.200");
     // From each of ten addresses, five wrong passwords at the owner's email
     // and five at emails with no account.
@@ -302,7 +309,7 @@ describe("password sign-in", () => {
         expect(response.status).toBe(401);
       }
     }
-    const owner = await signIn(every, OWNER.password, "203.0.113.50");
+    const owner = await signIn(every, "not the password", "203.0.113.50");
     expect(owner.status).toBe(429);
     const stranger = await signIn(
       every,
@@ -317,10 +324,33 @@ describe("password sign-in", () => {
     );
     expect(waits[0]).toBeGreaterThan(15 * 60);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
-    // The witness: the owner's known device still signs in.
+    // Fifty of the hundred were at the owner's email, so the owner's share
+    // has room: the right password signs in from a browser the server does
+    // not know, and so does the known device.
+    expect((await signIn(every, OWNER.password, "203.0.113.53")).status).toBe(
+      200,
+    );
     expect(
       (await signIn(every, OWNER.password, "203.0.113.52", device)).status,
     ).toBe(200);
+  }, 120_000);
+
+  it("answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour", async () => {
+    // The witness: with the owner's share left, the right password signs in.
+    expect(
+      (await signIn(ownersEmail, OWNER.password, "10.9.98.1")).status,
+    ).toBe(200);
+    await fillAccount(ownersEmail, 9);
+    const wrong = await signIn(ownersEmail, "not the password", "10.9.97.1");
+    const right = await signIn(ownersEmail, OWNER.password, "10.9.96.1");
+    expect(wrong.status).toBe(429);
+    expect(right.status).toBe(wrong.status);
+    expect(right.headers.getSetCookie()).toEqual([]);
+    const waits = [wrong, right].map((response) =>
+      Number(response.headers.get("retry-after")),
+    );
+    expect(waits[0]).toBeGreaterThan(15 * 60);
+    expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
   }, 120_000);
 
   it("records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses", async () => {

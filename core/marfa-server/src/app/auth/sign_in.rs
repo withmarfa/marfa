@@ -66,7 +66,8 @@ where
 {
     let admitted_ms = app.clock.now_ms();
     if let Some(wait) = app.limiter.admit(admitted_ms, &lanes.before) {
-        return Ok(Err(wait));
+        let shared = app.limiter.spent(admitted_ms, lanes.shared.as_slice());
+        return Ok(Err(shared.map_or(wait, |shared| shared.max(wait))));
     }
     let one = |lane: &Lane| app.limiter.admit(admitted_ms, std::slice::from_ref(lane));
     let gate = Gate {

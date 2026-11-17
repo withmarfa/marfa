@@ -373,4 +373,96 @@ describe("replacing the password with a credential", () => {
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
   });
+
+  it(
+    "holds the doors that need the owner's credential to a hundred passwords an hour of their own",
+    async () => {
+      // Strangers spending the hour every address shares must not reach these
+      // doors, so the case has a server of its own.
+      const held = await bootFreshServer("owner-password-own-hour", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      });
+      try {
+        const heldOrigin = await issuerOrigin(held);
+        const signInAt = (email: string, password: string, address: string) =>
+          fetch(`${held.apiUrl}/auth/sign-in`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: heldOrigin,
+              [CLIENT_HEADER]: address,
+            },
+            body: JSON.stringify({ email, password }),
+          });
+        for (let a = 1; a <= 10; a++) {
+          for (let i = 0; i < 10; i++) {
+            const stranger = await signInAt(
+              `stranger-${String(a)}-${String(i)}@example.test`,
+              "not the password",
+              `10.1.${String(a)}.1`,
+            );
+            expect(stranger.status).toBe(401);
+          }
+        }
+        const spent = await signInAt(
+          "stranger@example.test",
+          "not the password",
+          "10.1.99.1",
+        );
+        expect(spent.status, "the hour every address shares is not spent").toBe(
+          429,
+        );
+
+        const answer = await controlRequest(held.controlSocket, "/keys", {
+          method: "POST",
+          body: {
+            label: "owner password own hour",
+            source: "owner-password-own-hour-key",
+            permissions: ["sign_ins.manage"],
+          },
+        });
+        expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+        const key = (answer.body as { key: string }).key;
+        const replaceAt = (body: unknown, address: string) =>
+          fetch(`${held.apiUrl}/owner/password`, {
+            method: "PUT",
+            headers: {
+              authorization: `Bearer ${key}`,
+              "content-type": "application/json",
+              [CLIENT_HEADER]: address,
+            },
+            body: JSON.stringify(body),
+          });
+        for (let a = 1; a <= 10; a++) {
+          for (let i = 0; i < 10; i++) {
+            const wrong = await replaceAt(
+              { current_password: "wrong one", new_password: NEW_PASSWORD },
+              `10.2.${String(a)}.1`,
+            );
+            expect(wrong.status).toBe(401);
+          }
+        }
+        const locked = await replaceAt(FORWARD, "10.2.99.1");
+        expect(locked.status).toBe(429);
+        expect(await code(locked)).toBe("rate_limited");
+        expect(Number(locked.headers.get("retry-after"))).toBeGreaterThan(
+          15 * 60,
+        );
+        // Nothing changed: the new password is refused as any wrong one is
+        // while strangers hold the shared hour, and the owner's own share
+        // still signs in with the old one.
+        expect(
+          (await signInAt(TEST_OWNER.email, NEW_PASSWORD, "10.3.1.1")).status,
+        ).toBe(429);
+        expect(
+          (await signInAt(TEST_OWNER.email, TEST_OWNER.password, "10.3.2.1"))
+            .status,
+        ).toBe(200);
+      } finally {
+        await held.stop();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

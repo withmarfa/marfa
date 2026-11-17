@@ -287,6 +287,74 @@ describe("confirming with the password", () => {
   });
 });
 
+describe("confirming while strangers are limited", () => {
+  it(
+    "confirms while strangers keep the sign-in limit every address shares spent",
+    async () => {
+      // The case spends the hour every address shares, so it has a server of its own.
+      const crowded = await bootFreshServer("confirm-sign-in-crowded", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      });
+      try {
+        const crowdedOrigin = await issuerOrigin(crowded);
+        const signInAt = (email: string, password: string, address: string) =>
+          fetch(`${crowded.apiUrl}/auth/sign-in`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: crowdedOrigin,
+              [CLIENT_HEADER]: address,
+            },
+            body: JSON.stringify({ email, password }),
+          });
+        const signedIn = await signInAt(
+          TEST_OWNER.email,
+          TEST_OWNER.password,
+          "10.4.0.1",
+        );
+        expect(signedIn.status).toBe(200);
+        const stale = sessionCookie(signedIn)!;
+        expect(stale).toBeTruthy();
+        for (let a = 1; a <= 10; a++) {
+          for (let i = 0; i < 10; i++) {
+            const stranger = await signInAt(
+              `stranger-${String(a)}-${String(i)}@example.test`,
+              "not the password",
+              `10.4.${String(a)}.1`,
+            );
+            expect(stranger.status).toBe(401);
+          }
+        }
+        const spent = await signInAt(
+          "stranger@example.test",
+          "not the password",
+          "10.4.99.1",
+        );
+        expect(spent.status, "the hour every address shares is not spent").toBe(
+          429,
+        );
+        await crowded.advanceClock(6 * MINUTE);
+        const confirmed = await fetch(`${crowded.apiUrl}/auth/confirm`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: crowdedOrigin,
+            [CLIENT_HEADER]: "10.4.98.1",
+            cookie: stale,
+          },
+          body: JSON.stringify({ password: TEST_OWNER.password }),
+        });
+        expect(confirmed.status).toBe(200);
+        expect(sessionCookie(confirmed)).toBeTruthy();
+      } finally {
+        await crowded.stop();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
 describe("a confirmation names no account", () => {
   it("refuses a body that names an email, both proofs, or neither, and replaces nothing", async () => {
     const stale = await signIn();
