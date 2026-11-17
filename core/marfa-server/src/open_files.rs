@@ -103,17 +103,13 @@ mod tests {
             rlim_max: 0,
         };
         // SAFETY: as in `raise`.
-        assert_eq!(
-            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut before) },
-            0
-        );
+        let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut before) };
+        assert_eq!(read, 0);
         let raised = raise();
         let mut after = before;
         // SAFETY: as in `raise`.
-        assert_eq!(
-            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut after) },
-            0
-        );
+        let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut after) };
+        assert_eq!(read, 0);
         assert!(after.rlim_cur >= before.rlim_cur);
         assert_eq!(after.rlim_max, before.rlim_max);
         #[cfg(target_os = "macos")]

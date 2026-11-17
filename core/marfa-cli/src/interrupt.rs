@@ -275,7 +275,9 @@ mod tests {
         let (ready, started) = std::sync::mpsc::channel();
         let (done, finish) = std::sync::mpsc::channel::<()>();
         let bystander = std::thread::spawn(move || {
-            ready.send(unsafe { libc::pthread_self() }).unwrap();
+            // SAFETY: `pthread_self` takes no arguments and cannot fail.
+            let this_thread = unsafe { libc::pthread_self() };
+            ready.send(this_thread).unwrap();
             let _ = finish.recv();
         });
         let target = started.recv().unwrap();

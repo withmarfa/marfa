@@ -1,0 +1,62 @@
+# `cargo deny check`, run from `core/` by the `Rust dependencies` job.
+
+[graph]
+# The platforms the programs and the bindings are built for.
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-musl",
+    "x86_64-unknown-linux-gnu",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2026-0459", reason = "fixed in rusqlite 0.41, whose upgrade is a change of its own" },
+    { id = "RUSTSEC-2023-0071", reason = "webauthn-rs links a release candidate of rsa that no stable release replaces yet, and uses it to check public-key signatures only" },
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml is read only when askama's macros run at build time" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant has no replacement release; keyring on Linux reaches it through secret-service" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names has no replacement release; keyring on Linux reaches it through secret-service" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive has no replacement release; keyring on Linux reaches it through secret-service" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+# Two major versions of one crate are two copies in the program. Each tree
+# below is held back by a dependency that has not moved yet, so it is listed,
+# and a duplicate from anywhere else warns.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+skip-tree = [
+    { crate = "webauthn-rs", reason = "pins older RustCrypto, rand, thiserror and base64 releases" },
+    { crate = "object_store", reason = "pins its own quick-xml and tower-http" },
+    { crate = "opentelemetry_sdk", reason = "pins its own rand" },
+    { crate = "opentelemetry-otlp", reason = "pins its own prost, itertools and tower-http" },
+    { crate = "ring", reason = "pins getrandom 0.2" },
+    { crate = "yaml-rust2", reason = "pins an older encoding_rs" },
+    { crate = "chrono-tz", reason = "pins an older phf" },
+    { crate = "image", reason = "pins its own miniz_oxide" },
+]

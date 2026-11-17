@@ -118,6 +118,10 @@ impl<S: Subscriber> Layer<S> for Logs {
         event.record(&mut fields);
         let mut record = logger.create_log_record();
         let (number, text) = severity(event.metadata().level());
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "an exported record carries the host's time"
+        )]
         let now = SystemTime::now();
         record.set_timestamp(now);
         record.set_observed_timestamp(now);

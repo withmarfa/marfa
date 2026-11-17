@@ -258,6 +258,10 @@ impl Entry {
         self.default_value().to_json()
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "each registered default is checked against its rule by a test"
+    )]
     fn default_value(&self) -> Value {
         self.parse(self.default)
             .expect("a registered default is inside its own rule")
@@ -315,16 +319,26 @@ impl<T> Clone for Setting<T> {
 
 impl<T> Copy for Setting<T> {}
 
+/// A `Setting<T>` is made only by `registry!`, which pairs a rule with its kind, and a test reads
+/// every default as its kind.
+#[allow(
+    clippy::expect_used,
+    reason = "a setting's value is always of its own kind"
+)]
+fn kind_of<T: Kind>(value: &Value) -> T {
+    T::from_value(value).expect("a setting reads as its rule's kind")
+}
+
 impl<T: Kind> Setting<T> {
     pub fn default_value(self) -> T {
-        T::from_value(&self.entry.default_value()).expect("a setting reads as its rule's kind")
+        kind_of(&self.entry.default_value())
     }
 
     /// The value of this one setting from its stored row, as a [`Snapshot`] resolves it. A
     /// secret's row does not open here.
     pub fn resolve(self, seeds: &Seeds, row: Option<&str>) -> (T, Reading) {
         let (value, reading) = self.entry.resolve(seeds, None, row);
-        let value = T::from_value(&value).expect("a setting reads as its rule's kind");
+        let value = kind_of(&value);
         (value, reading)
     }
 }
@@ -664,7 +678,7 @@ impl Snapshot {
     }
 
     pub fn get<T: Kind>(&self, setting: Setting<T>) -> T {
-        T::from_value(&self.values[setting.entry.key]).expect("a setting reads as its rule's kind")
+        kind_of(&self.values[setting.entry.key])
     }
 
     pub fn rate_limit_window_ms(&self) -> u64 {

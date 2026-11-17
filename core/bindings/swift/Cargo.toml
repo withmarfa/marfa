@@ -10,6 +10,9 @@ publish = false
 crate-type = ["staticlib", "cdylib", "lib"]
 name = "marfa_core_ffi"
 
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
 [dependencies]
 marfa-core = { path = "../../marfa-core" }
 serde_json = "1"
@@ -21,3 +24,8 @@ tempfile = "3"
 
 # Its own workspace: cargo-swift will not name a package inside a multi-crate one.
 [workspace]
+
+# The device core ends a caught panic with `fault`, which needs unwinding. This
+# workspace is separate from `core/`, so it states the profile itself.
+[profile.release]
+panic = "unwind"

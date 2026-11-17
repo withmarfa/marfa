@@ -19,6 +19,7 @@ pub(crate) struct DirectoryVfs {
 
 impl DirectoryVfs {
     pub(crate) fn supported(directory: &File) -> Result<()> {
+        // SAFETY: the descriptor belongs to `directory`, which is open for the call.
         let result = unsafe { marfa_directory_vfs_supported(directory.as_raw_fd()) };
         if result != rusqlite::ffi::SQLITE_OK {
             return Err(CoreError::Invalid(
@@ -31,6 +32,7 @@ impl DirectoryVfs {
     pub(crate) fn new(directory: &File) -> Result<Self> {
         Self::supported(directory)?;
         let name = CString::new(format!("marfa-{}", uuid::Uuid::now_v7())).unwrap();
+        // SAFETY: the descriptor is open for the call, and `name` is a NUL-terminated string that the call copies.
         let result = unsafe { marfa_directory_vfs_register(directory.as_raw_fd(), name.as_ptr()) };
         if result != rusqlite::ffi::SQLITE_OK {
             return Err(CoreError::Store(format!(
@@ -42,6 +44,7 @@ impl DirectoryVfs {
 
     pub(crate) fn open(&self, name: &str, flags: OpenFlags) -> Result<Connection> {
         let conn = Connection::open_with_flags_and_vfs(name, flags, self.name.to_str().unwrap())?;
+        // SAFETY: `conn` holds the open handle, and `single_store` matches the callback SQLite expects and reads nothing else.
         unsafe {
             rusqlite::ffi::sqlite3_set_authorizer(
                 conn.handle(),
@@ -62,6 +65,7 @@ unsafe extern "C" fn single_store(
     _: *const std::ffi::c_char,
 ) -> i32 {
     if action == rusqlite::ffi::SQLITE_ATTACH && !argument.is_null() {
+        // SAFETY: SQLite passes a NUL-terminated string, and the argument is not null here.
         let filename = unsafe { CStr::from_ptr(argument) }.to_bytes();
         if !filename.is_empty() && filename != b":memory:" {
             return rusqlite::ffi::SQLITE_DENY;
@@ -72,6 +76,7 @@ unsafe extern "C" fn single_store(
 
 impl Drop for DirectoryVfs {
     fn drop(&mut self) {
+        // SAFETY: `name` is the NUL-terminated name this value registered.
         unsafe { marfa_directory_vfs_unregister(self.name.as_ptr()) };
     }
 }
@@ -444,10 +449,9 @@ mod tests {
             ),
         ] {
             if let Some(expected) = expected {
-                assert_eq!(
-                    unsafe { rusqlite::ffi::sqlite3_limit(conn.handle(), limit, -1) },
-                    expected.parse::<i32>().unwrap()
-                );
+                // SAFETY: `conn` holds the open handle, and -1 only reads the limit.
+                let found = unsafe { rusqlite::ffi::sqlite3_limit(conn.handle(), limit, -1) };
+                assert_eq!(found, expected.parse::<i32>().unwrap());
             }
         }
     }

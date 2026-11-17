@@ -82,6 +82,10 @@ struct Path {
 pub struct Served(matchit::Router<Path>);
 
 impl Served {
+    #[allow(
+        clippy::expect_used,
+        reason = "runs once at start, over routes axum has already accepted"
+    )]
     pub(super) fn of(doors: &Doors) -> Served {
         let mut router = matchit::Router::new();
         for (path, mut methods) in doors.methods_by_path() {

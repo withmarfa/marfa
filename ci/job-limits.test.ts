@@ -45,6 +45,8 @@ const LIMITS: Record<string, number> = {
   // A run on a cold cache hit the old limit of 45 and failed `main`.
   "ci.yml:core-checks": 60,
   "ci.yml:core-checks-linux": 40,
+  // No runs yet: the job installs one tool and reads two lockfiles.
+  "ci.yml:core-deny": 10,
   // A cold build of the one crate takes about 3.5 minutes.
   "ci.yml:core-fault-injection": 10,
   // A change to what the native readers are built from builds PDFium and

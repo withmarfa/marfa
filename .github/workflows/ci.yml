@@ -62,6 +62,7 @@ jobs:
       core-checks: ${{ steps.classify.outputs.core-checks }}
       swift-package: ${{ steps.classify.outputs.swift-package }}
       core-checks-linux: ${{ steps.classify.outputs.core-checks-linux }}
+      core-deny: ${{ steps.classify.outputs.core-deny }}
       core-native: ${{ steps.classify.outputs.core-native }}
       core-fault-injection: ${{ steps.classify.outputs.core-fault-injection }}
       conformance-offline: ${{ steps.classify.outputs.conformance-offline }}
@@ -381,6 +382,27 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: core
         run: scripts/report-flaky.py target/nextest/ci/junit.xml
+
+  # The dependency graph against `core/deny.toml`: advisories, yanked crates,
+  # licenses and duplicate major versions. The Swift crate has a lockfile of
+  # its own, so it is checked apart from the workspace.
+  core-deny:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-deny != 'false') }}
+    name: Rust dependencies
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/rust-toolchain
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: cargo-deny@0.20
+      - name: Check the dependencies
+        working-directory: core
+        run: |
+          cargo deny --locked check
+          cargo deny --locked --manifest-path bindings/swift/Cargo.toml --config deny.toml check
 
   # `marfa-enrichment`'s PDF and OCR readers, built on x86_64 from the sources
   # `native/manifest.txt` pins and checked on the machine they are built for.
@@ -1605,6 +1627,7 @@ jobs:
         workspace-tests,
         core-checks,
         core-checks-linux,
+        core-deny,
         core-native,
         core-fault-injection,
         conformance-offline,
@@ -1660,6 +1683,7 @@ jobs:
         workspace-tests,
         core-checks,
         core-checks-linux,
+        core-deny,
         core-native,
         core-fault-injection,
         conformance-offline,

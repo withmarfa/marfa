@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods)
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

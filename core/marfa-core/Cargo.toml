@@ -7,6 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 # Off by default: without it no tracing code or dependency is compiled in.
+[lints]
+workspace = true
+
 [features]
 telemetry = ["dep:tracing"]
 

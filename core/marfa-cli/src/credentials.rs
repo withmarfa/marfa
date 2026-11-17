@@ -549,7 +549,7 @@ mod isolated {
             let folder = std::env::temp_dir()
                 .join(format!("marfa-cli-keychain-{}-{nanos}", std::process::id()));
             std::fs::create_dir_all(&folder).expect("the test keychain's folder");
-            // Safe: `remove_folder` takes nothing and touches only this path.
+            // SAFETY: `remove_folder` takes nothing and touches only this path.
             unsafe { libc::atexit(remove_folder) };
             folder
         })

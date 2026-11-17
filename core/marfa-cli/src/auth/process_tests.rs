@@ -473,7 +473,7 @@ fn credential_lock_rejects_insecure_paths_before_touching_credentials() {
     fixture.spawn("unsafe-lock", "hard-link").finish();
     std::fs::remove_file(&path).unwrap();
     let fifo = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
-    // The path is a NUL-terminated fixture path and mkfifo retains no pointer.
+    // SAFETY: The path is a NUL-terminated fixture path and mkfifo retains no pointer.
     assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
     fixture.spawn("unsafe-lock", "fifo").finish();
     std::fs::remove_file(&path).unwrap();

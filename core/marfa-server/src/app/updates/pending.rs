@@ -95,6 +95,10 @@ impl Folder {
         self.read(LAST)
     }
 
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a record of when the update ended, which a moved test clock must not change"
+    )]
     pub fn end(&self, outcome: Outcome, version: &str, reason: Option<String>) {
         let last = Last {
             outcome: outcome.word().to_string(),

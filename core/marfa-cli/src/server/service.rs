@@ -519,9 +519,10 @@ mod socket_tests {
         )
         .unwrap();
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // SAFETY: `getuid` and `getgid` cannot fail.
         let me = Identity {
+            // SAFETY: `getuid` cannot fail.
             uid: unsafe { libc::getuid() },
+            // SAFETY: `getgid` cannot fail.
             gid: unsafe { libc::getgid() },
         };
         let socket = dir.join("marfa.sock");

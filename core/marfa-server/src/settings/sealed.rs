@@ -139,6 +139,10 @@ fn write(path: &Path, key: &[u8; KEY_BYTES]) -> Result<(), Failure> {
 }
 
 /// Keeps a damaged file for whoever can mend it, under a name no later start reuses.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the name must differ from any earlier start's, whatever the test clock says"
+)]
 fn set_aside(path: &Path) -> Result<(), Failure> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

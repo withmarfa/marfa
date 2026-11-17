@@ -461,6 +461,11 @@ fn open_folder(path: &Path) -> Result<fs::File, CliError> {
 mod tests {
     use super::*;
 
+    fn effective_user() -> u32 {
+        // SAFETY: `geteuid` takes no arguments and cannot fail.
+        unsafe { libc::geteuid() }
+    }
+
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("marfa-files-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -579,7 +584,7 @@ mod tests {
     #[test]
     fn a_folder_the_account_controls_is_not_a_root_install() {
         let dir = scratch("account");
-        let mine = unsafe { libc::geteuid() };
+        let mine = effective_user();
         // A folder owned by anyone but root is refused for the account's install.
         if mine != 0 {
             let error = admit_folder(&dir, true, Some(988), true)
@@ -591,7 +596,7 @@ mod tests {
 
     #[test]
     fn a_folder_above_the_install_folder_that_others_can_write_is_refused() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let top = scratch("parents");
         let parent = top.join("parent");
         let dir = parent.join("marfa");
@@ -615,7 +620,7 @@ mod tests {
     #[test]
     fn a_folder_above_the_install_folder_is_refused_only_for_an_acl_that_writes() {
         use marfa_acl::testing::{Grant, let_another_account};
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let top = scratch("acl-parents");
         for (grant, refused) in [
             (Grant::Read, false),
@@ -644,7 +649,7 @@ mod tests {
 
     #[test]
     fn an_install_of_ones_own_refuses_a_folder_above_it_that_others_can_write() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let top = scratch("own-parents");
         let parent = top.join("parent");
         let dir = parent.join("marfa");
@@ -663,7 +668,7 @@ mod tests {
 
     #[test]
     fn a_folder_above_the_install_folder_that_another_account_owns_is_refused() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let top = scratch("owner");
         let dir = top.join("marfa");
         fs::create_dir(&dir).unwrap();
@@ -678,7 +683,7 @@ mod tests {
 
     #[test]
     fn a_link_above_the_install_folder_is_refused() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let top = scratch("parent-link");
         let real = top.join("real");
         fs::create_dir(&real).unwrap();
@@ -693,7 +698,7 @@ mod tests {
 
     #[test]
     fn a_root_install_is_refused_below_a_folder_others_can_write() {
-        if unsafe { libc::geteuid() } == 0 {
+        if effective_user() == 0 {
             return;
         }
         let top = scratch("root-parents");
@@ -705,7 +710,7 @@ mod tests {
 
     #[test]
     fn a_folder_another_account_owns_is_not_installed_into() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let dir = scratch("user-owner");
         admit(&dir, false, None, true, me).unwrap();
         let error = admit(&dir, false, None, true, me.wrapping_add(1))
@@ -716,7 +721,7 @@ mod tests {
 
     #[test]
     fn a_folder_others_can_write_is_not_installed_into() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let dir = scratch("user-open");
         for open in [0o770, 0o707, 0o777] {
             fs::set_permissions(&dir, fs::Permissions::from_mode(open)).unwrap();
@@ -729,7 +734,7 @@ mod tests {
 
     #[test]
     fn a_restore_that_another_account_owns_is_not_used() {
-        let me = unsafe { libc::geteuid() };
+        let me = effective_user();
         let dir = scratch("user-restore");
         fs::write(dir.join("marfa.env"), "").unwrap();
         fs::create_dir(dir.join("data")).unwrap();
@@ -752,7 +757,7 @@ mod tests {
     /// install, and passes without doing anything elsewhere.
     #[test]
     fn a_file_or_data_of_a_restore_that_another_account_owns_is_not_used() {
-        if unsafe { libc::geteuid() } != 0 {
+        if effective_user() != 0 {
             return;
         }
         for name in ["marfa.env", "data"] {
@@ -775,7 +780,7 @@ mod tests {
     /// install, and passes without doing anything elsewhere.
     #[test]
     fn the_root_folder_is_root_owned_and_only_its_data_belongs_to_the_account() {
-        if unsafe { libc::geteuid() } != 0 {
+        if effective_user() != 0 {
             return;
         }
         use std::os::unix::fs::MetadataExt;

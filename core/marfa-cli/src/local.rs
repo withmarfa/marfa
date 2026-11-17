@@ -34,6 +34,7 @@ fn verify(path: &Path) -> Result<(), CliError> {
         .filter(|walked| walked.len() > 1)
         .ok_or_else(|| CliError::Invalid("--socket requires a normalized absolute path".into()))?;
     folders.pop();
+    // SAFETY: `geteuid` takes no arguments and cannot fail.
     let uid = unsafe { libc::geteuid() };
     for folder in &folders {
         let found = std::fs::symlink_metadata(folder)?;
@@ -115,7 +116,9 @@ impl LocalTransport {
             };
             // macOS rejects socket timeout changes after the peer closes, even
             // when its response is still buffered. A hung-up socket cannot wait.
-            if unsafe { libc::poll(&mut poll, 1, 0) } == 1 && poll.revents & libc::POLLHUP != 0 {
+            // SAFETY: `poll` points at one `pollfd` that lives through the call, and a zero timeout returns at once.
+            let polled = unsafe { libc::poll(&mut poll, 1, 0) };
+            if polled == 1 && poll.revents & libc::POLLHUP != 0 {
                 return Ok(());
             }
         }

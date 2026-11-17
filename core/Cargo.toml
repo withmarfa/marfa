@@ -3,6 +3,24 @@ resolver = "2"
 members = ["marfa-acl", "marfa-allocator", "marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "marfa-enrichment", "bindings/node"]
 exclude = ["bindings/swift"]
 
+# Every crate inherits these with `[lints] workspace = true`. `unsafe_code` in
+# marfa-rules and `unwrap_used`, `expect_used` and `disallowed_methods` in
+# marfa-server are set in those crates' own roots, because a crate that inherits
+# cannot add lints of its own. `clippy.toml` lists the methods the server may
+# not call.
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+disallowed_methods = "allow"
+
+# Unwinding is relied on: marfa reports a panic and goes on unwinding, the
+# device core ends a caught panic with `fault`, and marfa-enrichment turns a
+# parser panic into `Malformed`. `panic = "abort"` would break all three.
+# Line tables give a crash report from a release program its line numbers; a
+# build that strips symbols, as the release's does, drops them again.
+[profile.release]
+panic = "unwind"
+debug = "line-tables-only"
+
 [workspace.package]
 version = "0.0.0"
 edition = "2024"

@@ -61,6 +61,10 @@ export const JOBS = [
   // the non-macOS credential store and the test keychain it uses are built.
   // It reads what `core-checks` reads but the Swift crate.
   "core-checks-linux",
+  // `Rust dependencies`: `cargo deny check` over the core workspace and the
+  // Swift crate. It reads the lockfiles, the manifests and `core/deny.toml`
+  // (`readsDependencies`).
+  "core-deny",
   // `Core native (x86_64 Linux)`: `marfa-enrichment`'s PDF and OCR readers,
   // built from pinned sources by `native/release.sh` and checked on real
   // x86_64 hardware, where a child that cannot confine itself reads nothing.
@@ -725,6 +729,16 @@ function versioned(path: string): boolean {
 }
 
 /**
+ * What `cargo deny check` reads: each lockfile and manifest, the policy and the
+ * compiler version `cargo metadata` runs under.
+ */
+function readsDependencies(path: string): boolean {
+  return /^core\/(deny\.toml|rust-toolchain\.toml|(bindings\/(node|swift)\/|[^/]+\/)?Cargo\.(toml|lock))$/.test(
+    path,
+  );
+}
+
+/**
  * What a draft pull request runs, of what its diff names: the format check,
  * the build and typecheck, lint, the type registry and the version check.
  * The tests, the server and the core, the contract and the clients wait
@@ -826,6 +840,7 @@ export function affected(path: string): Set<Job> {
   const rule = RULES.find(([pattern]) => pattern.test(path));
   const jobs = new Set<Job>(rule ? rule[1] : ALL);
   if (versioned(path)) jobs.add("version-fields");
+  if (readsDependencies(path)) jobs.add("core-deny");
   if (linted(path)) jobs.add("workspace");
   if (lintReads(path)) jobs.add("lint");
   // Its format check, this classifier's test and the contract's reference

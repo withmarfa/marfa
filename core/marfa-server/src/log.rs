@@ -85,6 +85,7 @@ where
     }
 }
 
+#[allow(clippy::disallowed_methods, reason = "the log records the host's time")]
 fn now_micros() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
 }
@@ -107,6 +108,7 @@ pub struct Request<'a> {
 }
 
 /// A record's time. The wall clock's, so a moved test clock cannot misplace it.
+#[allow(clippy::disallowed_methods, reason = "the log records the host's time")]
 pub fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
