@@ -1,7 +1,6 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { attentionOf, instanceIdOf, ownerOf } from "../../utils/backups.js";
@@ -19,6 +18,7 @@ import {
   runJob,
 } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The backup destination, the object store and the notice addresses are
@@ -50,8 +50,8 @@ describe("a destination set through /config", () => {
     "takes a backup folder set through /config without a restart, and finishes a backup that was running in the folder it began in",
     async () => {
       const server = await bootFreshServer("destination-swap", DISK);
-      const first = mkdtempSync(join(tmpdir(), "marfa-destination-first-"));
-      const second = mkdtempSync(join(tmpdir(), "marfa-destination-second-"));
+      const first = tempFolder("marfa-destination-first-");
+      const second = tempFolder("marfa-destination-second-");
       try {
         const { operator } = clientsFor(server);
         const owner = ownerOf(server);

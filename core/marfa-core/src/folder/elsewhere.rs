@@ -807,7 +807,7 @@ mod tests {
         let readable = peer();
         assert_eq!(readable.files()[0].mark.as_deref(), Some(mark.as_str()));
         assert_eq!(readable.files()[0].id.as_deref(), Some("n1"));
-        std::fs::set_permissions(&moved, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _sealed = crate::test_folders::locked(&moved, 0o000);
         let unreadable = peer();
         let retained = unreadable
             .files()
@@ -966,7 +966,7 @@ mod tests {
         let root = dir.path().canonicalize().unwrap();
         let shut = root.join("shut.md");
         std::fs::write(&shut, "---\nmarfa_id: n3\n---\nbody\n").unwrap();
-        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _sealed = crate::test_folders::locked(&shut, 0o000);
         let peer = Peer {
             root: root.clone(),
             root_dir: Some(Directory::open(&root).unwrap()),

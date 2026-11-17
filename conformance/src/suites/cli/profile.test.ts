@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { gif, png } from "../../utils/avatars.js";
@@ -9,6 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { Cli, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 let server: FreshServer;
 let local: Cli, delegated: Cli;
 beforeAll(async () => {
@@ -49,7 +49,7 @@ it("changes the owner through the private socket and through a credential", asyn
 });
 
 it("uploads, fetches and removes the owner's avatar from a file", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "marfa-cli-avatar-"));
+  const dir = tempFolder("marfa-cli-avatar-");
   try {
     const sent = png(16, 16);
     const file = join(dir, "me.png");

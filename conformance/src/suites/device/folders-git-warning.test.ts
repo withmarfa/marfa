@@ -1,12 +1,5 @@
 import { execFileSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
@@ -17,6 +10,7 @@ import {
   scriptFolderItem,
   scriptHydration,
 } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A folder whose directory git tracks: `folders add` warns and adds it all the
@@ -56,7 +50,7 @@ interface Machine {
 }
 
 async function machine(): Promise<Machine> {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), "marfa-git-"));
+  const root = tempFolder("marfa-git-");
   stops.push(() => {
     rmSync(root, { recursive: true, force: true });
   });

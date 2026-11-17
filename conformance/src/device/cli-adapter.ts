@@ -1,6 +1,4 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdtempSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { keychainEnv } from "../utils/keychain.js";
@@ -44,6 +42,7 @@ import {
   type UnsentWrite,
   type Tier,
 } from "./protocol.js";
+import { stopChildAtCleanup, tempFolder } from "../utils/temp-folder.js";
 
 const run = promisify(execFile);
 
@@ -181,10 +180,7 @@ export interface CliDeviceOptions {
 }
 
 export function newStore(label: string): string {
-  return join(
-    mkdtempSync(join(realpathSync(tmpdir()), `marfa-device-${label}-`)),
-    "core.sqlite",
-  );
+  return join(tempFolder(`marfa-device-${label}-`), "core.sqlite");
 }
 
 /** A flag once for each value of a filter that takes one or several. */
@@ -818,6 +814,7 @@ export class CliDevice implements DeviceUnderTest {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+    stopChildAtCleanup(child);
     let stderr = "";
     let stdout = "";
     let raised = false;

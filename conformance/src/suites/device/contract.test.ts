@@ -2,15 +2,8 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { describe, it, expect, afterEach } from "vitest";
-import {
-  chmodSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-} from "node:fs";
+import { chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   answers,
@@ -52,6 +45,7 @@ import {
   type FolderHarness,
 } from "./harness.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The binary holds a server to the contract it was built for.
@@ -984,7 +978,7 @@ class PrivateSocket {
   ) {}
 
   static async start(): Promise<PrivateSocket> {
-    const dir = mkdtempSync(join(realpathSync(tmpdir()), "m-"));
+    const dir = tempFolder("m-");
     const path = join(dir, "s");
     // Built below, once the server it counts for exists.
     const holder: { socket?: PrivateSocket } = {};

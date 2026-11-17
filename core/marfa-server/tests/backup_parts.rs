@@ -1926,7 +1926,7 @@ async fn a_due_part_no_backup_names_is_not_found_damaged_when_its_delete_fails()
     let old_path = place.path("backup-parts", &id, &part_name(&old_items));
     rewrite_keeping_time(&old_path, &altered(place.part(&id, &old_items)));
     let parts = old_path.parent().unwrap().to_path_buf();
-    fs::set_permissions(&parts, fs::Permissions::from_mode(0o555)).unwrap();
+    let _locked = marfa_acl::testing::locked(&parts, 0o555);
     let locked = fs::write(parts.join("probe"), b"probe").is_err();
     origin.app.clock.advance(8 * DAY_MS).unwrap();
     let third = origin.back_up().await;

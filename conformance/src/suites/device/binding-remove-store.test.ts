@@ -3,15 +3,12 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
-  realpathSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,6 +21,7 @@ import {
   startBindingHarness,
   type BindingHarness,
 } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Removing a store with the writes the person agreed to lose, through the
@@ -288,9 +286,7 @@ describe("removing a store", () => {
 
   it("removes a symbolic link at a store's name and keeps what it leads to", async () => {
     const { device } = await storeWithOneUnsent("remove-link");
-    const elsewhere = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-device-elsewhere-"),
-    );
+    const elsewhere = tempFolder("marfa-device-elsewhere-");
     const outside = join(elsewhere, "outside.txt");
     writeFileSync(outside, "kept");
     const bytes = join(elsewhere, "bytes");
@@ -330,7 +326,7 @@ describe("removing a store", () => {
   });
 
   it("refuses to remove a folder's store whose first page does not read", async () => {
-    const root = mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-"));
+    const root = tempFolder("marfa-folder-");
     mkdirSync(join(root, ".marfa"));
     const store = join(root, ".marfa", "core.sqlite");
     other = await BindingDevice.start({ module: requireModule(), store });

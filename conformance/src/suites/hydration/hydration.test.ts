@@ -17,16 +17,10 @@
  */
 
 import { execFile } from "node:child_process";
-import {
-  existsSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { request } from "node:http";
-import { cpus, platform, tmpdir } from "node:os";
+import { cpus, platform } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { promisify } from "node:util";
@@ -38,6 +32,7 @@ import { keychainEnv } from "../../utils/keychain.js";
 import { cleanup, createTestContext } from "../../utils/setup.js";
 import { percentile } from "../../utils/timing.js";
 import { REPORTS_DIR } from "../load/results.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 const run = promisify(execFile);
 
@@ -435,7 +430,7 @@ describe("a device filling a library of images", () => {
       apiUrl: url,
       apiKey: key,
     } = await createTestContext("hydration", "image-library"));
-    work = mkdtempSync(join(realpathSync(tmpdir()), "marfa-hydration-"));
+    work = tempFolder("marfa-hydration-");
   });
 
   async function measure(

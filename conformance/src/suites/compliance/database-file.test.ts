@@ -5,7 +5,6 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
@@ -13,7 +12,6 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
@@ -34,6 +32,7 @@ import {
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 const NOTE = "core.note";
 
@@ -65,7 +64,7 @@ async function writeNotes(
 /** The ids of every item the database file holds, read from a copy of it
  *  with no log beside it, so what the file alone holds is all that is read. */
 function itemIdsInFileAlone(sqlitePath: string): Set<string> {
-  const copy = mkdtempSync(join(tmpdir(), "marfa-file-alone-"));
+  const copy = tempFolder("marfa-file-alone-");
   try {
     cpSync(sqlitePath, join(copy, "marfa.db"));
     return withInstanceDatabase(join(copy, "marfa.db"), (db) => {
@@ -359,7 +358,7 @@ describe("copying the data directory one file after another while the instance w
       async function copyOneAfterAnother(
         between: (copied: string) => Promise<void>,
       ): Promise<{ image: string; before: Written[]; after: Written[] }> {
-        const image = mkdtempSync(join(tmpdir(), "marfa-copy-image-"));
+        const image = tempFolder("marfa-copy-image-");
         states.push(image);
         cpSync(server.stateDir, image, {
           recursive: true,
@@ -589,7 +588,7 @@ describe("starting on a database this build did not write", () => {
   beforeAll(async () => {
     donor = await bootFreshServer("lifecycle-refused");
     await writeNotes(donor, "lifecycle-refused", 5);
-    const dir = mkdtempSync(join(tmpdir(), "marfa-refused-donor-"));
+    const dir = tempFolder("marfa-refused-donor-");
     kept.push(dir);
     image = join(dir, "first.db");
     imageAfterAStart = join(dir, "second.db");
@@ -768,7 +767,7 @@ describe("starting on a database that holds some of the server's tables and no r
   beforeAll(async () => {
     server = await bootFreshServer("lifecycle-unfinished");
     await writeNotes(server, "lifecycle-unfinished", 5);
-    const dir = mkdtempSync(join(tmpdir(), "marfa-unfinished-donor-"));
+    const dir = tempFolder("marfa-unfinished-donor-");
     kept.push(dir);
     image = join(dir, "marfa.db");
     await server.restart({

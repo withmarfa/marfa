@@ -1009,7 +1009,7 @@ async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_a
     assert_eq!(status, StatusCode::OK, "{body}");
     fs::rename(&folder, parent.path().join("old disk")).unwrap();
     fs::create_dir(&folder).unwrap();
-    fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+    let _locked = marfa_acl::testing::locked(&folder, 0o555);
 
     let (status, refused) = instance
         .local(Method::POST, "/backups/folder/adopt", None)

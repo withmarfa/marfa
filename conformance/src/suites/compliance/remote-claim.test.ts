@@ -1,7 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { request } from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   bootUnclaimedServer,
@@ -21,6 +19,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
 import { TEST_OWNER } from "../../utils/target.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /** Claiming from off the machine, and recovering the owner with a code a start prints. */
 
@@ -56,7 +55,7 @@ async function bootUnclaimed(
   label: string,
   env: Record<string, string> = {},
 ): Promise<Unclaimed> {
-  const state = await mkdtemp(join(tmpdir(), `marfa-${label}-`));
+  const state = tempFolder(`marfa-${label}-`);
   states.push(state);
   return bootAgain(state, env);
 }

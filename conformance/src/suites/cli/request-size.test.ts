@@ -1,13 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -16,6 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { Cli, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A file within a body field's length that encodes past what the real server
@@ -30,7 +23,7 @@ const DEFAULT_LIMIT = 1_048_576;
 let server: FreshServer | undefined;
 let cli: Cli;
 let client: MarfaClient;
-const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-request-size-"));
+const dir = tempFolder("marfa-request-size-");
 
 beforeAll(async () => {
   server = await bootFreshServer("cli-request-size");

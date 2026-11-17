@@ -13,6 +13,7 @@ The contract (`spec/`) and the fixtures that hold a server and a device to it (`
 - Isolate a fixture by credential. Each file mints its own key with a unique `source`, writes through it, and `cleanup` in `afterAll` deletes what it tracked and revokes the key. No state is shared between files.
 - When an answer is the instance's whole history rather than items a key can isolate (such as the owner), or a fixture needs a setting `marfa:up` turns off (the rate limiter, enrichment, OCR, private addresses), boot a server of its own with `bootFreshServer` from `src/utils/fresh-server.ts` and stop it in `afterAll`.
 - Reach past the target interface (open the database, the disk store or the log) only where no operation or fault can make the state. List the fixture in `TARGET-INTERFACE.md`, "Fixtures that reach past the target interface", with the reason. Reaching into `marfa.db` binds the contract to a column name.
+- Make every temporary folder with `tempFolder` from `src/utils/temp-folder.ts`, never `mkdtemp` under `os.tmpdir()`. It removes the folder after the file, at exit and on an interrupt, and unlocks it first (immutable flags, deny ACLs, modes). Register a disk image you attach with `detachImageAtCleanup`, and a process you start and hold with `stopChildAtCleanup`. The run fails when a folder is left behind (`src/utils/temp-folder-run.ts`).
 - Give a fixture a title in a double- or single-quoted string. A statement cites a test by its exact title, and `spec-citations.test.ts` cannot read a title in a template literal.
 
 ## What a new test owes

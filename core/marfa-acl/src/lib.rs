@@ -532,6 +532,45 @@ pub mod testing {
         InheritReadToFiles,
     }
 
+    /// A path a test locks with a mode or an ACL entry. Dropping it removes
+    /// the entries and gives the owner access back, so the folder that holds
+    /// it is removed even when the test fails first. Declare it after the
+    /// `TempDir`, so it drops first.
+    pub struct Locked(std::path::PathBuf);
+
+    /// Holds `path` at `mode` until the result is dropped.
+    pub fn locked(path: impl AsRef<Path>, mode: u32) -> Locked {
+        use std::os::unix::fs::PermissionsExt;
+        let path = path.as_ref().to_path_buf();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        Locked(path)
+    }
+
+    /// Unlocks `path` when the result is dropped, for a path the test is about
+    /// to lock itself, with an ACL entry for one.
+    pub fn unlocked_after(path: impl AsRef<Path>) -> Locked {
+        Locked(path.as_ref().to_path_buf())
+    }
+
+    impl Drop for Locked {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("/bin/chmod")
+                .args(["-h", "-N"])
+                .arg(&self.0)
+                .status();
+            let Ok(meta) = std::fs::symlink_metadata(&self.0) else {
+                return;
+            };
+            if meta.file_type().is_symlink() {
+                return;
+            }
+            let owner = if meta.is_dir() { 0o700 } else { 0o600 };
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(owner));
+        }
+    }
+
     /// Returns whether the requested grant could be set on the file or folder.
     #[cfg(target_os = "macos")]
     pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
@@ -729,11 +768,43 @@ mod tests {
         assert!(lets_others_write(&open_other, me, true));
     }
 
-    fn folder(name: &str) -> std::path::PathBuf {
+    /// A folder of a test's own, removed when the test ends, whether it
+    /// passes or not, with the ACL entries and modes the test set undone.
+    struct Scratch(std::path::PathBuf);
+
+    impl std::ops::Deref for Scratch {
+        type Target = std::path::PathBuf;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl AsRef<Path> for Scratch {
+        fn as_ref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("/bin/chmod")
+                .args(["-R", "-N"])
+                .arg(&self.0)
+                .status();
+            let _ = std::process::Command::new("chmod")
+                .args(["-R", "u+rwx"])
+                .arg(&self.0)
+                .status();
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn folder(name: &str) -> Scratch {
         let path = std::env::temp_dir().join(format!("marfa-acl-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
-        path
+        Scratch(path)
     }
 
     fn me() -> u32 {
@@ -793,12 +864,12 @@ mod tests {
         let path = folder("plain");
         assert!(!grants_by_acl(&path).unwrap());
         assert!(!others_may_write(&path, me()).unwrap());
-        std::fs::remove_dir_all(&path).unwrap();
     }
 
     #[test]
     fn a_missing_path_is_an_error_on_linux_and_nothing_on_macos() {
-        let path = folder("missing").join("absent");
+        let scratch = folder("missing");
+        let path = scratch.join("absent");
         let found = grants_by_acl(&path);
         let written = others_may_write(&path, me());
         if cfg!(target_os = "macos") {
@@ -808,7 +879,6 @@ mod tests {
             assert!(found.is_err());
             assert!(written.is_err());
         }
-        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -829,11 +899,9 @@ mod tests {
             &[user_obj, (NAMED_USER, 7, 65534), group_obj, mask, other],
         ) {
             eprintln!("skipped: this file system keeps no POSIX ACLs");
-            std::fs::remove_dir_all(&named_user).unwrap();
             return;
         }
         assert!(grants_by_acl(&named_user).unwrap());
-        std::fs::remove_dir_all(&named_user).unwrap();
 
         let named_group = folder("named-group");
         assert!(set_posix_acl(
@@ -842,7 +910,6 @@ mod tests {
             &[user_obj, group_obj, (NAMED_GROUP, 7, 65534), mask, other],
         ));
         assert!(grants_by_acl(&named_group).unwrap());
-        std::fs::remove_dir_all(&named_group).unwrap();
 
         let inherited = folder("default");
         assert!(set_posix_acl(
@@ -851,7 +918,6 @@ mod tests {
             &[user_obj, group_obj, other]
         ));
         assert!(grants_by_acl(&inherited).unwrap());
-        std::fs::remove_dir_all(&inherited).unwrap();
 
         // The kernel folds an ACL that only restates the mode into the mode.
         let minimal = folder("minimal");
@@ -861,7 +927,6 @@ mod tests {
             &[user_obj, group_obj, other]
         ));
         assert!(!grants_by_acl(&minimal).unwrap());
-        std::fs::remove_dir_all(&minimal).unwrap();
     }
 
     #[test]
@@ -878,12 +943,10 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             if !let_another_account(&path, grant) {
                 eprintln!("skipped: this file system keeps no POSIX ACLs");
-                std::fs::remove_dir_all(&path).unwrap();
                 return;
             }
             assert!(grants_by_acl(&path).unwrap(), "{grant:?}");
             assert_eq!(others_may_write(&path, me()).unwrap(), writes, "{grant:?}");
-            std::fs::remove_dir_all(&path).unwrap();
         }
     }
 
@@ -900,7 +963,6 @@ mod tests {
         assert_eq!(reach(&opened(&file), me()).unwrap(), Reach::default());
         if !let_another_account(&file, Grant::ReadFile) {
             eprintln!("skipped: this file system keeps no POSIX ACLs");
-            std::fs::remove_dir_all(&at).unwrap();
             return;
         }
         assert!(let_another_account(&at, Grant::InheritReadToFiles));
@@ -915,7 +977,6 @@ mod tests {
         clear(&opened(&at)).unwrap();
         assert_eq!(reach(&opened(&at), me()).unwrap(), Reach::default());
         assert_eq!(reach(&opened(&file), me()).unwrap(), Reach::default());
-        std::fs::remove_dir_all(&at).unwrap();
     }
 
     #[cfg(target_os = "macos")]
@@ -937,7 +998,6 @@ mod tests {
         chmod(&["+a", "everyone allow list,search"], &deny);
         assert!(grants_by_acl(&deny).unwrap());
         chmod(&["-N"], &deny);
-        std::fs::remove_dir_all(&deny).unwrap();
     }
 
     #[cfg(target_os = "macos")]
@@ -996,6 +1056,5 @@ mod tests {
         // The deny entries keep even the owner from deleting.
         chmod(&["-N"], &path);
         chmod(&["-N"], &at);
-        std::fs::remove_dir_all(at).unwrap();
     }
 }

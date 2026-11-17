@@ -1,12 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   bootFreshServer,
@@ -15,6 +8,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { notCarried } from "../../utils/archive.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * An archive export whose server holds the first byte for longer than the
@@ -30,7 +24,7 @@ let dir: string;
 
 beforeAll(async () => {
   server = await bootFreshServer("cli-archive-wait");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-archive-wait-"));
+  dir = tempFolder("marfa-cli-archive-wait-");
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {

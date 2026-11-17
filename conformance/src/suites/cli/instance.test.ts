@@ -1,6 +1,5 @@
 import { signInOwnerWithPassword } from "../../client/owner-session.js";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
@@ -16,6 +15,7 @@ import { expectSignedBy, startReceiver } from "../../utils/webhook-receiver.js";
 import type { Receiver } from "../../utils/webhook-receiver.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
 import type { Cli, CliContext, ItemEnvelope } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * The instance from the terminal: what it says about itself, its keys, its
@@ -28,7 +28,7 @@ let receiver: Receiver;
 
 beforeAll(async () => {
   c = await cliContext("instance");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-instance-"));
+  dir = tempFolder("marfa-cli-instance-");
   receiver = await startReceiver();
 });
 

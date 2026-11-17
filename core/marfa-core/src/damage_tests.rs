@@ -1301,10 +1301,26 @@ fn a_log_whose_tail_is_torn_or_foreign_still_gives_its_committed_writes() {
     }
 }
 
+/// Takes the ACL entries off a folder when dropped, so the folder is removed
+/// even when the test fails while it holds one.
+#[cfg(target_os = "macos")]
+struct AclCleared(PathBuf);
+
+#[cfg(target_os = "macos")]
+impl Drop for AclCleared {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("chmod")
+            .arg("-N")
+            .arg(&self.0)
+            .status();
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn a_log_that_cannot_be_copied_to_be_read_stops_the_set_aside_before_anything_moves() {
     let (dir, path, _) = emptied_with_log(2);
+    let _unlocked = AclCleared(dir.path().to_path_buf());
     let log = bytes(&beside(&path, "-wal"));
     let acl = |args: &[&str]| {
         assert!(

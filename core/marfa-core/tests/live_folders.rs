@@ -8,7 +8,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once, mpsc};
+use std::sync::{Arc, Mutex, Once, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use marfa_core::folder::{REGISTRY_ENV, Registry};
@@ -122,11 +122,21 @@ fn nonce() -> String {
 }
 
 static REGISTRY: Once = Once::new();
+static REGISTRY_FOLDER: OnceLock<PathBuf> = OnceLock::new();
+
+extern "C" fn remove_registry_folder() {
+    if let Some(folder) = REGISTRY_FOLDER.get() {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
 
 /// Set once, before any folder reads it, so no test races another's write.
 fn registry() -> Registry {
     REGISTRY.call_once(|| {
-        let dir = temporary_folder().keep();
+        let dir = REGISTRY_FOLDER.get_or_init(|| temporary_folder().keep());
+        // SAFETY: the function takes no arguments and removes only the folder
+        // made here.
+        unsafe { libc::atexit(remove_registry_folder) };
         // SAFETY: under the `Once`, before any thread this file starts reads
         // the environment.
         unsafe { std::env::set_var(REGISTRY_ENV, dir.join("folders.json")) };

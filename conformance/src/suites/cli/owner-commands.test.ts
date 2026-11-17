@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
@@ -11,6 +10,7 @@ import { png } from "../../utils/avatars.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { Cli, requireBinary, unique } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let server: FreshServer;
 let local: Cli, keyed: Cli;
@@ -86,7 +86,7 @@ it("ends every browser sign-in at once, sparing a named one and leaving apps and
 });
 
 it("clears the owner's avatar", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "marfa-cli-owner-avatar-"));
+  const dir = tempFolder("marfa-cli-owner-avatar-");
   try {
     const file = join(dir, "me.png");
     await writeFile(file, png(16, 16));

@@ -1,6 +1,5 @@
 import {
   existsSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -8,7 +7,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -21,6 +19,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A secret setting is written through `/config` and never read back: each
@@ -99,7 +98,7 @@ describe("a secret setting", () => {
           "MARFA_OBJECT_STORE_ENDPOINT is required: source the env file `pnpm garage:up` writes.",
         );
       }
-      const folder = mkdtempSync(join(tmpdir(), "marfa-secret-backups-"));
+      const folder = tempFolder("marfa-secret-backups-");
       const server = await bootFreshServer("secret-witness", DISK);
       try {
         const { operator } = clientsFor(server);

@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /** Link and unlink: an edge between two notes, read from both ends. */
 
@@ -13,7 +13,7 @@ let dir: string;
 
 beforeAll(async () => {
   c = await cliContext("edges");
-  dir = mkdtempSync(join(tmpdir(), "marfa-cli-edges-"));
+  dir = tempFolder("marfa-cli-edges-");
 });
 
 afterAll(async () => {

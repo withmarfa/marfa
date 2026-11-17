@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -14,6 +13,7 @@ import {
   trackType,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A device holds a write to the bounds the server holds it to on the names it
@@ -71,7 +71,7 @@ beforeAll(async () => {
   row = made.data.item.id;
   trackItem(ctx, row);
   store = newStore("name-bounds-live");
-  scratch = mkdtempSync(join(tmpdir(), "marfa-name-bounds-"));
+  scratch = tempFolder("marfa-name-bounds-");
   device = new CliDevice({
     binary: requireBinary(),
     store,

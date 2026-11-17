@@ -3,8 +3,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
-  realpathSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -14,7 +12,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -74,6 +71,7 @@ import {
   withoutPlacements,
 } from "./folders.shared.js";
 import { ON_MACOS } from "../../utils/platform.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * "A folder is a directory bound to a `system.folder`, whose query decides
@@ -369,10 +367,7 @@ describe("what a folder is", () => {
         answers.currentKey("fixture-key", { "*": "write" }),
       );
       server.copyAnswer("GET", `/items/${id}`, answers.updated(row()));
-      const dir = join(
-        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-not-a-folder-")),
-        "notes",
-      );
+      const dir = join(tempFolder("marfa-folder-not-a-folder-"), "notes");
       const folder = new CliFolder(dir, {
         binary: requireBinary(),
         url: server.url,
@@ -397,9 +392,7 @@ describe("what a folder is", () => {
   });
 
   it("ends every command on a directory that is not a folder with the refused exit", () => {
-    const base = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-not-followed-"),
-    );
+    const base = tempFolder("marfa-not-followed-");
     const dir = join(base, "notes");
     mkdirSync(dir);
     const env = {
@@ -456,10 +449,7 @@ describe("what a folder is", () => {
         "/keys/current",
         answers.currentKey("fixture-key", { "*": "write" }, types),
       );
-      const dir = join(
-        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-unreadable-")),
-        "notes",
-      );
+      const dir = join(tempFolder("marfa-folder-unreadable-"), "notes");
       const folder = new CliFolder(dir, {
         binary: requireBinary(),
         url: server.url,
@@ -987,12 +977,7 @@ describe("what a folder is", () => {
         answers.currentKey("fixture-key", { "*": "write" }),
       );
       const row = scriptFolderItem(server, settings);
-      const dir = join(
-        mkdtempSync(
-          join(realpathSync(tmpdir()), "marfa-folder-defaults-refused-"),
-        ),
-        "notes",
-      );
+      const dir = join(tempFolder("marfa-folder-defaults-refused-"), "notes");
       const folder = new CliFolder(dir, {
         binary: requireBinary(),
         url: server.url,
@@ -1615,10 +1600,7 @@ describe("what a folder's query holds", () => {
     ]) {
       const server = await ScriptedServer.start();
       const row = scriptFolderItem(server, settings as FolderSettings);
-      const dir = join(
-        mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-refused-")),
-        "notes",
-      );
+      const dir = join(tempFolder("marfa-folder-refused-"), "notes");
       const folder = new CliFolder(dir, {
         binary: requireBinary(),
         url: server.url,
@@ -5047,9 +5029,7 @@ describe("what a folder takes", () => {
   });
 
   it("refuses to write a file outside the folder", async () => {
-    const elsewhere = mkdtempSync(
-      join(realpathSync(tmpdir()), "marfa-folder-elsewhere-"),
-    );
+    const elsewhere = tempFolder("marfa-folder-elsewhere-");
     harness = await folderHarness("folder-outside", {
       items: {
         "core.note": [
@@ -5821,10 +5801,7 @@ describe("reading only what changed", () => {
       // by one `cp -p`, which writes the file in place and puts the time
       // back at once: a pass between a write and a separate `touch` would
       // see the time moved and read the file.
-      const staged = join(
-        mkdtempSync(join(realpathSync(tmpdir()), "marfa-time-")),
-        "kept.md",
-      );
+      const staged = join(tempFolder("marfa-time-"), "kept.md");
       writeFileSync(staged, read(made, "kept.md").replace("first", "FIRST"));
       chmodSync(staged, statSync(kept).mode);
       execFileSync("touch", ["-r", kept, staged]);

@@ -6,8 +6,7 @@
  * lists the store, lets it settle and reads its memory. It stops only the
  * server it started.
  */
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { scalar } from "../../src/utils/scale/figures.js";
 import { readServerMemory } from "../../src/utils/scale/memory.js";
@@ -15,6 +14,7 @@ import { StartedServers } from "../../src/utils/scale/servers.js";
 import { bootServer, stopServer } from "../marfa-server.js";
 import { log, Recorder, sleep } from "./context.js";
 import { connectionOf, send, supervisor } from "./standalone.js";
+import { tempFolder } from "../../src/utils/temp-folder.js";
 
 const SETTLE_MS = Number(process.env.MARFA_SCALE_SETTLE_MS ?? "30000");
 
@@ -25,7 +25,7 @@ export async function store(): Promise<void> {
       "MARFA_OBJECT_STORE_ENDPOINT is not set; run `pnpm garage:up` first",
     );
   }
-  const work = mkdtempSync(join(tmpdir(), "marfa-scale-store-"));
+  const work = tempFolder("marfa-scale-store-");
   const state = join(work, "a");
   const started = new StartedServers();
   try {

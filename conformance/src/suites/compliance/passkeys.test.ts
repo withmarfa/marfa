@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import {
   bootUnclaimedServer,
   stopServer,
@@ -13,6 +11,7 @@ import {
   keepStatusLog,
 } from "../../utils/fresh-server.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 let document: OpenApiDocument;
 async function expectMatchesSchema(
@@ -116,7 +115,7 @@ async function signIn(
   );
 }
 beforeAll(async () => {
-  state = await mkdtemp(join(tmpdir(), "marfa-passkey-conformance-"));
+  state = tempFolder("marfa-passkey-conformance-");
   server = await bootUnclaimedServer({ state });
   base = onLocalhost(server.url);
   const moved = await controlRequest(server.controlSocket, "/config", {

@@ -9,9 +9,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -25,6 +24,7 @@ import {
   unreachedDebt,
 } from "./status-declarations.js";
 import { FRESH_SERVER_LOGS } from "./fresh-server.js";
+import { tempFolder } from "./temp-folder.js";
 
 /** A document declaring one door, the way the server's does. */
 function documentDeclaring(statuses: number[]) {
@@ -770,7 +770,7 @@ describe("the status checker", () => {
     const url = `http://127.0.0.1:${String(typeof address === "object" && address ? address.port : 0)}`;
     const states: string[] = [];
     const stateWith = (main: string[], fresh: string[] = []) => {
-      const state = mkdtempSync(join(tmpdir(), "check-statuses-"));
+      const state = tempFolder("check-statuses-");
       states.push(state);
       writeFileSync(join(state, "server.log"), main.join("\n"));
       if (fresh.length > 0) {

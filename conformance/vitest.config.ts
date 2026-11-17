@@ -7,6 +7,11 @@ silenceTelemetry();
 
 const exclude = (...own: string[]) => [...configDefaults.exclude, ...own];
 
+// Every project removes what its files make: the run lists its run folders
+// first, so it is the last to tear down and finds what the others missed.
+const RUN_FOLDERS = "src/utils/temp-folder-run.ts";
+const REMOVE_AFTER_FILE = "src/utils/temp-folder-teardown.ts";
+
 export default defineConfig({
   test: {
     fileParallelism: false,
@@ -18,6 +23,8 @@ export default defineConfig({
       {
         test: {
           name: "generators",
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE],
           ...ciRetry,
           // The no-network lane. `*.decision.test.ts` under a suite folder is
           // a pure verdict driven over inputs rather than a run against a
@@ -44,6 +51,8 @@ export default defineConfig({
         // else, so it runs where that binary is (the `MCP conformance` job).
         test: {
           name: "harness",
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE],
           ...ciRetry,
           include: ["src/utils/**/*.harness.test.ts"],
           testTimeout: 60_000,
@@ -53,6 +62,8 @@ export default defineConfig({
       {
         test: {
           name: "correctness",
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE],
           ...ciRetry,
           include: ["src/suites/correctness/**/*.test.ts"],
           exclude: exclude("src/suites/correctness/**/*.decision.test.ts"),
@@ -69,6 +80,8 @@ export default defineConfig({
       {
         test: {
           name: "performance",
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE],
           include: ["src/suites/performance/**/*.test.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
@@ -80,7 +93,8 @@ export default defineConfig({
           ...ciRetry,
           include: ["src/suites/compliance/**/*.test.ts"],
           exclude: exclude("src/suites/compliance/**/*.decision.test.ts"),
-          setupFiles: ["src/utils/fresh-server-teardown.ts"],
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE, "src/utils/fresh-server-teardown.ts"],
           // Matches correctness, for the same reasons: archive, bulk and
           // export bodies are slow under full-run load, and every file pays
           // the same mint-and-teardown cost.
@@ -95,6 +109,8 @@ export default defineConfig({
         // rather than a single request.
         test: {
           name: "sync",
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE],
           ...ciRetry,
           include: ["src/suites/sync/**/*.test.ts"],
           // Runs in the no-network lane instead; see the generators project.
@@ -109,9 +125,14 @@ export default defineConfig({
         // budget as the network suites.
         test: {
           name: "device",
+          setupFiles: [REMOVE_AFTER_FILE],
           ...ciRetry,
           include: ["src/suites/device/**/*.test.ts"],
-          globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
+          globalSetup: [
+            RUN_FOLDERS,
+            "src/utils/keychain.ts",
+            "src/utils/registry.ts",
+          ],
           // Runs in the no-network lane instead; see the generators project.
           exclude: exclude("src/suites/device/**/*.decision.test.ts"),
           testTimeout: 120_000,
@@ -124,10 +145,15 @@ export default defineConfig({
         // plus a round trip, so the budget matches the device project.
         test: {
           name: "cli",
+          setupFiles: [REMOVE_AFTER_FILE],
           ...ciRetry,
           include: ["src/suites/cli/**/*.test.ts"],
           exclude: exclude("src/suites/cli/**/*.decision.test.ts"),
-          globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
+          globalSetup: [
+            RUN_FOLDERS,
+            "src/utils/keychain.ts",
+            "src/utils/registry.ts",
+          ],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },
@@ -140,8 +166,9 @@ export default defineConfig({
         // every night, not a gate.
         test: {
           name: "hydration",
+          setupFiles: [REMOVE_AFTER_FILE],
           include: ["src/suites/hydration/**/*.test.ts"],
-          globalSetup: ["src/utils/keychain.ts"],
+          globalSetup: [RUN_FOLDERS, "src/utils/keychain.ts"],
           testTimeout: 3_600_000,
           hookTimeout: 3_600_000,
         },
@@ -149,6 +176,8 @@ export default defineConfig({
       {
         test: {
           name: "load",
+          globalSetup: [RUN_FOLDERS],
+          setupFiles: [REMOVE_AFTER_FILE],
           include: ["src/suites/load/**/*.test.ts"],
           testTimeout: 1_800_000,
           hookTimeout: 600_000,

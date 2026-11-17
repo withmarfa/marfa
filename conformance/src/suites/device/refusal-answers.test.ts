@@ -1,5 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliFolder } from "../../device/cli-adapter.js";
@@ -13,6 +12,7 @@ import {
   startBindingHarness,
   startHarness,
 } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 interface Door {
   hydrate: (types: string[]) => Promise<Outcome<unknown>>;
@@ -129,7 +129,7 @@ describe.each(doors)("through $name", ({ name, open }) => {
       `/items/${folder}`,
       refusal(404, "item_not_found", "No such item", { id: folder }),
     );
-    scratch = mkdtempSync(join(realpathSync(tmpdir()), "marfa-refusal-"));
+    scratch = tempFolder("marfa-refusal-");
     const added = await opened.door.addFolder(join(scratch, "notes"), folder);
     expect(added.ok, "a folder the server does not hold was added").toBe(false);
     if (added.ok) return;

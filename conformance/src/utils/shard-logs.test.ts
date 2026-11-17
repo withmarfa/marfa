@@ -1,13 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readShards } from "./shard-logs.js";
+import { tempFolder } from "./temp-folder.js";
 
 describe("the logs the shards of a run kept", () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "marfa-shard-logs-"));
+    dir = tempFolder("marfa-shard-logs-");
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });

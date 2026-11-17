@@ -1,5 +1,3 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
@@ -7,11 +5,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 import { Cli, requireBinary } from "./harness.js";
 
 let server: FreshServer;
 let cli: Cli;
-const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-cli-refusals-"));
+const dir = tempFolder("marfa-cli-refusals-");
 
 beforeAll(async () => {
   server = await bootFreshServer("cli-refusals");
@@ -20,7 +19,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server?.stop();
-  rmSync(dir, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 it("ends a stale-version refusal the same way from a command that goes through the device core as from a direct one", async () => {

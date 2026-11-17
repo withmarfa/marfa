@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { loadavg, tmpdir } from "node:os";
+import { loadavg } from "node:os";
 import { join } from "node:path";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -26,6 +26,7 @@ import {
 import { QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 interface Row {
   id: string;
@@ -127,7 +128,7 @@ beforeAll(async () => {
     url: server.apiUrl,
     key: server.workingKey,
   });
-  gateDir = mkdtempSync(join(tmpdir(), "marfa-two-devices-gate-"));
+  gateDir = tempFolder("marfa-two-devices-gate-");
   unreachable = await closedPort();
 }, FRESH_SERVER_TIMEOUT_MS);
 

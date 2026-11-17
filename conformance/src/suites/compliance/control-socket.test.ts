@@ -1,12 +1,4 @@
-import {
-  lstat,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
@@ -15,6 +7,7 @@ import {
   bootRefused,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -22,7 +15,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const root = await mkdtemp(join(await realpath(tmpdir()), "marfa-restart-"));
+  const root = tempFolder("restart-");
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const socket = join(root, "control.sock");
   const extraEnv = { MARFA_CONTROL_SOCKET: socket };

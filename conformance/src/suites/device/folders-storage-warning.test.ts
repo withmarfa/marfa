@@ -1,12 +1,4 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -22,6 +14,7 @@ import {
   scriptFolderItem,
   scriptHydration,
 } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * Where a folder's directory sits: iCloud Drive, a cloud service's synced
@@ -71,9 +64,7 @@ interface Ran {
 }
 
 async function machine(label: string): Promise<Machine> {
-  const root = mkdtempSync(
-    join(realpathSync(tmpdir()), `marfa-storage-${label}-`),
-  );
+  const root = tempFolder(`marfa-storage-${label}-`);
   stops.push(() => {
     rmSync(root, { recursive: true, force: true });
   });

@@ -1,15 +1,12 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import {
   mkdirSync,
-  mkdtempSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -29,6 +26,7 @@ import {
   trackType,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 // The gate places the competing commit after the transaction's first read.
 
@@ -68,7 +66,7 @@ function value<T>(result: Outcome<T>): T {
 }
 
 function scratch(label: string): string {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), `marfa-${label}-`));
+  const base = tempFolder(`marfa-${label}-`);
   bases.push(base);
   return base;
 }

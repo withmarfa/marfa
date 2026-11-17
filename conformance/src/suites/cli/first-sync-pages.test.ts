@@ -1,12 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -15,6 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { Cli, requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
  * A first sync of a folder against a server that limits requests
@@ -29,7 +23,7 @@ import { Cli, requireBinary } from "./harness.js";
 const NOTES = 300;
 let server: FreshServer | undefined;
 let cli: Cli;
-const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-first-sync-"));
+const dir = tempFolder("marfa-first-sync-");
 let apiUrl = "";
 let workingKey = "";
 

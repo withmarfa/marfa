@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootUnclaimedServer, stopServer } from "../../scripts/marfa-server.js";
 import { controlRequest } from "./control-request.js";
 import { bootFreshServer, runScript } from "./fresh-server.js";
+import { tempFolder } from "./temp-folder.js";
 
 describe("the fixture server's script runner", () => {
   it("keeps the worker's timers ticking while a script runs", async () => {
@@ -42,7 +42,7 @@ describe("fixture listener ownership", () => {
     });
     await new Promise<void>((done) => squatter.listen(0, "127.0.0.1", done));
     port = (squatter.address() as { port: number }).port;
-    const state = mkdtempSync(join(tmpdir(), "marfa-occupied-port-"));
+    const state = tempFolder("marfa-occupied-port-");
     // The impostor really does answer health before the harness is asked.
     await (await fetch(`http://127.0.0.1:${port}/health`)).text();
     expect(requests).toBe(1);
@@ -65,7 +65,7 @@ describe("fixture listener ownership", () => {
 
   it("assigns concurrent listeners their own ports, private sockets, and identities", async () => {
     const states = Array.from({ length: 4 }, () =>
-      mkdtempSync(join(tmpdir(), "marfa-parallel-boot-")),
+      tempFolder("marfa-parallel-boot-"),
     );
     try {
       const boots = await Promise.allSettled(

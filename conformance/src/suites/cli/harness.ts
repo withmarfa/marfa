@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import type { TestContext } from "../../client/types.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { createTestContext } from "../../utils/setup.js";
+import { stopChildAtCleanup } from "../../utils/temp-folder.js";
 
 /**
  * The `marfa` binary, driven as the reference client against the server the
@@ -220,6 +221,7 @@ export class Cli {
       stdio: ["ignore", "pipe", "pipe"],
     });
     held.push(child);
+    stopChildAtCleanup(child);
     return child;
   }
 }

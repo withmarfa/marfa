@@ -1,17 +1,17 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { SPEC_DIR } from "../../utils/spec-statements.js";
 import { refusalLine } from "../../device/cli-adapter.js";
 import { requireBinary } from "./harness.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 // The help's generated list makes a new core or CLI code observable here.
 
 const run = promisify(execFile);
-const dir = mkdtempSync(join(tmpdir(), "marfa-error-codes-"));
+const dir = tempFolder("marfa-error-codes-");
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });

@@ -11,13 +11,7 @@
  * that its pin is removed.
  */
 import { spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import {
   createServer,
   request as httpRequest,
@@ -26,10 +20,10 @@ import {
 import { request as httpsRequest } from "node:https";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnvFile } from "../src/utils/target.js";
+import { tempFolder } from "../src/utils/temp-folder.js";
 
 /** The scenarios every check of which must pass. */
 export const REQUIRED = ["server-initialize", "ping", "tools-list"] as const;
@@ -210,7 +204,7 @@ async function main(): Promise<void> {
   if (!base || !key)
     throw new Error("the env file has no MARFA_API_URL or MARFA_API_KEY");
   const proxy = await startProxy(new URL("/mcp", base), key);
-  const output = mkdtempSync(join(tmpdir(), "mcp-conformance-"));
+  const output = tempFolder("mcp-conformance-");
   const results: Record<string, Check[] | undefined> = {};
   try {
     const entry = toolEntry();
