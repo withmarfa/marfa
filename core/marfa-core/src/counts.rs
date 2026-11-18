@@ -760,6 +760,12 @@ mod tests {
             },
             CoreError::Network("offline".into()),
             CoreError::NotAnswerable("a count the renewer asked".into()),
+            CoreError::RenewalFailed(Box::new(CoreError::NotAnswerable(
+                "a count a nested renewal asked".into(),
+            ))),
+            CoreError::RenewalFailed(Box::new(CoreError::RenewalFailed(Box::new(
+                CoreError::NotAnswerable("a count two renewals deep".into()),
+            )))),
         ] {
             let server = Scripted::start();
             let core = copy(&server);
@@ -772,7 +778,7 @@ mod tests {
             core.renew_credential_with(Box::new(move |_| Err(failure.clone())));
             let refusal = core.counts(&ids, &table).unwrap_err();
             match expected {
-                CoreError::NotAnswerable(_) => assert!(
+                expected if expected.code() == "not_answerable" => assert!(
                     matches!(&refusal, CoreError::RenewalFailed(cause) if matches!(**cause, CoreError::Invalid(_))),
                     "{refusal:?}"
                 ),
@@ -1078,6 +1084,132 @@ mod tests {
                 "{counted:?}: {refusal:?}"
             );
         }
+    }
+
+    /// A writer on disk whose server limits requests, and a reading handle on the same store.
+    fn writer_and_reader(server: &Scripted) -> (tempfile::TempDir, std::sync::Arc<Core>, Core) {
+        server.on(
+            "/",
+            vec![scripted::json(
+                200,
+                &format!(
+                    r#"{{"name":"marfa","version":"dev","instance_id":"{}","contract":{},"features":[],"max_request_bytes":2000}}"#,
+                    scripted::INSTANCE,
+                    crate::contract::CONTRACT_VERSION
+                ),
+            )],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let writer = crate::stop_tests::copy_in_keyed(server, dir.path(), "k");
+        let reader = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(crate::Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(reader.handle(), crate::Handle::Reader);
+        (dir, writer, reader)
+    }
+
+    /// Every byte of the store's database and its write-ahead log.
+    fn store_bytes(dir: &tempfile::TempDir) -> Vec<Vec<u8>> {
+        ["core.sqlite", "core.sqlite-wal"]
+            .iter()
+            .map(|name| std::fs::read(dir.path().join(name)).unwrap_or_default())
+            .collect()
+    }
+
+    fn link_answer(id: &str) -> scripted::Answer {
+        scripted::json(
+            200,
+            &json!({ "counts": [{ "id": id, "total": 0, "status_groups": groups(0) }] })
+                .to_string(),
+        )
+    }
+
+    #[test]
+    fn a_count_a_reading_handle_asks_of_the_server_leaves_the_store_unchanged() {
+        let id = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let link = Counted::Backref("parent-of".into());
+        let server = Scripted::start();
+        server.on("/items/counts", vec![link_answer(&id)]);
+        let (dir, writer, reader) = writer_and_reader(&server);
+        let before = store_bytes(&dir);
+        let version = store::data_version(&writer.conn().unwrap()).unwrap();
+
+        reader
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap();
+        assert_eq!(server.seen("/items/counts").len(), 1);
+        assert_eq!(
+            store::data_version(&writer.conn().unwrap()).unwrap(),
+            version,
+            "the reading handle's count wrote to the store"
+        );
+        assert!(store_bytes(&dir) == before, "the store's bytes changed");
+        assert_eq!(store::request_limit(&writer.conn().unwrap()).unwrap(), None);
+
+        // The witness: the writer's own count stores the limit its server's root names.
+        writer
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap();
+        assert_eq!(
+            store::request_limit(&writer.conn().unwrap()).unwrap(),
+            Some(2000)
+        );
+        assert!(store_bytes(&dir) != before);
+    }
+
+    #[test]
+    fn a_reading_handle_refuses_a_count_for_another_instance_and_leaves_the_copy_unexpired() {
+        let id = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let link = Counted::Backref("parent-of".into());
+        let other = scripted::root("00000000-0000-7000-8000-000000000001");
+
+        // Another instance answers the root.
+        let server = Scripted::start();
+        server.on("/items/counts", vec![link_answer(&id)]);
+        let (dir, writer, reader) = writer_and_reader(&server);
+        server.on("/", vec![other.clone()]);
+        let before = store_bytes(&dir);
+        let refusal = reader
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert_eq!(refusal.code(), "copy_expired", "{refusal:?}");
+        assert!(server.seen("/items/counts").is_empty());
+        assert!(!crate::reach::expired(&writer.conn().unwrap()).unwrap());
+        assert!(store_bytes(&dir) == before, "the store's bytes changed");
+        // The witness: the writer's count expires the copy.
+        let refusal = writer
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert_eq!(refusal.code(), "copy_expired", "{refusal:?}");
+        assert!(crate::reach::expired(&writer.conn().unwrap()).unwrap());
+
+        // Another instance takes the address after the root was read and refuses the named request.
+        let server = Scripted::start();
+        server.on(
+            "/items/counts",
+            vec![scripted::refusal(409, crate::http::INSTANCE_CHANGED)],
+        );
+        let (dir, writer, reader) = writer_and_reader(&server);
+        let before = store_bytes(&dir);
+        let refusal = reader
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert!(
+            matches!(&refusal, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED),
+            "{refusal:?}"
+        );
+        assert!(!crate::reach::expired(&writer.conn().unwrap()).unwrap());
+        assert!(store_bytes(&dir) == before, "the store's bytes changed");
+        // The witness: the writer's count expires the copy.
+        writer
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert!(crate::reach::expired(&writer.conn().unwrap()).unwrap());
     }
 
     #[test]
