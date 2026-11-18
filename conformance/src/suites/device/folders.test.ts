@@ -5004,6 +5004,94 @@ describe("what a folder takes", () => {
     ]);
   });
 
+  it("gives the numbered name to the item created later, whatever order the server lists them in", async () => {
+    const note = (id: string, title: string, created: string) => ({
+      item: {
+        id,
+        created_at: created,
+        properties: { title, body: `${title}\n` },
+      },
+    });
+    const made = (n: number) => `01a00000-0000-7000-8000-0000000172${n}`;
+    // Each pair is [earlier, later]; the server lists the later one first in
+    // the second and third pair, and a pair made at one time is ordered by id.
+    const pairs = [
+      [
+        note(made(10), "ΟΔΟΣ", "2026-09-18T10:00:00.000Z"),
+        note(made(11), "οδος", "2026-09-18T10:00:01.000Z"),
+      ],
+      [
+        note(made(21), "STRASSE", "2026-09-18T10:00:00.000Z"),
+        note(made(20), "Straße", "2026-09-18T10:00:01.000Z"),
+      ],
+      [
+        note(made(30), "Star", "2026-09-18T10:00:00.000Z"),
+        note(made(31), "ſtar", "2026-09-18T10:00:01.000Z"),
+      ],
+      [
+        note(made(40), "Plan", "2026-09-18T10:00:00.000Z"),
+        note(made(41), "plan", "2026-09-18T10:00:00.000Z"),
+      ],
+    ] as const;
+    const listed = pairs.flatMap(([earlier, later], at) =>
+      at % 2 === 0 ? [earlier, later] : [later, earlier],
+    );
+    harness = await folderHarness("folder-later-name", {
+      items: { "core.note": listed },
+    });
+    scriptFolderWrites(harness, { edges: new EdgeDoor() });
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    const files = readdirSync(harness.dir).filter((name) =>
+      name.endsWith(".md"),
+    );
+    const fileOf = (id: string) =>
+      files.find((name) => idIn(harness!, name) === id);
+    for (const [earlier, later] of pairs) {
+      expect(
+        [fileOf(earlier.item.id), fileOf(later.item.id)],
+        `${earlier.item.properties.title} and ${later.item.properties.title}`,
+      ).toEqual([
+        `${earlier.item.properties.title}.md`,
+        `${later.item.properties.title} (2).md`,
+      ]);
+    }
+  });
+
+  it("keeps the plain name of a file already written when an item created earlier arrives with the same name", async () => {
+    const written = {
+      id: "01a00000-0000-7000-8000-000000017251",
+      created_at: "2026-09-18T10:00:01.000Z",
+      properties: { title: "Straße", body: "held\n" },
+    };
+    const arriving = {
+      id: "01a00000-0000-7000-8000-000000017250",
+      version: 1,
+      created_at: "2026-09-18T10:00:00.000Z",
+      properties: { title: "STRASSE", body: "arrived\n" },
+    };
+    harness = await folderHarness("folder-held-name", {
+      items: { "core.note": [{ item: written }] },
+      events: [
+        copyReplay("2", [
+          copyItemEvent("2", "item.created", wireItem(arriving)),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness, { edges: new EdgeDoor() });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      readdirSync(harness.dir).filter((name) => name.endsWith(".md")),
+    ).toEqual(["Straße.md"]);
+    const before = read(harness, "Straße.md");
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(read(harness, "Straße.md")).toBe(before);
+    expect(idIn(harness, "Straße.md")).toBe(written.id);
+    expect(idIn(harness, "STRASSE (2).md")).toBe(arriving.id);
+  });
+
   it("keeps its own state in .marfa and never pushes it", async () => {
     // An include line naming `.marfa/` takes nothing under it either.
     harness = await folderHarness("folder-state", {

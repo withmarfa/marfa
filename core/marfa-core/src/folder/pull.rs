@@ -691,9 +691,10 @@ impl Folder {
             }
             let rank = match &placed {
                 Some(edge) => placement::rank_of(edge),
-                None => {
-                    placement::unplaced_rank(bound.as_ref().is_some_and(|bound| bound.path == want))
-                }
+                None => placement::unplaced_rank(
+                    bound.as_ref().is_some_and(|bound| bound.path == want),
+                    item,
+                ),
             };
             placing.push(Placing {
                 item,
@@ -707,7 +708,8 @@ impl Folder {
             return Ok(false);
         }
         // Ranked by what the server holds, so every machine gives a shared
-        // path to the same item; stable, so the listing orders the rest.
+        // path to the same item, and by creation where nothing is placed, so
+        // the later of two items takes the number whatever order they list in.
         placing.sort_by(|a, b| a.rank.cmp(&b.rank));
         // Compared as a folder compares names, so two items never get paths
         // one disk holds as one file.
@@ -2857,7 +2859,7 @@ mod tests {
                 item: &item,
                 bound: None,
                 want: "fixture.bin".into(),
-                rank: placement::unplaced_rank(true),
+                rank: placement::unplaced_rank(true, &item),
                 taken: None,
             };
             let mut report = PullReport::default();
@@ -3010,7 +3012,7 @@ mod tests {
                 item: &item,
                 bound: Some(bound),
                 want: "a.md".into(),
-                rank: placement::unplaced_rank(false),
+                rank: placement::unplaced_rank(false, &item),
                 taken: None,
             };
             let mut report = PullReport::default();

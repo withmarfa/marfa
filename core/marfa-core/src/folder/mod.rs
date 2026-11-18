@@ -2691,6 +2691,8 @@ mod reclaim_tests;
 mod refused_edge_tests;
 #[cfg(test)]
 mod relink_tests;
+#[cfg(test)]
+mod same_name_tests;
 
 #[cfg(test)]
 mod tests {

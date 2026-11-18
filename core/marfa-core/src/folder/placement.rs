@@ -76,7 +76,8 @@ struct Refused {
 }
 
 /// How a pull ranks items wanting one path: the older edge, then its id; an
-/// item with no placement after every one with, one already there first.
+/// item with no placement after every one with, one already there first, then
+/// the one created earlier, then the lower id.
 pub(super) type Rank = (bool, bool, String, String);
 
 impl Folder {
@@ -650,8 +651,8 @@ pub(super) fn rank_of(edge: &Edge) -> Rank {
     (false, false, edge.created_at.clone(), edge.id.clone())
 }
 
-pub(super) fn unplaced_rank(settled: bool) -> Rank {
-    (true, !settled, String::new(), String::new())
+pub(super) fn unplaced_rank(settled: bool, item: &Item) -> Rank {
+    (true, !settled, item.created_at.clone(), item.id.clone())
 }
 
 pub(crate) fn is_duplicate(answer: &str) -> bool {

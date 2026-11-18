@@ -278,9 +278,19 @@ When distinct folder files have paths equal without regard to case or Unicode no
 
 ### `folder-documents/same-name-beside`
 
-When two folder items are placed at names equal without regard to case or Unicode normalization, a device MUST place the later item beside the earlier one under a numbered name.
+When two folder items are placed at names equal without regard to case or Unicode normalization, a device MUST place the item with the later `created_at` beside the other under a numbered name, and where both have the same `created_at`, the item with the greater `id`.
 
-**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`.
+**Reason:** the number goes by when an item was made, never by the order a server lists items in, so every device gives the plain name to the same item.
+
+**Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders.test.ts › gives the numbered name to the item created later, whatever order the server lists them in`.
+
+### `folder-documents/same-name-beside-held-file`
+
+When a folder file already holds a name and an item with the earlier `created_at` is placed at a name equal to it without regard to case or Unicode normalization, a device MUST leave the file at its name and place the item beside it under a numbered name.
+
+**Reason:** a person's file never moves because another item arrived with the same name.
+
+**Tests:** `device/folders.test.ts › keeps the plain name of a file already written when an item created earlier arrives with the same name`.
 
 ### `folder-documents/case-rename-unsent`
 
