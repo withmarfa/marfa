@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, SecondsFormat};
+use marfa_rules::time;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -105,11 +105,7 @@ pub fn read_latest(body: &[u8], platform: Option<&str>) -> Result<Latest, &'stat
     let published_at = release
         .get("published_at")
         .and_then(Value::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|time| {
-            time.with_timezone(&chrono::Utc)
-                .to_rfc3339_opts(SecondsFormat::Millis, true)
-        })
+        .and_then(|text| time::rfc3339(text, "published_at").ok())
         .ok_or(untidy)?;
     let assets = release
         .get("assets")

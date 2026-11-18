@@ -1317,10 +1317,10 @@ impl RecordFile {
 impl RecordProcess {
     /// The rule `FOLDER-WATCH-RECORD.md` gives a reader.
     pub(crate) fn current(&self, now: SystemTime) -> bool {
-        let Ok(beat) = chrono::DateTime::parse_from_rfc3339(&self.heartbeat_at) else {
+        let Ok(beat) = marfa_rules::time::read(&self.heartbeat_at) else {
             return false;
         };
-        let Ok(beat) = u64::try_from(beat.timestamp_millis()) else {
+        let Ok(beat) = u64::try_from(beat) else {
             return false;
         };
         let beat = SystemTime::UNIX_EPOCH + Duration::from_millis(beat);
@@ -2057,11 +2057,7 @@ mod tests {
             folders: Vec::new(),
         };
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_760_000_000);
-        let at = |seconds: u64| {
-            chrono::DateTime::from_timestamp(seconds as i64, 0)
-                .unwrap()
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        };
+        let at = |seconds: u64| marfa_rules::time::written(seconds as i64 * 1000);
         assert!(entry(&at(1_760_000_000 - 14), None).current(now));
         assert!(!entry(&at(1_760_000_000 - 15), None).current(now));
         assert!(!entry(&at(1_760_000_000 + 1), None).current(now));

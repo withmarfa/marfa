@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::sync::OnceLock;
 
-use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use tracing_subscriber::filter::{LevelFilter, filter_fn};
 use tracing_subscriber::layer::SubscriberExt;
@@ -11,6 +10,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{Layer, fmt};
 
 use marfa_rules::server_log::UpgradeRefusal;
+use marfa_rules::time;
 
 use crate::telemetry::{Logs, REQUEST_TARGET};
 
@@ -87,7 +87,16 @@ where
 
 #[allow(clippy::disallowed_methods, reason = "the log records the host's time")]
 fn now_micros() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
+    micros_text(jiff::Timestamp::now().as_microsecond())
+}
+
+fn micros_text(micros: i64) -> String {
+    let millis = time::written(micros.div_euclid(1000));
+    format!(
+        "{}{:03}Z",
+        millis.trim_end_matches('Z'),
+        micros.rem_euclid(1000)
+    )
 }
 
 #[derive(Serialize)]
@@ -110,7 +119,7 @@ pub struct Request<'a> {
 /// A record's time. The wall clock's, so a moved test clock cannot misplace it.
 #[allow(clippy::disallowed_methods, reason = "the log records the host's time")]
 pub fn now() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+    time::written(jiff::Timestamp::now().as_millisecond())
 }
 
 pub fn request(record: &Request<'_>) {
@@ -201,4 +210,19 @@ pub(crate) fn captured<R>(f: impl FnOnce() -> R) -> (R, String) {
     let result = tracing::subscriber::with_default(subscriber, f);
     let log = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
     (result, log)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_record_time_keeps_microseconds_and_a_stamp_milliseconds() {
+        let at = time::epoch_ms("2026-11-18T12:34:56.123Z").unwrap();
+        assert_eq!(micros_text(at * 1000 + 456), "2026-11-18T12:34:56.123456Z");
+        assert_eq!(micros_text(at * 1000), "2026-11-18T12:34:56.123000Z");
+        assert_eq!(micros_text(0), "1970-01-01T00:00:00.000000Z");
+        assert_eq!(micros_text(-1), "1969-12-31T23:59:59.999999Z");
+        assert_eq!(time::written(at), "2026-11-18T12:34:56.123Z");
+    }
 }

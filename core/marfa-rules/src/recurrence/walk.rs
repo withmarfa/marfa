@@ -2,11 +2,9 @@
 
 use std::ops::ControlFlow;
 
-use super::calendar::{
-    DAY, LAST_YEAR, ceil_div, civil_from_days, days_from_civil, days_in_month, is_leap,
-    week_number, week_start, weekday,
-};
+use super::calendar::{DAY, LAST_YEAR, ceil_div, week_number, week_start, weekday};
 use super::rule::{DAILY, HOURLY, MINUTELY, MONTHLY, Rule, SECONDLY, WEEKLY, YEARLY};
+use crate::time::{civil_from_days, days_from_civil, days_in_month, is_leap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stop {

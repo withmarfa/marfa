@@ -29,12 +29,6 @@ pub struct Window {
     pub type_filter: Option<String>,
 }
 
-pub fn iso(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|at| at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-        .unwrap_or_default()
-}
-
 /// One with no length overlaps where it starts.
 fn overlaps(start: i64, end: i64, window: &Window) -> bool {
     if start >= window.to {
@@ -385,9 +379,9 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
             .iter()
             .filter_map(|entry| {
                 let item = place.get(&entry.row).and_then(|at| items.get(*at))?;
-                let mut out = format!("{{\"starts_at\":\"{}\"", iso(entry.start));
+                let mut out = format!("{{\"starts_at\":\"{}\"", time::written(entry.start));
                 if let Some(end) = entry.end {
-                    out.push_str(&format!(",\"ends_at\":\"{}\"", iso(end)));
+                    out.push_str(&format!(",\"ends_at\":\"{}\"", time::written(end)));
                 }
                 out.push_str(",\"item\":");
                 out.push_str(item);
@@ -395,7 +389,7 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
                     out.push_str(&format!(",\"series_id\":{}", json!(rows[series].id)));
                 }
                 if let Some(slot) = entry.replaces {
-                    out.push_str(&format!(",\"replaces\":\"{}\"", iso(slot)));
+                    out.push_str(&format!(",\"replaces\":\"{}\"", time::written(slot)));
                 }
                 out.push('}');
                 Some(out)
@@ -405,7 +399,7 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
         let mut answer = format!(
             "{{\"data\":[{}],\"next_cursor\":null,\"window\":{},\"scan\":{}",
             data.join(","),
-            json!({ "from": iso(window.from), "to": iso(window.to) }),
+            json!({ "from": time::written(window.from), "to": time::written(window.to) }),
             json!({ "series_errors": errors.count, "series_unexpanded": unexpanded }),
         );
         if !errors.listed.is_empty() {

@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
 use http_body::Frame;
+use marfa_rules::time;
 
 use super::answer::Answer;
 use super::blobs::header_of;
@@ -90,7 +91,7 @@ pub async fn export(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> An
         return Ok(streamed(body, "application/x-ndjson"));
     }
     let (body, created_at) = app.export_archive(&caller, ask, files).await?;
-    let date = created_at.at().format("%Y-%m-%d");
+    let date = time::date_text(created_at.ms());
     let mut response = streamed(body, "application/x-tar");
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,

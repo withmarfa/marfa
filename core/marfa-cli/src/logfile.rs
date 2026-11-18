@@ -143,9 +143,8 @@ fn now() -> String {
     let since = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    chrono::DateTime::from_timestamp(since.as_secs() as i64, since.subsec_nanos())
-        .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        .unwrap_or_default()
+    let text = marfa_rules::time::written(since.as_secs() as i64 * 1000);
+    format!("{}Z", &text[..19])
 }
 
 #[cfg(test)]

@@ -172,7 +172,6 @@ pub(crate) fn parents(read: &Reader<'_, '_>, targets: &[&str]) -> Result<Vec<(St
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
     use rusqlite::{Connection, params};
     use serde_json::{Value as Json, json};
 
@@ -197,12 +196,15 @@ mod tests {
         .unwrap();
     }
 
-    fn day(offset: i64) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2028, 1, 1, 0, 0, 0).unwrap() + Duration::days(offset)
+    const HOUR: i64 = 3_600_000;
+    const DAY: i64 = 24 * HOUR;
+
+    fn day(offset: i64) -> i64 {
+        instant("2028-01-01T00:00:00Z") + offset * DAY
     }
 
-    fn read(db: &Connection, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<i64> {
-        let sql = candidates(from.timestamp_millis(), to.timestamp_millis());
+    fn read(db: &Connection, from: i64, to: i64) -> Vec<i64> {
+        let sql = candidates(from, to);
         let mut statement = db
             .prepare(&format!("SELECT seq FROM ({}) ORDER BY seq", sql.text))
             .unwrap();
@@ -213,23 +215,16 @@ mod tests {
             .unwrap()
     }
 
-    fn instant(text: &str) -> DateTime<Utc> {
-        match DateTime::parse_from_rfc3339(text) {
-            Ok(at) => at.with_timezone(&Utc),
-            Err(_) => NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc(),
-        }
+    fn instant(text: &str) -> i64 {
+        marfa_rules::time::epoch_ms(text).unwrap()
     }
 
     /// A one-off event that overlaps the window, by its stated start and end or its duration.
-    fn overlaps(event: &Json, from: DateTime<Utc>, to: DateTime<Utc>) -> bool {
+    fn overlaps(event: &Json, from: i64, to: i64) -> bool {
         let start = instant(event["starts_at"].as_str().unwrap());
         let end = match (event["ends_at"].as_str(), event["duration"].as_f64()) {
             (Some(end), _) => instant(end),
-            (None, Some(seconds)) => start + Duration::milliseconds((seconds * 1000.0) as i64),
+            (None, Some(seconds)) => start + (seconds * 1000.0) as i64,
             (None, None) => start,
         };
         if end > start {
@@ -248,12 +243,12 @@ mod tests {
                 &db,
                 at + 1,
                 &json!({
-                    "starts_at": start.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-                    "ends_at": (start + Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "starts_at": marfa_rules::time::written(start),
+                    "ends_at": marfa_rules::time::written(start + HOUR),
                 }),
             );
         }
-        let sql = candidates(day(0).timestamp_millis(), day(1).timestamp_millis());
+        let sql = candidates(day(0), day(1));
         let mut statement = db
             .prepare(&format!("EXPLAIN QUERY PLAN {}", sql.text))
             .unwrap();
@@ -310,7 +305,7 @@ mod tests {
         ];
         for at in -40..=40 {
             events.push(json!({
-                "starts_at": (day(60) + Duration::hours(at * 7)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                "starts_at": marfa_rules::time::written(day(60) + at * 7 * HOUR),
                 "duration": f64::from(((at * 37).rem_euclid(5_000_000)) as i32),
             }));
         }
@@ -319,7 +314,7 @@ mod tests {
         }
         let windows = [
             (day(60), day(61)),
-            (day(60) + Duration::hours(1), day(60) + Duration::hours(2)),
+            (day(60) + HOUR, day(60) + 2 * HOUR),
             (
                 instant("2028-03-01T00:00:00Z"),
                 instant("2028-03-02T00:00:00Z"),
@@ -344,13 +339,12 @@ mod tests {
         for (from, to) in windows {
             let read = read(&db, from, to);
             for (at, event) in events.iter().enumerate() {
-                let dated = event["starts_at"].as_str().is_some_and(|text| {
-                    DateTime::parse_from_rfc3339(text).is_ok()
-                        || NaiveDate::parse_from_str(text, "%Y-%m-%d").is_ok()
-                }) && event["ends_at"].as_str().is_none_or(|text| {
-                    DateTime::parse_from_rfc3339(text).is_ok()
-                        || NaiveDate::parse_from_str(text, "%Y-%m-%d").is_ok()
-                });
+                let dated = event["starts_at"]
+                    .as_str()
+                    .is_some_and(|text| marfa_rules::time::epoch_ms(text).is_some())
+                    && event["ends_at"]
+                        .as_str()
+                        .is_none_or(|text| marfa_rules::time::epoch_ms(text).is_some());
                 if !dated {
                     assert!(
                         read.contains(&(at as i64 + 1)),
@@ -440,7 +434,7 @@ mod tests {
             instant("2028-05-16T00:00:00Z"),
         );
         assert!(
-            instant("2028-05-02T10:00:00Z") < from - Duration::days(10),
+            instant("2028-05-02T10:00:00Z") < from - 10 * DAY,
             "the slot lies more than 10 days before the window"
         );
         assert_eq!(read(&db, from, to), vec![1, 2]);

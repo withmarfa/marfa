@@ -662,8 +662,15 @@ mod tests {
         let folder = dir.path().join("notes");
         std::fs::create_dir(&folder).unwrap();
         let now = SystemTime::now();
-        let beat = chrono::DateTime::<chrono::Utc>::from(now).to_rfc3339();
-        let old = chrono::DateTime::<chrono::Utc>::from(now - Duration::from_secs(60)).to_rfc3339();
+        let text = |at: SystemTime| {
+            let ms = at
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            marfa_rules::time::written(ms as i64)
+        };
+        let beat = text(now);
+        let old = text(now - Duration::from_secs(60));
         let entry = |pid: u32, version: Option<&str>, beat: &str, dir: &Path, watching: bool| {
             let mut entry = json!({
                 "pid": pid,

@@ -11,8 +11,8 @@ use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, SliceT
 use crate::store::Unreadable;
 use crate::{Core, CoreError, Result, search, store};
 use marfa_rules::catalog::Catalog;
-use marfa_rules::recurrence::{DAY, Zone, civil_from_days, days_from_civil, week_start};
-use marfa_rules::time;
+use marfa_rules::recurrence::{DAY, Zone, week_start};
+use marfa_rules::time::{self, civil_from_days, days_from_civil};
 
 pub const VIEW_TYPE: &str = "system.view";
 

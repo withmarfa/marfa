@@ -31,7 +31,6 @@ askama = { version = "0.16", default-features = false, features = ["config", "de
 backtrace = "0.3"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "matched-path", "query"] }
 base64.workspace = true
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap.workspace = true
 flate2 = "1"
 form_urlencoded = "1"
@@ -41,6 +40,7 @@ hmac = "0.13"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
+jiff = { version = "1.0.1", default-features = false, features = ["std"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 bytes = "1"
 httpdate = "1"

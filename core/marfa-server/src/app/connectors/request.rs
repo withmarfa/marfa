@@ -209,12 +209,12 @@ impl Run {
             let held = required(fields, name, name)?
                 .as_str()
                 .ok_or_else(|| invalid(name, format!("{name} must be a timestamp.")))?;
-            match time::rfc3339(held, name) {
-                Ok(stored) => Ok(Stamp::Stored(stored)),
-                Err(_) if chrono::DateTime::parse_from_rfc3339(held).is_ok() => {
-                    Ok(Stamp::OutOfRange(name.to_string()))
+            match time::read(held) {
+                Ok(ms) => Ok(Stamp::Stored(time::written(ms))),
+                Err(time::Fault::Range) => Ok(Stamp::OutOfRange(name.to_string())),
+                Err(time::Fault::Form) => {
+                    Err(invalid(name, format!("{name} must be a timestamp.")))
                 }
-                Err(_) => Err(invalid(name, format!("{name} must be a timestamp."))),
             }
         };
         let started_at = moment("started_at")?;
@@ -510,5 +510,30 @@ mod tests {
         assert!(released(Some("")).is_err());
         assert!(released(Some(&"p".repeat(101))).is_err());
         assert!(released(Some("p")).is_ok());
+    }
+
+    #[test]
+    fn a_run_time_of_the_wrong_form_is_refused_at_once_and_one_out_of_range_once_checked() {
+        let run = |started: &str| {
+            Run::parse(&fields(json!({
+                "outcome": "succeeded",
+                "started_at": started,
+                "finished_at": "2026-01-01T00:00:00Z",
+            })))
+        };
+        for form in [
+            "2026-01-01 00:00:00Z",
+            "2016-12-31T23:59:60Z",
+            "2026-01-01T00:00:00\u{2212}05:00",
+        ] {
+            assert!(run(form).is_err(), "{form}");
+        }
+        for range in ["0000-01-01T00:00:00+00:01", "9999-12-31T23:59:59-00:01"] {
+            assert!(
+                run(range).is_ok_and(|run| run.checked().is_err()),
+                "{range}"
+            );
+        }
+        assert!(run("0000-01-01T00:00:00.000Z").is_ok_and(|run| run.checked().is_ok()));
     }
 }

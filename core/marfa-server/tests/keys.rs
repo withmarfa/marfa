@@ -317,10 +317,10 @@ async fn a_key_that_expires_while_its_write_waits_writes_nothing() {
     let ends = instance
         .app
         .clock
-        .now()
-        .checked_add_signed(chrono::Duration::hours(1))
+        .instant()
+        .plus_ms(3_600_000)
         .unwrap()
-        .to_rfc3339();
+        .text();
     let mut body = bare("ending");
     body["expires_at"] = ends.into();
     let (_, secret) = instance.key(body).await;

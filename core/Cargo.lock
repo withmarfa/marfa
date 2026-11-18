@@ -2732,7 +2732,6 @@ dependencies = [
 name = "marfa-cli"
 version = "0.0.0"
 dependencies = [
- "chrono",
  "clap",
  "fd-lock",
  "flate2",
@@ -2766,7 +2765,6 @@ version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
  "cc",
- "chrono",
  "core-foundation",
  "flate2",
  "hex",
@@ -2864,7 +2862,6 @@ dependencies = [
  "backtrace",
  "base64 0.23.1",
  "bytes",
- "chrono",
  "clap",
  "flate2",
  "form_urlencoded",
@@ -2879,6 +2876,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "ipnet",
+ "jiff 1.0.1",
  "libc",
  "libtest-mimic",
  "marfa-acl",

@@ -427,9 +427,8 @@ fn format_instant(now: u64, after: u64) -> Result<String, CliError> {
         .checked_add(after)
         .filter(|at| *at <= LAST_SECOND_OF_9999)
         .ok_or_else(|| CliError::Invalid("--expires-in: that is too far ahead".into()))?;
-    let instant = chrono::DateTime::from_timestamp(at as i64, 0)
-        .ok_or_else(|| CliError::Invalid("--expires-in: that is too far ahead".into()))?;
-    Ok(instant.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+    let text = marfa_rules::time::written(at as i64 * 1000);
+    Ok(format!("{}Z", &text[..19]))
 }
 
 /// `local` is a command sent through the private socket, whose authority has
@@ -822,5 +821,26 @@ mod keychain_off_tests {
                 "{outcome:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod expiry_text_tests {
+    use super::*;
+
+    #[test]
+    fn an_expiry_is_written_to_the_second_and_stops_at_the_end_of_year_9999() {
+        assert_eq!(
+            format_instant(1_760_000_000, 3_600).unwrap(),
+            "2025-10-09T09:53:20Z"
+        );
+        assert_eq!(
+            format_instant(253_402_300_798, 1).unwrap(),
+            "9999-12-31T23:59:59Z"
+        );
+        assert!(matches!(
+            format_instant(253_402_300_799, 1),
+            Err(CliError::Invalid(_))
+        ));
     }
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use marfa_rules::time;
 use serde_json::{Map, Value, json};
 
 use super::origin;
@@ -158,7 +159,9 @@ pub async fn add_url(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> A
 }
 
 fn day_of(stored: &str) -> Result<String, Refusal> {
-    Ok(Stamp::read(stored)?.at().format("%b %-d, %Y").to_string())
+    let date = time::date_of(Stamp::read(stored)?.ms())
+        .ok_or_else(|| Refusal::internal("a stored time names no date"))?;
+    Ok(date.strftime("%b %-d, %Y").to_string())
 }
 
 fn shown(passkey: Listed, host: &str) -> Result<OwnerPasskey, Refusal> {

@@ -482,9 +482,9 @@ impl Run {
         self.checked = Instant::now();
         self.expiry = expires_at.map(|at| match Stamp::read(at) {
             Ok(at) => {
-                let wait = (at.at() - self.app.clock.now())
-                    .to_std()
-                    .unwrap_or_default();
+                let wait = Duration::from_millis(
+                    u64::try_from(at.ms() - self.app.clock.instant().ms()).unwrap_or(0),
+                );
                 Instant::now() + wait.max(MIN_EXPIRY_WAIT)
             }
             Err(_) => Instant::now(),

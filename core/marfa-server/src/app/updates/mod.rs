@@ -13,7 +13,6 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
@@ -133,7 +132,7 @@ pub fn before_start(database: &DatabasePath) -> Start {
         return Start::Proceed;
     };
     let file = database.file();
-    let at = marfa_rules::time::written(&Utc::now());
+    let at = marfa_rules::time::written(jiff::Timestamp::now().as_millisecond());
     pending::on_start(&record, &Version::running().to_string(), &at, &|| {
         file.as_deref()
             .and_then(|file| db::inspect(file, MIGRATIONS).ok())
