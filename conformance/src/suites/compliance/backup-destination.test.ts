@@ -98,35 +98,86 @@ async function took(server: FreshServer): Promise<string> {
 
 describe("a destination set or unset through /config", () => {
   it(
-    "is the one the next GET /backups, POST /backups and restore use, whether it is an object store or a backup folder, with a backup in each destination to tell them apart",
+    "is the one the next GET /backups lists, whether it is an object store or a backup folder, with a backup in each destination to tell them apart",
     async () => {
       for (const make of [objectStore, backupFolder]) {
         const server = await bootFreshServer(
-          "backup-destination-set",
+          "backup-destination-set-list",
           SETTINGS,
         );
         try {
-          const owner = ownerOf(server);
+          const [first, second] = [make(), make()];
+          await setTo(server, first.set);
+          const inFirst = await took(server);
+          await setTo(server, second.set);
+          const inSecond = await took(server);
+
+          await setTo(server, first.set);
+          expect(await names(server)).toEqual([inFirst]);
+          await setTo(server, second.set);
+          expect(await names(server)).toEqual([inSecond]);
+        } finally {
+          await server.stop();
+        }
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "is the one the next POST /backups writes to, whether it is an object store or a backup folder",
+    async () => {
+      for (const make of [objectStore, backupFolder]) {
+        const server = await bootFreshServer(
+          "backup-destination-set-take",
+          SETTINGS,
+        );
+        try {
           const instance = await instanceIdOf(server);
           const [first, second] = [make(), make()];
-
           await setTo(server, first.set);
           const inFirst = await took(server);
           await setTo(server, second.set);
           const inSecond = await took(server);
           expect(await first.holds(instance)).toEqual([inFirst]);
           expect(await second.holds(instance)).toEqual([inSecond]);
+        } finally {
+          await server.stop();
+        }
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "is the one the next restore reads from, whether it is an object store or a backup folder, with a backup in each destination to tell them apart",
+    async () => {
+      for (const make of [objectStore, backupFolder]) {
+        const server = await bootFreshServer(
+          "backup-destination-set-restore",
+          SETTINGS,
+        );
+        try {
+          const owner = ownerOf(server);
+          const instance = await instanceIdOf(server);
+          const [first, second] = [make(), make()];
+          await setTo(server, first.set);
+          const inFirst = await took(server);
+          await setTo(server, second.set);
+          const inSecond = await took(server);
 
           await setTo(server, first.set);
-          expect(await names(server)).toEqual([inFirst]);
           const absent = await owner.restoreBackup(instance, inSecond);
           expect(absent.status, JSON.stringify(absent.error)).toBe(404);
           expect(absent.error?.error.code).toBe("backup_not_found");
 
           await setTo(server, second.set);
-          expect(await names(server)).toEqual([inSecond]);
           const gone = await owner.restoreBackup(instance, inFirst);
           expect(gone.status, JSON.stringify(gone.error)).toBe(404);
+          expect(gone.error?.error.code).toBe("backup_not_found");
+
+          await setTo(server, first.set);
+          await setTo(server, second.set);
           const restored = await owner.restoreBackup(instance, inSecond);
           expect(restored.status, JSON.stringify(restored.error)).toBe(200);
         } finally {

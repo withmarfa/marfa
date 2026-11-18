@@ -1164,13 +1164,25 @@ Where neither `object_store_bucket` nor `backup_path` is set, when a caller the 
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
-### `instance/backup-destination-set`
+### `instance/backup-destination-set-list`
 
-When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST answer the next `GET /backups` from the backups the destination that write set holds, put the backup the next `POST /backups` takes there, and read the backup the next `POST /backups/{instance_id}/{name}/restore` names from there, for a caller the operation admits, none of them with `409 no_backup_destination`.
+When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST answer the next `GET /backups` from a caller holding `backups.manage` with the backups the destination that write set holds.
 
 **Reason:** a script can set the destination and use it in its next request.
 
-**Tests:** `compliance/backup-destination.test.ts › is the one the next GET /backups, POST /backups and restore use, whether it is an object store or a backup folder, with a backup in each destination to tell them apart`.
+**Tests:** `compliance/backup-destination.test.ts › is the one the next GET /backups lists, whether it is an object store or a backup folder, with a backup in each destination to tell them apart`.
+
+### `instance/backup-destination-set-take`
+
+When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST put the backup the next `POST /backups` from a caller holding `backups.manage` takes in the destination that write set.
+
+**Tests:** `compliance/backup-destination.test.ts › is the one the next POST /backups writes to, whether it is an object store or a backup folder`.
+
+### `instance/backup-destination-set-restore`
+
+When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST read the backup that the next `POST /backups/{instance_id}/{name}/restore` names from the destination that write set, for a caller the operation admits.
+
+**Tests:** `compliance/backup-destination.test.ts › is the one the next restore reads from, whether it is an object store or a backup folder, with a backup in each destination to tell them apart`.
 
 ### `instance/backup-destination-unset`
 
