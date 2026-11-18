@@ -33,3 +33,26 @@ impl Core {
         sent.map(|_| ())
     }
 }
+
+impl Core {
+    /// Each write in `waiting`, with the way to clear it (or the write it waits on).
+    pub(crate) fn exits_of(&self, waiting: &[crate::QueuedWrite]) -> Result<String> {
+        let queue = store::queued_writes(&*self.conn()?)?;
+        let mut blockers = crate::model::Blockers::new(&queue);
+        Ok(waiting
+            .iter()
+            .map(|write| match blockers.of(write) {
+                Some(blocker) => format!(
+                    "{} ({}) waits on {} ({}): {}",
+                    write.id,
+                    write.kind,
+                    blocker.id,
+                    blocker.kind,
+                    blocker.exits()
+                ),
+                None => format!("{} ({}): {}", write.id, write.kind, write.exits()),
+            })
+            .collect::<Vec<_>>()
+            .join("; "))
+    }
+}

@@ -8,6 +8,14 @@ This page is the reference for an app developer who embeds the Rust core through
 
 The read keeps the address's path prefix, asks for JSON and sends no credential, including one embedded in the URL. It returns the configured display name, or the server's default `Marfa`, and does not invent a name when the answer is malformed. A connection failure, an HTTP refusal, a redirect or a malformed description returns an error. A description can be read from a server on another contract, so a client can identify it before opening a working copy; reading it does not establish contract compatibility or access to any data.
 
+## Trash several items at once
+
+An app that deletes a selection previews, then trashes, on `Core` (the Swift binding carries both as `preview_trash(ids)` and `trash_items(preview)`):
+
+- `preview_trash(ids)` takes 1 to 20 distinct ids (an id named twice counts once; none or more than 20 is refused `Validation` before anything is sent) and answers the server's preview: each item once with what its trash takes (`takes`, cut at 100 with `truncated` set), the `count` of every item the trash would take, and a `digest`. It needs the server, confirms the instance as a read does, and a reading handle may call it.
+- `trash_items(preview)` sends the preview's ids and digest in one request, never queued, so an offline app uses the single queued `delete_item` instead. It is refused `Invalid`, sending nothing, while a write waits for a named item or one listed in `takes` (for any item where a `takes` was truncated), with the commands that clear each. A refusal from the server, `trash_plan_changed` for a digest that no longer matches included, comes back typed and changes nothing. On success the copy shows every item it holds among them in the bin at once.
+- A `Network` failure may follow a trash the server made. The `item.trashed` events settle the copy; preview again before trashing again.
+
 ## Read many rows, and what changed
 
 An app that holds what it shows in memory reads many rows in one call, then rereads only what changed. On `Core`:

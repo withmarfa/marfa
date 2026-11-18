@@ -12,7 +12,7 @@ use crate::edge_writes::refuse_self_loop;
 use crate::fault;
 use crate::{
     Completeness, Core, CoreError, Draft, Edit, FOLDER_TYPE, Item, ItemState, QueuedWrite, Result,
-    Seen, TagsWrite, Tier, WriteKind, body, catch_up, edge_rules, model, store,
+    Seen, TagsWrite, Tier, WriteKind, body, catch_up, edge_rules, store,
 };
 
 /// The names a write carries held to the server's bounds before anything is
@@ -706,26 +706,10 @@ impl Core {
             });
         }
         if !waiting.is_empty() {
-            let queue = store::queued_writes(&*self.conn()?)?;
-            let mut blockers = model::Blockers::new(&queue);
-            let exits = waiting
-                .iter()
-                .map(|write| match blockers.of(write) {
-                    Some(blocker) => format!(
-                        "{} ({}) waits on {} ({}): {}",
-                        write.id,
-                        write.kind,
-                        blocker.id,
-                        blocker.kind,
-                        blocker.exits()
-                    ),
-                    None => format!("{} ({}): {}", write.id, write.kind, write.exits()),
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
             return Err(CoreError::Invalid(format!(
-                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {exits}",
-                waiting.len()
+                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {}",
+                waiting.len(),
+                self.exits_of(&waiting)?
             )));
         }
         let Some(version) = version.or(held.as_ref().map(|held| held.version)) else {

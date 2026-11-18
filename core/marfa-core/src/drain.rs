@@ -24,7 +24,9 @@ mod tests;
 
 pub(crate) use address::ends_the_drain;
 use read_back::ReachChange;
-pub(crate) use read_back::{ReadBack, apply_read_back, read_back, withdraw_read_backs};
+pub(crate) use read_back::{
+    ReadBack, apply_read_back, read_back, read_back_trashed, withdraw_read_backs,
+};
 pub(crate) use report::Cut;
 pub use report::{DrainReport, DrainVerdict};
 use send::send_queue;
