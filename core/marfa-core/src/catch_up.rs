@@ -1031,11 +1031,68 @@ pub(crate) fn refuse_another_instance_until(
         }
         reach::generation(&conn)?
     };
-    let served = ask_unless_stopped(stop, http, Http::served)?;
+    let served = ask_unless_stopped(stop, http, Http::served).map_err(unconfirmed)?;
     same_instance(core, &served.instance_id, generation)?;
     match core.handle() {
         Handle::Writer => store::note_request_limit(&*core.conn()?, served.max_request_bytes),
         Handle::Reader => Ok(()),
+    }
+}
+
+/// The root's `404` says nothing about the item a request names, which a
+/// reader of the request's own `404` would take as absent.
+fn unconfirmed(error: CoreError) -> CoreError {
+    match error {
+        CoreError::NotFound { code, message, .. } => CoreError::Server {
+            status: 404,
+            code,
+            message,
+            details: None,
+        },
+        other => other,
+    }
+}
+
+enum Ask {
+    Confirm(mpsc::SyncSender<Result<()>>),
+    Answered,
+}
+
+/// `ask_unless_stopped` for a request that confirms something before each
+/// attempt it makes, a retry after a credential renewal included. `confirm`
+/// runs here, on the calling thread, since it holds the store; the request
+/// waits for its verdict.
+pub(crate) fn ask_confirmed_unless_stopped<T: Send + 'static>(
+    stop: &AtomicBool,
+    http: &Http,
+    confirm: &dyn Fn() -> Result<()>,
+    read: impl FnOnce(&Http, &dyn Fn() -> Result<()>) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    refuse_if_stopped(stop)?;
+    let (asks, waiting) = mpsc::channel::<Ask>();
+    let answered = asks.clone();
+    let pending = Pending::start(http, move |http| {
+        let before = || {
+            let (verdict, hears) = mpsc::sync_channel(1);
+            asks.send(Ask::Confirm(verdict))
+                .map_err(|_| CoreError::Canceled)?;
+            hears.recv().map_err(|_| CoreError::Canceled)?
+        };
+        let answer = read(http, &before);
+        let _ = answered.send(Ask::Answered);
+        answer
+    });
+    loop {
+        refuse_if_stopped(stop)?;
+        match waiting.recv_timeout(PACE.stop_poll) {
+            Ok(Ask::Confirm(verdict)) => {
+                let _ = verdict.send(confirm());
+            }
+            Ok(Ask::Answered) | Err(RecvTimeoutError::Disconnected) => {
+                return pending.answer(stop);
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
     }
 }
 

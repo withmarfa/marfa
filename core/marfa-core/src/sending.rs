@@ -345,9 +345,15 @@ impl Core {
                 | CoreError::CopyExpired { .. }
                 | CoreError::Canceled),
             ) => Err(error),
-            Err(CoreError::StreamIncomplete { .. }) => Err(CoreError::expired(
-                "the copy was expired while the server's instance was being confirmed",
-            )),
+            Err(incomplete @ CoreError::StreamIncomplete { .. }) => {
+                if crate::reach::expired(&*self.conn()?)? {
+                    Err(CoreError::expired(
+                        "the copy was expired while the server's instance was being confirmed",
+                    ))
+                } else {
+                    Err(incomplete)
+                }
+            }
             _ => Ok(()),
         }
     }

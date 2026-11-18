@@ -289,7 +289,14 @@ impl<'a> Resolver<'a> {
         }
         let http = self.core.http()?;
         let confirm = crate::catch_up::confirm_each_attempt(self.core, http, self.stop);
-        Ok(match http.item_checked(id, Some(&confirm)) {
+        let wanted = id.to_string();
+        let asked = crate::catch_up::ask_confirmed_unless_stopped(
+            self.stop,
+            http,
+            &confirm,
+            move |http, before| http.item_checked(&wanted, Some(before)),
+        );
+        Ok(match asked {
             Ok(Some(row)) => Resolved::Found {
                 id: row.item.id,
                 r#type: Some(row.item.r#type),
