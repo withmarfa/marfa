@@ -178,7 +178,7 @@ pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use slice::SliceQuery;
 pub use store::CEILING;
-pub use trash::{TrashPreview, TrashPreviewItem, TrashTaken};
+pub use trash::{TrashPreview, TrashPreviewItem, TrashReport, TrashTaken};
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
 pub use watch::{Listening, WatchListener};
 #[cfg(debug_assertions)]

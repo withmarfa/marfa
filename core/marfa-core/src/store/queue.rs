@@ -66,6 +66,9 @@ fn refuse_too_deep(payload: &str) -> Result<(), CoreError> {
 /// would let a retry of a write whose answer was lost write it twice.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
     refuse_too_deep(write.payload)?;
+    if let Some(item) = write.item_id {
+        super::marks::refuse_removing(conn, item)?;
+    }
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
     let depends_on = if write.depends_on.is_empty() {

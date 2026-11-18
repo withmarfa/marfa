@@ -53,7 +53,7 @@ pub(crate) fn streaming_of(streaming: &Mutex<Streaming>) -> MutexGuard<'_, Strea
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-const ROWS_CAUGHT_UP_WAIT: Duration = Duration::from_secs(5);
+pub(crate) const CAUGHT_UP_WAIT: Duration = Duration::from_secs(5);
 
 pub(crate) fn one_at_a_time() -> CoreError {
     CoreError::Invalid(
@@ -219,24 +219,43 @@ impl Core {
 
     /// An unreadable head does not prevent sending the write.
     pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
-        let deadline = std::time::Instant::now() + ROWS_CAUGHT_UP_WAIT;
+        self.caught_up_to_head(CAUGHT_UP_WAIT, stop).map(drop)
+    }
+
+    /// Takes the server's events through the last one its log holds now,
+    /// waiting on whatever moves the cursor rather than taking any twice.
+    /// `Some` says why the copy is not there yet; an error is one a caller
+    /// may not get past.
+    pub(crate) fn caught_up_to_head(
+        &self,
+        within: Duration,
+        stop: &AtomicBool,
+    ) -> Result<Option<String>> {
+        let deadline = std::time::Instant::now() + within;
         let _ends_by = http::EndsBy::hold(Some(deadline));
         let target = match catch_up::last_carried(self, self.http()?, deadline, stop) {
             Ok(target) => target,
             Err(error) => {
                 catch_up::refuse_if_stopped(stop)?;
                 telemetry::degraded!(&error);
-                return Ok(());
+                return Ok(Some(format!(
+                    "the server's event log could not be read: {error}"
+                )));
             }
         };
         let Some(target) = target else {
-            return Ok(());
+            return Ok(None);
+        };
+        let late = || {
+            format!(
+                "the copy had not taken the server's events through {target} within {within:?}"
+            )
         };
         while !self.applied_through(target)? {
             catch_up::refuse_if_stopped(stop)?;
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             if left.is_zero() {
-                return Ok(());
+                return Ok(Some(late()));
             }
             if streaming_of(&self.streaming).holder.is_some() {
                 std::thread::sleep(left.min(Duration::from_millis(20)));
@@ -245,19 +264,22 @@ impl Core {
             match self.catch_up_by(deadline, stop) {
                 Ok(_) => {}
                 Err(failed) if failed.error == one_at_a_time() => {}
+                Err(failed) if failed.error == CoreError::Canceled => {
+                    catch_up::refuse_if_stopped(stop)?;
+                    return Ok(Some(late()));
+                }
                 Err(failed)
-                    if failed.error == CoreError::Canceled
-                        || failed.error.is_environmental()
+                    if failed.error.is_environmental()
                         || matches!(failed.error, CoreError::StreamIncomplete { .. }) =>
                 {
                     catch_up::refuse_if_stopped(stop)?;
                     telemetry::degraded!(&failed.error);
-                    return Ok(());
+                    return Ok(Some(failed.error.to_string()));
                 }
                 Err(failed) => return Err(failed.error),
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn applied_through(&self, target: u64) -> Result<bool> {

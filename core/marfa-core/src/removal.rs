@@ -1,7 +1,26 @@
 use rusqlite::TransactionBehavior;
 
 use crate::model::Subject;
-use crate::{Core, Result, reach, store};
+use crate::{Core, Result, reach, store, telemetry};
+
+/// Items held by `Core::hold_removing`, let go however the removal ends.
+pub(crate) struct HeldRemoving<'a> {
+    core: &'a Core,
+    ids: Vec<String>,
+}
+
+impl Drop for HeldRemoving<'_> {
+    fn drop(&mut self) {
+        let conn = self
+            .core
+            .conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Err(error) = store::release_removing(&conn, &self.ids) {
+            telemetry::degraded!(&error);
+        }
+    }
+}
 
 impl Core {
     /// Sends a purge the server announces as `item.purged`, and once it is
@@ -35,6 +54,13 @@ impl Core {
 }
 
 impl Core {
+    /// Lets go of `ids`, which `store::hold_removing` held in a transaction
+    /// that has committed, once what it answers is dropped. Taken only with
+    /// the connection free, since the drop locks it.
+    pub(crate) fn removing_held(&self, ids: Vec<String>) -> HeldRemoving<'_> {
+        HeldRemoving { core: self, ids }
+    }
+
     /// Each write in `waiting`, with the way to clear it (or the write it waits on).
     pub(crate) fn exits_of(&self, waiting: &[crate::QueuedWrite]) -> Result<String> {
         let queue = store::queued_writes(&*self.conn()?)?;

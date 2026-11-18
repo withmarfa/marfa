@@ -109,24 +109,54 @@ fn previewed(
     core.preview_trash(&ids).unwrap()
 }
 
-fn in_the_bin(rows: &[(&str, i64)]) -> Answer {
-    let data: Vec<Value> = rows
-        .iter()
-        .map(|(id, version)| {
-            let mut row: Value =
-                serde_json::from_str(&scripted::item_payload("item.trashed", id, NOTE, *version))
-                    .unwrap();
-            row.as_object_mut().unwrap().remove("event_type");
-            row["item"]["state"] = "trashed".into();
-            row["item"]["updated_at"] = "2026-03-01T00:00:00Z".into();
-            row["listed"] = true.into();
-            row
-        })
-        .collect();
-    certified(scripted::json(
-        200,
-        &json!({ "data": data, "next_cursor": null }).to_string(),
-    ))
+fn trashed_event(id: &str, version: i64) -> String {
+    let mut event: Value =
+        serde_json::from_str(&scripted::item_payload("item.trashed", id, NOTE, version)).unwrap();
+    event["item"]["state"] = "trashed".into();
+    event["item"]["updated_at"] = "2026-03-01T00:00:00Z".into();
+    event["listed"] = true.into();
+    event.to_string()
+}
+
+/// The server's log after the cursor the copy holds: `item.trashed` for each
+/// of `rows` at its version, as a catch-up reads it.
+fn log_holds(server: &Scripted, rows: &[(&str, i64)]) {
+    server.on("/types", vec![certified(scripted::types(&[(NOTE, None)]))]);
+    server.on("/edge-types", vec![certified(scripted::edge_types(&[]))]);
+    let mut frames = vec![scripted::copy_marker("stream_cursor", "10")];
+    let mut last = 10;
+    for (id, version) in rows {
+        last += 1;
+        frames.push(scripted::event(
+            &last.to_string(),
+            "item.trashed",
+            &trashed_event(id, *version),
+        ));
+    }
+    frames.push(scripted::copy_marker("stream_live", &last.to_string()));
+    server.on("/events", vec![scripted::stream(frames, Then::End)]);
+}
+
+fn edit() -> crate::Edit {
+    crate::Edit {
+        properties: serde_json::from_value(json!({"title": "new work"})).unwrap(),
+        ..Default::default()
+    }
+}
+
+fn being_removed(result: crate::Result<crate::QueuedWrite>, id: &str) {
+    match result {
+        Err(CoreError::Validation {
+            code,
+            details,
+            server: None,
+            ..
+        }) => {
+            assert_eq!(code, "item_being_removed");
+            assert_eq!(details.map(|details| details["id"].clone()), Some(json!(id)));
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 fn state_of(core: &Core, id: &str) -> Option<(ItemState, i64)> {
@@ -223,16 +253,23 @@ fn a_preview_at_another_instance_expires_the_copy_and_asks_nothing() {
 }
 
 #[test]
-fn an_accepted_trash_lays_every_held_row_in_the_bin_at_once_at_the_versions_read() {
+fn an_accepted_trash_settles_the_copy_from_the_servers_events() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
-    // `c` is named and taken by nobody the copy holds; `d` is taken and held.
+    // `c` is named and the copy does not hold it; `d` is taken and held.
     let core = copy(Some(&server), dir.path(), &["a", "b", "d", "keep"]);
     let preview = previewed(&core, &server, &["a", "b", "c"], &[("d", "")]);
     server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
-    server.on("/items", vec![in_the_bin(&[("a", 2), ("b", 2), ("d", 2)])]);
+    log_holds(&server, &[("a", 2), ("b", 2), ("d", 2)]);
     let before = core.changes_since(None, 100).unwrap().cursor;
-    core.trash_items(&preview).unwrap();
+    let report = core.trash_items(&preview).unwrap();
+    assert_eq!(
+        report,
+        crate::TrashReport {
+            settled: true,
+            behind: None
+        }
+    );
     let seen = server.seen("/items/trash");
     assert_eq!(seen.len(), 1);
     let sent: Value = serde_json::from_slice(&seen[0].body).unwrap();
@@ -246,11 +283,6 @@ fn an_accepted_trash_lays_every_held_row_in_the_bin_at_once_at_the_versions_read
         assert_eq!(state_of(&core, id), Some((ItemState::Trashed, 2)), "{id}");
     }
     assert_eq!(state_of(&core, "keep"), Some((ItemState::Active, 1)));
-    assert_eq!(
-        state_of(&core, "c"),
-        None,
-        "the copy does not take a row it never held"
-    );
     assert_eq!(queue_len(&core), 0);
     let told = core.changes_since(Some(&before), 100).unwrap();
     assert!(
@@ -270,7 +302,7 @@ fn a_trash_is_refused_while_a_write_waits_for_a_named_or_a_taken_item() {
         waiting_write(&core, "w1", "other");
         // The witness: a write for an unrelated item does not stop it.
         server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
-        server.on("/items", vec![in_the_bin(&[("a", 2), ("d", 2)])]);
+        log_holds(&server, &[("a", 2), ("d", 2)]);
         waiting_write(&core, "w2", waiting_for);
         match core.trash_items(&preview).unwrap_err() {
             CoreError::Invalid(message) => {
@@ -329,7 +361,7 @@ fn a_changed_digest_or_any_refusal_changes_nothing_and_comes_back_typed() {
             matches!(&error, CoreError::Server { code: got, .. } | CoreError::Validation { code: got, .. } | CoreError::Forbidden { code: got, .. } if got == code),
             "{error:?}"
         );
-        assert!(server.seen("/items").is_empty(), "no read after a refusal");
+        assert!(server.seen("/events").is_empty(), "no catch-up after a refusal");
         for id in ["a", "d"] {
             assert_eq!(state_of(&core, id), Some((ItemState::Active, 1)));
         }
@@ -394,7 +426,7 @@ fn a_slow_trash_does_not_hold_the_copy_from_other_writers() {
             answer: Box::new(scripted::json(200, r#"{"ok":true}"#)),
         }],
     );
-    server.on("/items", vec![in_the_bin(&[("a", 2)])]);
+    log_holds(&server, &[("a", 2)]);
     std::thread::scope(|scope| {
         let trashing = scope.spawn(|| core.trash_items(&preview));
         server.wait_for("/items/trash", 1, Duration::from_secs(10));
@@ -432,4 +464,229 @@ fn a_reading_handle_may_preview_and_cannot_trash() {
     reader.preview_trash(&ids(&["a"])).unwrap();
     assert!(reader.trash_items(&preview).is_err());
     assert!(server.seen("/items/trash").is_empty());
+}
+
+#[test]
+fn an_accepted_trash_whose_copy_cannot_catch_up_says_so_and_the_events_settle_it_later() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "b"]);
+    let preview = previewed(&core, &server, &["a", "b"], &[]);
+    server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
+    server.on("/events", vec![scripted::refusal(503, "unavailable")]);
+    let report = core.trash_items(&preview).unwrap();
+    assert!(!report.settled, "{report:?}");
+    assert!(report.behind.is_some(), "{report:?}");
+    assert_eq!(state_of(&core, "b"), Some((ItemState::Active, 1)));
+
+    log_holds(&server, &[("a", 2), ("b", 2)]);
+    core.catch_up().unwrap();
+    for id in ["a", "b"] {
+        assert_eq!(state_of(&core, id), Some((ItemState::Trashed, 2)), "{id}");
+    }
+}
+
+#[test]
+fn a_cut_cascade_lays_a_held_item_it_did_not_list_in_the_bin() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "omitted"]);
+    let names: Vec<String> = (0..100).map(|n| format!("child{n}")).collect();
+    let takes: Vec<(&str, &str)> = names.iter().map(|id| (id.as_str(), "")).collect();
+    let mut body: Value = serde_json::from_str(&preview_body(&["a"], &takes, true)).unwrap();
+    body["count"] = 102.into();
+    body["items"][0]["count"] = 102.into();
+    server.on(
+        "/items/trash-preview",
+        vec![scripted::json(200, &body.to_string())],
+    );
+    let preview = core.preview_trash(&ids(&["a"])).unwrap();
+    server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
+    log_holds(&server, &[("a", 2), ("omitted", 2)]);
+    assert!(core.trash_items(&preview).unwrap().settled);
+    assert_eq!(state_of(&core, "omitted"), Some((ItemState::Trashed, 2)));
+}
+
+#[test]
+fn a_restore_the_copy_took_before_the_answer_is_kept() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let preview = previewed(&core, &server, &["a"], &[]);
+    let ready = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/items/trash",
+        vec![Answer::WaitFor {
+            ready: ready.clone(),
+            answer: Box::new(scripted::json(200, r#"{"ok":true}"#)),
+        }],
+    );
+    server.on("/types", vec![certified(scripted::types(&[(NOTE, None)]))]);
+    server.on("/edge-types", vec![certified(scripted::edge_types(&[]))]);
+    let mut restored: Value =
+        serde_json::from_str(&scripted::item_payload("item.restored", "a", NOTE, 3)).unwrap();
+    restored["item"]["updated_at"] = "2026-03-02T00:00:00Z".into();
+    restored["listed"] = true.into();
+    server.on(
+        "/events",
+        vec![scripted::stream(
+            vec![
+                scripted::copy_marker("stream_cursor", "10"),
+                scripted::event("11", "item.trashed", &trashed_event("a", 2)),
+                scripted::event("12", "item.restored", &restored.to_string()),
+                scripted::copy_marker("stream_live", "12"),
+            ],
+            Then::End,
+        )],
+    );
+    std::thread::scope(|scope| {
+        let trashing = scope.spawn(|| core.trash_items(&preview));
+        server.wait_for("/items/trash", 1, Duration::from_secs(10));
+        core.catch_up().unwrap();
+        assert_eq!(state_of(&core, "a"), Some((ItemState::Active, 3)));
+        ready.store(true, Ordering::Relaxed);
+        assert!(trashing.join().unwrap().unwrap().settled);
+    });
+    assert_eq!(state_of(&core, "a"), Some((ItemState::Active, 3)));
+}
+
+/// Holds the trash at its instance check, runs `during`, then lets it go.
+fn while_held(
+    core: &Core,
+    server: &Scripted,
+    preview: &TrashPreview,
+    during: impl FnOnce(),
+) -> crate::Result<crate::TrashReport> {
+    server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
+    held_at_instance_check(server, || core.trash_items(preview), during)
+}
+
+fn held_at_instance_check<T: Send>(
+    server: &Scripted,
+    act: impl FnOnce() -> T + Send,
+    during: impl FnOnce(),
+) -> T {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let ready = Arc::new(AtomicBool::new(false));
+    let roots = server.seen("/").len();
+    server.on(
+        "/",
+        vec![Answer::WaitFor {
+            ready: ready.clone(),
+            answer: Box::new(scripted::root(scripted::INSTANCE)),
+        }],
+    );
+    std::thread::scope(|scope| {
+        let acting = scope.spawn(act);
+        server.wait_for("/", roots + 1, Duration::from_secs(10));
+        during();
+        ready.store(true, Ordering::Relaxed);
+        acting.join().unwrap()
+    })
+}
+
+#[test]
+fn a_write_to_an_item_the_trash_holds_is_refused_until_it_returns_and_others_are_not() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "d", "z"]);
+    let preview = previewed(&core, &server, &["a"], &[("d", "")]);
+    log_holds(&server, &[("a", 2), ("d", 2)]);
+    let report = while_held(&core, &server, &preview, || {
+        being_removed(core.update_item("a", &edit()), "a");
+        being_removed(core.delete_item("d"), "d");
+        core.update_item("z", &edit()).unwrap();
+    })
+    .unwrap();
+    assert!(report.settled);
+    assert_eq!(server.seen("/items/trash").len(), 1);
+    assert_eq!(queue_len(&core), 1, "only the write to z was queued");
+    core.update_item("a", &edit()).unwrap();
+}
+
+#[test]
+fn a_cut_preview_holds_every_item_while_its_trash_is_out() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "other"]);
+    server.on(
+        "/items/trash-preview",
+        vec![scripted::json(200, &preview_body(&["a"], &[], true))],
+    );
+    let preview = core.preview_trash(&ids(&["a"])).unwrap();
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &preview, || {
+        match core.update_item("other", &edit()) {
+            Err(CoreError::Validation { code, .. }) => assert_eq!(code, "item_being_removed"),
+            other => panic!("{other:?}"),
+        }
+    })
+    .unwrap();
+    core.update_item("other", &edit()).unwrap();
+}
+
+#[test]
+fn a_second_trash_of_an_item_a_trash_holds_is_refused() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "b"]);
+    let first = previewed(&core, &server, &["a"], &[]);
+    let second = previewed(&core, &server, &["b"], &[("a", "")]);
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &first, || {
+        match core.trash_items(&second) {
+            Err(CoreError::Validation { code, .. }) => assert_eq!(code, "item_being_removed"),
+            other => panic!("{other:?}"),
+        }
+    })
+    .unwrap();
+    assert_eq!(server.seen("/items/trash").len(), 1);
+}
+
+#[test]
+fn a_trash_lets_its_items_go_after_a_refusal_a_network_failure_and_no_server() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let preview = previewed(&core, &server, &["a"], &[]);
+
+    server.on("/items/trash", vec![scripted::refusal(409, "trash_plan_changed")]);
+    core.trash_items(&preview).unwrap_err();
+    core.update_item("a", &edit()).unwrap();
+    clear_queue(&core);
+
+    drop(server);
+    assert!(core.trash_items(&preview).unwrap_err().is_unreachable());
+    core.update_item("a", &edit()).unwrap();
+    clear_queue(&core);
+    drop(core);
+
+    let core = copy(None, dir.path(), &["a"]);
+    assert!(matches!(
+        core.trash_items(&preview).unwrap_err(),
+        CoreError::NoServer
+    ));
+    core.update_item("a", &edit()).unwrap();
+}
+
+#[test]
+fn a_trash_left_out_by_a_process_that_ended_holds_nothing_once_the_store_opens_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(None, dir.path(), &["a"]);
+    store::meta_set(&core.conn().unwrap(), "removing/a", "trash").unwrap();
+    being_removed(core.update_item("a", &edit()), "a");
+    drop(core);
+    let core = open(None, dir.path());
+    core.update_item("a", &edit()).unwrap();
+}
+
+fn clear_queue(core: &Core) {
+    core.conn().unwrap().execute("DELETE FROM queue", []).unwrap();
 }

@@ -433,6 +433,9 @@ impl Core {
             };
             // A copy that has never reached a server holds the types Marfa
             // ships, so an app can save before it has connected.
+            if lock.handle() == Handle::Writer {
+                store::forget_removing(&conn)?;
+            }
             if lock.handle() == Handle::Writer
                 && store::never_synced(&conn)?
                 && store::catalog_version(&conn)?.is_none()
