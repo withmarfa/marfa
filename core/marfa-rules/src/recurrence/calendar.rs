@@ -77,7 +77,7 @@ impl Zone {
         fixed: Some(0),
     };
 
-    /// A name the bundled database holds in exactly this spelling.
+    /// A name the bundled database holds in exactly this spelling, other than `Factory`.
     pub fn named(name: &str) -> Option<Zone> {
         let zone = TimeZone::get(name).ok()?;
         (zone.iana_name() == Some(name) && name != "Factory").then(|| Zone::from_time_zone(zone))

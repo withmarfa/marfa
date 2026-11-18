@@ -245,8 +245,8 @@ impl Core {
                 let mut key: Value = serde_json::from_str(&raw).map_err(|error| {
                     CoreError::Store(format!("cannot read view group: {error}"))
                 })?;
-                if let Some(bucket) = bucket {
-                    key = date_bucket(&key, bucket, zone.as_ref().unwrap_or(&Zone::UTC));
+                if let (Some(bucket), Some(zone)) = (bucket, zone.as_ref()) {
+                    key = date_bucket(&key, bucket, zone);
                 }
                 let entry = groups
                     .entry(group_identity(&key))

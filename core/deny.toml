@@ -61,9 +61,7 @@ skip-tree = [
     { crate = "image", reason = "pins its own miniz_oxide" },
 ]
 
-# jiff 1 reads time zones from the database it bundles, so a program carries
-# the same rules on every platform. These features read a copy from the host
-# or pick one by platform instead.
+# Zone rules come only from the database jiff bundles, never from the host.
 [[bans.features]]
 crate = "jiff@1"
 deny = ["tzdb-zoneinfo", "tzdb-concatenated", "tzdb-bundle-platform"]
