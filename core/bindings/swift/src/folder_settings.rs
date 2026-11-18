@@ -173,7 +173,7 @@ impl Core {
         self.inner.folder(&id)?.map(row).transpose()
     }
 
-    /// What the folder's query holds, as a folder on disk holds it. A
+    /// The listed items that match the folder's query. A
     /// query the slice cannot answer whole is `MarfaError.Invalid`, never
     /// answered in part; a folder the copy does not hold is
     /// `MarfaError.NotFound` with the code `not_held`. While a hydration

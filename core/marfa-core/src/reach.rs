@@ -318,6 +318,9 @@ pub(crate) fn expired(conn: &Connection) -> Result<bool> {
     Ok(true)
 }
 
+/// A refill keeps the last negative listing answer for each row it has yet to read.
+pub(crate) const UNLISTED_BEFORE: &str = "item_unlisted_before/";
+
 pub(crate) fn listed(conn: &Connection, id: &str) -> Result<bool> {
     Ok(store::meta_get(conn, &format!("item_listed/{id}"))?.as_deref() == Some("true"))
 }
@@ -329,6 +332,7 @@ pub(crate) fn answered(conn: &Connection, id: &str) -> Result<bool> {
 }
 
 pub(crate) fn set_listed(conn: &Connection, id: &str, listed: bool) -> Result<()> {
+    store::meta_delete(conn, &format!("{UNLISTED_BEFORE}{id}"))?;
     store::meta_set(
         conn,
         &format!("item_listed/{id}"),
@@ -351,6 +355,7 @@ pub(crate) fn forget_early(conn: &Connection, id: &str) -> Result<()> {
 }
 
 pub(crate) fn forget_listed(conn: &Connection, id: &str) -> Result<()> {
+    store::meta_delete(conn, &format!("{UNLISTED_BEFORE}{id}"))?;
     store::meta_delete(conn, &format!("item_listed/{id}"))
 }
 

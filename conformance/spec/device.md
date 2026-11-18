@@ -1922,6 +1922,22 @@ When a local list names a `source`, a device MUST answer only the items stamped 
 
 **Tests:** `device/item-fields-live.test.ts › lists by source as the server does`.
 
+### `device/list-unlisted-pin`
+
+When a local list or search runs on a copy that holds a pinned item the server marked `listed: false` for the credential, a device MUST omit that item from the result.
+
+**Reason:** the credential's source filter applies to listings. The pin keeps the item readable by ID (`reach/listed-by-id`).
+
+**Tests:** `device/listing-unlisted-pins.test.ts › leaves a pinned item the server did not list out of a local list and search, and still reads it by id`.
+
+### `device/view-folder-unlisted-pin`
+
+When a caller lists items in a saved view or folder, or searches in a folder, a device MUST omit any pinned item the server marked `listed: false` for the credential.
+
+**Reason:** applying a view or folder query keeps the credential's source filter in effect.
+
+**Tests:** `device/listing-unlisted-pins.test.ts › leaves a pinned item the server did not list out of a local view's and a local folder's listing`.
+
 ### `device/list-updated-range`
 
 When a local list names `updated_after` or `updated_before`, a device MUST answer only the items whose `updated_at` is at or after the `updated_after` bound and before the `updated_before` bound, narrowing by one bound alone when only one is named.
@@ -5444,9 +5460,9 @@ While a device holds a create that the server has not answered, a device MUST an
 
 ### `device/view-read`
 
-When a caller lists views or reads a held view by ID, a device MUST return the held `system.view` items with their IDs, versions, states, and settings without contacting the server.
+When a caller lists views or reads a held view by ID, a device MUST return the held `system.view` items with their IDs, versions, states, and settings without contacting the server, omitting pinned views marked `listed: false` for the credential only from the list.
 
-**Tests:** `device/views.test.ts › reads the saved views and their settings offline`.
+**Tests:** `device/views.test.ts › reads the saved views and their settings offline`, `device/listing-unlisted-pins.test.ts › leaves a pinned view the server did not list out of the views list, and still reads it by id`.
 
 ### `device/view-sort-property`
 
@@ -5698,7 +5714,7 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 When a caller lists or searches in a folder, a device MUST answer the items of the query's types and their subtypes, in the tiers the query holds, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` item.
 
-**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folder-setup/search-match`).
+**Reason:** an app uses the same query settings as the folder on disk (`folder-setup/search-match`). The credential's source filter also applies to the app's listing (`device/view-folder-unlisted-pin`).
 
 **Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's query holds`.
 
