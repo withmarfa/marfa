@@ -247,9 +247,7 @@ impl Core {
             return Ok(None);
         };
         let late = || {
-            format!(
-                "the copy had not taken the server's events through {target} within {within:?}"
-            )
+            format!("the copy had not taken the server's events through {target} within {within:?}")
         };
         while !self.applied_through(target)? {
             catch_up::refuse_if_stopped(stop)?;

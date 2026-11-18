@@ -154,7 +154,10 @@ fn being_removed(result: crate::Result<crate::QueuedWrite>, id: &str) {
             ..
         }) => {
             assert_eq!(code, "item_being_removed");
-            assert_eq!(details.map(|details| details["id"].clone()), Some(json!(id)));
+            assert_eq!(
+                details.map(|details| details["id"].clone()),
+                Some(json!(id))
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -362,7 +365,10 @@ fn a_changed_digest_or_any_refusal_changes_nothing_and_comes_back_typed() {
             matches!(&error, CoreError::Server { code: got, .. } | CoreError::Validation { code: got, .. } | CoreError::Forbidden { code: got, .. } if got == code),
             "{error:?}"
         );
-        assert!(server.seen("/events").is_empty(), "no catch-up after a refusal");
+        assert!(
+            server.seen("/events").is_empty(),
+            "no catch-up after a refusal"
+        );
         for id in ["a", "d"] {
             assert_eq!(state_of(&core, id), Some((ItemState::Active, 1)));
         }
@@ -641,11 +647,9 @@ fn a_second_trash_of_an_item_a_trash_holds_is_refused() {
     let first = previewed(&core, &server, &["a"], &[]);
     let second = previewed(&core, &server, &["b"], &[("a", "")]);
     log_holds(&server, &[("a", 2)]);
-    while_held(&core, &server, &first, || {
-        match core.trash_items(&second) {
-            Err(CoreError::Validation { code, .. }) => assert_eq!(code, "item_being_removed"),
-            other => panic!("{other:?}"),
-        }
+    while_held(&core, &server, &first, || match core.trash_items(&second) {
+        Err(CoreError::Validation { code, .. }) => assert_eq!(code, "item_being_removed"),
+        other => panic!("{other:?}"),
     })
     .unwrap();
     assert_eq!(server.seen("/items/trash").len(), 1);
@@ -658,7 +662,10 @@ fn a_trash_lets_its_items_go_after_a_refusal_a_network_failure_and_no_server() {
     let core = copy(Some(&server), dir.path(), &["a"]);
     let preview = previewed(&core, &server, &["a"], &[]);
 
-    server.on("/items/trash", vec![scripted::refusal(409, "trash_plan_changed")]);
+    server.on(
+        "/items/trash",
+        vec![scripted::refusal(409, "trash_plan_changed")],
+    );
     core.trash_items(&preview).unwrap_err();
     core.update_item("a", &edit()).unwrap();
     clear_queue(&core);
@@ -689,7 +696,10 @@ fn a_trash_left_out_by_a_process_that_ended_holds_nothing_once_the_store_opens_a
 }
 
 fn clear_queue(core: &Core) {
-    core.conn().unwrap().execute("DELETE FROM queue", []).unwrap();
+    core.conn()
+        .unwrap()
+        .execute("DELETE FROM queue", [])
+        .unwrap();
 }
 
 fn in_the_bin(core: &Core, id: &str) {
@@ -714,7 +724,10 @@ fn a_write_to_an_item_a_purge_has_out_is_refused_until_it_returns() {
     let dir = tempfile::tempdir().unwrap();
     let core = copy(Some(&server), dir.path(), &["a", "z"]);
     in_the_bin(&core, "a");
-    server.on("/items/a/purge", vec![scripted::json(200, r#"{"ok":true}"#)]);
+    server.on(
+        "/items/a/purge",
+        vec![scripted::json(200, r#"{"ok":true}"#)],
+    );
     held_at_instance_check(
         &server,
         || core.purge_item("a", None),
@@ -735,7 +748,10 @@ fn a_refused_purge_lets_its_item_go() {
     let dir = tempfile::tempdir().unwrap();
     let core = copy(Some(&server), dir.path(), &["a"]);
     in_the_bin(&core, "a");
-    server.on("/items/a/purge", vec![scripted::refusal(409, "version_conflict")]);
+    server.on(
+        "/items/a/purge",
+        vec![scripted::refusal(409, "version_conflict")],
+    );
     core.purge_item("a", None).unwrap_err();
     assert_eq!(removing_keys(&core), 0);
     core.restore_item("a").unwrap();
