@@ -1138,8 +1138,7 @@ impl Folder {
         Ok(ControlFlow::Continue(work))
     }
 
-    /// Sends the edges the files' links and lines ask for, once every file
-    /// is bound. A failure is its file's alone: the file waits.
+    /// File-level errors hold the affected file for a later scan.
     fn queue_edge_work(&self, scan: &mut ScanState, mut work: Vec<EdgeWork>) -> Result<()> {
         let (catalog, edge_types) = (&scan.catalog, &scan.edge_types);
         let (shown, report) = (&mut scan.shown, &mut scan.report);

@@ -394,8 +394,6 @@ fn item_asked(server: &Scripted, id: &str) -> usize {
     server.seen(&format!("/items/{id}")).len()
 }
 
-/// A folder whose server holds neither id, and whose root names the copy's
-/// instance until `replace` is called.
 fn folder_asking_by_id(settings: Value) -> (ScannedDir, Folder, Scripted) {
     let (dir, folder, server) = online_folder_with(settings, nothing_found());
     for id in [FIRST, SECOND] {

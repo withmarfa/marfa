@@ -336,8 +336,7 @@ impl Core {
             .collect())
     }
 
-    /// Unresolved names can wait for the next pass. Store failures, a stop and
-    /// the copy's expiry reach the caller.
+    /// A name the server could not resolve can wait for the next pass.
     pub(crate) fn settle_bodies(&self, stop: &AtomicBool) -> Result<()> {
         match body::rule::settle(self, stop) {
             Err(
@@ -346,8 +345,6 @@ impl Core {
                 | CoreError::CopyExpired { .. }
                 | CoreError::Canceled),
             ) => Err(error),
-            // The generation moved while the root was read: the copy was
-            // expired, and its names were never judged against its server.
             Err(CoreError::StreamIncomplete { .. }) => Err(CoreError::expired(
                 "the copy was expired while the server's instance was being confirmed",
             )),

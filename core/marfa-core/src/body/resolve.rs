@@ -217,7 +217,6 @@ pub(crate) struct Resolver<'a> {
     /// Why the server refused a title lookup as a whole this pass, where it
     /// did: the refusal named no one name, so the names it carried wait.
     refused_call: Option<String>,
-    /// Raised by the operation the pass runs for: no lookup starts after it.
     stop: &'a AtomicBool,
     /// Whether a title lookup call was answered with its results this pass.
     answered: bool,

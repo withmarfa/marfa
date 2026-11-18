@@ -417,9 +417,7 @@ impl CoreError {
         }
     }
 
-    /// Whether the copy itself ended the call, not one item or one file: it
-    /// expired, changed under the call, or the call was stopped. No later item
-    /// of the same pass is worth asking.
+    /// An error that must reach the caller even when processing a single file.
     pub fn is_copy_wide(&self) -> bool {
         matches!(
             self,

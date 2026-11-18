@@ -1480,8 +1480,7 @@ describe("the working copy belongs to one server", () => {
     scriptHydration(server, { head: "10" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const elsewhere = await startHarness("origin-moved-reader-peer");
-    // The writer holds the copy for the whole read, so the next open to send is a
-    // reading handle.
+    // Holding the writer lock makes the second process open as a reader.
     const writer = device.holdFollow(20);
     try {
       await vi.waitFor(

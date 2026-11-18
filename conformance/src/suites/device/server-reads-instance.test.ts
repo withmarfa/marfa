@@ -226,10 +226,7 @@ describe("a link by id looked up on the server", () => {
   });
 });
 
-/**
- * The token is kept in the run's own keychain file, which exists only where
- * there are keychain files.
- */
+// This fixture uses a macOS keychain file for the renewable credential.
 describe("a table read repeated after a credential renewal", ON_MACOS, () => {
   async function repeated(replacedAtRenewal: boolean) {
     harness = await startHarness("server-reads-renewal");

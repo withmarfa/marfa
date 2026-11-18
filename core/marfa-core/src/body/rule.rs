@@ -1158,12 +1158,7 @@ pub(crate) fn waiting(conn: &Connection) -> Result<bool> {
         .is_some())
 }
 
-/// Looks again at every name a body written here carries and no edge says
-/// yet: one the server has not been asked about or did not answer, and one
-/// it answered naming nothing or more than one item where the copy now holds
-/// a different number of items it names. A name the body no longer carries
-/// stops waiting. A failure leaves the names to the next pass, which a
-/// drain does not wait for; a stop, or the copy's expiry, ends the pass.
+/// Rechecks missing or ambiguous names when the number of local matches changes.
 pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
     let rows: Vec<Row> = {
         let conn = core.conn()?;

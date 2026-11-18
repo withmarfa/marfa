@@ -214,8 +214,6 @@ pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
-/// What a caller confirms before each attempt of a request, such as that the
-/// server is still the instance the copy was built from.
 pub(crate) type Before<'a> = Option<&'a dyn Fn() -> Result<(), CoreError>>;
 
 /// An environment proxy cannot reach this machine's loopback addresses.
@@ -970,9 +968,6 @@ impl Http {
         self.authorized_checked(None, run)
     }
 
-    /// `authorized`, with `before` run ahead of each attempt, a retry after a
-    /// renewal included, so a request is sent only on the answer of a check
-    /// made for that attempt.
     fn authorized_checked(
         &self,
         before: Before<'_>,
@@ -1469,7 +1464,6 @@ impl Http {
         Ok(self.item_answered(id)?.row())
     }
 
-    /// `item`, with `before` run ahead of each attempt.
     pub(crate) fn item_checked(
         &self,
         id: &str,
