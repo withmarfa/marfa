@@ -214,7 +214,7 @@ fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
 }
 
 fn millis_of(stamp: &str) -> Option<i64> {
-    i64::try_from(crate::store::instant_of(stamp)? / 1_000_000).ok()
+    marfa_rules::time::read(stamp).ok()
 }
 
 impl Folder {

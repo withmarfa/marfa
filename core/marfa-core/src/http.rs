@@ -2460,13 +2460,7 @@ fn http_date(raw: &str) -> Option<i64> {
         clock[1].parse().ok()?,
         clock[2].parse().ok()?,
     );
-    // The days-from-civil algorithm.
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
+    let days = marfa_rules::time::days_from_civil(year, month, day);
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 

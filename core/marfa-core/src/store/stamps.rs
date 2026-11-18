@@ -9,7 +9,6 @@ use super::queue::{
 use super::reach::edge_brought;
 use super::reads::{edge_by_id, edge_ends, items_by_ids};
 use super::rows::{upsert_edge, upsert_item};
-use super::time::instant_of;
 use crate::error::CoreError;
 use crate::model::{Edge, Item, QueuedWrite, Subject, WriteKind};
 use crate::wire::{WireEdge, WireItem};
@@ -34,8 +33,11 @@ impl Stamp {
         if self.version != other.version {
             return self.version > other.version;
         }
-        match (instant_of(&self.updated_at), instant_of(&other.updated_at)) {
-            (Some(held), Some(other)) => held > other,
+        match (
+            marfa_rules::time::read(&self.updated_at),
+            marfa_rules::time::read(&other.updated_at),
+        ) {
+            (Ok(held), Ok(other)) => held > other,
             _ => false,
         }
     }
