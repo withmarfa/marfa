@@ -437,12 +437,7 @@ impl Blobs {
         attached.wanted == *wanted && attached.trouble.is_none()
     }
 
-    /// Takes the store `wanted` names in place of the one in use, or tries again to take one that
-    /// could not be used, after any change of store already under way. `wanted` is read again
-    /// after each attach, and a store the settings no longer name is let go, so the store in use
-    /// ends as the last committed settings name it. Work that began with the old store keeps it
-    /// until it ends. Fails only when the store taken could not be recorded, and the store in use
-    /// is then troubled, never the old one.
+    /// Waits for the current attachment attempt. A recording failure is returned to the caller.
     pub async fn follow(
         &self,
         db: &Db,
@@ -453,7 +448,7 @@ impl Blobs {
         self.settle(db, wanted, at).await
     }
 
-    /// As `follow`, except that it leaves a change of store under way to the one making it.
+    /// Skips the retry if another caller is already attaching a store.
     pub async fn follow_if_idle(
         &self,
         db: &Db,
@@ -488,9 +483,6 @@ impl Blobs {
         }
     }
 
-    /// Records `next` and puts it in use. One that cannot be recorded is not used: a store the
-    /// settings name that the server cannot record copies in is attached as trouble, in place of
-    /// the old one, which they no longer name.
     async fn take(&self, db: &Db, next: Attached, at: String) -> std::result::Result<(), Refusal> {
         let recorded = record(db, &self.disk, &next, at).await;
         let (next, outcome) = match recorded {
@@ -548,7 +540,7 @@ impl Blobs {
         self.attached.load().folder.clone()
     }
 
-    /// Where backups go, read from one attachment so that a change of store is seen whole.
+    /// Reads the backup destination and its prefix from the same attachment.
     pub fn kept(&self) -> Option<Kept> {
         let attached = self.attached.load();
         match (&attached.s3, &attached.folder, &attached.wanted) {

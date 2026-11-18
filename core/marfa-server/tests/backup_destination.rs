@@ -1,7 +1,4 @@
-//! What `PATCH /config` does to the store backups go to: that the store in use follows the last
-//! committed settings however writes overlap, that a store that cannot be recorded is not left
-//! looking like the one the settings name, and that a write that names no other store never waits
-//! for one being taken.
+//! Backup destinations during concurrent settings writes, restores, and attachment failures.
 
 #[allow(dead_code)]
 mod fake_s3;
@@ -106,7 +103,6 @@ impl Instance {
         patch(&self.control, body).await
     }
 
-    /// An archive of what the instance holds, which restores to another instance.
     async fn archive(&self) -> Vec<u8> {
         let key = Some(self.writer.as_str());
         let exported = call(
@@ -183,7 +179,6 @@ async fn call(
     Reply { status, body }
 }
 
-/// The settings that point `PATCH /config` at the store, under `prefix`.
 fn names(s3: &FakeS3, prefix: &str) -> Value {
     let settings: serde_json::Map<String, Value> = s3
         .settings(BUCKET, prefix)
@@ -248,7 +243,6 @@ async fn a_bucket_a_later_write_removed_is_not_taken_by_the_attach_an_earlier_on
     let listed = instance.get("/backups").await;
     assert_eq!(listed.status, StatusCode::CONFLICT, "{}", listed.body);
     assert_eq!(listed.code(), "no_backup_destination");
-    // The witness: the same attach, with nothing removing the bucket, is the destination.
     let again = instance.patch(names(&s3, "older")).await;
     assert_eq!(again.status, StatusCode::OK, "{}", again.body);
     assert_eq!(instance.get("/backups").await.status, StatusCode::OK);
@@ -288,7 +282,6 @@ async fn a_restore_that_holds_the_writer_leaves_the_store_the_settings_name_trou
     assert_eq!(set.status, StatusCode::OK, "{}", set.body);
     let config = instance.get("/config").await;
     assert_eq!(config.body["object_store_bucket"], BUCKET);
-    // The store the settings name could not be recorded, so it is not the old one that is used.
     let refused = instance.get("/backups").await;
     assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(refused.code(), "blob_store_unavailable");

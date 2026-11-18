@@ -106,7 +106,7 @@ pub fn write_rows(tx: &Transaction<'_>, rows: &Rows) -> Result<()> {
 pub struct Staged {
     generation: u64,
     rows: Vec<(String, String)>,
-    /// Whether the write named another store beside the disk than the settings it followed.
+    /// Whether this transaction changed the destination, or its previous value was unknown.
     moved: bool,
 }
 
@@ -114,9 +114,7 @@ fn wanted_by(app: &App, rows: &[(String, String)]) -> super::blobs::Wanted {
     super::blobs::Wanted::of(&app.settings.candidate(rows))
 }
 
-/// Takes the table as this transaction holds it, in its place in the order of
-/// the commits. Taken inside the write transaction, where writes are serial.
-/// `before` is the table as the transaction found it, before the write changed it.
+/// Compare against rows read before the change in this same transaction.
 pub fn stage(tx: &Transaction<'_>, app: &App, before: &[(String, String)]) -> Result<Staged> {
     let rows = rows(tx)?;
     Ok(Staged {
@@ -126,7 +124,7 @@ pub fn stage(tx: &Transaction<'_>, app: &App, before: &[(String, String)]) -> Re
     })
 }
 
-/// As `stage`, for a write that does not know what it changed: it counts as a change of store.
+/// A restore or an uncertain commit may have changed the destination.
 pub fn stage_unknown(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
     Ok(Staged {
         generation: app.settings.next_generation(),
@@ -136,10 +134,7 @@ pub fn stage_unknown(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
 }
 
 impl Staged {
-    /// Backup requests read the attached store, so a write that names another store waits until
-    /// the store in use follows the settings, and is answered after. A write that names none never
-    /// waits for a change of store under way, nor starts one; it tries a store that failed again
-    /// in the background.
+    /// Backups read the attached store, so a destination change waits for attachment.
     pub async fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
         super::housekeeping::wake(app);

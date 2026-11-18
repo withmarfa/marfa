@@ -62,8 +62,7 @@ describe("a destination set through /config", () => {
           const { operator } = clientsFor(server);
           const owner = ownerOf(server);
 
-          // Each door follows a write of its own, sent as the very next request,
-          // from an instance with nowhere to put backups.
+          // Each backup request must be the first request after its destination is set.
           const first = await operator.patchConfig(destination());
           expect(first.status, JSON.stringify(first.error)).toBe(200);
           const listed = await owner.listBackups();

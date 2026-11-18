@@ -266,8 +266,7 @@ impl App {
         Ok(app)
     }
 
-    /// Takes the store beside the disk that the live settings name, or tries again to take one
-    /// that could not be used. It waits for a change of store under way.
+    /// Waits for an attachment in progress before checking the live settings.
     pub async fn follow_stores(&self) -> Result<(), refusal::Refusal> {
         self.blobs
             .follow(
@@ -278,7 +277,7 @@ impl App {
             .await
     }
 
-    /// As `follow_stores`, except that it leaves a change of store under way to the one making it.
+    /// Skips the retry if another caller is already attaching a store.
     pub async fn follow_stores_if_idle(&self) -> Result<(), refusal::Refusal> {
         self.blobs
             .follow_if_idle(
