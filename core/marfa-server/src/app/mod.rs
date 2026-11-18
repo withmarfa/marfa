@@ -275,7 +275,20 @@ impl App {
                 || blobs::Wanted::of(&self.settings.live()),
                 || self.clock.stamp(),
             )
-            .await;
+            .await
+            .ok();
+    }
+
+    /// The store beside the disk that the committed settings name now, taken first if it is not
+    /// the one in use. The settings are read once, so everything read from the answer agrees.
+    pub async fn stores_named(&self) -> Result<Arc<blobs::Attached>, refusal::Refusal> {
+        self.blobs
+            .using(
+                &self.db,
+                || blobs::Wanted::of(&self.settings.live()),
+                || self.clock.stamp(),
+            )
+            .await
     }
 
     /// Raised once, when the stop begins; a stream reads it to end with `server_stopping`.

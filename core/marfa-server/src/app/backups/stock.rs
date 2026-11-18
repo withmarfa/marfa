@@ -589,7 +589,7 @@ mod tests {
                     .unwrap();
             let app = App::start(settings).await.unwrap();
             app.clock.pause(true);
-            let destination = app.destination().unwrap();
+            let destination = app.destination().await.unwrap();
             let mut stock = Stock::load(&app, &destination).await.unwrap();
             let mut made = Vec::new();
             for index in 0..PARTS {
