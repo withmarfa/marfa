@@ -474,12 +474,13 @@ describe("a stored store setting that does not read", () => {
     const told = await storeConcerns(server);
     expect(told).toHaveLength(1);
     expect(told[0]!.description).toContain(unreadablePath.key);
-    expect(told[0]!.description).toContain("blob folder");
     expect(told[0]!.description).not.toContain(unreadablePath.value);
     // The blob folder being away makes this answer 503, with the same body.
     const health = await operator.rawRequest<{
       backups: Record<string, unknown>;
+      components: Record<string, { status: string }>;
     }>("/health");
+    expect(health.data.components.blob_storage?.status).toBe("down");
     expect(health.data.backups).toMatchObject({
       destination: "folder",
       reason: "destination_unusable",
@@ -594,7 +595,6 @@ describe("a stored store setting that does not read", () => {
         const told = await storeConcerns(server);
         expect(told).toHaveLength(1);
         expect(told[0]!.description).toContain(unreadable.key);
-        expect(told[0]!.description).toContain("blob folder");
         expect(told[0]!.description).not.toContain(unreadable.value);
         const absent = await operator.downloadBlob(hash);
         expect(absent.status).toBe(503);

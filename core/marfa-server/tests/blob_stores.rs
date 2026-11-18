@@ -2232,7 +2232,6 @@ async fn a_start_over_an_empty_folder_with_a_store_setting_that_does_not_read_is
     assert!(troubled.app.blobs.s3().is_none());
     let trouble = troubled.app.blobs.trouble().unwrap();
     assert!(trouble.contains("object_store_region"), "{trouble}");
-    assert!(trouble.contains("blob folder"), "{trouble}");
     assert!(!trouble.contains("not a region"), "{trouble}");
     let told = store_concerns(&troubled.app).await;
     assert_eq!(told.len(), 1, "{told:?}");
@@ -2240,7 +2239,7 @@ async fn a_start_over_an_empty_folder_with_a_store_setting_that_does_not_read_is
         told[0]["description"]
             .as_str()
             .unwrap()
-            .contains("blob folder"),
+            .contains("object_store_region"),
         "{told:?}"
     );
     let absent = troubled.fetch(&hash).await;
@@ -2329,7 +2328,6 @@ async fn a_start_that_cannot_name_its_store_leaves_an_empty_folder_alone_until_t
         assert_left_alone(&instance, mount_point);
         let trouble = troubled.app.blobs.trouble().unwrap();
         assert!(trouble.contains("backup_path"), "{trouble}");
-        assert!(trouble.contains("blob folder"), "{trouble}");
         assert!(trouble.contains("no file is purged"), "{trouble}");
 
         mount_back(&instance, &away);
@@ -2337,8 +2335,6 @@ async fn a_start_that_cannot_name_its_store_leaves_an_empty_folder_alone_until_t
         assert_eq!(served.status, StatusCode::OK, "{}", served.body);
         assert_eq!(served.bytes, b"saved before the drive went away");
         assert_eq!(troubled.sweep().await["purged"], 0);
-        let trouble = troubled.app.blobs.trouble().unwrap();
-        assert!(!trouble.contains("blob folder"), "{trouble}");
         let stored = troubled.put(b"sent once the drive is back").await;
         assert_eq!(stored.status, StatusCode::CREATED, "{}", stored.body);
 

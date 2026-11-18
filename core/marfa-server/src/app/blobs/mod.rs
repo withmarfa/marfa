@@ -236,16 +236,6 @@ impl Attached {
             )),
         }
     }
-
-    fn with_folder_away(mut self) -> Attached {
-        if let Some(trouble) = &mut self.trouble {
-            trouble.push_str(
-                " The blob folder is missing or holds no store marker too, so the files it holds \
-                 cannot be read and no file can be stored until it is mounted or restored.",
-            );
-        }
-        self
-    }
 }
 
 pub struct Blobs {
@@ -451,9 +441,7 @@ async fn taking(
     }
 }
 
-/// What a start takes where the blob folder is empty and the record names copies there. Only a
-/// store the server kept copies in may refill it, and anything else refuses the start, but for
-/// store settings the owner can only correct through a running server: those are reported.
+/// An unreadable store setting does not refuse the start: only a running server can correct it.
 async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<Attached, Failure> {
     let failure = match &wanted {
         Wanted::Bucket(settings) => match caught(object_store(db, settings, Some(root))).await {
@@ -471,7 +459,7 @@ async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<
         Wanted::Unreadable(keys) => does_not_read(keys),
         Wanted::Disk | Wanted::Folder(_) => return Err(folder_missing(root, "")),
     };
-    Ok(Attached::troubled(wanted, failure).with_folder_away())
+    Ok(Attached::troubled(wanted, failure))
 }
 
 type StoreRows = Vec<(String, &'static str, String)>;
@@ -547,7 +535,7 @@ impl Blobs {
         }
         let folder_opened = away.is_none();
         let disk = Arc::new(match away {
-            Some(id) => Disk::unmounted(id, root.to_path_buf()),
+            Some(id) => Disk::awaiting_blob_folder(id, root.to_path_buf()),
             None => {
                 let folder = root.to_path_buf();
                 tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
@@ -578,6 +566,11 @@ impl Blobs {
     /// Whether the start took the blob folder as the disk store.
     pub fn folder_opened(&self) -> bool {
         self.folder_opened
+    }
+
+    /// Whether the blob folder returned after the start and cannot be locked now. It blocks.
+    pub fn folder_unlockable(&self) -> bool {
+        self.disk.returned_unlockable()
     }
 
     /// Whether the store in use is the usable one `wanted` names.
@@ -618,20 +611,6 @@ impl Blobs {
             return Err(unsettled());
         }
         Ok(attached)
-    }
-
-    /// Takes the store `wanted` names, saying so where the blob folder is away as well.
-    async fn attach_beside_disk(&self, db: &Db, wanted: Wanted) -> Attached {
-        let next = attach(db, wanted, &self.instance, &self.kept).await;
-        if next.trouble.is_none() {
-            return next;
-        }
-        let disk = self.disk.clone();
-        let looked = tokio::task::spawn_blocking(move || disk.reachable());
-        match tokio::time::timeout(self.check(), looked).await {
-            Ok(Ok(true)) => next,
-            _ => next.with_folder_away(),
-        }
     }
 
     /// Why the store the settings name is not in use, in the owner's words.
@@ -1105,9 +1084,13 @@ fn unavailable() -> Refusal {
 fn insufficient() -> Refusal {
     Refusal::new(
         Code::InsufficientStorage,
-        "The volume the blobs are kept on has no room for the upload.",
+        "The volume the blobs are kept on has no room.",
     )
 }
+
+/// What a backup or export is told when the blob folder cannot take its working files.
+pub const WORKING_FILES_REFUSED: &str =
+    "The blob folder cannot take working files now; try again later.";
 
 /// `507` for a write that met a volume with no room.
 pub fn out_of_room(error: &io::Error) -> Option<Refusal> {
@@ -1125,6 +1108,15 @@ fn unwritable(error: io::Error) -> Refusal {
     }
     tracing::error!(%error, "A blob write failed");
     unavailable()
+}
+
+/// `unwritable` for a working file, which says the blob folder is what refused.
+fn no_working_file(error: io::Error) -> Refusal {
+    if let Some(refusal) = out_of_room(&error) {
+        return refusal;
+    }
+    tracing::error!(%error, "A working file was not made");
+    Refusal::new(Code::BlobStoreUnavailable, WORKING_FILES_REFUSED)
 }
 
 fn joined<T>(outcome: std::result::Result<T, tokio::task::JoinError>) -> Result<T> {
@@ -1388,7 +1380,7 @@ impl App {
                 }
                 None => {
                     tried = Some(wanted.clone());
-                    Arc::new(blobs.attach_beside_disk(&self.db, wanted).await)
+                    Arc::new(attach(&self.db, wanted, &blobs.instance, &blobs.kept).await)
                 }
             };
             let generation = match self.record_stores(&next).await {
@@ -2064,6 +2056,6 @@ mod tests {
         let attached = attached.map_err(|failure| failure.message).unwrap();
         assert!(attached.s3.is_none());
         let trouble = attached.trouble.unwrap();
-        assert!(trouble.contains("blob folder"), "{trouble}");
+        assert!(trouble.contains("object store"), "{trouble}");
     }
 }

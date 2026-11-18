@@ -108,9 +108,65 @@ While the disk store that `stores/unread-setting-store-kept` keeps listed has no
 
 **Tests:** `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`.
 
+### `stores/returned-folder-locked`
+
+If another running server has written to a disk folder since that folder returned to it holding the store's marker, and the server starts on that folder, then the server MUST refuse to start.
+
+**Reason:** a blob folder belongs to one running server at a time.
+
+**Tests:** `compliance/one-server.test.ts › refuses a second server on a returned folder while an upload is in progress there, and the upload lands`.
+
+### `stores/returned-folder-locked-health`
+
+If another running server has answered `GET /health` since a disk folder it started without returned holding the store's marker, no server having that folder open at that answer, and the server starts on that folder, then the server MUST refuse to start.
+
+**Reason:** a server that has reported the folder as its store keeps it until it ends.
+
+**Tests:** `compliance/one-server.test.ts › refuses a second server on a returned folder once it has answered GET /health, and not after it has only served a read`.
+
+### `stores/returned-folder-taken`
+
+While a disk folder that the server started without has returned holding the store's marker, and another running server has it open or it cannot be locked, when a credential that may upload sends `POST /blobs`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a folder the server cannot keep to itself may be another server's.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/returned-folder-taken-export`
+
+While a disk folder is as `stores/returned-folder-taken` describes, when a credential that may export sends `GET /export?format=archive`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** an archive export writes its working files in the folder.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/returned-folder-taken-backup`
+
+While a disk folder is as `stores/returned-folder-taken` describes and the settings name a backup destination, when a credential that may run a backup sends `POST /backups`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a backup writes its working files in the folder.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`.
+
+### `stores/returned-folder-taken-read`
+
+While a disk folder is as `stores/returned-folder-taken` describes, when a credential that may read a file the folder holds requests it, the server MUST serve the file.
+
+**Reason:** a read changes nothing in the folder.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/returned-folder-taken-health`
+
+While a disk folder is as `stores/returned-folder-taken` describes, the server MUST answer the `blob_storage` component of `GET /health` as `down`.
+
+**Reason:** nothing can be stored until the folder is the server's own.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
 ### `stores/unread-setting-folder-returns`
 
-When the folder of the disk store that `stores/unread-setting-store-kept` keeps listed holds that store's marker again, the server MUST serve and store blobs through that store, without a restart.
+When the folder of the disk store that `stores/unread-setting-store-kept` keeps listed holds that store's marker again and `stores/returned-folder-taken` does not describe it, the server MUST serve and store blobs through that store, without a restart.
 
 **Tests:** `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`.
 

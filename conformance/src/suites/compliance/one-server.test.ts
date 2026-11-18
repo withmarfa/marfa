@@ -1,4 +1,4 @@
-import { chmod, link, rm, stat, symlink } from "node:fs/promises";
+import { chmod, link, rename, rm, stat, symlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
@@ -15,6 +15,7 @@ import {
   clientsFor,
   DISK_ONLY,
 } from "../../utils/own-blob-server.js";
+import { storeSettingRow } from "../../utils/instance-database.js";
 import { inspectStores } from "../../utils/store-faults.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -57,7 +58,8 @@ async function refused(extraEnv: Record<string, string>): Promise<RefusedBoot> {
 const health = async () =>
   (await controlRequest(first.controlSocket, "/health")).status;
 
-const spool = async () => (await inspectStores(first.controlSocket)).spool;
+const spool = async (server: FreshServer = first) =>
+  (await inspectStores(server.controlSocket)).spool;
 
 /** The ways a second server can name the first's database. */
 async function waysToTheDatabase(): Promise<string[]> {
@@ -74,14 +76,17 @@ async function waysToTheDatabase(): Promise<string[]> {
 }
 
 /** Starts an upload of `UPLOAD_BYTES` and waits until its bytes wait, received, in the spool. */
-async function heldUpload(): Promise<{
+async function heldUpload(
+  server: FreshServer = first,
+  client: MarfaClient = working,
+): Promise<{
   bytes: Uint8Array;
   answer: ReturnType<MarfaClient["uploadBlob"]>;
 }> {
   const bytes = new Uint8Array(UPLOAD_BYTES).map((_, at) => at % 251);
-  await first.setFault("hold:blob-write");
-  const answer = working.uploadBlob(bytes, "application/octet-stream");
-  await first.waitForHold("hold:blob-write");
+  await server.setFault("hold:blob-write");
+  const answer = client.uploadBlob(bytes, "application/octet-stream");
+  await server.waitForHold("hold:blob-write");
   return { bytes, answer };
 }
 
@@ -191,6 +196,203 @@ describe("a second server on a running server's files", () => {
       expect(await spool()).toEqual([]);
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a blob folder that returns to a server started without it", () => {
+  const KEPT_TEXT = "a file the folder keeps";
+
+  /** A disk-only server holding one file, restarted with its folder moved away. */
+  async function startedWithoutItsFolder(label: string) {
+    const folder = join(tempFolder("marfa-one-server-disk-"), "blobs");
+    const away = `${folder}.away`;
+    const server = await bootFreshServer(label, {
+      ...DISK_ONLY,
+      MARFA_BLOB_PATH: folder,
+    });
+    const kept = await clientsFor(server).working.uploadBlob(
+      new TextEncoder().encode(KEPT_TEXT),
+      "text/plain",
+    );
+    expect(kept.status, JSON.stringify(kept.error)).toBe(201);
+    await server.restart(async () => {
+      storeSettingRow(server.sqlitePath, "backup_path", "not/an/absolute/path");
+      await rename(folder, away);
+    });
+    return {
+      server,
+      folder,
+      away,
+      hash: kept.data.hash,
+      ...clientsFor(server),
+    };
+  }
+
+  /** What holds while the server cannot keep a returned folder to itself. */
+  async function expectNothingStored({
+    server,
+    hash,
+    operator: reader,
+    working: client,
+  }: Awaited<ReturnType<typeof startedWithoutItsFolder>>) {
+    expect(await blobStorage(server)).toBe("down");
+    const upload = await client.uploadBlob(
+      new TextEncoder().encode("sent to a folder not kept"),
+      "text/plain",
+    );
+    expect(upload.status).toBe(503);
+    expect(upload.error?.error.code).toBe("blob_store_unavailable");
+    const exported = await fetch(`${server.apiUrl}/export?format=archive`, {
+      headers: { Authorization: `Bearer ${server.workingKey}` },
+    });
+    expect(exported.status).toBe(503);
+    expect(
+      ((await exported.json()) as { error: { code: string } }).error.code,
+    ).toBe("blob_store_unavailable");
+    const read = await reader.downloadBlob(hash);
+    expect(read.status).toBe(200);
+    expect(new TextDecoder().decode(read.data)).toBe(KEPT_TEXT);
+  }
+
+  const blobStorage = async (server: FreshServer) => {
+    const { body } = await controlRequest(server.controlSocket, "/health");
+    const { components } = body as {
+      components: Record<string, { status: string }>;
+    };
+    return components.blob_storage?.status;
+  };
+
+  it(
+    "refuses a second server on a returned folder while an upload is in progress there, and the upload lands",
+    async () => {
+      const {
+        server,
+        folder,
+        away,
+        working: client,
+      } = await startedWithoutItsFolder("one-server-returning");
+      try {
+        await rename(away, folder);
+        const { answer } = await heldUpload(server, client);
+        const before = await spool(server);
+        expect(before.map((file) => file.size)).toEqual([UPLOAD_BYTES]);
+
+        const second = await refused({ MARFA_BLOB_PATH: folder });
+        expect(second.code, second.output).toBe(1);
+        expect(second.output).toContain(
+          `The blob folder ${folder} is open in another Marfa server`,
+        );
+        expect(await spool(server)).toEqual(before);
+
+        await server.clearFault("hold:blob-write");
+        const landed = await answer;
+        expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends",
+    async () => {
+      const started = await startedWithoutItsFolder("one-server-beaten");
+      const { server, folder, away, operator, working: client } = started;
+      try {
+        await rename(away, folder);
+        const holder = await bootFreshServer("one-server-holder", {
+          ...DISK_ONLY,
+          MARFA_BLOB_PATH: folder,
+        });
+        try {
+          await expectNothingStored(started);
+          // With a destination that can be used, only the blob folder stops the backup.
+          const set = await operator.patchConfig({
+            backup_path: tempFolder("marfa-one-server-backups-"),
+          });
+          expect(set.status, JSON.stringify(set.error)).toBe(200);
+          const refusedBackup = await operator.runBackup();
+          expect(refusedBackup.status).toBe(503);
+          expect(refusedBackup.error?.error.code).toBe(
+            "blob_store_unavailable",
+          );
+          expect(refusedBackup.error?.error.message).toContain("blob folder");
+        } finally {
+          await holder.stop();
+        }
+        // The witness: all of it recovers once the folder is free, with no write first.
+        expect(await blobStorage(server)).toBe("ok");
+        const backup = await operator.runBackup();
+        expect(backup.status, JSON.stringify(backup.error)).toBe(200);
+        const later = await client.uploadBlob(
+          new TextEncoder().encode("sent to a folder set free"),
+          "text/plain",
+        );
+        expect(later.status, JSON.stringify(later.error)).toBe(201);
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be",
+    async () => {
+      const started = await startedWithoutItsFolder("one-server-unlockable");
+      const { server, folder, away, working: client } = started;
+      const secondLink = `${folder}.second-link`;
+      try {
+        // The server refuses a lock file with a second name, as it does at a start.
+        await link(join(away, ".server-lock"), secondLink);
+        await rename(away, folder);
+        await expectNothingStored(started);
+        await rm(secondLink);
+        expect(await blobStorage(server)).toBe("ok");
+        const later = await client.uploadBlob(
+          new TextEncoder().encode("sent once it can be locked"),
+          "text/plain",
+        );
+        expect(later.status, JSON.stringify(later.error)).toBe(201);
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a second server on a returned folder once it has answered GET /health, and not after it has only served a read",
+    async () => {
+      const {
+        server,
+        folder,
+        away,
+        hash,
+        operator: reader,
+      } = await startedWithoutItsFolder("one-server-looked");
+      try {
+        await rename(away, folder);
+        expect((await reader.downloadBlob(hash)).status).toBe(200);
+        // The witness: a read leaves the folder free, so this server starts.
+        const after = await bootFreshServer("one-server-after-read", {
+          ...DISK_ONLY,
+          MARFA_BLOB_PATH: folder,
+        });
+        await after.stop();
+
+        expect((await fetch(`${server.apiUrl}/health`)).status).toBe(200);
+        const second = await refused({ MARFA_BLOB_PATH: folder });
+        expect(second.code, second.output).toBe(1);
+        expect(second.output).toContain(
+          `The blob folder ${folder} is open in another Marfa server`,
+        );
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 

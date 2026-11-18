@@ -186,6 +186,11 @@ stays because that thing is what it checks.
   opens the lock files beside the database and in the disk store's folder to
   the server's group before a restart. No door or fault links the database or
   changes a file's mode, and the files' links and modes are the subject.
+  Its fixtures of "a blob folder that returns to a server started without it"
+  write a `backup_path` row that does not read before a start, move the blob
+  folder away while the server is stopped and move it back while it runs,
+  because only a disk that goes away and returns does that. One gives the
+  folder's lock file a second name, which no door or fault does.
 - `device/binding-reading-handle-writes-nothing.test.ts` compares the store
   file and its write-ahead log before and after the last connection closes.
   It opens a writable SQLite connection as a control. The binding exposes

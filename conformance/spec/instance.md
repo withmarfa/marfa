@@ -2172,7 +2172,7 @@ If the server starts on a database file that another running server has open, th
 
 If the server starts on a blob folder that another running server has open, then the server MUST refuse to start, whatever database it was given.
 
-**Reason:** a server empties the files it was receiving when it starts, and those in a folder another server has open are that server's uploads in progress.
+**Reason:** a server empties the files it was receiving when it starts, and those in a folder another server has open are that server's uploads in progress. A server that has only read from a blob folder since it returned does not have it open.
 
 **Tests:** `compliance/one-server.test.ts › is refused on the blob folder though it has a database of its own, and names the folder`.
 
@@ -3352,7 +3352,7 @@ If a write to `/config` sets `object_store_bucket` to text that, with the whites
 
 ### `instance/store-setting-unreadable-start`
 
-Where `object_store_bucket` is set or its stored value does not read, and a stored setting whose key begins `object_store_` does not read, or where `object_store_bucket` is not set and the stored `backup_path` does not read, when the server starts, the server MUST start, whatever the blob folder holds.
+Where `object_store_bucket` is set or its stored value does not read, and a stored setting whose key begins `object_store_` does not read, or where `object_store_bucket` is not set and the stored `backup_path` does not read, when the server starts, the server MUST NOT refuse the start because the blob folder is missing or holds no marker.
 
 **Reason:** these are the settings that leave the server unable to tell which store is meant, and only a running server can take the corrected value through `/config`.
 

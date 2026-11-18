@@ -1936,7 +1936,8 @@ async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<
                 gone.is_some() && matches!(refused.code, Code::Unauthorized | Code::Forbidden);
             if !theirs {
                 let (message, at) = (refused.message.to_string(), app.clock.instant());
-                let in_store = refused.code == Code::BlobStoreUnavailable;
+                let in_store = refused.code == Code::BlobStoreUnavailable
+                    && refused.message != super::blobs::WORKING_FILES_REFUSED;
                 if let Err(error) = app
                     .db
                     .write(Write::own(), move |tx| {

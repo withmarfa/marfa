@@ -3284,7 +3284,7 @@ export interface components {
                  */
                 reason?: "no_backup_destination" | "turned_off" | "destination_unusable";
                 /**
-                 * @description Where Marfa puts backups: `folder` for the backup folder `backup_path` names, `bucket` for the object store `object_store_bucket` names. Present only for a caller that holds `instance.read`, and only when one is in use.
+                 * @description Where Marfa puts backups: `folder` for the backup folder `backup_path` names, `bucket` for the object store `object_store_bucket` names. Present only for a caller that holds `instance.read`, and only when the settings name one.
                  * @enum {string}
                  */
                 destination?: "folder" | "bucket";
@@ -37725,7 +37725,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Try again later.
+             * @description - `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy, or Marfa couldn't write the archive's working files in the blob folder. Try again later.
              *     - `write_contention`: the database was busy. Nothing changed. Try the request again.
              */
             503: {
@@ -38374,7 +38374,7 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `blob_store_unavailable`: the backup folder or object store failed, or didn't answer in time. Try again later. */
+            /** @description `blob_store_unavailable`: the backup folder, the object store or the blob folder failed, or didn't answer in time. Try again later. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
