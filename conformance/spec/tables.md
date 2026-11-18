@@ -1820,7 +1820,7 @@ When `POST /restore` succeeds, the server MUST answer in `rows_imported` the num
 
 When `POST /restore` counts an item as a duplicate, the server MUST leave the rows the instance holds for it as they are and write none of the archive's.
 
-**Reason:** a restore replaces nothing the instance holds (`archive/restore-duplicate-kept`).
+**Reason:** a restore keeps the rows the instance holds for an item it counts as a duplicate (`archive/restore-duplicate-kept`).
 
 **Tests:** `compliance/table-rows-archive.test.ts › leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
 

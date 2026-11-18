@@ -184,11 +184,11 @@ A change that needs a sign-in from the last five minutes is refused to an older 
 
 ### `authentication/recent-refusal`
 
-If a change that needs a sign-in from the last five minutes comes from an owner browser session created more than five minutes ago, then the server MUST answer `403 forbidden` with `needs` set to `recent_sign_in` in the `error` object's `details`.
+If a change that needs a sign-in from the last five minutes comes from an owner browser session created more than five minutes ago, or dated later than the server's clock, then the server MUST answer `403 forbidden` with `needs` set to `recent_sign_in` in the `error` object's `details`.
 
-**Reason:** A page recognizes this refusal by its detail to open the dialog, so every door that needs a recent sign-in refuses alike, and its message is free to change.
+**Reason:** A page recognizes this refusal by its detail to open the dialog, so every door that needs a recent sign-in refuses alike, and its message is free to change. A session dated later than the clock, which a clock set back leaves, is no evidence that the owner signed in within five minutes, and `POST /auth/confirm` gives the owner a session dated now.
 
-**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`.
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`, `› refuses a session dated later than the clock until the owner confirms, and then lets the change run`.
 
 ### `authentication/confirm-replaces`
 

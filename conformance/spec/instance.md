@@ -3200,15 +3200,23 @@ While a secret setting holds a stored value the server cannot open, when `GET /a
 
 ### `instance/settings-key-lost-starts`
 
-If `marfa.settings.key` is missing or does not read when the server starts, then the server MUST start, make a new settings key, and refuse no request because of it.
+If `marfa.settings.key` is missing, or opens as a file but its contents do not read (empty, truncated or damaged), when the server starts, then the server MUST start, make a new settings key, and refuse no request because of it.
 
 **Reason:** the key protects secrets the owner can set again from any app, so losing it costs those secrets and nothing else.
 
 **Tests:** `compliance/secret-settings.test.ts › survives a lost or damaged settings key: the server starts, serves, and lists each stored secret to set again`.
 
+### `instance/settings-key-unopened-refused`
+
+If `marfa.settings.key` cannot be opened as a file the server may keep, such as one with mode `000`, a symbolic link or a directory, when the server starts, then the server MUST refuse to start and leave that file as it was.
+
+**Reason:** the server cannot read such a file to tell a lost key from one that is only out of reach, so replacing it could lose a key that opens the owner's secrets.
+
+**Tests:** `compliance/secret-settings.test.ts › refuses to start on a settings key it cannot open, and keeps the file as it was`.
+
 ### `instance/settings-key-damaged-kept`
 
-If `marfa.settings.key` does not read when the server starts, then the server MUST keep that file beside the database under a name that begins `marfa.settings.key.damaged-`.
+If the contents of `marfa.settings.key` do not read when the server starts, then the server MUST keep that file beside the database under a name that begins `marfa.settings.key.damaged-`.
 
 **Reason:** whoever can mend the file can put it back and open the secrets sealed with it.
 

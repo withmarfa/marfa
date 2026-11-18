@@ -40,7 +40,7 @@ pub struct Session {
 
 impl Session {
     pub fn is_recent(&self, now: Stamp) -> bool {
-        now.ms().saturating_sub(self.created_at.ms()) <= RECENT_MS
+        (0..=RECENT_MS).contains(&(now.ms() - self.created_at.ms()))
     }
 
     /// What a sign-in is called where it wrote something.
@@ -458,6 +458,31 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(left, ["after"]);
+    }
+
+    fn created(ms: i64) -> Session {
+        Session {
+            id: "s".to_string(),
+            owner_id: "owner".to_string(),
+            created_at: at(ms),
+            last_used_at: at(ms),
+            expires_at: at(ms + 1_000_000),
+            user_agent: None,
+            standing: Standing::default(),
+        }
+    }
+
+    #[test]
+    fn a_session_is_recent_from_its_start_to_five_minutes_after_and_never_before() {
+        let session = created(NOW);
+        for (now, recent) in [
+            (NOW - 1, false),
+            (NOW, true),
+            (NOW + RECENT_MS, true),
+            (NOW + RECENT_MS + 1, false),
+        ] {
+            assert_eq!(session.is_recent(at(now)), recent, "{}", now - NOW);
+        }
     }
 
     #[test]
