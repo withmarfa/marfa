@@ -1000,12 +1000,15 @@ fn read_only_bench_times_a_flip_and_a_read_beside_it() {
         let (core, flipped) = (Arc::clone(&core), Arc::clone(&flipped));
         std::thread::spawn(move || {
             let mut waits = Vec::new();
-            while !flipped.load(std::sync::atomic::Ordering::Relaxed) {
+            loop {
                 let asked = std::time::Instant::now();
                 core.get(&crate::read_bench_tests::note_id(0))
                     .unwrap()
                     .unwrap();
                 waits.push(asked.elapsed());
+                if flipped.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             waits
