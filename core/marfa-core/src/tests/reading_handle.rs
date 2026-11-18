@@ -795,8 +795,7 @@ fn a_reader_that_cannot_make_the_logs_index_refuses_and_changes_nothing() {
             }
             (folder, copy)
         };
-        // A copy made while the writer holds the log needs the log, and one made
-        // once it closed is the checkpointed file alone.
+        // Without the log, both copies need the writer's final checkpoint.
         let copies = if with_log {
             let copies = (copy_into("writable"), copy_into("left"));
             drop(writer);
@@ -834,7 +833,7 @@ fn a_reader_that_cannot_make_the_logs_index_refuses_and_changes_nothing() {
 }
 
 #[test]
-fn a_reader_of_a_store_with_no_log_changes_the_file_and_leaves_an_empty_log_at_most() {
+fn a_clean_store_stays_unchanged_and_a_new_log_stays_empty_after_a_read() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
     let log = std::path::PathBuf::from(format!("{}-wal", path.display()));
@@ -867,7 +866,6 @@ fn a_reader_of_a_store_with_no_log_changes_the_file_and_leaves_an_empty_log_at_m
         assert_eq!(left.len(), 0, "a reader wrote into the log");
     }
 
-    // The witness: a connection that can write changes the file of this store.
     let writable = store::open(&path).unwrap();
     writable
         .execute_batch("CREATE TABLE witness (x); INSERT INTO witness VALUES (1)")

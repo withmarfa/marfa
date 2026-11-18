@@ -49,8 +49,7 @@ impl Core {
             let cache = blob::Cache::anchored(state, store_label, true)?;
             (store::open_directory(&vfs, store_label)?, cache)
         } else {
-            // The store's schema is judged before the blob folder is reached, so a
-            // store another build made is refused `wrong_schema` whatever that holds.
+            // A blob folder error must not hide a schema mismatch from folder status.
             let conn = store::read_directory(&vfs, store_label)?;
             (conn, blob::Cache::anchored(state, store_label, false)?)
         };

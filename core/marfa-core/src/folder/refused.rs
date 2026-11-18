@@ -621,7 +621,6 @@ mod tests {
             "{refused:?}"
         );
 
-        // The witness: the same blob file with a current store is what stops a read.
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(&format!("PRAGMA user_version = {}", store::SCHEMA_VERSION))
