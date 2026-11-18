@@ -5,4 +5,6 @@ disallowed-methods = [
     { path = "std::time::SystemTime::elapsed", reason = "read the time through app::clock, which a test can move" },
     { path = "jiff::Timestamp::now", reason = "read the time through app::clock, which a test can move" },
     { path = "jiff::ZonedDateTime::now", reason = "read the time through app::clock, which a test can move" },
+    { path = "jiff::tz::TimeZone::system", reason = "name the zone: the host's own zone never changes an answer" },
+    { path = "jiff::tz::TimeZone::try_system", reason = "name the zone: the host's own zone never changes an answer" },
 ]
