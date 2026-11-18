@@ -688,3 +688,22 @@ async fn health_reports_no_destination_once_unset_even_when_the_detach_was_not_r
     );
     assert!(backups.get("destination").is_none(), "{}", health.body);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health_reports_a_named_store_not_in_use_as_unusable_and_never_as_another_store() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    instance.name(bucket(&s3, "first")).await;
+    instance.settle().await;
+
+    instance.app.faults.set("fail:stores-record", None).unwrap();
+    instance.name(bucket(&s3, "second")).await;
+    instance.failed_on("fail:stores-record").await;
+    assert_eq!(instance.in_use(), locator("first"));
+    let health = instance.send(Method::GET, "/health", None).await;
+    let backups = &health.body["backups"];
+    assert_eq!(backups["status"], "failing", "{}", health.body);
+    assert_eq!(backups["reason"], "destination_unusable", "{}", health.body);
+    assert!(backups["store_error"].is_string(), "{}", health.body);
+    assert!(backups.get("destination").is_none(), "{}", health.body);
+}

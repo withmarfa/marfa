@@ -29,7 +29,7 @@ use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
-use super::blobs::{Attached, Blob, Hash, Kept, Wanted, folder_shortfall};
+use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
     HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
@@ -514,10 +514,11 @@ impl Destination {
         }
     }
 
+    /// For an attachment of a named store, which is never a missing destination.
     fn required(attached: &Attached) -> Result<Destination> {
         Destination::of(attached).ok_or_else(|| match attached.trouble() {
             Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble.to_string()),
-            None => no_backup_destination(),
+            None => unsettled(),
         })
     }
 
@@ -997,13 +998,28 @@ impl Held {
 }
 
 impl App {
-    /// Unset settings take precedence over attachment failures.
-    async fn backup_stores(self: &Arc<App>) -> Result<Arc<Attached>> {
-        let wanted = Wanted::of(&self.settings.live());
-        if wanted == Wanted::Disk {
-            return Err(no_backup_destination());
+    /// The destination the live settings name, which no attachment can stand in for.
+    fn named_destination(&self) -> Result<Wanted> {
+        match Wanted::of(&self.settings.live()) {
+            Wanted::Disk => Err(no_backup_destination()),
+            wanted => Ok(wanted),
         }
-        self.stores_named(&wanted).await
+    }
+
+    /// The settings are read again after the follow, which may outlast several changes to them.
+    async fn backup_stores(self: &Arc<App>) -> Result<Arc<Attached>> {
+        let wanted = self.named_destination()?;
+        let current = self.blobs.attachment();
+        if current.is(&wanted) && self.blobs.settled() {
+            return Ok(current);
+        }
+        let followed = self.follow_stores(Retry::Trouble).await;
+        let wanted = self.named_destination()?;
+        followed?;
+        if !self.blobs.settled() {
+            return Err(unsettled());
+        }
+        self.blobs.stores_in_use(&wanted)
     }
 
     async fn destination(self: &Arc<App>) -> Result<Destination> {
@@ -1306,12 +1322,12 @@ impl App {
 
     /// The follow lock covers folder selection through its claim.
     async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        let followed = self.backup_stores().await;
+        let followed = match self.backup_stores().await {
+            Err(refused) if refused.code == Code::NoBackupDestination => return Err(refused),
+            followed => followed,
+        };
         let _changing = self.blobs.changing().await;
-        let wanted = Wanted::of(&self.settings.live());
-        if wanted == Wanted::Disk {
-            return Err(no_backup_destination());
-        }
+        let wanted = self.named_destination()?;
         let attached = self
             .blobs
             .stores_in_use(&wanted)
@@ -1342,7 +1358,7 @@ impl App {
             ));
         }
         if !self.blobs.settled() {
-            return Err(followed.err().unwrap_or_else(super::blobs::unsettled));
+            return Err(followed.err().unwrap_or_else(unsettled));
         }
         let looked = folder.clone();
         let found = tokio::time::timeout(self.blobs.check(), blocking(move || looked.adoptable()))
@@ -1484,8 +1500,15 @@ impl App {
     /// What `/health` says of backups: whether they run, how the last went, and the store's state.
     pub async fn backup_health(&self) -> BackupHealth {
         let mut health = serde_json::Map::new();
-        let attached = self.blobs.attachment();
-        let destination = Destination::of(&attached);
+        let attachment = self.named_destination().ok().map(|wanted| {
+            self.blobs
+                .stores_in_use(&wanted)
+                .map_err(|unsettled| unsettled.message)
+        });
+        let destination = match &attachment {
+            Some(Ok(attached)) => Destination::of(attached),
+            _ => None,
+        };
         if let Some(destination) = &destination {
             health.insert("destination".into(), destination.kind().into());
         }
@@ -1543,10 +1566,11 @@ impl App {
                 .and_then(|result| refused_by(result, &destination.id()));
             store_trouble(destination, looked, refused)
         });
-        let unusable = destination
-            .is_none()
-            .then(|| attached.trouble().map(str::to_string))
-            .flatten();
+        let unusable = match (&destination, &attachment) {
+            (None, Some(Ok(attached))) => attached.trouble().map(str::to_string),
+            (None, Some(Err(unsettled))) => Some(unsettled.to_string()),
+            _ => None,
+        };
         let trouble = trouble.or(unusable.map(|error| (StoreFault::Unusable, error)));
         let fault = trouble.as_ref().map(|(fault, _)| *fault);
         let store_error = trouble.map(|(_, error)| error);

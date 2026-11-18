@@ -173,7 +173,7 @@ impl Attached {
     }
 
     /// Whether this is the store `wanted` names, and could be used.
-    fn is(&self, wanted: &Wanted) -> bool {
+    pub(crate) fn is(&self, wanted: &Wanted) -> bool {
         self.wanted == *wanted && self.trouble.is_none()
     }
 
@@ -509,7 +509,7 @@ impl Blobs {
         self.attached.load_full()
     }
 
-    /// Requires the follow lock so the returned attachment cannot be replaced.
+    /// The attachment in use, if it is of the store `wanted` names.
     pub(crate) fn stores_in_use(&self, wanted: &Wanted) -> Result<Arc<Attached>> {
         let attached = self.attachment();
         if attached.wanted != *wanted {
@@ -1311,19 +1311,6 @@ impl App {
     pub async fn follow_stores(self: &Arc<App>, retry: Retry) -> Result<()> {
         let app = self.clone();
         joined(tokio::spawn(async move { app.follow(retry).await }).await)?
-    }
-
-    /// A failed follow or remaining doubt means the named store is unavailable.
-    pub async fn stores_named(self: &Arc<App>, wanted: &Wanted) -> Result<Arc<Attached>> {
-        let current = self.blobs.attachment();
-        if current.is(wanted) && self.blobs.settled() {
-            return Ok(current);
-        }
-        self.follow_stores(Retry::Trouble).await?;
-        if !self.blobs.settled() {
-            return Err(unsettled());
-        }
-        Ok(self.blobs.attachment())
     }
 
     /// Whether the caller may upload, on the types registered now.
