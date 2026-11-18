@@ -430,7 +430,7 @@ impl Blobs {
         self.names(wanted) && self.attached.load().trouble.is_none()
     }
 
-    /// Whether the store in use was taken for `wanted`, whether or not it could be used.
+    /// A failed attachment still identifies the settings that requested it.
     pub fn names(&self, wanted: &Wanted) -> bool {
         self.attached.load().wanted == *wanted
     }

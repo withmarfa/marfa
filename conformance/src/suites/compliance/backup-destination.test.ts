@@ -9,10 +9,6 @@ import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 import { waitFor } from "../../utils/wait.js";
 
-/**
- * Where backups go is what `/config` names as soon as a write to it is
- * answered: each test sends the backup operations in the very next request.
- */
 function objectStore(): Record<string, string | boolean> {
   for (const name of [
     "MARFA_OBJECT_STORE_BUCKET",

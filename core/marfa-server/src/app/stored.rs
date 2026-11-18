@@ -118,9 +118,7 @@ pub fn stage(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
 }
 
 impl Staged {
-    /// A job's interval or switch may be a setting, so the scheduler looks again, and the store
-    /// beside the disk follows its settings. A store the settings newly name is taken before this
-    /// returns, so what is answered next sees it; one that failed before is tried again behind.
+    /// Backup requests read the attached store, so a destination change must finish before the reply.
     pub async fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
         super::housekeeping::wake(app);
