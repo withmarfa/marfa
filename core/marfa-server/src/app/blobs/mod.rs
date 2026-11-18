@@ -1113,10 +1113,31 @@ impl App {
         Ok(recorded)
     }
 
-    /// An adopt may have recorded a new ID without claiming the folder.
+    /// An adopt may have recorded a new ID without claiming the folder. Refuses where the folder
+    /// does not answer in time or a claim given up on has not ended, which leaves it unknown.
     pub(crate) async fn retake_folder(&self, folder: &Arc<Folder>) -> Result<()> {
+        let deadline = self.blobs.check();
+        let late = || {
+            Refusal::new(
+                Code::BlobStoreUnavailable,
+                format!(
+                    "The backup folder {} did not answer in time, so the store it holds is not \
+                     known. Check that its disk is mounted and answering, then try again.",
+                    folder.root().display()
+                ),
+            )
+        };
+        if folder.claim_unended() {
+            return Err(late());
+        }
         let looked = folder.clone();
-        if joined(tokio::task::spawn_blocking(move || looked.reachable()).await)? {
+        let reachable = tokio::time::timeout(
+            deadline,
+            tokio::task::spawn_blocking(move || looked.reachable()),
+        )
+        .await
+        .map_err(|_| late())?;
+        if joined(reachable)? {
             return Ok(());
         }
         let files = folder.files();
@@ -1128,11 +1149,14 @@ impl App {
         let Some(id) = recorded.filter(|id| id != files.id()) else {
             return Ok(());
         };
-        let claimed = folder.clone();
-        if let Err(error) = joined(tokio::task::spawn_blocking(move || claimed.claim(&id)).await)? {
-            tracing::warn!(%error, "The backup folder could not take the store the record names");
+        match folder.claim_within(id, deadline).await {
+            None => Err(late()),
+            Some(Ok(())) => Ok(()),
+            Some(Err(error)) => {
+                tracing::warn!(%error, "The backup folder could not take the store the record names");
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     /// Its own task keeps cancellation from separating the record and swap.

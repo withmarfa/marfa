@@ -760,3 +760,246 @@ async fn an_adopt_whose_request_goes_away_after_its_record_still_claims_the_fold
         .collect();
     assert_eq!(attached, [id.as_str()]);
 }
+
+/// Puts a FIFO where `marker` was, so a read of it waits for a writer.
+fn stall_at(marker: &Path) {
+    let _ = fs::remove_file(marker);
+    let made = std::process::Command::new("mkfifo")
+        .arg(marker)
+        .status()
+        .unwrap();
+    assert!(made.success());
+}
+
+/// Returns once a reader holds the FIFO at `marker` open, with the writer that ends its wait.
+async fn read_stalls(marker: &Path) -> fs::File {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            // Opening a FIFO's write end without blocking fails until a reader holds it.
+            if let Ok(writer) = fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(marker)
+            {
+                break writer;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("nothing read the marker")
+}
+
+/// The ids recorded for the backup folder at `area`, each with whether it is attached.
+async fn folder_ids(instance: &Instance, area: &Path) -> Vec<(String, bool)> {
+    let listed = instance.send(Method::GET, "/blobs/stores", None).await;
+    listed.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|store| store["locator"] == area.display().to_string())
+        .map(|store| {
+            (
+                store["id"].as_str().unwrap().to_string(),
+                store["detached_at"].is_null(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_adopt_whose_folder_does_not_answer_refuses_and_lets_a_later_settings_write_be_followed()
+{
+    let parent = TempDir::new().unwrap();
+    let first = folder_in(&parent, "first");
+    let other = folder_in(&parent, "other");
+    let instance = Instance::start().await;
+    instance.name(json!({ "backup_path": first })).await;
+    instance.settle().await;
+    instance
+        .app
+        .faults
+        .set("store-check-deadline", Some("300"))
+        .unwrap();
+    let area = instance.area(&first);
+    let before = folder_ids(&instance, &area).await;
+    let marker = area.join(MARKER);
+    let id = fs::read_to_string(&marker).unwrap();
+    stall_at(&marker);
+
+    let mut adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .send(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    let mut writer = read_stalls(&marker).await;
+    assert!(
+        !adopting.is_finished(),
+        "the adopt did not wait on the marker"
+    );
+    instance.name(json!({ "backup_path": other })).await;
+    let switched = tokio::time::timeout(Duration::from_secs(3), instance.settle()).await;
+    let answered = tokio::time::timeout(Duration::from_secs(3), &mut adopting).await;
+    // Ends the stall whatever the outcome, so a failing run does not hang.
+    fs::remove_file(&marker).unwrap();
+    fs::write(&marker, &id).unwrap();
+    std::io::Write::write_all(&mut writer, id.as_bytes()).unwrap();
+    drop(writer);
+    let adopted = match answered {
+        Ok(adopted) => adopted.unwrap(),
+        Err(_) => adopting.await.unwrap(),
+    };
+
+    assert!(
+        switched.is_ok(),
+        "a stalled adopt held the follow lock and kept the settings from being followed"
+    );
+    assert_eq!(
+        adopted.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        adopted.body
+    );
+    assert_eq!(adopted.body["error"]["code"], "blob_store_unavailable");
+    instance.settle().await;
+    assert_eq!(
+        instance.in_use(),
+        instance.area(&other).display().to_string()
+    );
+    let after: Vec<String> = folder_ids(&instance, &area)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let before: Vec<String> = before.into_iter().map(|(id, _)| id).collect();
+    assert_eq!(after, before, "the refused adopt wrote a record");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees_with_the_record() {
+    let parent = TempDir::new().unwrap();
+    let instance = Instance::start().await;
+    let (folder, old) = replaced(&instance, &parent).await;
+    instance
+        .app
+        .faults
+        .set("store-check-deadline", Some("300"))
+        .unwrap();
+    let area = instance.area(&folder);
+    fs::create_dir_all(&area).unwrap();
+    let marker = area.join(MARKER);
+
+    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    let mut adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .send(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    instance.reached("hold:stores-swap").await;
+    stall_at(&marker);
+    instance.app.faults.clear(Some("hold:stores-swap"));
+    let writer = read_stalls(&marker).await;
+    let answered = tokio::time::timeout(Duration::from_secs(3), &mut adopting).await;
+    let follow = tokio::time::timeout(
+        Duration::from_secs(3),
+        instance.app.follow_stores(Retry::Settle),
+    )
+    .await;
+    let settled_while_stalled = instance.app.blobs.settled();
+    let again = tokio::time::timeout(
+        Duration::from_secs(3),
+        instance.send(Method::POST, "/backups/folder/adopt", None),
+    )
+    .await;
+    // The claim waiting on the marker finishes now and writes it.
+    fs::remove_file(&marker).unwrap();
+    drop(writer);
+    let adopted = match answered {
+        Ok(adopted) => adopted.unwrap(),
+        Err(_) => adopting.await.unwrap(),
+    };
+
+    assert_eq!(
+        adopted.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        adopted.body
+    );
+    assert_eq!(adopted.body["error"]["code"], "blob_store_unavailable");
+    assert!(
+        matches!(follow, Ok(Err(_))),
+        "a follow during the stalled claim counted the folder as settled or waited on it"
+    );
+    assert!(!settled_while_stalled);
+    let again = again.expect("a second adopt waited on the stalled claim");
+    assert_eq!(
+        again.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        again.body
+    );
+    assert!(
+        again.body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("earlier adopt"),
+        "a second adopt started while the first one's claim ran: {}",
+        again.body
+    );
+
+    let folder = instance.app.blobs.folder().unwrap();
+    for _ in 0..500 {
+        if !folder.claim_unended() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    instance.settle().await;
+    assert!(instance.app.blobs.settled());
+    let id = folder.files().id().to_string();
+    assert_ne!(id, old);
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), id);
+    let attached: Vec<String> = folder_ids(&instance, &area)
+        .await
+        .into_iter()
+        .filter_map(|(id, attached)| attached.then_some(id))
+        .collect();
+    assert_eq!(attached, [id]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replication_run_whose_follow_fails_ends_failed_and_the_next_records_the_store() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    instance.name(bucket(&s3, "a")).await;
+    instance.settle().await;
+
+    instance.app.faults.set("fail:stores-record", None).unwrap();
+    instance.name(bucket(&s3, "b")).await;
+    instance.failed_on("fail:stores-record").await;
+    instance.app.faults.set("fail:stores-record", None).unwrap();
+    let ended = housekeeping::run_now(&instance.app, &Caller::Server, "blob-replicate")
+        .await
+        .unwrap();
+    assert_eq!(instance.in_use(), locator("a"));
+    assert_eq!(instance.attached().await, [locator("a")]);
+    assert!(!instance.app.blobs.settled());
+    assert_eq!(ended.outcome, "failed", "{ended:?}");
+    assert!(ended.error.is_some(), "{ended:?}");
+
+    // The witness that a run whose follow succeeds ends succeeded.
+    instance.app.faults.clear(None);
+    let ended = housekeeping::run_now(&instance.app, &Caller::Server, "blob-replicate")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "succeeded", "{ended:?}");
+    assert_eq!(instance.in_use(), locator("b"));
+    assert!(instance.app.blobs.settled());
+}

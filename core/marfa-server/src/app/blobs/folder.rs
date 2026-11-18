@@ -6,8 +6,9 @@ use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use futures_util::StreamExt;
 use futures_util::stream;
@@ -48,8 +49,19 @@ pub struct Folder {
     instance: String,
     /// Replaced only when the owner adopts a folder whose files area lost its marker.
     files: RwLock<Arc<Disk>>,
+    /// Set from a claim's start until its blocking work ends, which can outlast a deadline.
+    claiming: Arc<AtomicBool>,
     /// A temporary file staged before this is a leftover of a process that ended.
     started: SystemTime,
+}
+
+/// Clears `claiming` when the claim's blocking work ends or never runs.
+struct Claiming(Arc<AtomicBool>);
+
+impl Drop for Claiming {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// What the folder holds when the owner asks to adopt it.
@@ -164,6 +176,7 @@ impl Folder {
             root: root.to_path_buf(),
             instance: instance.to_string(),
             files: RwLock::new(Arc::new(files)),
+            claiming: Arc::new(AtomicBool::new(false)),
             #[allow(
                 clippy::disallowed_methods,
                 reason = "compared with files' modification times, which are the host's time"
@@ -211,9 +224,36 @@ impl Folder {
         }
     }
 
-    /// Takes the files area as the store `id`; where that fails, `id` waits as one not mounted. It
-    /// blocks.
-    pub fn claim(&self, id: &str) -> io::Result<()> {
+    /// Whether a claim has started whose blocking work has not ended.
+    pub fn claim_unended(&self) -> bool {
+        self.claiming.load(Ordering::SeqCst)
+    }
+
+    /// Takes the files area as the store `id` within `deadline`, or answers `None` where the
+    /// folder did not answer in time or an earlier claim has not ended. A claim given up on runs
+    /// to its end, and no other starts on this folder until it has.
+    pub async fn claim_within(
+        self: &Arc<Self>,
+        id: String,
+        deadline: Duration,
+    ) -> Option<io::Result<()>> {
+        if self.claiming.swap(true, Ordering::SeqCst) {
+            return None;
+        }
+        let (folder, claiming) = (self.clone(), Claiming(self.claiming.clone()));
+        let claimed = tokio::task::spawn_blocking(move || {
+            let _claiming = claiming;
+            folder.claim(&id)
+        });
+        match tokio::time::timeout(deadline, claimed).await {
+            Ok(Ok(answer)) => Some(answer),
+            Ok(Err(error)) => Some(Err(io::Error::other(error))),
+            Err(_) => None,
+        }
+    }
+
+    /// Takes the files area as the store `id`; where that fails, `id` waits as one not mounted.
+    fn claim(&self, id: &str) -> io::Result<()> {
         let area = self.area();
         let claimed = if self.root.is_dir() {
             make_inside(&self.root.join(FILES))
