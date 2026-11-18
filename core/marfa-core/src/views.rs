@@ -531,7 +531,7 @@ fn day_of_text(text: &str, zone: &Zone) -> Option<i64> {
     if text.len() == 10 {
         return time::epoch_ms(text).map(|ms| ms.div_euclid(DAY * 1000));
     }
-    time::read(text).ok().map(|ms| zone.day_of(ms))
+    time::epoch_ms(text).map(|ms| zone.day_of(ms))
 }
 
 fn date_bucket(value: &Value, bucket: &str, zone: &Zone) -> Value {
@@ -870,6 +870,31 @@ mod tests {
         unsafe { std::env::set_var("TZ", "America/Los_Angeles") };
         let rows = core.view_groups("view", None).unwrap().rows;
         assert_eq!(rows[0].key, json!("2026-07-01"));
+    }
+
+    #[test]
+    fn a_datetime_without_seconds_buckets_by_its_day_in_the_views_zone() {
+        let core = copy();
+        for (id, date) in [
+            ("a", "2026-07-01T20:00Z"),
+            ("b", "2026-07-01T23:30+01:00"),
+            ("c", "2026-07-01T23:30-10:00"),
+            ("d", "2026-07-01T20:00"),
+        ] {
+            put(&core, id, json!({"date":date}), &[]);
+        }
+        assert_eq!(
+            groups(&core, "day", "UTC"),
+            [
+                (json!("2026-07-01"), 2),
+                (json!("2026-07-02"), 1),
+                (Value::Null, 1)
+            ]
+        );
+        assert_eq!(
+            groups(&core, "day", "Pacific/Auckland"),
+            [(json!("2026-07-02"), 3), (Value::Null, 1)]
+        );
     }
 
     #[test]
