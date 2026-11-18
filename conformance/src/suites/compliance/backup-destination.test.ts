@@ -110,7 +110,6 @@ describe("a destination set or unset through /config", () => {
           const instance = await instanceIdOf(server);
           const [first, second] = [make(), make()];
 
-          // Each request below is the first the server gets after the write before it.
           await setTo(server, first.set);
           const inFirst = await took(server);
           await setTo(server, second.set);

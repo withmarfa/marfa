@@ -1,6 +1,4 @@
-//! The backup operations act on the destination the settings name as soon as the write that set
-//! it is answered: each reads the live settings, then the store in use, and holds that store to
-//! its end.
+//! Backup operations use the destination immediately after its settings write answers.
 
 #[allow(dead_code)]
 mod fake_s3;

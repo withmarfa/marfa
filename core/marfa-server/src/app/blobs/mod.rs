@@ -145,8 +145,7 @@ pub struct Beside<'a> {
     pub kept: Vec<(&'static str, PathBuf)>,
 }
 
-/// The store beside the disk, as one reading of the settings attached it. An operation that
-/// reads more than one thing of the store in use reads them from one of these.
+/// One attachment keeps a store, its prefix, and its failure consistent.
 pub struct Attached {
     wanted: Wanted,
     s3: Option<Arc<S3>>,
@@ -510,8 +509,7 @@ impl Blobs {
         self.attached.load_full()
     }
 
-    /// The store in use now, if it is the one `wanted` names. For a caller that holds the follow
-    /// lock, so that no follow can change it.
+    /// Requires the follow lock so the returned attachment cannot be replaced.
     pub(crate) fn stores_in_use(&self, wanted: &Wanted) -> Result<Arc<Attached>> {
         let attached = self.attachment();
         if attached.wanted != *wanted {
@@ -1315,10 +1313,7 @@ impl App {
         joined(tokio::spawn(async move { app.follow(retry).await }).await)?
     }
 
-    /// The store in use once it is the one `wanted` names, with no doubt about its record or the
-    /// settings: the one in use if it already is, otherwise what a follow leaves in use. The
-    /// attachment answers for a store that could not be used; a follow that fails, or leaves a
-    /// doubt, is refused as the owner's store being unavailable, never as there being no store.
+    /// A failed follow or remaining doubt means the named store is unavailable.
     pub async fn stores_named(self: &Arc<App>, wanted: &Wanted) -> Result<Arc<Attached>> {
         let current = self.blobs.attachment();
         if current.is(wanted) && self.blobs.settled() {

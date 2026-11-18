@@ -156,6 +156,9 @@ stays because that thing is what it checks.
 - `compliance/backups.test.ts` reads `sign_ins.digest`, the digest the instance
   keeps of each sign-in, and the generated secrets in `marfa.secrets`, to show
   that no backup carries them. No door answers either.
+- `compliance/backup-destination.test.ts` reads backup folders and lists object
+  store keys to check which destination holds each manifest. The server's own
+  listing cannot independently prove where it wrote a backup.
 - `compliance/durability.test.ts` runs `PRAGMA integrity_check` on a copy of
   the database files a kill left. The files' integrity is the subject.
 - `compliance/bucket-sharing.test.ts` replaces the database files with an

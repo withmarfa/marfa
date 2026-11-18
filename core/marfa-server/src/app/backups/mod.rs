@@ -514,8 +514,6 @@ impl Destination {
         }
     }
 
-    /// The destination `attached` holds. Where it holds none, the store the settings name could
-    /// not be used (`503`), or the settings named none while the operation ran (`409`).
     fn required(attached: &Attached) -> Result<Destination> {
         Destination::of(attached).ok_or_else(|| match attached.trouble() {
             Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble.to_string()),
@@ -843,8 +841,7 @@ fn running(restoring: bool) -> Refusal {
     Refusal::new(Code::HousekeepingJobRunning, message)
 }
 
-/// Whether the schedule runs backups here: the settings name a destination and the interval is
-/// not 0.
+/// Whether the settings enable scheduled backups.
 pub fn scheduled(app: &App) -> bool {
     let settings = app.settings.live();
     Wanted::of(&settings) != Wanted::Disk && settings.get(BACKUP_INTERVAL_SECONDS) > 0
@@ -1000,11 +997,7 @@ impl Held {
 }
 
 impl App {
-    /// The store in use that a backup operation holds to its end. It reads the live settings
-    /// first, which are published before a write to them is answered: settings that name neither
-    /// an object store nor a backup folder are `409`, before any attachment or follow is looked
-    /// at. Otherwise it is the store the settings name, taken by a follow if it is not in use,
-    /// and `503` if it cannot be.
+    /// Unset settings take precedence over attachment failures.
     async fn backup_stores(self: &Arc<App>) -> Result<Arc<Attached>> {
         let wanted = Wanted::of(&self.settings.live());
         if wanted == Wanted::Disk {
@@ -1311,9 +1304,7 @@ impl App {
         .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
     }
 
-    /// The follow lock prevents another follow from recording the old folder ID. The folder is
-    /// taken under that lock, from the stores in use then, so no follow can swap it afterwards.
-    /// A follow runs first, outside the lock, so that the store the settings name is in use.
+    /// The follow lock covers folder selection through its claim.
     async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         let followed = self.backup_stores().await;
         let _changing = self.blobs.changing().await;
