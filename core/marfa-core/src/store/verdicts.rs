@@ -361,6 +361,17 @@ pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
     )?)
 }
 
+/// Whether a drain has a row to return to unanswered
+/// (`unblock_self_clearing`).
+pub fn any_self_clearing(conn: &Connection) -> Result<bool, CoreError> {
+    let [credential_refused, awaiting] = SELF_CLEARING;
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM queue WHERE verdict = ?1 AND reason IN (?2, ?3))",
+        params![Verdict::Blocked.as_str(), credential_refused, awaiting],
+        |row| row.get(0),
+    )?)
+}
+
 /// The reasons a block clears itself for: a drain returns these rows to
 /// unanswered before it starts (`unblock_self_clearing`).
 pub(super) const SELF_CLEARING: [&str; 2] = [

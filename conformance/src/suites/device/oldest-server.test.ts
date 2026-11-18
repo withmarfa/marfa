@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { answers } from "../../device/marfa-answers.js";
+import { answers, refusal } from "../../device/marfa-answers.js";
 import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
 import {
   hydratedHarness,
   scriptHydration,
+  scriptWrites,
   startHarness,
   type Harness,
 } from "./harness.js";
@@ -130,6 +131,16 @@ describe("a server older than the oldest release a device works with", () => {
       properties: { title: "Waits for a newer server" },
     });
     expect(queued.ok).toBe(true);
+    scriptWrites(server, {
+      create: [
+        refusal(403, "forbidden", "This credential may not write here.", {}),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    const held = await device.queue();
+    expect(held.ok && held.value.map((row) => [row.verdict, row.reason])).toEqual(
+      [["blocked", "credential_refused"]],
+    );
     const requests = server.requests.length;
     server.answer("GET", "/", running(before(OLDEST!)));
     const refused = await device.drain();
@@ -141,7 +152,7 @@ describe("a server older than the oldest release a device works with", () => {
     }
     expect(sent(harness).slice(requests)).toEqual(["GET /"]);
     const queue = await device.queue();
-    expect(queue.ok && queue.value.length).toBe(1);
+    expect(queue.ok && held.ok && queue.value).toEqual(held.ok && held.value);
   });
 });
 

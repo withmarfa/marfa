@@ -5,6 +5,7 @@ use marfa_rules::release::OLDEST_SERVER;
 use crate::contract::CONTRACT_VERSION;
 use crate::scripted::{self, Answer, INSTANCE, Scripted};
 use crate::stop_tests::{copy, holding_a_catalog, note};
+use crate::model::{BlockedReason, Verdict};
 use crate::{CoreError, SliceTier, store};
 
 fn root_running(version: &str) -> Answer {
@@ -28,9 +29,9 @@ fn too_old(served: &str) -> CoreError {
 }
 
 /// What a copy holds that a refusal must leave as it was.
-fn held(core: &crate::Core) -> (Option<String>, usize) {
+fn held(core: &crate::Core) -> (Option<String>, Vec<crate::QueuedWrite>) {
     let cursor = store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap();
-    (cursor, core.queue().unwrap().len())
+    (cursor, core.queue().unwrap())
 }
 
 type Door = (&'static str, fn(&crate::Core) -> Result<(), CoreError>);
@@ -139,4 +140,19 @@ fn a_root_naming_no_release_is_let_through() {
         Err(CoreError::ServerTooOld { .. })
     ));
     assert!(server.paths().len() > 1);
+}
+
+#[test]
+fn a_drain_refused_for_the_release_leaves_a_blocked_write_with_its_verdict() {
+    let server = Scripted::start();
+    let core = queued_copy(&server);
+    store::block_unanswered(&core.conn().unwrap(), BlockedReason::CredentialRefused).unwrap();
+    let before = held(&core);
+    let blocked = &before.1[0];
+    assert_eq!(blocked.verdict, Some(Verdict::Blocked), "the witness is blocked");
+    assert!(blocked.answered_at.is_some(), "the witness has an answer time");
+    server.on("/", vec![root_of("0.0.77")]);
+    assert_eq!(core.drain().unwrap_err(), too_old("0.0.77"));
+    assert_eq!(server.paths(), ["/"]);
+    assert_eq!(held(&core), before);
 }
