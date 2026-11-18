@@ -3584,6 +3584,14 @@ Where an app follows through a binding, a device MUST tell it `catalog.changed`,
 
 **Tests:** `device/binding-follow.test.ts › tells that the catalog changed, that the server was lost and is back, and what a drain did or failed to do, each as a change of its own kind apart from the events the stream applied`.
 
+### `device/follow-table-filled`
+
+When a follow leaves a table it holds whole, or finds it past the cap, a device MUST tell its caller `table.filled` once, naming the item and the table, as a change of its own kind.
+
+**Reason:** a follow fills a table with no event to say so, so an app that reads the table from the server while it fills would never learn that the copy now holds it, or that it has passed the cap.
+
+**Tests:** `device/tables-live.test.ts › fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`.
+
 ### `device/follow-drains-reachable`
 
 Where an app or the CLI follows a working copy, when a device tells its caller `server.reachable` while the queue holds work a drain would do, such as a write to send or a read-back owed, a device MUST drain the queue once.
@@ -5914,7 +5922,7 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Reason:** a hydration reports once its items are whole; the tables of those items fill at the catch-up or follow after it.
 
-**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow`.
+**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it`.
 
 ### `device/table-fill-failed`
 

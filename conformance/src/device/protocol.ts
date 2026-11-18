@@ -184,6 +184,9 @@ export interface Change {
   /** The store's data version, on `store.saved` alone
    *  (`device/watch-saves`). */
   data_version?: number;
+  /** The table a follow's fill settled, on `table.filled` alone
+   *  (`device/follow-table-filled`). */
+  table?: string;
 }
 
 /** What a held stream did before it was stopped. */

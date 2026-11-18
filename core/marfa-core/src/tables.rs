@@ -655,6 +655,11 @@ fn fails_one_table(error: &CoreError) -> bool {
 pub(crate) enum Step {
     Done,
     Moved,
+    /// The step left this item's table whole, or found it past the cap.
+    Settled {
+        item: String,
+        table: String,
+    },
     Failed(String),
 }
 
@@ -707,10 +712,18 @@ impl Pass {
             return Ok(Step::Done);
         };
         let key = (owed.item.clone(), owed.table.clone());
+        let settled = self.report.whole + self.report.online;
         match advance(core, context, &owed, &mut self.report, stop) {
             Ok(()) => {
                 self.failed.remove(&key);
-                Ok(Step::Moved)
+                if self.report.whole + self.report.online > settled {
+                    Ok(Step::Settled {
+                        item: owed.item,
+                        table: owed.table,
+                    })
+                } else {
+                    Ok(Step::Moved)
+                }
             }
             Err(error) if fails_one_table(&error) => {
                 let failure = format!("the table {} of {}: {error}", owed.table, owed.item);

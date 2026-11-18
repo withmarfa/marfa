@@ -2321,6 +2321,13 @@ pub enum Change {
     /// holds no stream until the next hydration or catch-up; a reading
     /// handle's reads go on, and the first that works is told as `Saved`.
     WatchFailed { reason: MarfaError, cursor: String },
+    /// A follow's fill left `table` of the item whole, or found it past the
+    /// cap, so reads of it now answer as `heldTables` says.
+    TableFilled {
+        item_id: String,
+        table: String,
+        cursor: String,
+    },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -2355,6 +2362,11 @@ impl From<&marfa_core::Change> for Change {
             },
             marfa_core::ChangeEvent::WatchFailed(reason) => Change::WatchFailed {
                 reason: reason.clone().into(),
+                cursor,
+            },
+            marfa_core::ChangeEvent::TableFilled(table) => Change::TableFilled {
+                item_id: change.item_id.clone().unwrap_or_default(),
+                table: table.clone(),
                 cursor,
             },
         }
@@ -3574,6 +3586,14 @@ mod tests {
             })
         };
         use marfa_core::ChangeEvent as E;
+        assert_eq!(
+            change(E::TableFilled("steps".into()), Some("item")),
+            Change::TableFilled {
+                item_id: "item".into(),
+                table: "steps".into(),
+                cursor: "11".into()
+            }
+        );
         assert_eq!(
             change(E::CatalogChanged, None),
             Change::CatalogChanged {

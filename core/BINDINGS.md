@@ -118,6 +118,7 @@ Use `removeStoreLosingAll` only when the person agrees to lose every write, incl
 - `tableRows`, `tableRow` and `tableTotals` answer in the server's shapes, with `held` set where the copy answered from a table it holds whole and unset where it asked the server. Node answers a plain object, and Swift a `JsonObject`.
 - `writeRows` queues one write of kind `write_rows` for each call, and `undoRows` one of kind `undo_rows` for the batch named. A drain sends consecutive row writes to the same table in one request and gives each write its own verdict.
 - A hold's and a fill's counts cross as numbers. In Swift, a held table's `state` is the enum `TableState` (`owed`, `filling`, `whole` and `online` in Node), its item is `itemId` (`item` in Node), and a read's options are the record `RowsAsked`, whose `direction` is `SortDirection` and whose `limit` is a `UInt32`.
+- A follow fills held tables between events. When its fill leaves a table whole or finds it past the cap, it tells the change `TableFilled` (`tableFilled` in Node) once, with the item and the table, so a view of that table reads it again (`device/follow-table-filled`).
 
 ## Folders in an app
 

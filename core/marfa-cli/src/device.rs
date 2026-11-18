@@ -106,7 +106,9 @@ pub enum DeviceCommand {
     ///
     /// When the server is reachable again after it was lost, it drains the
     /// queue once if writes wait, and prints `queue.drained` with what the
-    /// drain did, or `queue.not_drained` with why it did not.
+    /// drain did, or `queue.not_drained` with why it did not. When its fill
+    /// leaves a held table whole or finds it past the cap, it prints
+    /// `table.filled` with the item and the table.
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
@@ -2813,6 +2815,7 @@ fn change_line(change: &marfa_core::Change) -> String {
                     .unwrap_or_default()
             ),
             marfa_core::ChangeEvent::Saved(version) => format!(": data version {version}"),
+            marfa_core::ChangeEvent::TableFilled(table) => format!(": table {}", printable(table)),
             _ => String::new(),
         }
     )

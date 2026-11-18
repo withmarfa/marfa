@@ -145,7 +145,8 @@ export type BindingChange =
   | { kind: "queueDrained"; report: BindingDrainReport; cursor: string }
   | { kind: "queueNotDrained"; code: string; reason: string; cursor: string }
   | { kind: "saved"; dataVersion: number; cursor: string }
-  | { kind: "watchFailed"; code: string; reason: string; cursor: string };
+  | { kind: "watchFailed"; code: string; reason: string; cursor: string }
+  | { kind: "tableFilled"; itemId: string; table: string; cursor: string };
 
 /** An error the binding threw: its `code` and message, and what rode on it. */
 export interface BindingError {

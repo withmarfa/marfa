@@ -145,10 +145,11 @@ fn unexplained(
 }
 
 /// What a held stream changed in the copy: an event it applied, with the
-/// item or edge it was about, or a catalog that differs from the one held,
-/// naming neither. Or what became of the server: unreachable, with why, once
-/// when a stream cannot be had or an event it sends cannot be taken, and
-/// reachable once when one is had, or the event taken, again.
+/// item or edge it was about, a table of an item it filled, or a catalog
+/// that differs from the one held, naming neither. Or what became of the
+/// server: unreachable, with why, once when a stream cannot be had or an
+/// event it sends cannot be taken, and reachable once when one is had, or
+/// the event taken, again.
 /// Or what became of the queue it drained then. `cursor` is the cursor held
 /// after it.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,7 +173,14 @@ impl Serialize for Change {
             ChangeEvent::Saved(version) => Some(version),
             _ => None,
         };
-        let mut change = serializer.serialize_struct("Change", 6 + usize::from(saved.is_some()))?;
+        let filled = match &self.event {
+            ChangeEvent::TableFilled(table) => Some(table),
+            _ => None,
+        };
+        let mut change = serializer.serialize_struct(
+            "Change",
+            6 + usize::from(saved.is_some()) + usize::from(filled.is_some()),
+        )?;
         change.serialize_field("event", self.event.as_str())?;
         change.serialize_field("item_id", &self.item_id)?;
         change.serialize_field("edge_id", &self.edge_id)?;
@@ -193,14 +201,17 @@ impl Serialize for Change {
         if let Some(version) = saved {
             change.serialize_field("data_version", version)?;
         }
+        if let Some(table) = filled {
+            change.serialize_field("table", table)?;
+        }
         change.end()
     }
 }
 
 /// What a `Change` tells. Written as text by its name: the applied event's
 /// type, or `catalog.changed`, `server.unreachable`, `server.reachable`,
-/// `queue.drained`, `queue.not_drained`, and, from a watch only,
-/// `store.saved` or `watch.failed`.
+/// `queue.drained`, `queue.not_drained`, `table.filled`, and, from a watch
+/// only, `store.saved` or `watch.failed`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
     /// An event the stream applied, by the event's type, or a change to the
@@ -227,6 +238,10 @@ pub enum ChangeEvent {
     /// catch-up; a reading handle's reads go on, and the first that works is
     /// told as `Saved`.
     WatchFailed(CoreError),
+    /// A follow's fill left this table of the change's item whole, or found
+    /// it past the cap, so reads of it now answer from the copy or the
+    /// server as `held_tables` says.
+    TableFilled(String),
 }
 
 impl ChangeEvent {
@@ -240,6 +255,7 @@ impl ChangeEvent {
             ChangeEvent::QueueNotDrained(_) => "queue.not_drained",
             ChangeEvent::Saved(_) => "store.saved",
             ChangeEvent::WatchFailed(_) => "watch.failed",
+            ChangeEvent::TableFilled(_) => "table.filled",
         }
     }
 }
@@ -1734,6 +1750,12 @@ fn read_stream(
                 match pass.step(core, context, now(), stop) {
                     Ok(crate::tables::Step::Done) => filling = false,
                     Ok(crate::tables::Step::Moved) => {}
+                    Ok(crate::tables::Step::Settled { item, table }) => on_change(&Change {
+                        event: ChangeEvent::TableFilled(table),
+                        item_id: Some(item),
+                        edge_id: None,
+                        cursor: report.cursor.clone(),
+                    }),
                     Ok(crate::tables::Step::Failed(failure)) => {
                         report.tables_failed += 1;
                         report.last_failure = Some(failure);

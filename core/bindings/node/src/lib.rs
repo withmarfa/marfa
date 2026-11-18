@@ -1840,6 +1840,13 @@ pub enum Change {
         reason: String,
         cursor: String,
     },
+    /// A follow's fill left `table` of the item whole, or found it past the
+    /// cap, so reads of it now answer as `heldTables` says.
+    TableFilled {
+        item_id: String,
+        table: String,
+        cursor: String,
+    },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1872,6 +1879,11 @@ impl From<&marfa_core::Change> for Change {
             marfa_core::ChangeEvent::WatchFailed(error) => Change::WatchFailed {
                 code: error.code().to_string(),
                 reason: error.to_string(),
+                cursor,
+            },
+            marfa_core::ChangeEvent::TableFilled(table) => Change::TableFilled {
+                item_id: change.item_id.clone().unwrap_or_default(),
+                table: table.clone(),
                 cursor,
             },
         }
