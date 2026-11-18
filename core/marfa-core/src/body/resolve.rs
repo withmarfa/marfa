@@ -216,8 +216,6 @@ pub(crate) struct Resolver<'a> {
     /// Why the server refused a title lookup as a whole this pass, where it
     /// did: the refusal named no one name, so the names it carried wait.
     refused_call: Option<String>,
-    /// Whether the server at the origin has been read as the copy's instance
-    /// this pass.
     instance_confirmed: bool,
     /// Whether a title lookup call was answered with its results this pass.
     answered: bool,
@@ -343,8 +341,7 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    /// A failed lookup never ends the pass; after one the network failed, no
-    /// later name is asked of the server.
+    /// A network failure defers the remaining remote lookups in this pass.
     fn failed(&mut self, error: crate::error::CoreError) -> Resolved {
         match self.failure(error) {
             Looked::Unanswered(why) => Resolved::Unanswered(why),

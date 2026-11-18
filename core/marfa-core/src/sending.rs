@@ -336,10 +336,7 @@ impl Core {
             .collect())
     }
 
-    /// Asks again about the names bodies written here carry and no edge says
-    /// yet. Best effort: a failure leaves them for the next pass, but for a
-    /// store that can no longer be written and a copy another instance has
-    /// replaced.
+    /// Unresolved names can wait for the next pass. Store failures and copy expiry reach the caller.
     pub(crate) fn settle_bodies(&self, stop: &AtomicBool) -> Result<()> {
         match body::rule::settle(self, stop) {
             Err(

@@ -22,13 +22,6 @@ import {
   sentEdgeWrites,
 } from "./folders.shared.js";
 
-/**
- * A device that reads a table's rows, a row or its totals from the server, or
- * looks up a link's id there, reads the server's root first and sends no item
- * id to another instance. A scripted server answers the root as the instance
- * the copy was built from, and then as another.
- */
-
 const REPLACED = "00000000-0000-7000-8000-0000000000ff";
 const ITEM = "01a00000-0000-7000-8000-00000000000a";
 const LINKED = "01a00000-0000-7000-8000-00000000e106";
@@ -89,7 +82,6 @@ async function refusesAnotherInstance([args, body]: [string[], unknown]) {
       request.pathname.startsWith(`/items/${ITEM}/tables/`),
     ).length;
 
-  // The witness: the instance the copy was built from is sent the item.
   const read = value(await device.tableRead<object>(args));
   expect(read).toMatchObject({ held: false });
   expect(reached()).toBe(1);
@@ -150,7 +142,6 @@ describe("a link by id looked up on the server", () => {
       server.requests.filter((request) => request.pathname === `/items/${id}`)
         .length;
 
-    // The witness: the instance the copy was built from is asked for the id.
     put("One.md", `---\nabout: "[[${LINKED}]]"\n---\none\n`);
     value(await folder.folder.push());
     expect(asked(LINKED)).toBe(1);

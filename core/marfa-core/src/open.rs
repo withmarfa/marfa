@@ -446,8 +446,6 @@ impl Core {
             let pending = Arc::clone(&renewals);
             let writes = lock.handle() == Handle::Writer;
             http.on_renewed(Box::new(move |from, to| {
-                // Only the handle that sent an upload records which bearer
-                // sent it.
                 if !writes {
                     return;
                 }

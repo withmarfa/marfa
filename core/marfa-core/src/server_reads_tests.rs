@@ -1,6 +1,3 @@
-//! A read that names an item to the server confirms the copy's instance
-//! first, and a reading handle writes nothing for any request it sends.
-
 use std::sync::Arc;
 
 use crate::body::resolve::{Resolved, Resolver};
@@ -29,7 +26,6 @@ fn writer_and_reader(server: &Scripted) -> (tempfile::TempDir, Arc<Core>, Core) 
     (dir, writer, reader)
 }
 
-/// Every byte of the store's database and its write-ahead log.
 fn store_bytes(dir: &tempfile::TempDir) -> Vec<Vec<u8>> {
     ["core.sqlite", "core.sqlite-wal"]
         .iter()
@@ -100,7 +96,6 @@ fn a_table_read_or_link_lookup_sends_no_item_id_to_another_instance_and_expires_
         let dir = tempfile::tempdir().unwrap();
         let core = copy_in_keyed(&server, dir.path(), "k");
 
-        // The witness: the copy's own instance is sent the item.
         read_a_table(&core, door).unwrap_or_else(|error| panic!("{name}: {error:?}"));
         assert_eq!(requests(&server), 1, "{name}");
         assert!(!expired(&core), "{name}");
@@ -136,7 +131,6 @@ fn a_reading_handle_reads_a_table_or_link_for_its_instance_and_refuses_another_w
         assert!(!expired(&writer), "{name}: the reader expired the copy");
         assert!(store_bytes(&dir) == before, "{name}: the store changed");
 
-        // The witness: the writer's own read expires it.
         assert_eq!(
             read_a_table(&writer, door).unwrap_err().code(),
             "copy_expired",
@@ -211,16 +205,18 @@ fn a_reading_handle_that_is_renewed_writes_nothing_and_keeps_working() {
     assert!(store_bytes(&dir) == before, "the reading handle wrote");
     assert_eq!(sent_as(&writer), first);
 
-    // The witness: the writer's own renewal is written down, and a renewal
-    // after the reader's still succeeds.
     renewed();
-    writer.renew_credential_with(Box::new(|_| Ok("fresh".into())));
+    writer.renew_credential_with(Box::new(|current| match current {
+        "k" => Ok("fresh".into()),
+        "fresh" => Ok("fresher".into()),
+        other => panic!("unexpected credential: {other}"),
+    }));
     writer.http().unwrap().types().unwrap();
     assert_eq!(sent_as(&writer), fresh);
     renewed();
-    writer.renew_credential_with(Box::new(|_| Ok("fresher".into())));
     writer.http().unwrap().types().unwrap();
-    assert_eq!(writer.http().unwrap().authorization(), "Bearer fresh");
+    assert_eq!(writer.http().unwrap().authorization(), "Bearer fresher");
+    assert_eq!(sent_as(&writer), store::credential_digest("Bearer fresher"));
 }
 
 fn moved(server: &Scripted, instance: &str) -> (tempfile::TempDir, Arc<Core>, Core) {
@@ -271,12 +267,10 @@ fn a_reading_handle_at_a_moved_origin_sends_for_the_copys_instance_and_leaves_th
     assert_eq!(server.seen("/types").len(), 1);
     assert_eq!(origin(&reader), MOVED_FROM);
     assert!(store_bytes(&dir) == before, "the reading handle wrote");
-    // Confirmed once: the next request asks no more.
     let roots = server.seen("/").len();
     reader.http().unwrap().types().unwrap();
     assert_eq!(server.seen("/").len(), roots);
 
-    // The witness: the writer records the move it confirms.
     writer.http().unwrap().types().unwrap();
     assert_eq!(origin(&writer), server.url());
 }
@@ -299,7 +293,6 @@ fn a_reading_handle_at_a_moved_origin_refuses_another_instance_and_sends_nothing
     );
     assert!(server.seen("/types").is_empty());
     assert!(store_bytes(&dir) == before);
-    // The witness: the writer's own request at the same origin is refused alike.
     assert!(matches!(
         writer.http().unwrap().types(),
         Err(CoreError::WrongServer { .. })

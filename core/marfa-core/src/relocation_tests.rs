@@ -426,7 +426,6 @@ fn relocation_reader_sends_once_the_identity_agrees_and_leaves_the_origin_to_the
         Some("Bearer reader-key")
     );
     assert_eq!(origin(&writer), OLD_ORIGIN);
-    // The writer that owns the copy commits the same confirmation.
     writer.http().unwrap().types().unwrap();
     assert_eq!(origin(&writer), server.url());
     assert_eq!(

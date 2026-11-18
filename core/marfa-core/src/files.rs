@@ -126,7 +126,6 @@ pub(crate) fn keep_relocated_origin(
             got: origin.into(),
         });
     }
-    // A reading handle is admitted for its own calls; the writer records the move.
     if writer {
         store::meta_set(&tx, store::META_SERVER_ORIGIN, origin)?;
         tx.commit()?;
