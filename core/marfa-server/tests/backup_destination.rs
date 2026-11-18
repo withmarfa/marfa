@@ -608,3 +608,83 @@ async fn quick_changes_of_the_destination_then_a_list_use_the_last_and_attach_no
     assert_eq!(instance.listed().await, Vec::<String>::new());
     assert_eq!(s3.requests(&Method::GET, &marker_of("middle")), 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_adopt_with_no_destination_named_refuses_without_waiting_for_an_attach() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    let release = name_while_attaching(&instance, &s3, "held").await;
+    let waiting = tokio::time::timeout(Duration::from_millis(300), instance.run(Operation::Adopt));
+    assert!(
+        waiting.await.is_err(),
+        "an adopt answered while a named store was being taken"
+    );
+
+    instance.name(json!({ "object_store_bucket": "" })).await;
+    let answer =
+        tokio::time::timeout(Duration::from_millis(500), instance.run(Operation::Adopt)).await;
+    release.send(()).unwrap();
+    instance.settle().await;
+    let answer = answer.expect("an adopt waited for an attach although the settings name nothing");
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.body);
+    assert_eq!(answer.code(), "no_backup_destination", "{}", answer.body);
+}
+
+/// A list whose follow ended before the settings named another store still decides from them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_list_resumed_after_its_follow_answers_unavailable_for_a_store_named_since() {
+    use marfa_server::app::access::Caller;
+    use marfa_server::app::refusal::Code;
+    use std::task::Poll;
+
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    let release = name_while_attaching(&instance, &s3, "first").await;
+    let caller = Caller::local();
+    let mut list = Box::pin(instance.app.list_backups(&caller));
+    assert!(futures_util::poll!(list.as_mut()).is_pending());
+    instance.name(json!({ "object_store_bucket": "" })).await;
+    release.send(()).unwrap();
+    instance.settle().await;
+    assert_eq!(instance.in_use(), "disk");
+
+    let release = name_while_attaching(&instance, &s3, "last").await;
+    let answer = futures_util::poll!(list.as_mut());
+    release.send(()).unwrap();
+    let answer = match answer {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => list.await,
+    };
+    instance.settle().await;
+    let refused = answer.expect_err("a list answered from a store the settings no longer name");
+    assert_eq!(refused.code, Code::BlobStoreUnavailable, "{refused:?}");
+    assert_eq!(instance.listed().await, Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health_reports_no_destination_once_unset_even_when_the_detach_was_not_recorded() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    instance.name(bucket(&s3, "first")).await;
+    instance.settle().await;
+    let named = instance.send(Method::GET, "/health", None).await;
+    assert_eq!(
+        named.body["backups"]["destination"], "bucket",
+        "{}",
+        named.body
+    );
+
+    instance.app.faults.set("fail:stores-record", None).unwrap();
+    instance.name(json!({ "object_store_bucket": "" })).await;
+    instance.failed_on("fail:stores-record").await;
+    assert_eq!(instance.in_use(), locator("first"));
+    let health = instance.send(Method::GET, "/health", None).await;
+    let backups = &health.body["backups"];
+    assert_eq!(backups["status"], "off", "{}", health.body);
+    assert_eq!(
+        backups["reason"], "no_backup_destination",
+        "{}",
+        health.body
+    );
+    assert!(backups.get("destination").is_none(), "{}", health.body);
+}
