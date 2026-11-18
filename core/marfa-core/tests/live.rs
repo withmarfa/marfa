@@ -236,7 +236,8 @@ fn several_items_are_previewed_and_trashed_together_against_a_live_server() {
         &format!("{}/edges", live.url),
         &[("Authorization", &format!("Bearer {}", live.key))],
         "application/json",
-        &serde_json::json!({ "type": "parent-of", "from_id": ids[0], "to_id": child }).to_string(),
+        &serde_json::json!({ "edge_type": "parent-of", "from_id": ids[0], "to_id": child })
+            .to_string(),
     );
     let core = Core::open(&path, Some(server())).unwrap();
     core.hydrate(&["core.note".into()], SliceTier::Library)
