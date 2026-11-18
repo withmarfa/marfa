@@ -533,7 +533,7 @@ describe("how a device fills a table", () => {
     }
   }, 300_000);
 
-  it("fills a table held while a follow holds the stream, with no event to wake the follow", async () => {
+  it("fills a table held while a follow holds the stream, with no event to wake the follow, and tells the follow's caller it filled it", async () => {
     const type = await tableType();
     const item = await itemOf(type);
     await filled(item, 1500);
@@ -557,6 +557,34 @@ describe("how a device fills a table", () => {
         const state = stateOf(tables, item);
         return state?.state === "whole" && state.rows === 1500;
       }, "the follow filling the table");
+      await until(
+        () =>
+          follow.changes.some(
+            (change) =>
+              change.kind === "tableFilled" &&
+              change.itemId === item &&
+              change.table === "steps",
+          ),
+        "the follow telling its caller it filled the table",
+      );
+      // Later events let the listener drain fill notices already queued.
+      for (const round of [1, 2]) {
+        const sentinel = await itemOf(type);
+        await until(
+          () =>
+            follow.changes.some(
+              (change) =>
+                change.kind === "applied" && change.itemId === sentinel,
+            ),
+          `the follow applying sentinel ${String(round)}`,
+        );
+      }
+      expect(
+        follow.changes.filter(
+          (change) => change.kind === "tableFilled" && change.itemId === item,
+        ),
+        "a table the follow filled once was told more than once",
+      ).toHaveLength(1);
     } finally {
       expect(await follow.stop()).toBeNull();
     }

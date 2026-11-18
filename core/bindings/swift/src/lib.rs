@@ -1588,6 +1588,10 @@ pub enum MarfaError {
     Invalid {
         message: String,
     },
+    /// The working copy lacks the edges or items needed for a link count.
+    NotAnswerable {
+        message: String,
+    },
     /// The core panicked, or a listener it called did, and it caught the
     /// panic. A fault in the core, never the caller's input.
     Fault {
@@ -1632,6 +1636,7 @@ impl MarfaError {
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
             | MarfaError::Invalid { message }
+            | MarfaError::NotAnswerable { message }
             | MarfaError::Fault { message } => message,
         }
     }
@@ -1678,6 +1683,7 @@ impl MarfaError {
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
+            MarfaError::NotAnswerable { .. } => marfa_core::CoreErrorKind::NotAnswerable,
             MarfaError::Fault { .. } => marfa_core::CoreErrorKind::Fault,
         };
         kind.code().to_string()
@@ -1839,6 +1845,7 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
             E::Invalid(_) => MarfaError::Invalid { message },
+            E::NotAnswerable(_) => MarfaError::NotAnswerable { message },
             E::Fault(_) => MarfaError::Fault { message },
         }
     }
@@ -2313,6 +2320,12 @@ pub enum Change {
     /// holds no stream until the next hydration or catch-up; a reading
     /// handle's reads go on, and the first that works is told as `Saved`.
     WatchFailed { reason: MarfaError, cursor: String },
+    /// The follow finished filling this table or found it over the cap.
+    TableFilled {
+        item_id: String,
+        table: String,
+        cursor: String,
+    },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -2347,6 +2360,11 @@ impl From<&marfa_core::Change> for Change {
             },
             marfa_core::ChangeEvent::WatchFailed(reason) => Change::WatchFailed {
                 reason: reason.clone().into(),
+                cursor,
+            },
+            marfa_core::ChangeEvent::TableFilled(table) => Change::TableFilled {
+                item_id: change.item_id.clone().unwrap_or_default(),
+                table: table.clone(),
                 cursor,
             },
         }
@@ -3535,6 +3553,7 @@ mod tests {
                 refusal: marfa_core::ContractRefusal::Unread,
             },
             E::Invalid(text()),
+            E::NotAnswerable(text()),
             E::Fault(text()),
             E::Canceled,
         ];
@@ -3565,6 +3584,14 @@ mod tests {
             })
         };
         use marfa_core::ChangeEvent as E;
+        assert_eq!(
+            change(E::TableFilled("steps".into()), Some("item")),
+            Change::TableFilled {
+                item_id: "item".into(),
+                table: "steps".into(),
+                cursor: "11".into()
+            }
+        );
         assert_eq!(
             change(E::CatalogChanged, None),
             Change::CatalogChanged {

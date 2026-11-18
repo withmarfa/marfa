@@ -280,6 +280,29 @@ describe("a write that names an instance", () => {
     }
   });
 
+  it("refuses a count naming another instance 409 instance_changed, answering no count", async () => {
+    const counted = { ids: [uuidv7()], backref: "parent-of" };
+    const refused = await send("/items/counts", {
+      body: counted,
+      headers: { [HEADER]: OTHER },
+    });
+    expect(refused.status).toBe(409);
+    const body = (await refused.json()) as {
+      error?: { code?: string };
+      counts?: unknown;
+    };
+    expect(body.error?.code).toBe("instance_changed");
+    expect(body).not.toHaveProperty("counts");
+
+    // The witness: the same count naming this instance is answered.
+    const answered = await send("/items/counts", {
+      body: counted,
+      headers: { [HEADER]: own },
+    });
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toHaveProperty("counts");
+  });
+
   it("refuses another instance on a conditional read before it judges the read's reach", async () => {
     const read = { ids: [uuidv7()] };
     for (const reach of ["not-a-reach", "0".repeat(64)]) {

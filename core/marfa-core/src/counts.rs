@@ -82,6 +82,23 @@ fn distinct(ids: &[String]) -> Result<Vec<String>> {
     Ok(distinct)
 }
 
+/// Refuses an edge type or a table name the server would refuse.
+fn refuse_unnamed(counted: &Counted) -> Result<()> {
+    match counted {
+        Counted::Backref(edge_type) | Counted::Edge(edge_type)
+            if !marfa_rules::filter::edge_type_named(edge_type) =>
+        {
+            Err(refused(
+                "an edge type is not blank, has no space and no closing bracket.",
+            ))
+        }
+        Counted::Table(table) if !marfa_rules::catalog::api_name(table) => Err(refused(
+            "a table is a lowercase letter and then at most 63 lowercase letters, digits and underscores.",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// A full slice can exclude an absent endpoint because the server's listing excludes it too.
 fn holds_every_listed_item(conn: &Connection) -> Result<bool> {
     let Some((types, tier)) = store::slice(conn)? else {
@@ -114,7 +131,7 @@ fn linked(
         .iter()
         .any(|held| held == edge_type)
     {
-        return Err(CoreError::Invalid(format!(
+        return Err(CoreError::NotAnswerable(format!(
             "a count of {edge_type:?} is not answered from a working copy that does not hold that edge type whole: hydrate with it as an edge type held whole, or ask the server"
         )));
     }
@@ -160,7 +177,7 @@ fn linked(
             .prepare_cached(&gap)?
             .exists(params_from_iter(bound(ids, edge_type)))?
     {
-        return Err(CoreError::Invalid(format!(
+        return Err(CoreError::NotAnswerable(format!(
             "a count of {edge_type:?} reaches an item this working copy does not hold, so it cannot say how many the server counts: ask the server"
         )));
     }
@@ -169,10 +186,9 @@ fn linked(
             "SELECT e.{anchor}, COUNT(*){groups}
                FROM edges e CROSS JOIN items ON items.id = e.{other}
               WHERE e.edge_type = ? AND e.{anchor} IN ({marks})
-                AND {counted} AND items.type NOT LIKE 'system.%'
-                AND NOT EXISTS (SELECT 1 FROM meta
-                                 WHERE key = 'item_listed/' || items.id AND value = 'false')
-              GROUP BY e.{anchor}"
+                AND {counted} AND items.type NOT LIKE 'system.%' AND {listed}
+              GROUP BY e.{anchor}",
+            listed = crate::query::LISTED
         );
         let mut params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
         params.extend(bound(ids, edge_type));
@@ -204,19 +220,12 @@ fn linked(
 }
 
 impl Core {
-    /// Counts linked items or table rows for up to [`MOST_IDS`] IDs, once per distinct ID in request order.
-    /// Link counts follow the server's anchored listing with its default state.
-    /// A link count returns `Invalid` if the copy lacks edges or items needed for the count.
-    /// The server counts rows for tables the copy does not hold whole. An omitted ID fails the call.
+    /// Counts links locally and asks the server for rows in tables the copy does not hold whole.
     pub fn counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
         let ids = distinct(ids)?;
+        refuse_unnamed(counted)?;
         match counted {
             Counted::Backref(edge_type) | Counted::Edge(edge_type) => {
-                if !marfa_rules::filter::edge_type_named(edge_type) {
-                    return Err(refused(
-                        "an edge type is not blank, has no space and no closing bracket.",
-                    ));
-                }
                 let backref = matches!(counted, Counted::Backref(_));
                 store::read_marked(&mut *self.conn()?, |conn, _| {
                     store::refuse_unless_usable(conn)?;
@@ -225,11 +234,6 @@ impl Core {
                 })
             }
             Counted::Table(table) => {
-                if !marfa_rules::catalog::api_name(table) {
-                    return Err(refused(
-                        "a table is a lowercase letter and then at most 63 lowercase letters, digits and underscores.",
-                    ));
-                }
                 self.lay_rows()?;
                 let held: Vec<Option<i64>> = store::read_marked(&mut *self.conn()?, |conn, _| {
                     tables::held_row_counts(conn, &ids, table)
@@ -240,24 +244,25 @@ impl Core {
                     .filter(|(_, held)| held.is_none())
                     .map(|(id, _)| id)
                     .collect();
-                let mut answered: HashMap<String, i64> = HashMap::new();
-                if !asked.is_empty() {
-                    answered = self.http()?.item_counts(&asked, table)?;
-                    if let Some(missing) = asked.iter().find(|id| !answered.contains_key(**id)) {
-                        return Err(CoreError::Decoding(format!(
-                            "the server's counts leave out {missing}, which was asked"
-                        )));
-                    }
+                let mut served = if asked.is_empty() {
+                    Vec::new()
+                } else {
+                    self.ask_own_instance(&asked, counted)?
                 }
+                .into_iter()
+                .map(|(total, _)| total);
                 ids.iter()
                     .zip(held)
                     .map(|(id, held)| {
+                        let total = match held {
+                            Some(total) => total,
+                            None => served.next().ok_or_else(|| {
+                                CoreError::Decoding("the server's counts end early".into())
+                            })?,
+                        };
                         Ok(ItemCount {
                             id: id.clone(),
-                            total: match held {
-                                Some(total) => total,
-                                None => answered[id],
-                            },
+                            total,
                             status_groups: None,
                             held: held.is_some(),
                         })
@@ -265,6 +270,39 @@ impl Core {
                     .collect()
             }
         }
+    }
+
+    /// Requests every count from the copy's server using its current credential.
+    pub fn served_counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
+        let ids = distinct(ids)?;
+        refuse_unnamed(counted)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let asked: Vec<&String> = ids.iter().collect();
+        let served = self.ask_own_instance(&asked, counted)?;
+        Ok(ids
+            .into_iter()
+            .zip(served)
+            .map(|(id, (total, status_groups))| ItemCount {
+                id,
+                total,
+                status_groups,
+                held: false,
+            })
+            .collect())
+    }
+}
+
+impl Core {
+    fn ask_own_instance(
+        &self,
+        asked: &[&String],
+        counted: &Counted,
+    ) -> Result<Vec<(i64, Option<StatusGroups>)>> {
+        let http = self.http()?;
+        crate::catch_up::refuse_another_instance(self, http)?;
+        crate::catch_up::write_naming_instance(self, http, |http| http.item_counts(asked, counted))
     }
 }
 
@@ -439,7 +477,10 @@ mod tests {
             hold_whole(&conn, held);
             for backref in [true, false] {
                 let refusal = linked(&conn, &catalog, &anchors, "parent-of", backref).unwrap_err();
-                assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+                assert!(
+                    matches!(refusal, CoreError::NotAnswerable(_)),
+                    "{refusal:?}"
+                );
             }
         }
     }
@@ -457,7 +498,10 @@ mod tests {
         // A child outside the slice, held as an edge only.
         store::upsert_edge(&conn, &wire_edge("far", PARENT, "elsewhere", "parent-of")).unwrap();
         let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
         // An anchor with no edge is not a gap.
         assert_eq!(
             linked(&conn, &catalog, &named(&["lone"]), "parent-of", true).unwrap()[0].total,
@@ -471,7 +515,10 @@ mod tests {
         );
         // From the other end the counted item is the one that links to the anchor, which the copy lacks.
         let refusal = linked(&conn, &catalog, &named(&["lone"]), "parent-of", false).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
     }
 
     #[test]
@@ -550,6 +597,26 @@ mod tests {
     }
 
     #[test]
+    fn a_child_a_refill_keeps_unlisted_is_not_counted_as_the_listing_leaves_it_out() {
+        let conn = tasks();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        put(&conn, "hidden", "acme.task", "active", json!({}));
+        store::upsert_edge(&conn, &wire_edge("h", "lone", "hidden", "parent-of")).unwrap();
+        store::pin(&conn, "hidden").unwrap();
+        let counted =
+            || linked(&conn, &catalog, &named(&["lone"]), "parent-of", true).unwrap()[0].total;
+        let listing = || listed(&conn, "id eq \"hidden\"");
+        // The witness: listed before the refill, the child is counted and listed after it too.
+        crate::reach::set_listed(&conn, "hidden", true).unwrap();
+        store::start_refill(&conn).unwrap();
+        assert_eq!((counted(), listing()), (1, 1));
+        crate::reach::set_listed(&conn, "hidden", false).unwrap();
+        store::start_refill(&conn).unwrap();
+        assert_eq!(listing(), 0);
+        assert_eq!(counted(), 0);
+    }
+
+    #[test]
     fn an_anchor_outside_the_slice_is_answered_while_every_counted_item_is_held() {
         let conn = tasks();
         let catalog = crate::catalog::load(&conn).unwrap();
@@ -565,7 +632,10 @@ mod tests {
         // The witness: a counted item the narrow slice lacks is still refused.
         store::upsert_edge(&conn, &wire_edge("b", "outside", "elsewhere", "parent-of")).unwrap();
         let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
     }
 
     #[test]
@@ -577,7 +647,10 @@ mod tests {
         store::upsert_edge(&conn, &wire_edge("far", PARENT, "filtered", "parent-of")).unwrap();
         let anchors = named(&[PARENT]);
         let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
-        assert!(matches!(refusal, CoreError::Invalid(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::NotAnswerable(_)),
+            "{refusal:?}"
+        );
         holding_every_listed_item(&conn);
         assert_eq!(
             linked(&conn, &catalog, &anchors, "parent-of", true).unwrap()[0].total,
@@ -601,7 +674,7 @@ mod tests {
             }
             let refusal = linked(&conn, &catalog, &anchors, "parent-of", true).unwrap_err();
             assert!(
-                matches!(refusal, CoreError::Invalid(_)),
+                matches!(refusal, CoreError::NotAnswerable(_)),
                 "{types} {tier} {query:?}: {refusal:?}"
             );
             conn.execute("DELETE FROM meta WHERE key = ?1", [store::META_SLICE_QUERY])
@@ -610,23 +683,545 @@ mod tests {
     }
 
     #[test]
-    fn rows_the_server_leaves_out_of_its_answer_are_refused_for_the_whole_batch() {
+    fn a_served_answer_that_is_not_the_asked_ids_once_each_in_order_is_refused_whole() {
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+        let two = "01a1011c-2f86-76b6-9594-050c109f4957";
+        let three = "01a1011c-2f86-76b6-9594-050c109f4958";
+        let row = |id: &str| json!({ "id": id, "total": 3 });
+        let asked = [one.to_string(), two.to_string(), one.to_string()];
+        for (what, answer) in [
+            ("missing", vec![row(one)]),
+            ("reordered", vec![row(two), row(one)]),
+            ("repeated", vec![row(one), row(one)]),
+            ("extra", vec![row(one), row(two), row(three)]),
+            ("repeated after both", vec![row(one), row(two), row(one)]),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            holding_a_catalog(&core);
+            server.on(
+                "/items/counts",
+                vec![scripted::json(
+                    200,
+                    &json!({ "counts": answer }).to_string(),
+                )],
+            );
+            let refusal = core
+                .counts(&asked, &Counted::Table("messages".into()))
+                .unwrap_err();
+            assert!(
+                matches!(refusal, CoreError::Decoding(_)),
+                "{what}: {refusal:?}"
+            );
+        }
+        // The witness: the asked ids once each, in order, are answered.
         let server = Scripted::start();
         let core = copy(&server);
         holding_a_catalog(&core);
-        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
-        let two = "01a1011c-2f86-76b6-9594-050c109f4957".to_string();
         server.on(
             "/items/counts",
             vec![scripted::json(
                 200,
-                &json!({ "counts": [{ "id": one, "total": 3 }] }).to_string(),
+                &json!({ "counts": [row(one), row(two)] }).to_string(),
             )],
         );
+        let answered = core
+            .counts(&asked, &Counted::Table("messages".into()))
+            .unwrap();
+        assert_eq!(
+            answered
+                .iter()
+                .map(|count| count.id.as_str())
+                .collect::<Vec<_>>(),
+            [one, two]
+        );
+    }
+
+    #[test]
+    fn a_failure_asking_the_server_for_rows_is_itself_and_never_not_answerable() {
+        let ids = ["01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string()];
+        let table = Counted::Table("messages".into());
+        let server = Scripted::start();
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        server.on(
+            "/items/counts",
+            vec![scripted::refusal(429, "rate_limited")],
+        );
+        let refusal = core.counts(&ids, &table).unwrap_err();
+        assert!(
+            matches!(refusal, CoreError::RateLimited { .. }),
+            "{refusal:?}"
+        );
+        for failure in [
+            CoreError::Invalid("the renewer could not renew".into()),
+            CoreError::SignedOut {
+                origin: server.url(),
+            },
+            CoreError::Network("offline".into()),
+            CoreError::NotAnswerable("a count the renewer asked".into()),
+            CoreError::RenewalFailed(Box::new(CoreError::NotAnswerable(
+                "a count a nested renewal asked".into(),
+            ))),
+            CoreError::RenewalFailed(Box::new(CoreError::RenewalFailed(Box::new(
+                CoreError::NotAnswerable("a count two renewals deep".into()),
+            )))),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            holding_a_catalog(&core);
+            server.on(
+                "/items/counts",
+                vec![scripted::refusal(401, "unauthorized")],
+            );
+            let expected = failure.clone();
+            core.renew_credential_with(Box::new(move |_| Err(failure.clone())));
+            let refusal = core.counts(&ids, &table).unwrap_err();
+            match expected {
+                expected if expected.code() == "not_answerable" => assert!(
+                    matches!(&refusal, CoreError::RenewalFailed(cause) if matches!(**cause, CoreError::Invalid(_))),
+                    "{refusal:?}"
+                ),
+                expected => assert_eq!(refusal, CoreError::RenewalFailed(Box::new(expected))),
+            }
+            assert_ne!(refusal.code(), "not_answerable");
+        }
+    }
+
+    fn groups(total: i64) -> Value {
+        json!({ "not_started": total, "in_progress": 0, "completed": 0, "canceled": 0 })
+    }
+
+    #[test]
+    fn served_counts_ask_the_copys_server_once_per_distinct_id_and_say_so() {
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+        let two = "01a1011c-2f86-76b6-9594-050c109f4957";
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/items/counts",
+            vec![scripted::json(
+                200,
+                &json!({ "counts": [
+                    { "id": one, "total": 2, "status_groups": groups(2) },
+                    { "id": two, "total": 0, "status_groups": groups(0) }
+                ] })
+                .to_string(),
+            )],
+        );
+        let asked = [one.to_string(), two.to_string(), one.to_string()];
+        let served = core
+            .served_counts(&asked, &Counted::Backref("parent-of".into()))
+            .unwrap();
+        assert_eq!(
+            served,
+            [
+                ItemCount {
+                    id: one.into(),
+                    total: 2,
+                    status_groups: Some(StatusGroups::of([2, 0, 0, 0])),
+                    held: false,
+                },
+                ItemCount {
+                    id: two.into(),
+                    total: 0,
+                    status_groups: Some(StatusGroups::default()),
+                    held: false,
+                },
+            ]
+        );
+        let sent: Value = serde_json::from_slice(&server.seen("/items/counts")[0].body).unwrap();
+        assert_eq!(sent, json!({ "ids": [one, two], "backref": "parent-of" }));
+        assert!(
+            core.served_counts(&[], &Counted::Edge("in-collection".into()))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(server.seen("/items/counts").len(), 1);
+    }
+
+    #[test]
+    fn a_served_answer_with_the_wrong_ids_or_status_groups_is_refused_whole() {
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+        let two = "01a1011c-2f86-76b6-9594-050c109f4957";
+        let link = Counted::Edge("in-collection".into());
+        let rows = Counted::Table("messages".into());
+        let grouped = |id: &str| json!({ "id": id, "total": 1, "status_groups": groups(1) });
+        let bare = |id: &str| json!({ "id": id, "total": 1 });
+        let asked = [one.to_string(), two.to_string()];
+        let cases = [
+            ("reordered", &link, vec![grouped(two), grouped(one)]),
+            ("missing", &link, vec![grouped(one)]),
+            ("repeated", &link, vec![grouped(one), grouped(one)]),
+            (
+                "a link without groups",
+                &link,
+                vec![grouped(one), bare(two)],
+            ),
+            (
+                "a link missing a group",
+                &link,
+                vec![
+                    grouped(one),
+                    json!({ "id": two, "total": 1, "status_groups": { "not_started": 1 } }),
+                ],
+            ),
+            ("rows with groups", &rows, vec![bare(one), grouped(two)]),
+        ];
+        for (what, counted, answer) in cases {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on(
+                "/items/counts",
+                vec![scripted::json(
+                    200,
+                    &json!({ "counts": answer }).to_string(),
+                )],
+            );
+            let refusal = core.served_counts(&asked, counted).unwrap_err();
+            assert!(
+                matches!(refusal, CoreError::Decoding(_)),
+                "{what}: {refusal:?}"
+            );
+        }
+        // The witness: each kind is answered when its answer is whole.
+        for (counted, answer) in [
+            (&link, vec![grouped(one), grouped(two)]),
+            (&rows, vec![bare(one), bare(two)]),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on(
+                "/items/counts",
+                vec![scripted::json(
+                    200,
+                    &json!({ "counts": answer }).to_string(),
+                )],
+            );
+            assert_eq!(core.served_counts(&asked, counted).unwrap().len(), 2);
+        }
+    }
+
+    #[test]
+    fn a_served_answer_of_another_shape_or_an_impossible_number_is_refused_whole() {
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+        let link = Counted::Edge("in-collection".into());
+        let rows = Counted::Table("messages".into());
+        let asked = [one.to_string()];
+        let body = |count: Value| json!({ "counts": [count] }).to_string();
+        let cases = [
+            (
+                "groups null on a row",
+                &rows,
+                body(json!({ "id": one, "total": 1, "status_groups": null })),
+            ),
+            (
+                "groups null on a link",
+                &link,
+                body(json!({ "id": one, "total": 1, "status_groups": null })),
+            ),
+            (
+                "unnamed groups",
+                &link,
+                body(json!({ "id": one, "total": 4, "status_groups": [1, 1, 1, 1] })),
+            ),
+            ("a positional count", &rows, body(json!([one, 1]))),
+            (
+                "a positional answer",
+                &rows,
+                json!([[{ "id": one, "total": 1 }]]).to_string(),
+            ),
+            (
+                "a negative total",
+                &rows,
+                body(json!({ "id": one, "total": -1 })),
+            ),
+            (
+                "a fractional total",
+                &rows,
+                body(json!({ "id": one, "total": 1.5 })),
+            ),
+            (
+                "a negative group",
+                &link,
+                body(
+                    json!({ "id": one, "total": 1, "status_groups": { "not_started": 2, "in_progress": -1, "completed": 0, "canceled": 0 } }),
+                ),
+            ),
+            (
+                "groups above the total",
+                &link,
+                body(
+                    json!({ "id": one, "total": 1, "status_groups": { "not_started": 1, "in_progress": 1, "completed": 0, "canceled": 0 } }),
+                ),
+            ),
+            ("no counts", &rows, json!({}).to_string()),
+        ];
+        for (what, counted, answer) in cases {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on("/items/counts", vec![scripted::json(200, &answer)]);
+            let refusal = core.served_counts(&asked, counted).unwrap_err();
+            assert!(
+                matches!(refusal, CoreError::Decoding(_)),
+                "{what}: {refusal:?}"
+            );
+        }
+        // The witness: groups below the total, and members the device does not know, are answered.
+        for (counted, count) in [
+            (
+                &link,
+                json!({ "id": one, "total": 3, "status_groups": { "not_started": 1, "in_progress": 0, "completed": 1, "canceled": 0, "later": 9 }, "later": true }),
+            ),
+            (&rows, json!({ "id": one, "total": 0, "later": true })),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on("/items/counts", vec![scripted::json(200, &body(count))]);
+            assert_eq!(core.served_counts(&asked, counted).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn served_counts_send_no_id_to_a_server_that_is_not_the_copys() {
+        let server = Scripted::start();
+        server.on(
+            "/",
+            vec![scripted::root("00000000-0000-7000-8000-000000000001")],
+        );
+        server.on(
+            "/items/counts",
+            vec![scripted::json(200, r#"{"counts":[]}"#)],
+        );
+        let (_dir, core) =
+            crate::relocation_tests::moving_copy(&server.url(), Some(scripted::INSTANCE));
         let refusal = core
-            .counts(&[one, two], &Counted::Table("messages".into()))
+            .served_counts(
+                &["01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string()],
+                &Counted::Backref("parent-of".into()),
+            )
             .unwrap_err();
-        assert!(matches!(refusal, CoreError::Decoding(_)), "{refusal:?}");
+        assert!(
+            matches!(refusal, CoreError::WrongServer { .. }),
+            "{refusal:?}"
+        );
+        assert!(server.seen("/items/counts").is_empty());
+        // The witness: the same copy whose server answers as its own instance asks it.
+        let server = Scripted::start();
+        server.on("/", vec![scripted::root(scripted::INSTANCE)]);
+        server.on(
+            "/items/counts",
+            vec![scripted::json(
+                200,
+                &json!({ "counts": [{ "id": "01a1011a-4902-76cf-a4a9-88e99c038c8d", "total": 0, "status_groups": groups(0) }] })
+                    .to_string(),
+            )],
+        );
+        let (_dir, core) =
+            crate::relocation_tests::moving_copy(&server.url(), Some(scripted::INSTANCE));
+        core.served_counts(
+            &["01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string()],
+            &Counted::Backref("parent-of".into()),
+        )
+        .unwrap();
+        assert_eq!(server.seen("/items/counts").len(), 1);
+    }
+
+    fn at_its_own_address(instance: &str) -> (Scripted, std::sync::Arc<Core>) {
+        let server = Scripted::start();
+        server.on("/", vec![scripted::root(instance)]);
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        store::meta_set(
+            &core.conn().unwrap(),
+            store::META_INSTANCE_ID,
+            scripted::INSTANCE,
+        )
+        .unwrap();
+        (server, core)
+    }
+
+    #[test]
+    fn a_count_asked_of_the_server_sends_no_id_to_another_instance_at_the_copys_address() {
+        let id = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let link = Counted::Backref("parent-of".into());
+        let rows = Counted::Table("messages".into());
+        let answer = |counted: &Counted| {
+            let count = match counted {
+                Counted::Table(_) => json!({ "id": id, "total": 0 }),
+                _ => json!({ "id": id, "total": 0, "status_groups": groups(0) }),
+            };
+            scripted::json(200, &json!({ "counts": [count] }).to_string())
+        };
+        let ask = |core: &Core, counted: &Counted| match counted {
+            Counted::Table(_) => core.counts(std::slice::from_ref(&id), counted),
+            _ => core.served_counts(std::slice::from_ref(&id), counted),
+        };
+        for counted in [&link, &rows] {
+            // The witness: the copy's own instance is asked, and named on the request.
+            let (server, core) = at_its_own_address(scripted::INSTANCE);
+            server.on("/items/counts", vec![answer(counted)]);
+            ask(&core, counted).unwrap();
+            let seen = server.seen("/items/counts");
+            assert_eq!(seen.len(), 1, "{counted:?}");
+            assert_eq!(seen[0].instance.as_deref(), Some(scripted::INSTANCE));
+
+            let (server, core) = at_its_own_address("00000000-0000-7000-8000-000000000001");
+            server.on("/items/counts", vec![answer(counted)]);
+            let refusal = ask(&core, counted).unwrap_err();
+            assert_eq!(refusal.code(), "copy_expired", "{counted:?}: {refusal:?}");
+            assert!(server.seen("/items/counts").is_empty(), "{counted:?}");
+
+            // Another instance that takes the address after the root was read refuses the named request.
+            let (server, core) = at_its_own_address(scripted::INSTANCE);
+            server.on(
+                "/items/counts",
+                vec![scripted::refusal(409, crate::http::INSTANCE_CHANGED)],
+            );
+            let refusal = ask(&core, counted).unwrap_err();
+            assert!(
+                matches!(&refusal, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED),
+                "{counted:?}: {refusal:?}"
+            );
+        }
+    }
+
+    /// A writer on disk whose server limits requests, and a reading handle on the same store.
+    fn writer_and_reader(server: &Scripted) -> (tempfile::TempDir, std::sync::Arc<Core>, Core) {
+        server.on(
+            "/",
+            vec![scripted::json(
+                200,
+                &format!(
+                    r#"{{"name":"marfa","version":"dev","instance_id":"{}","contract":{},"features":[],"max_request_bytes":2000}}"#,
+                    scripted::INSTANCE,
+                    crate::contract::CONTRACT_VERSION
+                ),
+            )],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let writer = crate::stop_tests::copy_in_keyed(server, dir.path(), "k");
+        let reader = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(crate::Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(reader.handle(), crate::Handle::Reader);
+        (dir, writer, reader)
+    }
+
+    /// Every byte of the store's database and its write-ahead log.
+    fn store_bytes(dir: &tempfile::TempDir) -> Vec<Vec<u8>> {
+        ["core.sqlite", "core.sqlite-wal"]
+            .iter()
+            .map(|name| std::fs::read(dir.path().join(name)).unwrap_or_default())
+            .collect()
+    }
+
+    fn link_answer(id: &str) -> scripted::Answer {
+        scripted::json(
+            200,
+            &json!({ "counts": [{ "id": id, "total": 0, "status_groups": groups(0) }] })
+                .to_string(),
+        )
+    }
+
+    #[test]
+    fn a_count_a_reading_handle_asks_of_the_server_leaves_the_store_unchanged() {
+        let id = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let link = Counted::Backref("parent-of".into());
+        let server = Scripted::start();
+        server.on("/items/counts", vec![link_answer(&id)]);
+        let (dir, writer, reader) = writer_and_reader(&server);
+        let before = store_bytes(&dir);
+        let version = store::data_version(&writer.conn().unwrap()).unwrap();
+
+        reader
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap();
+        assert_eq!(server.seen("/items/counts").len(), 1);
+        assert_eq!(
+            store::data_version(&writer.conn().unwrap()).unwrap(),
+            version,
+            "the reading handle's count wrote to the store"
+        );
+        assert!(store_bytes(&dir) == before, "the store's bytes changed");
+        assert_eq!(store::request_limit(&writer.conn().unwrap()).unwrap(), None);
+
+        // The witness: the writer's own count stores the limit its server's root names.
+        writer
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap();
+        assert_eq!(
+            store::request_limit(&writer.conn().unwrap()).unwrap(),
+            Some(2000)
+        );
+        assert!(store_bytes(&dir) != before);
+    }
+
+    #[test]
+    fn a_reading_handle_refuses_a_count_for_another_instance_and_leaves_the_copy_unexpired() {
+        let id = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let link = Counted::Backref("parent-of".into());
+        let other = scripted::root("00000000-0000-7000-8000-000000000001");
+
+        // Another instance answers the root.
+        let server = Scripted::start();
+        server.on("/items/counts", vec![link_answer(&id)]);
+        let (dir, writer, reader) = writer_and_reader(&server);
+        server.on("/", vec![other.clone()]);
+        let before = store_bytes(&dir);
+        let refusal = reader
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert_eq!(refusal.code(), "copy_expired", "{refusal:?}");
+        assert!(server.seen("/items/counts").is_empty());
+        assert!(!crate::reach::expired(&writer.conn().unwrap()).unwrap());
+        assert!(store_bytes(&dir) == before, "the store's bytes changed");
+        // The witness: the writer's count expires the copy.
+        let refusal = writer
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert_eq!(refusal.code(), "copy_expired", "{refusal:?}");
+        assert!(crate::reach::expired(&writer.conn().unwrap()).unwrap());
+
+        // Another instance takes the address after the root was read and refuses the named request.
+        let server = Scripted::start();
+        server.on(
+            "/items/counts",
+            vec![scripted::refusal(409, crate::http::INSTANCE_CHANGED)],
+        );
+        let (dir, writer, reader) = writer_and_reader(&server);
+        let before = store_bytes(&dir);
+        let refusal = reader
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert!(
+            matches!(&refusal, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED),
+            "{refusal:?}"
+        );
+        assert!(!crate::reach::expired(&writer.conn().unwrap()).unwrap());
+        assert!(store_bytes(&dir) == before, "the store's bytes changed");
+        // The witness: the writer's count expires the copy.
+        writer
+            .served_counts(std::slice::from_ref(&id), &link)
+            .unwrap_err();
+        assert!(crate::reach::expired(&writer.conn().unwrap()).unwrap());
+    }
+
+    #[test]
+    fn served_counts_without_a_server_are_no_server() {
+        let core = Core::open_in_memory(None).unwrap();
+        let refusal = core
+            .served_counts(
+                &["01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string()],
+                &Counted::Backref("parent-of".into()),
+            )
+            .unwrap_err();
+        assert_eq!(refusal, CoreError::NoServer);
     }
 
     #[test]

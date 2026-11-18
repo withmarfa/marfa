@@ -106,7 +106,9 @@ pub enum DeviceCommand {
     ///
     /// When the server is reachable again after it was lost, it drains the
     /// queue once if writes wait, and prints `queue.drained` with what the
-    /// drain did, or `queue.not_drained` with why it did not.
+    /// drain did, or `queue.not_drained` with why it did not. When its fill
+    /// leaves a held table whole or finds it past the cap, it prints
+    /// `table.filled` with the item and the table.
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
@@ -519,9 +521,9 @@ pub enum ItemsCommand {
     /// Count, for each item, the active items an edge type links to it or the
     /// rows it holds in a table, as `marfa items counts` does.
     ///
-    /// Links are counted from the copy, and refused `invalid` where it does
-    /// not hold the edge type whole or may lack an item the server counts
-    /// that an edge reaches. Rows are counted from the copy for a table it
+    /// Links are counted from the copy, and refused `not_answerable` where it
+    /// does not hold the edge type whole or may lack an item the server
+    /// counts that an edge reaches. Rows are counted from the copy for a table it
     /// holds whole and by the server for any other; `held` says which. A
     /// count the copy answers needs no server and no credential.
     #[command(group(clap::ArgGroup::new("counted").required(true).args(["backref", "edge", "table"])))]
@@ -540,6 +542,12 @@ pub enum ItemsCommand {
         /// Count the rows each item holds in this table.
         #[arg(long, value_name = "TABLE")]
         table: Option<String>,
+        /// Ask the copy's own server for every count, after the instance check
+        /// a moved copy makes, and answer `held` false. An answer that is not
+        /// the asked ids once each in order, a link count without its four
+        /// status groups and a count of rows with any are refused `decoding`.
+        #[arg(long)]
+        from_server: bool,
     },
     /// Write a new item into the local copy and queue it for the server.
     Create(CreateArgs),
@@ -1552,6 +1560,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     backref,
                     edge,
                     table,
+                    from_server,
                 },
         } => {
             let counted = match (backref, edge, table) {
@@ -1564,15 +1573,19 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     ));
                 }
             };
-            let local = {
-                let core = store.open(None)?;
-                core.counts(&ids, &counted)
-            };
-            let counts = match local {
-                Err(marfa_core::CoreError::NoServer) if !store.reader => {
-                    store.open_with_server(named)?.counts(&ids, &counted)?
+            let counts = if from_server {
+                store.open_with_server(named)?.served_counts(&ids, &counted)?
+            } else {
+                let local = {
+                    let core = store.open(None)?;
+                    core.counts(&ids, &counted)
+                };
+                match local {
+                    Err(marfa_core::CoreError::NoServer) if !store.reader => {
+                        store.open_with_server(named)?.counts(&ids, &counted)?
+                    }
+                    answered => answered?,
                 }
-                answered => answered?,
             };
             output::report(&serde_json::json!({ "counts": counts }), json, || {
                 counts
@@ -2802,6 +2815,7 @@ fn change_line(change: &marfa_core::Change) -> String {
                     .unwrap_or_default()
             ),
             marfa_core::ChangeEvent::Saved(version) => format!(": data version {version}"),
+            marfa_core::ChangeEvent::TableFilled(table) => format!(": table {}", printable(table)),
             _ => String::new(),
         }
     )

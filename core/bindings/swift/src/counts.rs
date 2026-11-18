@@ -64,14 +64,25 @@ impl From<marfa_core::ItemCount> for ItemCount {
 
 #[uniffi::export]
 impl Core {
-    /// Counts linked items or table rows for up to 100 IDs, once per distinct ID in request order.
-    /// Link counts use the anchored listing's default state and include status groups.
-    /// They throw `Invalid` if the copy lacks edges or items needed for the count.
-    /// For row counts, `held` is true when the copy answered and false when the server answered.
+    /// Counts from the copy where possible. On `NotAnswerable`, call `servedCounts(ids:counted:)`.
     pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
         Ok(self
             .inner
             .counts(&ids, &counted.into())?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Requests every count from the copy's server. Each result has `held` set to false.
+    pub fn served_counts(
+        &self,
+        ids: Vec<String>,
+        counted: Counted,
+    ) -> Result<Vec<ItemCount>, MarfaError> {
+        Ok(self
+            .inner
+            .served_counts(&ids, &counted.into())?
             .into_iter()
             .map(Into::into)
             .collect())
@@ -81,6 +92,7 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::{Counted, StatusGroups};
+    use crate::renewal::{CredentialRenewer, RenewalError};
     use crate::{Core, MarfaError};
 
     const PARENT: &str = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
@@ -149,7 +161,124 @@ mod tests {
         let (_dir, unheld) = self::core("[]");
         assert!(matches!(
             unheld.counts(vec![PARENT.into()], backref()),
-            Err(MarfaError::Invalid { .. })
+            Err(MarfaError::NotAnswerable { .. })
         ));
+    }
+
+    struct Failing(RenewalError);
+
+    impl CredentialRenewer for Failing {
+        fn renew(&self, _refused: String) -> Result<String, RenewalError> {
+            Err(self.0.clone())
+        }
+    }
+
+    /// A server that refuses every request's credential.
+    fn refusing() -> String {
+        answering(
+            "401 Unauthorized",
+            r#"{"error":{"code":"unauthorized","message":"the token expired"}}"#,
+        )
+    }
+
+    /// A server that gives every request `status` and `body`.
+    fn answering(status: &'static str, body: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let (mut length, mut line) = (0, String::new());
+                while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                    if let Some((key, value)) = line.split_once(':')
+                        && key.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                    line.clear();
+                }
+                let _ = reader.read_exact(&mut vec![0; length]);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                        marfa_core::contract::CONTRACT_VERSION
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_failed_renewal_asking_the_server_for_rows_is_itself_and_never_not_answerable() {
+        let url = refusing();
+        let message = || "said".to_string();
+        for (failure, expected) in [
+            (RenewalError::Failed { message: message() }, "invalid"),
+            (RenewalError::Ended { message: message() }, "signed_out"),
+            (RenewalError::Unavailable { message: message() }, "network"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("copy.sqlite").display().to_string();
+            let core = Core::open(
+                path,
+                Some(url.clone()),
+                Some("stale".into()),
+                Some(std::sync::Arc::new(Failing(failure))),
+            )
+            .unwrap();
+            let refusal = core
+                .counts(
+                    vec![PARENT.into()],
+                    Counted::Table {
+                        table: "lines".into(),
+                    },
+                )
+                .unwrap_err();
+            assert_eq!(refusal.code(), expected, "{refusal:?}");
+        }
+    }
+
+    #[test]
+    fn served_counts_cross_the_swift_boundary_typed_and_refuse_an_answer_without_groups() {
+        let open = |url: String| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("copy.sqlite").display().to_string();
+            let core = Core::open(path, Some(url), Some("key".into()), None).unwrap();
+            (dir, core)
+        };
+        let backref = || Counted::Backref {
+            edge_type: "parent-of".into(),
+        };
+        let (_dir, core) = open(answering(
+            "200 OK",
+            r#"{"counts":[{"id":"01a1011a-4902-76cf-a4a9-88e99c038c8d","total":3,"status_groups":{"not_started":1,"in_progress":1,"completed":1,"canceled":0}}]}"#,
+        ));
+        let served = core
+            .served_counts(vec![PARENT.into(), PARENT.into()], backref())
+            .unwrap();
+        assert_eq!(served.len(), 1);
+        assert_eq!(served[0].total, 3);
+        assert!(!served[0].held);
+        assert_eq!(
+            served[0].status_groups,
+            Some(StatusGroups {
+                not_started: 1,
+                in_progress: 1,
+                completed: 1,
+                canceled: 0
+            })
+        );
+        let (_dir, core) = open(answering(
+            "200 OK",
+            r#"{"counts":[{"id":"01a1011a-4902-76cf-a4a9-88e99c038c8d","total":3}]}"#,
+        ));
+        let refusal = core
+            .served_counts(vec![PARENT.into()], backref())
+            .unwrap_err();
+        assert_eq!(refusal.code(), "decoding", "{refusal:?}");
     }
 }

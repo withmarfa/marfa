@@ -26,7 +26,11 @@ The Swift binding exposes these as `get_items`, `edge`, `get_edges`, `body_links
 
 In Swift, pass `Counted.backref(edgeType:)` to count the items each anchor links to, `Counted.edge(edgeType:)` to count the items that link to each anchor, or `Counted.table(table:)` to count rows. In Node, pass one of `{ backref: edgeType }`, `{ edge: edgeType }` or `{ table: name }` as the second argument. Node returns an object with a `counts` array.
 
-A local link count can fail with `invalid` if the copy lacks edges or items needed for the count. To request the count from the server, send the same IDs and direction to `POST /items/counts`. If the copy asks the server for row counts and the server omits a requested ID, the whole call fails.
+If a local link count fails with `not_answerable`, ask the server with `servedCounts(ids:counted:)` in Swift or `servedCounts(ids, counted)` in Node. Pass the same arguments. Each result has `held` set to false. Propagate other errors to the caller.
+
+The request uses the copy's server and current credential. If the copy records an instance, it checks the anonymous root before requesting counts and includes the recorded instance in `X-Marfa-Instance-Id`. If the root identifies another instance, the request is not sent: the call returns `wrong_server` at a new origin and `copy_expired` at the recorded origin, where a writing handle also expires the copy. The root check and the count are two requests, so another instance can take the address between them and still receive the count. A conforming server refuses a request that names another instance with `409 instance_changed` and returns no counts, and the call returns `copy_expired`. A reading handle stores nothing during a served count and never expires the copy; the writing handle expires it when it next finds the other instance.
+
+The server's answer must be an object with a `counts` array containing each requested ID once, in request order. Totals and group counts must be nonnegative integers. A link count must include all four status groups, and their sum must fit within the total. A row count must omit `status_groups`. If any check fails, the whole call fails with `decoding`.
 
 To time these reads and a whole listing over a copy of many notes, run from `core/`:
 
@@ -116,6 +120,7 @@ Use `removeStoreLosingAll` only when the person agrees to lose every write, incl
 - `tableRows`, `tableRow` and `tableTotals` answer in the server's shapes, with `held` set where the copy answered from a table it holds whole and unset where it asked the server. Node answers a plain object, and Swift a `JsonObject`.
 - `writeRows` queues one write of kind `write_rows` for each call, and `undoRows` one of kind `undo_rows` for the batch named. A drain sends consecutive row writes to the same table in one request and gives each write its own verdict.
 - A hold's and a fill's counts cross as numbers. In Swift, a held table's `state` is the enum `TableState` (`owed`, `filling`, `whole` and `online` in Node), its item is `itemId` (`item` in Node), and a read's options are the record `RowsAsked`, whose `direction` is `SortDirection` and whose `limit` is a `UInt32`.
+- When a follow finishes filling a table or finds it over the cap, it emits one `tableFilled` change with the item ID and table name. Read the table again when you receive this change (`device/follow-table-filled`).
 
 ## Folders in an app
 

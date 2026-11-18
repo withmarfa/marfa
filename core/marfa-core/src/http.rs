@@ -12,7 +12,7 @@ use ureq::unversioned::transport::{
 use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
-use crate::error::{ContractRefusal, CoreError, ServerAnswer};
+use crate::error::{ContractRefusal, CoreError, CoreErrorKind, ServerAnswer};
 use crate::model::SliceTier;
 use crate::wire::{
     WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
@@ -919,6 +919,12 @@ impl Http {
         match self.renewal(sent) {
             Ok(fresh) => Ok(fresh),
             Err(CoreError::Unauthorized { .. }) => Ok(None),
+            // `not_answerable` is only the copy's word on a count, which a renewal never is.
+            Err(error) if error.kind() == CoreErrorKind::NotAnswerable => {
+                Err(CoreError::RenewalFailed(Box::new(CoreError::Invalid(
+                    format!("the credential renewal failed: {error}"),
+                ))))
+            }
             Err(error) => Err(CoreError::RenewalFailed(Box::new(error))),
         }
     }
@@ -1470,28 +1476,24 @@ impl Http {
             .collect())
     }
 
-    /// `POST /items/counts` for the rows each item holds in `table`, by id.
+    /// Reads counts for distinct IDs in request order.
     pub(crate) fn item_counts(
         &self,
         ids: &[&String],
-        table: &str,
-    ) -> Result<std::collections::HashMap<String, i64>, CoreError> {
-        #[derive(serde::Deserialize)]
-        struct Count {
-            id: String,
-            total: i64,
-        }
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            counts: Vec<Count>,
-        }
-        let body = serde_json::json!({ "ids": ids, "table": table }).to_string();
-        let answer: Answer = self.read_json(&["items", "counts"], &[], Some(&body))?;
-        Ok(answer
-            .counts
-            .into_iter()
-            .map(|count| (count.id, count.total))
-            .collect())
+        counted: &crate::counts::Counted,
+    ) -> Result<Vec<(i64, Option<crate::counts::StatusGroups>)>, CoreError> {
+        use crate::counts::Counted;
+        let (field, name, linked) = match counted {
+            Counted::Backref(name) => ("backref", name, true),
+            Counted::Edge(name) => ("edge", name, true),
+            Counted::Table(name) => ("table", name, false),
+        };
+        let mut body = serde_json::Map::new();
+        body.insert("ids".into(), serde_json::json!(ids));
+        body.insert(field.into(), serde_json::json!(name));
+        let body = serde_json::Value::Object(body).to_string();
+        let answer: serde_json::Value = self.read_json(&["items", "counts"], &[], Some(&body))?;
+        decode_item_counts(&answer, ids, linked)
     }
 
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, answering only
@@ -2494,6 +2496,80 @@ fn credential_ended(refused: &CoreError) -> CoreError {
         reason: "credential_ended".into(),
         server: refused.answer().map(Box::new),
     }
+}
+
+/// Members the device does not know are ignored; anything else off the declared shape is refused.
+fn decode_item_counts(
+    answer: &serde_json::Value,
+    ids: &[&String],
+    linked: bool,
+) -> Result<Vec<(i64, Option<crate::counts::StatusGroups>)>, CoreError> {
+    let wrong = |what: &str| CoreError::Decoding(format!("the server's counts {what}"));
+    let counts = answer
+        .as_object()
+        .and_then(|answer| answer.get("counts"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| wrong("are not an object holding a list of counts"))?;
+    if counts.len() != ids.len() {
+        return Err(wrong(
+            "are not the asked ids, once each and in the order asked",
+        ));
+    }
+    let number = |count: &serde_json::Map<String, serde_json::Value>, name: &str| {
+        count
+            .get(name)
+            .and_then(serde_json::Value::as_i64)
+            .filter(|number| *number >= 0)
+            .ok_or_else(|| {
+                wrong(&format!(
+                    "do not give `{name}` as a whole number of zero or more"
+                ))
+            })
+    };
+    counts
+        .iter()
+        .zip(ids)
+        .map(|(count, id)| {
+            let count = count
+                .as_object()
+                .ok_or_else(|| wrong("hold a count that is not an object"))?;
+            if count.get("id").and_then(serde_json::Value::as_str) != Some(id.as_str()) {
+                return Err(wrong(
+                    "are not the asked ids, once each and in the order asked",
+                ));
+            }
+            let total = number(count, "total")?;
+            let groups = match (linked, count.get("status_groups")) {
+                (false, None) => None,
+                (false, Some(_)) => return Err(wrong("of rows carry status groups")),
+                (true, None) => return Err(wrong("of links carry no status groups")),
+                (true, Some(groups)) => {
+                    let groups = groups
+                        .as_object()
+                        .ok_or_else(|| wrong("give status groups that are not an object"))?;
+                    let groups = crate::counts::StatusGroups {
+                        not_started: number(groups, "not_started")?,
+                        in_progress: number(groups, "in_progress")?,
+                        completed: number(groups, "completed")?,
+                        canceled: number(groups, "canceled")?,
+                    };
+                    let grouped = [
+                        groups.not_started,
+                        groups.in_progress,
+                        groups.completed,
+                        groups.canceled,
+                    ]
+                    .iter()
+                    .try_fold(0_i64, |sum, group| sum.checked_add(*group));
+                    if grouped.is_none_or(|grouped| grouped > total) {
+                        return Err(wrong("give status groups that sum to more than the total"));
+                    }
+                    Some(groups)
+                }
+            };
+            Ok((total, groups))
+        })
+        .collect()
 }
 
 #[cfg(test)]

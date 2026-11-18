@@ -351,10 +351,11 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["rows", "undo", item, table, batch]);
   }
 
-  /** `marfa device items counts`: links from the copy, rows from the copy or the server, with `held`. */
+  /** `fromServer` requests every count from the copy's server. */
   async counts(
     ids: string[],
     counted: { backref: string } | { edge: string } | { table: string },
+    { fromServer = false }: { fromServer?: boolean } = {},
   ): Promise<Outcome<{ counts: DeviceCount[] }>> {
     const [flag, name] = Object.entries(counted)[0] as [string, string];
     return this.json<{ counts: DeviceCount[] }>([
@@ -363,6 +364,7 @@ export class CliDevice implements DeviceUnderTest {
       ...ids,
       `--${flag}`,
       name,
+      ...(fromServer ? ["--from-server"] : []),
       ...this.server(),
     ]);
   }

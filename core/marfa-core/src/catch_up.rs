@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::drain::DrainReport;
 use crate::error::CoreError;
 use crate::http::{EndsBy, Http};
+use crate::lock::Handle;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
 use crate::reach::{self, Context};
@@ -144,13 +145,7 @@ fn unexplained(
         .find(|named| !refreshed.contains(named))
 }
 
-/// What a held stream changed in the copy: an event it applied, with the
-/// item or edge it was about, or a catalog that differs from the one held,
-/// naming neither. Or what became of the server: unreachable, with why, once
-/// when a stream cannot be had or an event it sends cannot be taken, and
-/// reachable once when one is had, or the event taken, again.
-/// Or what became of the queue it drained then. `cursor` is the cursor held
-/// after it.
+/// A follow or watch notification with the cursor held after the change.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
     pub event: ChangeEvent,
@@ -172,7 +167,14 @@ impl Serialize for Change {
             ChangeEvent::Saved(version) => Some(version),
             _ => None,
         };
-        let mut change = serializer.serialize_struct("Change", 6 + usize::from(saved.is_some()))?;
+        let filled = match &self.event {
+            ChangeEvent::TableFilled(table) => Some(table),
+            _ => None,
+        };
+        let mut change = serializer.serialize_struct(
+            "Change",
+            6 + usize::from(saved.is_some()) + usize::from(filled.is_some()),
+        )?;
         change.serialize_field("event", self.event.as_str())?;
         change.serialize_field("item_id", &self.item_id)?;
         change.serialize_field("edge_id", &self.edge_id)?;
@@ -193,14 +195,14 @@ impl Serialize for Change {
         if let Some(version) = saved {
             change.serialize_field("data_version", version)?;
         }
+        if let Some(table) = filled {
+            change.serialize_field("table", table)?;
+        }
         change.end()
     }
 }
 
-/// What a `Change` tells. Written as text by its name: the applied event's
-/// type, or `catalog.changed`, `server.unreachable`, `server.reachable`,
-/// `queue.drained`, `queue.not_drained`, and, from a watch only,
-/// `store.saved` or `watch.failed`.
+/// The event or local change reported by a follow or watch.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
     /// An event the stream applied, by the event's type, or a change to the
@@ -227,6 +229,8 @@ pub enum ChangeEvent {
     /// catch-up; a reading handle's reads go on, and the first that works is
     /// told as `Saved`.
     WatchFailed(CoreError),
+    /// The follow finished filling this table or found it over the cap.
+    TableFilled(String),
 }
 
 impl ChangeEvent {
@@ -240,6 +244,7 @@ impl ChangeEvent {
             ChangeEvent::QueueNotDrained(_) => "queue.not_drained",
             ChangeEvent::Saved(_) => "store.saved",
             ChangeEvent::WatchFailed(_) => "watch.failed",
+            ChangeEvent::TableFilled(_) => "table.filled",
         }
     }
 }
@@ -994,6 +999,8 @@ pub(crate) fn divergence(reason: &str) -> Option<crate::model::HydrateRestart> {
 /// copy never held. A copy that names none learns it at its next hydration,
 /// which a catch-up sends it to. A server that cannot be asked is an error
 /// like any other, so nothing is sent while the instance is unconfirmed.
+/// A reading handle refuses another instance without expiring the copy and
+/// stores nothing; the writer expires it on its own next call.
 pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
@@ -1014,7 +1021,10 @@ pub(crate) fn refuse_another_instance_until(
     };
     let served = ask_unless_stopped(stop, http, Http::served)?;
     same_instance(core, &served.instance_id, generation)?;
-    store::note_request_limit(&*core.conn()?, served.max_request_bytes)
+    match core.handle() {
+        Handle::Writer => store::note_request_limit(&*core.conn()?, served.max_request_bytes),
+        Handle::Reader => Ok(()),
+    }
 }
 
 /// Runs a request on a thread holding only the transport and ends with
@@ -1128,9 +1138,9 @@ pub(crate) fn expire_for_another_instance(
     })
 }
 
-/// Sends one write naming the copy's instance. Where another instance at the
-/// origin refuses it, the copy is expired and the call ends `copy_expired`
-/// with the reason `instance_changed`.
+/// Sends one request naming the copy's instance. Where another instance at
+/// the origin refuses it, the call ends `copy_expired` with the reason
+/// `instance_changed`, and a writer expires the copy.
 pub(crate) fn write_naming_instance<T>(
     core: &Core,
     http: &Http,
@@ -1139,7 +1149,7 @@ pub(crate) fn write_naming_instance<T>(
     let (named, generation) = naming_instance(core, http)?;
     match write(&named) {
         Err(CoreError::CopyExpired { reason, server })
-            if reason == crate::http::INSTANCE_CHANGED =>
+            if reason == crate::http::INSTANCE_CHANGED && core.handle() == Handle::Writer =>
         {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
@@ -1169,8 +1179,10 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
             "this copy does not name the instance it was built from, and the server at this address is instance {served}"
         ),
     };
-    reach::expire(&tx)?;
-    tx.commit()?;
+    if core.handle() == Handle::Writer {
+        reach::expire(&tx)?;
+        tx.commit()?;
+    }
     Err(CoreError::expired(reason))
 }
 
@@ -1734,6 +1746,12 @@ fn read_stream(
                 match pass.step(core, context, now(), stop) {
                     Ok(crate::tables::Step::Done) => filling = false,
                     Ok(crate::tables::Step::Moved) => {}
+                    Ok(crate::tables::Step::Settled { item, table }) => on_change(&Change {
+                        event: ChangeEvent::TableFilled(table),
+                        item_id: Some(item),
+                        edge_id: None,
+                        cursor: report.cursor.clone(),
+                    }),
                     Ok(crate::tables::Step::Failed(failure)) => {
                         report.tables_failed += 1;
                         report.last_failure = Some(failure);

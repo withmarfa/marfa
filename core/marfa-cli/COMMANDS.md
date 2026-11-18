@@ -46,7 +46,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_answerable`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -3047,7 +3047,7 @@ Hold the event stream open and apply each event as it arrives, printing a line f
 
 On a copy never hydrated, or whose hydration was interrupted, it waits for a hydration and asks the server nothing, as an app's follow does. This process holds the store until it ends, so no other can hydrate it meanwhile: hydrate first. An expired copy is refused.
 
-When the server is reachable again after it was lost, it drains the queue once if writes wait, and prints `queue.drained` with what the drain did, or `queue.not_drained` with why it did not.
+When the server is reachable again after it was lost, it drains the queue once if writes wait, and prints `queue.drained` with what the drain did, or `queue.not_drained` with why it did not. When its fill leaves a held table whole or finds it past the cap, it prints `table.filled` with the item and the table.
 
 ```text
 marfa device follow [OPTIONS]
@@ -3187,7 +3187,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Count, for each item, the active items an edge type links to it or the rows it holds in a table, as `marfa items counts` does.
 
-Links are counted from the copy, and refused `invalid` where it does not hold the edge type whole or may lack an item the server counts that an edge reaches. Rows are counted from the copy for a table it holds whole and by the server for any other; `held` says which. A count the copy answers needs no server and no credential.
+Links are counted from the copy, and refused `not_answerable` where it does not hold the edge type whole or may lack an item the server counts that an edge reaches. Rows are counted from the copy for a table it holds whole and by the server for any other; `held` says which. A count the copy answers needs no server and no credential.
 
 ```text
 marfa device items counts [OPTIONS] <--backref <EDGE_TYPE>|--edge <EDGE_TYPE>|--table <TABLE>> <ID>...
@@ -3202,6 +3202,7 @@ marfa device items counts [OPTIONS] <--backref <EDGE_TYPE>|--edge <EDGE_TYPE>|--
 | `--backref <EDGE_TYPE>` | Count the items an edge of this type leaves each item for, such as `parent-of` for children. |
 | `--edge <EDGE_TYPE>` | Count the items with an edge of this type to each item, such as `in-collection` for a collection's members. |
 | `--table <TABLE>` | Count the rows each item holds in this table. |
+| `--from-server` | Ask the copy's own server for every count, after the instance check a moved copy makes, and answer `held` false. An answer that is not the asked ids once each in order, a link count without its four status groups and a count of rows with any are refused `decoding`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
