@@ -551,7 +551,7 @@ fn a_reading_open_names_what_is_wrong_with_the_file() {
     std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
     assert!(matches!(
         refusal(&words),
-        CoreError::StoreDamaged { path, reason, unsent: None }
+        CoreError::StoreDamaged { path, reason, unsent: None, .. }
             if path == words.display().to_string() && reason.contains("not a database")
     ));
 

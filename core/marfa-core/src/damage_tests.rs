@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::stop_tests::note;
-use crate::{Core, CoreError, QueuedWrite, SetAside, blob, store};
+use crate::{Core, CoreError, QueuedWrite, Result, SetAside, blob, store};
 
 /// Every test here makes its folder through `folder` or `folder_in_temp`,
 /// which refuse to run outside nextest instead of failing by chance.
@@ -288,7 +288,18 @@ fn a_set_aside_that_stops_part_way_loses_nothing_and_asking_again_finishes_it() 
             let _stopping = crate::fault::fail_on_this_thread(&format!("set-aside-stop:{stop}"));
             assert!(Core::set_aside_damaged(&path).is_err(), "{stop}");
         }
-        let (named, unsent, said) = damaged(Core::open(&path, None).err().unwrap());
+        let refused = Core::open(&path, None).err().unwrap();
+        assert!(
+            matches!(
+                refused,
+                CoreError::StoreDamaged {
+                    set_aside_stopped: true,
+                    ..
+                }
+            ),
+            "{stop}: {refused:?}"
+        );
+        let (named, unsent, said) = damaged(refused);
         assert_eq!(named, path.display().to_string());
         assert_eq!(unsent, Some(2), "{stop}: {said}");
         assert!(said.contains("stopped part way"), "{said}");
@@ -371,6 +382,177 @@ fn a_damaged_store_is_removed_only_when_every_write_is_agreed_lost() {
     assert!(path.exists());
     Core::remove_store_losing_all(&path).unwrap();
     assert!(!path.exists());
+}
+
+#[test]
+fn removing_losing_all_refuses_a_store_whose_queue_reads_and_keeps_its_writes() {
+    let (_dir, path, queued) = store_with(2);
+    let good = bytes(&path).unwrap();
+    damage_table(&path, "queue");
+    assert!(matches!(Core::read_unsent(&path), Err(CoreError::Store(_))));
+
+    // The app's earlier read does not establish what removal will find.
+    std::fs::write(&path, &good).unwrap();
+    damage_table(&path, "items");
+    let before = bytes(&path);
+    let refused = Core::remove_store_losing_all(&path).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            CoreError::UnsentDiffers {
+                unsent: Some(2),
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(bytes(&path), before);
+    let shown = Core::read_unsent(&path).unwrap();
+    assert_eq!(shown.writes.len(), queued.len());
+    Core::remove_store(&path, &shown.confirmation).unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn removing_losing_all_goes_for_a_damaged_store_whose_queue_reads_empty() {
+    let (_dir, path, _) = store_with(0);
+    damage_table(&path, "items");
+    Core::remove_store_losing_all(&path).unwrap();
+    assert!(!path.exists());
+}
+
+/// The flag each operation that can refuse `store_damaged` gives for `path`.
+fn stopped_flags(path: &Path) -> Vec<(&'static str, Option<bool>)> {
+    let flag = |outcome: Result<()>| match outcome {
+        Err(CoreError::StoreDamaged {
+            set_aside_stopped, ..
+        }) => Some(set_aside_stopped),
+        _ => None,
+    };
+    vec![
+        ("open", flag(Core::open(path, None).map(drop))),
+        ("check", flag(Core::check_store(path))),
+        ("read_unsent", flag(Core::read_unsent(path).map(drop))),
+        (
+            "remove",
+            flag(Core::remove_store(path, &store::confirmation(&[]))),
+        ),
+        ("remove_all", flag(Core::remove_store_losing_all(path))),
+        ("replace", flag(Core::replace_refused(path, None).map(drop))),
+    ]
+}
+
+fn mark_carrying(path: &Path) {
+    let conn = store::open(&beside(path, ".carrying")).unwrap();
+    store::meta_set(&conn, "set_aside_making", "true").unwrap();
+    store::without_log(&conn).unwrap();
+}
+
+#[test]
+fn every_operation_gives_the_same_set_aside_flag_for_a_damaged_store_with_a_set_aside_marked() {
+    let (_dir, path, _) = store_with(1);
+    damage_table(&path, "items");
+    // The witness: with no set-aside the flag is false wherever it is given.
+    for (name, flag) in stopped_flags(&path) {
+        assert_ne!(flag, Some(true), "{name}");
+    }
+    mark_carrying(&path);
+    let flags = stopped_flags(&path);
+    assert!(
+        flags
+            .iter()
+            .any(|(name, flag)| *name == "check" && flag.is_some()),
+        "{flags:?}"
+    );
+    for (name, flag) in flags {
+        assert_eq!(flag, Some(true), "{name}");
+    }
+}
+
+#[test]
+fn a_file_at_the_set_asides_name_stops_every_operation_with_the_flag_true_until_it_is_moved() {
+    let (_dir, path, queued) = store_with(1);
+    let made = beside(&path, ".carrying");
+    std::fs::write(&made, b"unrelated bytes").unwrap();
+    for (name, flag) in stopped_flags(&path) {
+        if name != "check" {
+            assert_eq!(flag, Some(true), "{name}");
+        }
+    }
+    assert_eq!(bytes(&made).unwrap(), b"unrelated bytes");
+    assert!(path.exists());
+
+    std::fs::remove_file(&made).unwrap();
+    let shown = Core::read_unsent(&path).unwrap();
+    assert_eq!(shown.writes.len(), queued.len());
+    Core::remove_store(&path, &shown.confirmation).unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn removing_losing_all_goes_for_a_queue_with_one_readable_write_and_one_that_does_not() {
+    let (_dir, path, queued) = store_with(2);
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE queue SET payload = x'ff' WHERE id = ?1",
+            [&queued[1].id],
+        )
+        .unwrap();
+    }
+    // The witness: the queue does not list, though one write in it reads.
+    assert!(matches!(Core::read_unsent(&path), Err(CoreError::Store(_))));
+    assert!(matches!(
+        Core::remove_store(&path, &store::confirmation(&[])),
+        Err(CoreError::UnsentDiffers { unsent: None, .. })
+    ));
+    assert!(path.exists());
+
+    Core::remove_store_losing_all(&path).unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+fn a_store_sqlite_cannot_read_is_refused_without_the_set_aside_flag() {
+    let (_dir, path, queued) = store_with(1);
+    damage_table(&path, "items");
+    let core = Core::open(&path, None).unwrap();
+    let met = core.get(&queued[0].item_id.clone().unwrap()).unwrap_err();
+    assert!(
+        matches!(
+            met,
+            CoreError::StoreDamaged {
+                set_aside_stopped: false,
+                ..
+            }
+        ),
+        "{met:?}"
+    );
+    drop(core);
+    let checked = Core::check_store(&path).unwrap_err();
+    assert!(
+        matches!(
+            checked,
+            CoreError::StoreDamaged {
+                set_aside_stopped: false,
+                ..
+            }
+        ),
+        "{checked:?}"
+    );
+    let junk = path.with_file_name("junk.sqlite");
+    std::fs::write(&junk, "words, not a database. ".repeat(40)).unwrap();
+    let opened = Core::open(&junk, None).err().unwrap();
+    assert!(
+        matches!(
+            opened,
+            CoreError::StoreDamaged {
+                set_aside_stopped: false,
+                ..
+            }
+        ),
+        "{opened:?}"
+    );
 }
 
 #[test]
@@ -578,7 +760,18 @@ fn a_store_whose_set_aside_stopped_is_not_removed_or_replaced_until_it_finishes(
         // Not shown as no writes, which the store set aside still holds.
         Core::read_unsent(&path).err(),
     ] {
-        let (named, _, said) = damaged(refused.expect("refused"));
+        let refused = refused.expect("refused");
+        assert!(
+            matches!(
+                refused,
+                CoreError::StoreDamaged {
+                    set_aside_stopped: true,
+                    ..
+                }
+            ),
+            "{refused:?}"
+        );
+        let (named, _, said) = damaged(refused);
         assert_eq!(named, path.display().to_string());
         assert!(said.contains("stopped part way"), "{said}");
         assert!(said.contains("Set it aside"), "{said}");
@@ -592,7 +785,14 @@ fn a_store_whose_set_aside_stopped_is_not_removed_or_replaced_until_it_finishes(
     let done = set_aside(&path);
     assert!(done.carried > 0);
     assert!(held());
-    Core::remove_store_losing_all(&path).unwrap();
+    let shown = Core::read_unsent(&path).unwrap();
+    let all = Core::remove_store_losing_all(&path);
+    assert!(
+        matches!(all, Err(CoreError::UnsentDiffers { .. })),
+        "{all:?} {:?}",
+        shown.writes
+    );
+    Core::remove_store(&path, &shown.confirmation).unwrap();
     assert!(!path.exists() && !made.exists());
     Core::open(&path, None).unwrap();
 }

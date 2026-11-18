@@ -159,6 +159,9 @@ pub enum CoreError {
         /// Writes in its queue the server has not taken, as `WrongSchema`
         /// counts them; `None` where the queue cannot be read whole.
         unsent: Option<u64>,
+        /// True while a file stands at the set-aside's name, which blocks
+        /// removal and replacement whether a set-aside left it or not.
+        set_aside_stopped: bool,
     },
     /// A removal of a store was refused, leaving it as it was, because the
     /// writes it holds that the server has not taken are not those the
@@ -693,6 +696,7 @@ impl From<rusqlite::Error> for CoreError {
                     path: String::new(),
                     reason: error.to_string(),
                     unsent: None,
+                    set_aside_stopped: false,
                 }
             }
             Some(rusqlite::ErrorCode::DatabaseBusy) => CoreError::StoreBusy(error.to_string()),

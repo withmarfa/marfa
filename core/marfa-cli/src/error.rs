@@ -1115,6 +1115,7 @@ mod tests {
             path: "copy.sqlite".into(),
             reason: "file is not a database".into(),
             unsent: Some(1),
+            set_aside_stopped: false,
         })
         .envelope();
         assert_eq!(damaged["error"]["code"], "store_damaged");

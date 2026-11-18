@@ -1707,10 +1707,12 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             path,
             reason,
             unsent,
+            set_aside_stopped,
         } => vec![
             ("path", json!(path)),
             ("reason", json!(reason)),
             ("unsent", json!(unsent)),
+            ("setAsideStopped", json!(set_aside_stopped)),
         ],
         E::UnsentDiffers { path, unsent } => {
             vec![("path", json!(path)), ("unsent", json!(unsent))]
@@ -2534,11 +2536,7 @@ impl MarfaCore {
         marfa_core::Core::remove_store(path, &confirmation).map_err(|error| failure(env, error))
     }
 
-    /// Removes the store at `path` as `removeStore` does, agreeing to lose
-    /// every write it holds that the server has not taken, whatever they are
-    /// and whether or not they can be read, as for a store `open`
-    /// refuses with `store_damaged`. Refuses as `removeStore` does but for
-    /// the writes.
+    /// Like `removeStore`, but accepts loss without a list only for an unreadable or empty queue.
     #[napi]
     pub fn remove_store_losing_all(env: Env, path: String) -> Result<()> {
         marfa_core::Core::remove_store_losing_all(path).map_err(|error| failure(env, error))

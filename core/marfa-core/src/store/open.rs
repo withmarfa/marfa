@@ -95,6 +95,7 @@ fn in_folder(error: CoreError, label: &Path, conn: &Connection) -> CoreError {
                 path: label.display().to_string(),
                 reason,
                 unsent: folder_unsent(conn),
+                set_aside_stopped: false,
             }
         }
         other => other,

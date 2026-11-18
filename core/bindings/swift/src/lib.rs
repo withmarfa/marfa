@@ -1518,6 +1518,8 @@ pub enum MarfaError {
         /// Writes in its queue the server has not taken; `None` where the
         /// queue cannot be read whole.
         unsent: Option<u64>,
+        /// True while set-aside recovery blocks removal or replacement.
+        set_aside_stopped: bool,
         message: String,
     },
     /// A removal of a store was refused, leaving it as it was, because the
@@ -1791,10 +1793,12 @@ impl From<marfa_core::CoreError> for MarfaError {
                 path,
                 reason,
                 unsent,
+                set_aside_stopped,
             } => MarfaError::StoreDamaged {
                 path,
                 reason,
                 unsent,
+                set_aside_stopped,
                 message,
             },
             E::UnsentDiffers { path, unsent } => MarfaError::UnsentDiffers {
@@ -3308,10 +3312,7 @@ pub fn remove_store(path: String, confirmation: String) -> Result<(), MarfaError
     Ok(marfa_core::Core::remove_store(path, &confirmation)?)
 }
 
-/// Removes the store at `path` as `removeStore` does, agreeing to lose every
-/// write it holds that the server has not taken, whatever they are and
-/// whether or not they can be read, as for a store `open` refuses with
-/// `StoreDamaged`. Throws as `removeStore` does but for the writes.
+/// Like `removeStore`, but accepts loss without a list only for an unreadable or empty queue.
 #[uniffi::export]
 pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store_losing_all(path)?)
@@ -3516,6 +3517,7 @@ mod tests {
                 path: text(),
                 reason: text(),
                 unsent: None,
+                set_aside_stopped: false,
             },
             E::UnsentDiffers {
                 path: text(),
@@ -3965,6 +3967,7 @@ mod tests {
                     path: text(),
                     reason: text(),
                     unsent: Some(1),
+                    set_aside_stopped: true,
                 }
                 .into(),
                 "StoreDamaged",
@@ -4215,6 +4218,27 @@ mod tests {
         ] {
             assert_eq!(unanswered.answer(), None);
             assert_eq!(said_by_server(&MarfaError::from(unanswered)), None);
+        }
+    }
+
+    #[test]
+    fn a_damaged_store_crosses_with_whether_its_set_aside_stopped() {
+        for stopped in [false, true] {
+            let crossed: MarfaError = marfa_core::CoreError::StoreDamaged {
+                path: "core.sqlite".into(),
+                reason: "a reason".into(),
+                unsent: Some(2),
+                set_aside_stopped: stopped,
+            }
+            .into();
+            assert!(
+                matches!(
+                    crossed,
+                    MarfaError::StoreDamaged { unsent: Some(2), set_aside_stopped, .. }
+                        if set_aside_stopped == stopped
+                ),
+                "{crossed:?}"
+            );
         }
     }
 
