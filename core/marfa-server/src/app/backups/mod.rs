@@ -1500,11 +1500,15 @@ impl App {
     /// What `/health` says of backups: whether they run, how the last went, and the store's state.
     pub async fn backup_health(&self) -> BackupHealth {
         let mut health = serde_json::Map::new();
-        let attachment = self.named_destination().ok().map(|wanted| {
-            self.blobs
-                .stores_in_use(&wanted)
-                .map_err(|unsettled| unsettled.message)
-        });
+        // While a follow is still running, the store in use is reported until it ends.
+        let attachment = match self.named_destination() {
+            Err(_) => None,
+            Ok(wanted) => Some(match self.blobs.stores_in_use(&wanted) {
+                Ok(attached) => Ok(attached),
+                Err(unsettled) if !self.blobs.settled() => Err(unsettled.message),
+                Err(_) => Ok(self.blobs.attachment()),
+            }),
+        };
         let destination = match &attachment {
             Some(Ok(attached)) => Destination::of(attached),
             _ => None,

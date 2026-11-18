@@ -15,6 +15,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { tempFolder } from "../../utils/temp-folder.js";
+import { waitFor } from "../../utils/wait.js";
 
 const SETTINGS = { ...DISK_ONLY, MARFA_BACKUP_INTERVAL_SECONDS: "0" };
 
@@ -89,6 +90,17 @@ async function names(server: FreshServer): Promise<string[]> {
   return listed.data.data.map((backup) => backup.name);
 }
 
+/** Sets a destination and waits until a list answers from it, for a test's setup. */
+async function setAndWait(
+  server: FreshServer,
+  settings: Record<string, string | boolean>,
+): Promise<void> {
+  await setTo(server, settings);
+  await waitFor("the destination to be in use", async () =>
+    (await ownerOf(server).listBackups()).status === 200 ? true : undefined,
+  );
+}
+
 async function took(server: FreshServer): Promise<string> {
   const taken = await ownerOf(server).runBackup();
   expect(taken.status, JSON.stringify(taken.error)).toBe(200);
@@ -161,9 +173,9 @@ describe("a destination set or unset through /config", () => {
           const owner = ownerOf(server);
           const instance = await instanceIdOf(server);
           const [first, second] = [make(), make()];
-          await setTo(server, first.set);
+          await setAndWait(server, first.set);
           const inFirst = await took(server);
-          await setTo(server, second.set);
+          await setAndWait(server, second.set);
           const inSecond = await took(server);
 
           await setTo(server, first.set);
