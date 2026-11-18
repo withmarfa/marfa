@@ -159,7 +159,10 @@ fn a_copy_lapses_exactly_where_it_holds_a_slice_it_cannot_keep_current() {
             }
         }
     }
-    assert!(lapsed_states > 0, "no state lapsed, so nothing was compared");
+    assert!(
+        lapsed_states > 0,
+        "no state lapsed, so nothing was compared"
+    );
 }
 
 #[test]

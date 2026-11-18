@@ -25,6 +25,7 @@ pub const META_INSTANCE_ID: &str = "instance_id";
 /// The largest request body the root last named, in bytes; absent where it
 /// has named none (`queue-and-verdicts/request-limit-unknown`).
 const META_REQUEST_LIMIT: &str = "request_limit";
+const META_TYPES_STAMP: &str = "types_stamp";
 
 /// Set where a write was refused for that limit, so a raised one is seen with
 /// nothing to send: a drain or a folder's pass reads the root. It holds
@@ -169,6 +170,22 @@ pub fn meta_under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String
 pub fn meta_delete_under(conn: &Connection, prefix: &str) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM meta WHERE key >= ?1 AND key < ?2")?
         .execute(params![prefix, prefix_end(prefix)])?;
+    Ok(())
+}
+
+/// A value no other state of the copy's types has held, which `replace_types`
+/// sets with the rows it writes, so it goes back with them where they roll
+/// back. None until the types are first written.
+pub fn types_stamp(conn: &Connection) -> Result<Option<String>, CoreError> {
+    meta_get(conn, META_TYPES_STAMP)
+}
+
+pub(crate) fn restamp_types(conn: &Connection) -> Result<(), CoreError> {
+    conn.prepare_cached(
+        "INSERT INTO meta (key, value) VALUES (?1, hex(randomblob(16)))
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )?
+    .execute([META_TYPES_STAMP])?;
     Ok(())
 }
 

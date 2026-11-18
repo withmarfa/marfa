@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -173,8 +174,38 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
     })
 }
 
+/// The entries of the last few type sets read, by the stamp each was read
+/// under. A stamp names one set of types in any store, so a copy whose stamp
+/// is here holds the entries kept under it.
+static READ: Mutex<Vec<(String, Arc<HashMap<String, CatalogEntry>>)>> = Mutex::new(Vec::new());
+
+const KEPT: usize = 8;
+
 /// The catalog the copy holds, with the request limit the server last said.
 pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
+    let limit = crate::store::request_limit(conn)?;
+    let Some(stamp) = store::types_stamp(conn)? else {
+        return Ok(Catalog::new(read_entries(conn)?, limit));
+    };
+    let kept = READ.lock().ok().and_then(|read| {
+        read.iter()
+            .find(|(held, _)| *held == stamp)
+            .map(|(_, entries)| entries.clone())
+    });
+    if let Some(entries) = kept {
+        return Ok(Catalog::shared(entries, limit));
+    }
+    let entries = Arc::new(read_entries(conn)?);
+    if let Ok(mut read) = READ.lock() {
+        if read.len() == KEPT {
+            read.remove(0);
+        }
+        read.push((stamp, entries.clone()));
+    }
+    Ok(Catalog::shared(entries, limit))
+}
+
+fn read_entries(conn: &Connection) -> Result<HashMap<String, CatalogEntry>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT id, parent, title_field, thumbnail_field,
                 json_extract(json, '$.display_hints.body_field'),
@@ -217,7 +248,7 @@ pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
             },
         );
     }
-    Ok(Catalog::new(entries, crate::store::request_limit(conn)?))
+    Ok(entries)
 }
 
 /// What only a working copy can say of a catalog: its words as an item shows
@@ -1150,5 +1181,103 @@ mod tests {
             (labelled.label.as_str(), labelled.reverse_label.as_str()),
             ("Reviews", "Reviews")
         );
+    }
+
+    fn type_reads_during(conn: &mut Connection, run: impl FnOnce(&Connection)) -> usize {
+        use rusqlite::trace::{TraceEvent, TraceEventCodes};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static READS: AtomicUsize = AtomicUsize::new(0);
+        READS.store(0, Ordering::SeqCst);
+        conn.trace_v2(
+            TraceEventCodes::SQLITE_TRACE_STMT,
+            Some(|event: TraceEvent<'_>| {
+                if let TraceEvent::Stmt(_, sql) = event {
+                    if sql.contains("FROM types") {
+                        READS.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }),
+        )
+        .unwrap();
+        run(conn);
+        conn.trace_v2(TraceEventCodes::empty(), None::<fn(TraceEvent<'_>)>)
+            .unwrap();
+        READS.load(Ordering::SeqCst)
+    }
+
+    fn types_of(ids: &[&str]) -> Vec<marfa_rules::wire::WireType> {
+        ids.iter()
+            .map(|id| store::testing::wire_type(id, None, None))
+            .collect()
+    }
+
+    #[test]
+    fn a_catalog_is_read_from_the_rows_once_for_as_long_as_the_types_are_unchanged() {
+        let mut conn = store::open_in_memory().unwrap();
+        store::replace_types(&conn, &types_of(&["acme.a", "acme.b"])).unwrap();
+        let first = load(&conn).unwrap();
+        let reads = type_reads_during(&mut conn, |conn| {
+            for _ in 0..5 {
+                let again = load(conn).unwrap();
+                assert!(Arc::ptr_eq(first.entries(), again.entries()));
+            }
+        });
+        assert_eq!(reads, 0, "the rows were read again with no change to them");
+
+        store::note_request_limit(&conn, Some(1234)).unwrap();
+        let limited = load(&conn).unwrap();
+        assert_eq!(limited.request_limit(), Some(1234));
+        assert!(Arc::ptr_eq(first.entries(), limited.entries()));
+
+        store::replace_types(&conn, &types_of(&["acme.a", "acme.b"])).unwrap();
+        assert!(Arc::ptr_eq(first.entries(), load(&conn).unwrap().entries()));
+    }
+
+    #[test]
+    fn a_catalog_follows_each_change_to_the_types_and_each_rollback_of_one() {
+        let mut conn = store::open_in_memory().unwrap();
+        store::replace_types(&conn, &types_of(&["acme.a"])).unwrap();
+        let before = load(&conn).unwrap();
+        assert!(before.known("acme.a") && !before.known("acme.b"));
+
+        let tx = conn.transaction().unwrap();
+        store::replace_types(&tx, &types_of(&["acme.b"])).unwrap();
+        let inside = load(&tx).unwrap();
+        assert!(inside.known("acme.b") && !inside.known("acme.a"));
+        tx.rollback().unwrap();
+        let after = load(&conn).unwrap();
+        assert!(after.known("acme.a") && !after.known("acme.b"));
+        assert!(Arc::ptr_eq(before.entries(), after.entries()));
+
+        store::replace_types(&conn, &types_of(&["acme.c"])).unwrap();
+        let changed = load(&conn).unwrap();
+        assert!(changed.known("acme.c") && !changed.known("acme.a"));
+    }
+
+    #[test]
+    fn two_stores_with_different_types_never_share_a_catalog() {
+        let one = store::open_in_memory().unwrap();
+        let two = store::open_in_memory().unwrap();
+        store::replace_types(&one, &types_of(&["acme.one"])).unwrap();
+        store::replace_types(&two, &types_of(&["acme.two"])).unwrap();
+        for _ in 0..2 {
+            assert!(load(&one).unwrap().known("acme.one"));
+            assert!(load(&two).unwrap().known("acme.two"));
+            assert!(!load(&two).unwrap().known("acme.one"));
+        }
+    }
+
+    #[test]
+    fn a_store_whose_types_carry_no_stamp_is_read_each_time() {
+        let mut conn = store::open_in_memory().unwrap();
+        conn.execute("INSERT INTO types (id, json) VALUES ('acme.old', '{}')", [])
+            .unwrap();
+        assert!(store::types_stamp(&conn).unwrap().is_none());
+        assert!(load(&conn).unwrap().known("acme.old"));
+        let reads = type_reads_during(&mut conn, |conn| {
+            load(conn).unwrap();
+            load(conn).unwrap();
+        });
+        assert_eq!(reads, 2);
     }
 }
