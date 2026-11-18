@@ -5390,11 +5390,9 @@ mod tests {
         };
         let report = folder.send_settings_edit().unwrap();
         assert!(
-            report
-                .flagged
-                .as_deref()
-                .is_some_and(|flag| flag.contains("not sent yet")
-                    && flag.contains("being moved to the bin")),
+            report.flagged.as_deref().is_some_and(
+                |flag| flag.contains("not sent yet") && flag.contains("being moved to the bin")
+            ),
             "{report:?}"
         );
         assert!(server.seen(&door).is_empty());

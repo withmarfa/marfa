@@ -879,9 +879,11 @@ fn releasing_a_refused_write_to_an_item_the_trash_holds_is_refused() {
         let verdict: Option<String> = core
             .conn()
             .unwrap()
-            .query_row("SELECT verdict FROM queue WHERE id = ?1", [&write.id], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT verdict FROM queue WHERE id = ?1",
+                [&write.id],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(verdict.as_deref(), Some("refused"));
     })
