@@ -2580,9 +2580,9 @@ Where a copy names the instance it was hydrated from, while a device holds the c
 
 ### `device/server-reads-instance-each-request`
 
-Where a copy names the instance it was hydrated from, a device MUST confirm that the server's root names that instance before each request it sends for a table's rows, one row or totals, and before each request for an item a link names by its id, a request repeated after a credential renewal included.
+Where a copy names the instance it was hydrated from, a device MUST confirm that the server's root names that instance before each server request for a direct table read (rows, one row or totals) or a link lookup by item ID, including a retry after credential renewal.
 
-**Reason:** an instance can be replaced between two requests, or between a request refused for its credential and the request that repeats it. The statement does not reach a table fill's pages or a row read again under a reach, which a hydration or catch-up pass confirms once, nor a read of an item whose id an event carried.
+**Reason:** the instance at an address can change between requests, including while a device renews its credential. Hydration and catch-up confirm the instance once per pass for table fills and row rereads under a reach.
 
 **Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it repeats a table read after a credential renewal`, `› sends no second link id to an instance that replaced the first between two lookups`.
 

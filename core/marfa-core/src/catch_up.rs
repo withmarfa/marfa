@@ -1039,8 +1039,7 @@ pub(crate) fn refuse_another_instance_until(
     }
 }
 
-/// The root's `404` says nothing about the item a request names, which a
-/// reader of the request's own `404` would take as absent.
+/// Only the item's own `404` establishes its absence.
 fn unconfirmed(error: CoreError) -> CoreError {
     match error {
         CoreError::NotFound { code, message, .. } => CoreError::Server {
@@ -1058,10 +1057,7 @@ enum Ask {
     Answered,
 }
 
-/// `ask_unless_stopped` for a request that confirms something before each
-/// attempt it makes, a retry after a credential renewal included. `confirm`
-/// runs here, on the calling thread, since it holds the store; the request
-/// waits for its verdict.
+/// Confirmation uses the caller's store, so it runs on the calling thread.
 pub(crate) fn ask_confirmed_unless_stopped<T: Send + 'static>(
     stop: &AtomicBool,
     http: &Http,
