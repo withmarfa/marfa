@@ -105,8 +105,7 @@ it("ends blob-replicate as failed while the record of the folder the last write 
   expect((await stores()).attached).toEqual([filesOf(first)]);
 
   try {
-    // The fault acts once each time it is set: first on the follow the write starts, then on
-    // the run's own follow.
+    // Each follow needs its own fault because the fault fires only once.
     await server!.setFault("fail:stores-record");
     await name(named);
     await firedOnce("fail:stores-record");

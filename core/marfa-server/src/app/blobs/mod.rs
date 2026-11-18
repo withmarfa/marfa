@@ -1113,8 +1113,7 @@ impl App {
         Ok(recorded)
     }
 
-    /// An adopt may have recorded a new ID without claiming the folder. Refuses where the folder
-    /// does not answer in time or a claim given up on has not ended, which leaves it unknown.
+    /// An adopt may have recorded a new ID without finishing its claim on the folder.
     pub(crate) async fn retake_folder(&self, folder: &Arc<Folder>) -> Result<()> {
         let deadline = self.blobs.check();
         let late = || {

@@ -409,8 +409,7 @@ fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
     )
 }
 
-/// Brings the stores in use to the settings, then copies to them; a run that could not bring
-/// them there fails, whatever it copied.
+/// Keep a failed follow visible even when file copying succeeds.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let unsettled = match app.settle_stores(super::Retry::Settle).await {
         Ok(()) => None,

@@ -53,8 +53,7 @@ pub struct Folder {
     started: SystemTime,
 }
 
-/// Files areas whose claim has started and whose blocking work has not ended, which can outlast
-/// a deadline. Kept by area, since a folder opened again after a switch away is another `Folder`.
+/// A timed-out claim outlives its caller and may share its area with a reopened folder.
 static CLAIMING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 
 fn claiming() -> std::sync::MutexGuard<'static, BTreeSet<PathBuf>> {
@@ -234,9 +233,7 @@ impl Folder {
         claiming().contains(&self.area())
     }
 
-    /// Takes the files area as the store `id` within `deadline`, or answers `None` where the
-    /// folder did not answer in time or an earlier claim has not ended. A claim given up on runs
-    /// to its end, and no other starts on this files area until it has.
+    /// A timeout does not cancel the blocking claim.
     pub async fn claim_within(
         self: &Arc<Self>,
         id: String,
@@ -827,8 +824,7 @@ mod tests {
             .claim_within("other".into(), Duration::from_millis(50))
             .await;
 
-        // Ends the stall before any assertion, so a failing run does not hang: the given-up claim
-        // reads an empty marker, then writes its own.
+        // Release the stalled claim before assertions so a failing test can end.
         let mut writer = None;
         for _ in 0..500 {
             // Opening a FIFO's write end without blocking fails until a reader holds it.
