@@ -46,7 +46,6 @@ sha2.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-chrono-tz = "0.10"
 rusqlite = { workspace = true, features = ["hooks", "trace"] }
 flate2 = "1"
 

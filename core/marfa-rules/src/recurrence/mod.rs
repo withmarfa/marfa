@@ -7,10 +7,6 @@ mod schedule;
 mod walk;
 
 #[cfg(test)]
-mod compare;
-#[cfg(test)]
-mod old_zone;
-#[cfg(test)]
 mod tests;
 
 pub use calendar::{DAY, Zone, civil_from_days, days_from_civil, week_start};

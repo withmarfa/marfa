@@ -557,9 +557,6 @@ fn date_bucket(value: &Value, bucket: &str, zone: &Zone) -> Value {
 }
 
 #[cfg(test)]
-mod compare;
-
-#[cfg(test)]
 mod tests {
     use crate::store::testing::{wire_item, wire_type};
     use crate::{Core, store};
