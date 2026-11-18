@@ -7,9 +7,9 @@ use crate::{Core, MarfaError};
 pub struct TrashPreview {
     /// Each named item once, in the order named.
     pub items: Vec<TrashPreviewItem>,
-    /// Every item the key may read that the trash would take, each once.
+    /// The number of distinct readable items the trash would take.
     pub count: u64,
-    /// Passed back unchanged to `trash` so the trash covers only this.
+    /// Pass unchanged to `trash_items` to bind it to this preview.
     pub digest: String,
 }
 
@@ -92,29 +92,12 @@ impl From<TrashPreview> for marfa_core::TrashPreview {
 
 #[uniffi::export]
 impl Core {
-    /// What trashing `ids` would take, read from the server and held nowhere
-    /// in the copy. An id named twice counts once. Throws `Validation` for no
-    /// id or more than 20 distinct ones, `NoServer` for a copy with none, and
-    /// `Network` offline. Any other copy than the one the server holds throws
-    /// `CopyExpired`.
+    /// Requires a server; duplicate IDs count once toward the 20-item limit.
     pub fn preview_trash(&self, ids: Vec<String>) -> Result<TrashPreview, MarfaError> {
         Ok(self.inner.preview_trash(&ids)?.into())
     }
 
-    /// Moves what `preview` names, and what it says the trash takes, to the
-    /// bin on the server at once, all or none. Never queued: the preview's
-    /// digest binds it to the server's state when it was read, so an app
-    /// offline queues `deleteItem` for each item instead. Throws `Invalid`
-    /// naming how to clear each write, before anything is sent, while a write
-    /// waits for a named item or one the preview lists under `takes` (for a
-    /// truncated preview, for any item), `NoServer`, `CopyExpired` for another
-    /// instance at the origin, and the server's refusal (`Server` with the
-    /// status 409 and `trash_plan_changed` for a digest that no longer
-    /// matches, `Server` with 400 and `edge_constraint_violation`,
-    /// `Forbidden`) with the copy and the queue as they were. `Network`
-    /// after the request went out may follow a trash the server made, which
-    /// the item events then show. Once it succeeds, every item the copy holds
-    /// among them is in the bin in the copy.
+    /// Never queued: the digest binds the request to the previewed state.
     pub fn trash_items(&self, preview: TrashPreview) -> Result<(), MarfaError> {
         Ok(self.inner.trash_items(&preview.into())?)
     }

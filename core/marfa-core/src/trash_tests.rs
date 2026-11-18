@@ -1,5 +1,4 @@
-//! Previewing and trashing several items at once (`device/trash-preview-online`,
-//! `device/trash-several-waits` and the rules beside them).
+//! Previewing and trashing several items at once.
 
 use std::path::Path;
 use std::time::Duration;
@@ -110,8 +109,6 @@ fn previewed(
     core.preview_trash(&ids).unwrap()
 }
 
-/// The server's bin as `GET /items?state=trashed` answers it under the
-/// copy's reach: each row trashed at `version`.
 fn in_the_bin(rows: &[(&str, i64)]) -> Answer {
     let data: Vec<Value> = rows
         .iter()

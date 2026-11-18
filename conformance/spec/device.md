@@ -6576,7 +6576,7 @@ If a preview or a several-item trash cannot be sent, then a device MUST refuse i
 
 Where the copy names the instance it was hydrated from, if another instance answers at the copy's origin when a preview or a several-item trash is asked for, then a device MUST expire the copy and send nothing further.
 
-**Reason:** a trash cannot be taken back, and a copy facing another instance cannot be kept current.
+**Reason:** a trash sent to another instance would change the wrong data, and the copy would no longer match its server.
 
 **Tests:** waiting on #3238.
 

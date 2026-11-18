@@ -10,13 +10,12 @@ use crate::{Core, CoreError, Result, catch_up, drain, store};
 /// The most items one preview or trash names.
 pub const TRASH_MOST: usize = 20;
 
-/// What the server would move to the bin for the items a preview named, and
-/// the digest that binds a trash to it.
+/// A server preview whose digest binds the trash to the previewed state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrashPreview {
     /// Each named item once, in the order named.
     pub items: Vec<TrashPreviewItem>,
-    /// Every item the key may read that the trash would take, each once.
+    /// The number of distinct readable items the trash would take.
     pub count: u64,
     pub digest: String,
 }
@@ -55,12 +54,7 @@ fn waits(write: &QueuedWrite) -> bool {
 }
 
 impl Core {
-    /// What trashing `ids` would take, read from the server and held nowhere
-    /// in the copy. An id named twice counts once. Refused before anything is
-    /// sent `Validation` for no id or more than 20 distinct ones; then
-    /// `NoServer` for a copy with no server, and the network's error offline.
-    /// The root confirms the copy's instance first. An id the copy does not
-    /// hold is asked of the server all the same, which judges it.
+    /// Requires a server; duplicate IDs count once toward the 20-item limit.
     pub fn preview_trash(&self, ids: &[String]) -> Result<TrashPreview> {
         let ids = distinct_ids(ids)?;
         let http = self.http()?;
@@ -68,22 +62,7 @@ impl Core {
         catch_up::write_naming_instance(self, http, |http| http.preview_item_trash(&ids))
     }
 
-    /// Moves the items `preview` names, and what it says their trash takes,
-    /// to the bin on the server in one step, all or none, never queued: the
-    /// digest binds it to the server's state when the preview was read, so
-    /// it cannot wait for a later drain. Refused, before anything is sent,
-    /// `Invalid` naming how to clear each write, while a write waits for a
-    /// named item or one the preview lists under `takes`; where any `takes`
-    /// was truncated, while a write waits for any item, since the items left
-    /// out cannot be checked. Then `NoServer` for a copy with no server. The
-    /// root confirms the copy's instance first, which expires the copy where
-    /// another answers. A refusal, `trash_plan_changed` for a digest that no
-    /// longer matches included, comes back typed with the copy and the queue
-    /// as they were. Once the server accepts, every row the copy holds among
-    /// them is read from the bin and laid in one step. A `Network` failure
-    /// after the request went out may follow a trash the server made, which
-    /// the `item.trashed` events then show. Preview again before trashing
-    /// again.
+    /// Never queued: the digest binds the request to the previewed state.
     pub fn trash_items(&self, preview: &TrashPreview) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let named: Vec<String> = preview.items.iter().map(|item| item.id.clone()).collect();
@@ -136,8 +115,7 @@ impl Core {
         Ok(())
     }
 
-    /// The trash is done whatever this finds: a row it cannot read again
-    /// reaches the copy with its `item.trashed` event.
+    /// A failed read does not undo the accepted trash.
     fn lay_trashed<'a>(&self, ids: impl Iterator<Item = &'a str>) {
         let reads: Vec<drain::ReadBack> = ids
             .filter_map(|id| drain::read_back_trashed(self, id).ok())

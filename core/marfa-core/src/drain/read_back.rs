@@ -246,8 +246,6 @@ pub(super) enum Bin {
     NotFound,
 }
 
-/// The row the server holds in the bin under `id`, which a trash just put
-/// it in. Changes nothing; `apply_read_back` writes it.
 pub(crate) fn read_back_trashed(core: &Core, id: &str) -> Result<ReadBack> {
     let (context, before) = {
         let conn = core.conn()?;
