@@ -1695,7 +1695,7 @@ If a redelivery names a `failed` delivery older than the effective audit retenti
 
 ## Where a webhook may send
 
-These rules hold where the instance does not allow private addresses, which is the default. An operator whose receivers run on a private network allows them with `allow_private_addresses` set to `true` through the private local process (`instance/private-addresses-local`), and the run's own server sets it because every other fixture's receiver is on loopback. The address fixtures boot a server of their own that does not.
+These rules hold where the instance does not allow private addresses, which is the default. An operator whose receivers run on a private network allows them with `allow_private_addresses` set to `true`, through the private local process or an app whose owner signed in within five minutes (`instance/private-addresses-local`), and the run's own server sets it because every other fixture's receiver is on loopback. The address fixtures boot a server of their own that does not.
 
 ### `events/address-private`
 

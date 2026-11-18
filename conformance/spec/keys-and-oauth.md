@@ -3689,13 +3689,13 @@ If the audit record of a browser session's end cannot be committed, then the ser
 
 ## Acts that need a recent sign-in
 
-Four acts replace the instance's data or move where people sign in, so they ask that a person signed in within the last five minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address` or changes `allow_private_addresses`, which take `config.manage`. An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
+Four acts replace the instance's data or move where people sign in, so they ask that a person signed in within the last five minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address` or turns `allow_private_addresses` on, which take `config.manage`. Turning it off narrows where the server may send, so it asks for nothing (`keys-and-oauth/step-up-switch-off`). An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
 
 ### `keys-and-oauth/step-up-recent`
 
 When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 300 seconds before the request, sends that act, the server MUST make the act as it would for the private local command.
 
-**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and turns allow_private_addresses on, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
 
 ### `keys-and-oauth/step-up-challenge`
 
@@ -3745,7 +3745,15 @@ If an API key that holds the permission an act in this section takes sends that 
 
 **Reason:** a key is not issued through a sign-in, so it has none to renew, and a challenge would send a client that follows it into a loop. A person makes the act from an app they signed in to, or with the private local command.
 
-**Tests:** `compliance/step-up.test.ts › refuses a key, even one holding every permission the acts take, with 403 app_sign_in_required and never a challenge`, `compliance/instance-addresses.test.ts › is refused to a key, which has no sign-in to renew`, `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which an app whose owner signed in just now changes`, `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/restore-archive.test.ts › refuses a key, which has no sign-in to renew`.
+**Tests:** `compliance/step-up.test.ts › refuses a key, even one holding every permission the acts take, with 403 app_sign_in_required and never a challenge`, `compliance/instance-addresses.test.ts › is refused to a key, which has no sign-in to renew`, `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch turned on, which an app whose owner signed in just now turns on, and lets it turn the switch off`, `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/restore-archive.test.ts › refuses a key, which has no sign-in to renew`.
+
+### `keys-and-oauth/step-up-switch-off`
+
+When an API key or an app's access token that holds `config.manage` sets `allow_private_addresses` from `true` to `false`, the server MUST make the change without a recent sign-in, however long ago the browser session behind the token began.
+
+**Reason:** the switch off narrows where the server may send, which protects the owner's network, so it asks for nothing. `instance/private-switch-off-refused` still refuses it while a stored destination is private.
+
+**Tests:** `compliance/step-up.test.ts › turns allow_private_addresses off for a key and for a token whose owner signed in more than five minutes ago`, `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch turned on, which an app whose owner signed in just now turns on, and lets it turn the switch off`.
 
 ### `keys-and-oauth/step-up-socket`
 

@@ -528,6 +528,32 @@ async fn a_key_never_moves_the_sign_in_address() {
 }
 
 #[tokio::test]
+async fn a_key_may_turn_private_addresses_off_but_never_on() {
+    let instance = Instance::start(&[]).await;
+    let key = instance.manager().await;
+    let switch = |on: bool| json!({ "allow_private_addresses": on });
+
+    let on = instance.as_key(&key, Method::PATCH, switch(true)).await;
+    assert_eq!(on.status, StatusCode::FORBIDDEN, "{}", on.text);
+    assert_eq!(on.code(), "app_sign_in_required");
+    assert_eq!(instance.row("allow_private_addresses").await, None);
+
+    // The witness: the private local command turns it on, and the same key's
+    // write that leaves it on changes nothing and is allowed.
+    let local = instance.patch(switch(true)).await;
+    assert_eq!(local.status, StatusCode::OK, "{}", local.text);
+    let same = instance.as_key(&key, Method::PATCH, switch(true)).await;
+    assert_eq!(same.status, StatusCode::OK, "{}", same.text);
+
+    let off = instance.as_key(&key, Method::PATCH, switch(false)).await;
+    assert_eq!(off.status, StatusCode::OK, "{}", off.text);
+    assert_ne!(
+        instance.config().await["allow_private_addresses"],
+        json!(true)
+    );
+}
+
+#[tokio::test]
 async fn the_addresses_are_judged_against_the_sign_in_address_in_force_stored_or_not() {
     let instance = Instance::start(&[]).await;
     let own = instance.app.addresses().sign_in().origin().to_string();

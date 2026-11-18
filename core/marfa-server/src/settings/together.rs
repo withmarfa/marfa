@@ -228,9 +228,11 @@ fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
     })
     .map(|(path, _)| Breach {
         path,
-        message: "names an address that is not public; only the private local command can allow \
-                  one, by setting allow_private_addresses to true"
-            .to_string(),
+        message:
+            "names an address that is not public; allow one by setting allow_private_addresses \
+                  to true, from the private local command or an app signed in to within five \
+                  minutes"
+                .to_string(),
     })
     .collect()
 }

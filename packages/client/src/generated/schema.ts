@@ -6481,7 +6481,7 @@ export interface components {
              */
             object_store_access_key_id?: string;
             /**
-             * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+             * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Turning it on needs a sign-in from the last five minutes. Absent: `false`.
              * @default false
              */
             allow_private_addresses: boolean;
@@ -34983,7 +34983,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Turning it on needs a sign-in from the last five minutes. Absent: `false`.
                      * @default false
                      */
                     allow_private_addresses?: boolean;
@@ -35210,7 +35210,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
-             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
+             *     - `app_sign_in_required`: the change moves the sign-in address or turns `allow_private_addresses` on, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {
@@ -35470,7 +35470,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string | null;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Turning it on needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
                      * @default false
                      */
                     allow_private_addresses?: boolean | null;
@@ -35697,7 +35697,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
-             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
+             *     - `app_sign_in_required`: the change moves the sign-in address or turns `allow_private_addresses` on, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {

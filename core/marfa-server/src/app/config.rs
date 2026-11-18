@@ -421,14 +421,15 @@ impl Plan {
         )
     }
 
-    /// A key that may change the configuration must not reach the owner's network.
-    fn private_addresses_change(&self, app: &App) -> bool {
+    /// Whether the change opens the owner's network to the server. Closing it
+    /// is the safe direction and asks for nothing.
+    fn opens_private_addresses(&self, app: &App) -> bool {
         let allowed = |rows: &Rows| {
             app.settings
                 .candidate(&pairs(rows))
                 .get(ALLOW_PRIVATE_ADDRESSES)
         };
-        allowed(&self.before) != allowed(&self.after)
+        allowed(&self.after) && !allowed(&self.before)
     }
 
     /// What the change does to the addresses, and whether it needs a person to
@@ -606,7 +607,7 @@ async fn check_sign_in(
         .db
         .read(move |tx| {
             let plan = Plan::of(&request, rows_of(stored::rows(tx)?));
-            let private_change = plan.private_addresses_change(&reading);
+            let private_change = plan.opens_private_addresses(&reading);
             let moved = plan
                 .judge(&reading)
                 .and_then(|()| plan.addresses_at(&reading, tx));
@@ -650,7 +651,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 let tx = unit.tx();
                 let before = rows_of(stored::rows(tx)?);
                 let plan = Plan::of(&request, before);
-                if plan.private_addresses_change(&writing) {
+                if plan.opens_private_addresses(&writing) {
                     unit.caller
                         .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }

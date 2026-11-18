@@ -29,7 +29,7 @@ import { tempFolder } from "../../utils/temp-folder.js";
 /**
  * The four acts that ask the owner to have signed in within five minutes:
  * restoring an archive, restoring a backup, moving the sign-in address and
- * changing `allow_private_addresses`. An app's token meets them by the time
+ * turning `allow_private_addresses` on. An app's token meets them by the time
  * its owner last signed in, a key never does, and the private socket keeps
  * them. The owner's sessions, the clock and the sign-in address are the
  * subject, so the file boots a server of its own, with a backup folder.
@@ -498,7 +498,7 @@ describe("an app's token", () => {
     expect(await itemStatus(id)).toBe(200);
   });
 
-  it("restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes", async () => {
+  it("restores an archive and a backup, and turns allow_private_addresses on, when its owner signed in within five minutes", async () => {
     const app = await registerApp(server, SCOPE);
     const { access } = await connect(app, await signIn());
     const restored = await call(access, "POST", "/restore", archive);
@@ -527,20 +527,53 @@ describe("an app's token", () => {
       [SWITCH]: true,
     });
     expect(on.status, JSON.stringify(on.body)).toBe(200);
+    const closed = await local("PATCH", "/config", { [SWITCH]: false });
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
     await server.advanceClock(2 * MINUTE);
     const third = await refreshed(app, second.refresh);
     for (const access of [second.access, third.access]) {
       expectChallenged(
-        await call(access, "PATCH", "/config", { [SWITCH]: false }),
+        await call(access, "PATCH", "/config", { [SWITCH]: true }),
         "refreshed",
       );
     }
-    expect(await switchState()).toBe(true);
+    expect(await switchState()).toBe(false);
     const fresh = await connect(app, await signIn());
+    expect(
+      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: true })).status,
+    ).toBe(200);
     expect(
       (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
         .status,
     ).toBe(200);
+  });
+
+  it("turns allow_private_addresses off for a key and for a token whose owner signed in more than five minutes ago", async () => {
+    const app = await registerApp(server, SCOPE);
+    const open = async () => {
+      const opened = await local("PATCH", "/config", { [SWITCH]: true });
+      expect(opened.status, JSON.stringify(opened.body)).toBe(200);
+      expect(await switchState()).toBe(true);
+    };
+    const { access } = await connect(app, await signIn());
+    await local("PATCH", "/config", { [SWITCH]: false });
+    await server.advanceClock(6 * MINUTE);
+    // The witness: the same token is challenged turning it on.
+    expectChallenged(
+      await call(access, "PATCH", "/config", { [SWITCH]: true }),
+      "on",
+    );
+    await open();
+    const off = await call(access, "PATCH", "/config", { [SWITCH]: false });
+    expect(off.status, JSON.stringify(off.body)).toBe(200);
+    expect(await switchState()).toBe(false);
+
+    await open();
+    const put = await call(server.managementKey, "PATCH", "/config", {
+      [SWITCH]: false,
+    });
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(await switchState()).toBe(false);
   });
 
   it("is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer", async () => {
@@ -554,14 +587,14 @@ describe("an app's token", () => {
     );
     const on = await call(fresh.access, "PATCH", "/config", { [SWITCH]: true });
     expect(on.status, JSON.stringify(on.body)).toBe(200);
-    expectChallenged(
-      await call(old.access, "PATCH", "/config", { [SWITCH]: false }),
-      "older, after the newer acted",
-    );
     expect(
       (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
         .status,
     ).toBe(200);
+    expectChallenged(
+      await call(old.access, "PATCH", "/config", { [SWITCH]: true }),
+      "older, after the newer acted",
+    );
   });
 });
 
