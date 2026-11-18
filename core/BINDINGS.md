@@ -10,7 +10,7 @@ The read keeps the address's path prefix, asks for JSON and sends no credential,
 
 ## Trash several items at once
 
-An app that deletes a selection previews, then trashes, on `Core` (the Swift binding carries both as `preview_trash(ids)` and `trash_items(preview)`):
+An app that deletes a selection previews, then trashes, on `Core` (the Swift binding carries both as `preview_trash(ids)` and `trash_items(preview)`, and the Node module as `previewTrash(ids)` and `trashItems(preview)`, each answering a promise):
 
 - `preview_trash(ids)` takes 1 to 20 distinct ids (an id named twice counts once; none or more than 20 is refused `Validation` before anything is sent) and answers the server's preview: each item once with what its trash takes (`takes`, cut at 100 with `truncated` set), the `count` of every item the trash would take, and a `digest`. It needs the server, confirms the instance as a read does, and a reading handle may call it.
 - `trash_items(preview)` sends the preview's ids and digest in one request, never queued, so an offline app uses the single queued `delete_item` instead. It is refused `Invalid`, sending nothing, while a write waits for a named item or one listed in `takes` (for any item where a `takes` was truncated), with the commands that clear each. A refusal from the server, `trash_plan_changed` for a digest that no longer matches included, comes back typed and changes nothing. On success the copy shows every item it holds among them in the bin at once.

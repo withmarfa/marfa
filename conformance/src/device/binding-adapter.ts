@@ -103,6 +103,26 @@ export interface BindingItemType {
   fields: Array<{ name: string; type: string; declaredBy: string }>;
 }
 
+export interface BindingTrashTaken {
+  id: string;
+  type: string;
+  version: number;
+}
+
+/** What a several-item trash would take, as the server's preview read it. */
+export interface BindingTrashPreview {
+  items: Array<{
+    id: string;
+    type: string;
+    version: number;
+    takes: BindingTrashTaken[];
+    count: number;
+    truncated: boolean;
+  }>;
+  count: number;
+  digest: string;
+}
+
 /** Absent where the item has none. */
 export interface BindingItemDisplay {
   name?: string;
@@ -761,6 +781,14 @@ export class BindingDevice {
 
   deleteItem(id: string): Call<BindingQueuedWrite> {
     return this.call("deleteItem", id);
+  }
+
+  previewTrash(ids: string[]): Call<BindingTrashPreview> {
+    return this.call("previewTrash", ids);
+  }
+
+  trashItems(preview: BindingTrashPreview): Call<void> {
+    return this.call("trashItems", preview);
   }
 
   release(id: string): Call<boolean> {

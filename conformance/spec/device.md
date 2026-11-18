@@ -6522,7 +6522,7 @@ If a write to an item that a several-item trash names, or lists as taken with it
 
 **Reason:** the write would reach rows that are in the bin, and a write that carried a person's content would be lost. The refusal names the commands that take each waiting write out of its wait, as a purge's does.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › refuses the trash invalid, sending nothing, while a write to a named item has no answer yet`, `› refuses the trash invalid, sending nothing, while a write to a taken item is dead`.
 
 ### `device/trash-waiting-write-cut`
 
@@ -6530,7 +6530,7 @@ If the preview's `takes` for any item was cut at its limit and a write to any it
 
 **Reason:** the items a cut `takes` leaves out cannot be checked, so no waiting write can be ruled out.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › refuses a trash whose preview was cut while a write to any item waits, sending nothing`.
 
 ### `device/trash-preview-bounds`
 
@@ -6538,7 +6538,7 @@ If a caller previews or trashes no item, or more than 20 distinct items, then a 
 
 **Reason:** the server refuses more than 20 ids, and an id named twice is one item.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › refuses a preview or a trash of no item or of more than 20 distinct items, sending nothing`.
 
 ### `device/trash-unsent-kept`
 
@@ -6546,7 +6546,7 @@ If a preview or a several-item trash cannot be sent, then a device MUST refuse i
 
 **Reason:** a trash is never queued, because its digest binds it to the server's state when the preview was read.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › refuses a preview and a trash network while the server cannot be reached, keeping the copy and the queue`.
 
 ### `device/trash-other-instance`
 
@@ -6554,7 +6554,7 @@ Where the copy names the instance it was hydrated from, if another instance answ
 
 **Reason:** a trash cannot be taken back, and a copy facing another instance cannot be kept current.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › asks no preview of another instance at the copy's origin, and expires the copy`, `› sends no trash to another instance at the copy's origin, and expires the copy`.
 
 ### `device/trash-accepted-copy`
 
@@ -6562,7 +6562,7 @@ When the server accepts a several-item trash, a device MUST show every item the 
 
 **Reason:** the acceptance carries no versions, so the copy reads each held row from the bin, and an app deleting a selection sees all of it gone at once.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › shows every named and taken item it holds in the bin at the server's version once the trash is accepted`.
 
 ### `device/trash-refused-kept`
 
@@ -6570,7 +6570,7 @@ If the server refuses a several-item trash, including `trash_plan_changed` for a
 
 **Reason:** a copy that looked as though it had trashed would disagree with the server for good.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › leaves the copy and the queue as they were and answers the server's own error when the server refuses the trash`.
 
 ### `device/trash-unanswered`
 
@@ -6578,7 +6578,7 @@ If a several-item trash is sent and no answer comes, then a device MUST leave th
 
 **Reason:** the server may have trashed the items and the answer been lost, so the `item.trashed` events settle the copy.
 
-**Tests:** waiting on #3238.
+**Tests:** `device/binding-trash.test.ts › keeps the copy and refuses network when a trash that was sent is never answered`.
 
 ## The bin
 

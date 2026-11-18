@@ -3,6 +3,7 @@
 pub mod filters;
 mod folders;
 mod tables;
+mod trash;
 mod views;
 
 use std::sync::atomic::{AtomicBool, Ordering};

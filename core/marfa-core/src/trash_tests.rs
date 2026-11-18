@@ -1,5 +1,5 @@
-//! Previewing and trashing several items at once (`device/trash-preview-online`,
-//! `device/trash-several-waits` and the rules beside them).
+//! Previewing and trashing several items at once (`device/trash-accepted-copy`,
+//! `device/trash-waiting-write` and the rules beside them).
 
 use std::path::Path;
 use std::time::Duration;
