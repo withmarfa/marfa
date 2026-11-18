@@ -781,25 +781,97 @@ fn a_reader_that_cannot_make_the_logs_index_refuses_and_changes_nothing() {
         let path = dir.path().join("core.sqlite");
         let writer = Core::open(&path, None).unwrap();
         save_rows(&writer);
-        let left = dir.path().join("left");
-        std::fs::create_dir(&left).unwrap();
-        let copy = left.join("core.sqlite");
-        std::fs::copy(&path, &copy).unwrap();
-        if with_log {
-            std::fs::copy(
-                format!("{}-wal", path.display()),
-                format!("{}-wal", copy.display()),
+        let copy_into = |name: &str| {
+            let folder = dir.path().join(name);
+            std::fs::create_dir(&folder).unwrap();
+            let copy = folder.join("core.sqlite");
+            std::fs::copy(&path, &copy).unwrap();
+            if with_log {
+                std::fs::copy(
+                    format!("{}-wal", path.display()),
+                    format!("{}-wal", copy.display()),
+                )
+                .unwrap();
+            }
+            (folder, copy)
+        };
+        // A copy made while the writer holds the log needs the log, and one made
+        // once it closed is the checkpointed file alone.
+        let copies = if with_log {
+            let copies = (copy_into("writable"), copy_into("left"));
+            drop(writer);
+            copies
+        } else {
+            drop(writer);
+            assert!(!std::path::Path::new(&format!("{}-wal", path.display())).exists());
+            (copy_into("writable"), copy_into("left"))
+        };
+        let ((_, writable), (left, locked)) = copies;
+
+        let reader = Core::open_reader(&writable).unwrap_or_else(|error| {
+            panic!("a reader in a writable folder refused, with a log: {with_log}: {error:?}")
+        });
+        let seen: i64 = reader
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM meta WHERE key LIKE 'row-%'",
+                [],
+                |r| r.get(0),
             )
             .unwrap();
-        }
-        drop(writer);
+        assert_eq!(seen, 50, "with a log: {with_log}");
+        drop(reader);
 
-        let before = store_files(&copy);
+        let before = store_files(&locked);
         let _locked = crate::test_folders::locked(&left, 0o555);
         assert!(
-            Core::open_reader(&copy).is_err(),
+            Core::open_reader(&locked).is_err(),
             "a reader in a folder it cannot write answered, with a log: {with_log}"
         );
-        assert!(store_files(&copy) == before);
+        assert!(store_files(&locked) == before);
     }
+}
+
+#[test]
+fn a_reader_of_a_store_with_no_log_changes_the_file_and_leaves_an_empty_log_at_most() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let log = std::path::PathBuf::from(format!("{}-wal", path.display()));
+    let writer = Core::open(&path, None).unwrap();
+    save_rows(&writer);
+    drop(writer);
+    assert!(
+        !log.exists(),
+        "the writer left a log, so the store is not clean"
+    );
+    let before = std::fs::read(&path).unwrap();
+
+    let reader = Core::open_reader(&path).unwrap();
+    let seen: i64 = reader
+        .conn()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM meta WHERE key LIKE 'row-%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(seen, 50, "the reader did not read the store");
+    drop(reader);
+    assert!(
+        std::fs::read(&path).unwrap() == before,
+        "a reader changed the store file"
+    );
+    if let Ok(left) = std::fs::metadata(&log) {
+        assert_eq!(left.len(), 0, "a reader wrote into the log");
+    }
+
+    // The witness: a connection that can write changes the file of this store.
+    let writable = store::open(&path).unwrap();
+    writable
+        .execute_batch("CREATE TABLE witness (x); INSERT INTO witness VALUES (1)")
+        .unwrap();
+    drop(writable);
+    assert!(std::fs::read(&path).unwrap() != before);
 }

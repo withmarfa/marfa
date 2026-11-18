@@ -45,11 +45,14 @@ impl Core {
         damage::refuse_emptied_in(state, store_label)?;
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         let writer = lock.handle() == Handle::Writer;
-        let cache = blob::Cache::anchored(state, store_label, writer)?;
-        let conn = if writer {
-            store::open_directory(&vfs, store_label)?
+        let (conn, cache) = if writer {
+            let cache = blob::Cache::anchored(state, store_label, true)?;
+            (store::open_directory(&vfs, store_label)?, cache)
         } else {
-            store::read_directory(&vfs, store_label)?
+            // The store's schema is judged before the blob folder is reached, so a
+            // store another build made is refused `wrong_schema` whatever that holds.
+            let conn = store::read_directory(&vfs, store_label)?;
+            (conn, blob::Cache::anchored(state, store_label, false)?)
         };
         Self::from_connection(conn, server, lock, Some(cache)).map(Core::swept)
     }
