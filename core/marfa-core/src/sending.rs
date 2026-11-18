@@ -338,10 +338,15 @@ impl Core {
 
     /// Asks again about the names bodies written here carry and no edge says
     /// yet. Best effort: a failure leaves them for the next pass, but for a
-    /// store that can no longer be written.
+    /// store that can no longer be written and a copy another instance has
+    /// replaced.
     pub(crate) fn settle_bodies(&self, stop: &AtomicBool) -> Result<()> {
         match body::rule::settle(self, stop) {
-            Err(error @ (CoreError::StorageFull(_) | CoreError::Store(_))) => Err(error),
+            Err(
+                error @ (CoreError::StorageFull(_)
+                | CoreError::Store(_)
+                | CoreError::CopyExpired { .. }),
+            ) => Err(error),
             _ => Ok(()),
         }
     }

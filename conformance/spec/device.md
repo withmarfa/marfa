@@ -2516,6 +2516,30 @@ Where a copy names the instance it was hydrated from, a device MUST name that in
 
 **Tests:** `device/counts-live.test.ts › sends no count to another instance its root names at the copy's own address, and names its instance on each count`.
 
+### `device/table-reads-instance`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a table's rows, one row or a table's totals, then a device MUST refuse the read `copy_expired` and expire the copy.
+
+**Reason:** another instance can take the address a copy was built from, as when an instance is replaced. The read is refused as a count is (`device/counts-from-server-instance`).
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy: rows`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: a row`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: totals`.
+
+### `device/table-reads-instance-no-id`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a table's rows, one row or a table's totals, then a device MUST send that server no request that names the item.
+
+**Reason:** a request for a table names the item that holds it, which tells a server that is not the copy's which items the copy holds. A write names the copy's instance (`device/counts-from-server-named`), but a read is judged by no header (`instance/write-instance-ignored`), so only the root read before the request stops the id leaving.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy: rows`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: a row`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: totals`.
+
+### `device/link-lookup-instance-no-id`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for an item a link names by its id, then a device MUST refuse the call that asked `copy_expired` and send that server no request that names the id.
+
+**Reason:** an id in a link that the copy does not hold is asked of the server, which would tell another instance what a person linked to. The root is read once for the ids one call looks up, not before each.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address`.
+
 ### `device/counts-from-server-groups`
 
 If the server's answer to a count of links lacks any of the four status groups for an asked id, or its answer to a count of rows carries status groups, then a device MUST refuse the whole call `decoding`.

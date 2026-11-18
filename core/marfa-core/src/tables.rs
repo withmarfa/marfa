@@ -1818,10 +1818,9 @@ pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> R
             params.push((name, value));
         }
     }
-    Ok(marked(
-        core.http()?.table_rows(item, table, &params)?,
-        false,
-    ))
+    let http = core.http()?;
+    crate::catch_up::refuse_another_instance(core, http)?;
+    Ok(marked(http.table_rows(item, table, &params)?, false))
 }
 
 pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Value> {
@@ -1850,7 +1849,9 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
             };
         }
     }
-    Ok(marked(core.http()?.table_row(item, table, row)?, false))
+    let http = core.http()?;
+    crate::catch_up::refuse_another_instance(core, http)?;
+    Ok(marked(http.table_row(item, table, row)?, false))
 }
 
 pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>) -> Result<Value> {
@@ -1868,10 +1869,9 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
         .map(|filter| ("filter", filter))
         .into_iter()
         .collect();
-    Ok(marked(
-        core.http()?.table_totals(item, table, &params)?,
-        false,
-    ))
+    let http = core.http()?;
+    crate::catch_up::refuse_another_instance(core, http)?;
+    Ok(marked(http.table_totals(item, table, &params)?, false))
 }
 
 #[cfg(test)]

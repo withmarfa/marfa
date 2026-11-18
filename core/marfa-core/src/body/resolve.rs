@@ -216,6 +216,9 @@ pub(crate) struct Resolver<'a> {
     /// Why the server refused a title lookup as a whole this pass, where it
     /// did: the refusal named no one name, so the names it carried wait.
     refused_call: Option<String>,
+    /// Whether the server at the origin has been read as the copy's instance
+    /// this pass.
+    instance_confirmed: bool,
     /// Whether a title lookup call was answered with its results this pass.
     answered: bool,
 }
@@ -232,6 +235,7 @@ impl<'a> Resolver<'a> {
             looked: HashMap::new(),
             offered: true,
             refused_call: None,
+            instance_confirmed: false,
             answered: false,
         }
     }
@@ -279,7 +283,18 @@ impl<'a> Resolver<'a> {
         if !self.online {
             return Ok(Resolved::Waiting);
         }
-        Ok(match self.core.http()?.item(id) {
+        let http = self.core.http()?;
+        if !self.instance_confirmed {
+            match crate::catch_up::refuse_another_instance(self.core, http) {
+                Ok(()) => self.instance_confirmed = true,
+                Err(
+                    error @ (crate::error::CoreError::CopyExpired { .. }
+                    | crate::error::CoreError::StreamIncomplete { .. }),
+                ) => return Err(error),
+                Err(error) => return Ok(self.failed(error)),
+            }
+        }
+        Ok(match http.item(id) {
             Ok(Some(row)) => Resolved::Found {
                 id: row.item.id,
                 r#type: Some(row.item.r#type),
