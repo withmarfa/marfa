@@ -6516,6 +6516,70 @@ If a purge is sent and no answer comes, then a device MUST keep the item and ref
 
 **Tests:** `device/purge.test.ts › keeps the item when a purge that was sent is never answered`.
 
+### `device/trash-waiting-write`
+
+If a write to an item that a several-item trash names, or lists as taken with it, has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing and leaving the queue as it was.
+
+**Reason:** the write would reach rows that are in the bin, and a write that carried a person's content would be lost. The refusal names the commands that take each waiting write out of its wait, as a purge's does.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-waiting-write-cut`
+
+If the preview's `takes` for any item was cut at its limit and a write to any item has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing.
+
+**Reason:** the items a cut `takes` leaves out cannot be checked, so no waiting write can be ruled out.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-preview-bounds`
+
+If a caller previews or trashes no item, or more than 20 distinct items, then a device MUST refuse it `validation` with the code `validation_error`, sending nothing.
+
+**Reason:** the server refuses more than 20 ids, and an id named twice is one item.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-unsent-kept`
+
+If a preview or a several-item trash cannot be sent, then a device MUST refuse it `network` and leave the copy's items and its queue as they were.
+
+**Reason:** a trash is never queued, because its digest binds it to the server's state when the preview was read.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-other-instance`
+
+Where the copy names the instance it was hydrated from, if another instance answers at the copy's origin when a preview or a several-item trash is asked for, then a device MUST expire the copy and send nothing further.
+
+**Reason:** a trash cannot be taken back, and a copy facing another instance cannot be kept current.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-accepted-copy`
+
+When the server accepts a several-item trash, a device MUST show every item the copy holds among the named and the taken items in the bin, with the version the server holds for it, before the call returns.
+
+**Reason:** the acceptance carries no versions, so the copy reads each held row from the bin, and an app deleting a selection sees all of it gone at once.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-refused-kept`
+
+If the server refuses a several-item trash, including `trash_plan_changed` for a digest that no longer matches, then a device MUST leave the copy's items and its queue as they were and refuse it with the server's own error.
+
+**Reason:** a copy that looked as though it had trashed would disagree with the server for good.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-unanswered`
+
+If a several-item trash is sent and no answer comes, then a device MUST leave the copy as it was and refuse the trash `network`.
+
+**Reason:** the server may have trashed the items and the answer been lost, so the `item.trashed` events settle the copy.
+
+**Tests:** waiting on #3238.
+
 ## The bin
 
 ### `device/bin-read`
