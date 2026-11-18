@@ -21,7 +21,6 @@ ignore = [
     { id = "RUSTSEC-2026-0371", reason = "zbus 6 replaces zbus_names; keyring on Linux reaches it through secret-service, which uses zbus 5" },
     { id = "RUSTSEC-2026-0372", reason = "zbus 6 replaces zvariant_derive; keyring on Linux reaches it through secret-service, which uses zbus 5" },
     { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained with no vulnerability; no maintained release replaces it in the crates that use it yet" },
-    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained with no vulnerability; no maintained release replaces it in the crates that use it yet" },
     { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained only because it wraps chrono; no maintained release replaces it in the crates that use it yet" },
 ]
 
@@ -59,6 +58,10 @@ skip-tree = [
     { crate = "opentelemetry-otlp", reason = "pins its own prost, itertools and tower-http" },
     { crate = "ring", reason = "pins getrandom 0.2" },
     { crate = "yaml-rust2", reason = "pins an older encoding_rs" },
-    { crate = "chrono-tz", reason = "pins an older phf" },
     { crate = "image", reason = "pins its own miniz_oxide" },
 ]
+
+# Zone rules come only from the database jiff bundles, never from the host.
+[[bans.features]]
+crate = "jiff@1"
+deny = ["tzdb-zoneinfo", "tzdb-concatenated", "tzdb-bundle-platform"]

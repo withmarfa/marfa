@@ -1,7 +1,8 @@
 //! Whole days counted from 1970-01-01, and the wall clock of a zone.
 
-use chrono::{DateTime, LocalResult, Offset, TimeDelta, TimeZone};
-use chrono_tz::Tz;
+use jiff::Timestamp;
+use jiff::civil::DateTime;
+use jiff::tz::{AmbiguousOffset, TimeZone};
 
 pub const DAY: i64 = 86_400;
 pub const LAST_YEAR: i64 = 9999;
@@ -63,62 +64,90 @@ pub fn ceil_div(a: i64, b: i64) -> i64 {
     -((-a).div_euclid(b))
 }
 
-/// No zone is UTC.
-#[derive(Clone, Copy, Debug)]
-pub struct Zone(Option<Tz>);
+/// A time zone read from the bundled IANA database.
+#[derive(Clone, Debug)]
+pub struct Zone {
+    zone: TimeZone,
+    fixed: Option<i64>,
+}
 
 impl Zone {
-    pub const UTC: Zone = Zone(None);
+    pub const UTC: Zone = Zone {
+        zone: TimeZone::UTC,
+        fixed: Some(0),
+    };
 
+    /// A name the bundled database holds in exactly this spelling, other than `Factory`.
     pub fn named(name: &str) -> Option<Zone> {
-        name.parse::<Tz>().ok().map(|tz| Zone(Some(tz)))
+        let zone = TimeZone::get(name).ok()?;
+        (zone.iana_name() == Some(name) && name != "Factory").then(|| Zone::from_time_zone(zone))
     }
 
-    /// The reading of the wall clock at `ms`, in seconds counted as if the zone were UTC.
-    pub fn wall_of(self, ms: i64) -> i64 {
-        let seconds = ms.div_euclid(1000);
-        let Some(tz) = self.0 else {
-            return seconds;
-        };
-        let Some(at) = DateTime::from_timestamp_millis(ms) else {
-            return seconds;
-        };
-        seconds
-            + i64::from(
-                tz.offset_from_utc_datetime(&at.naive_utc())
-                    .fix()
-                    .local_minus_utc(),
-            )
+    pub fn from_time_zone(zone: TimeZone) -> Zone {
+        let fixed = zone
+            .to_fixed_offset()
+            .ok()
+            .map(|offset| i64::from(offset.seconds()));
+        Zone { zone, fixed }
+    }
+
+    /// The reading of the wall clock at `ms`, in seconds counted as if the zone were UTC. Past the range jiff holds, the offset at its bound.
+    pub fn wall_of(&self, ms: i64) -> i64 {
+        if let Some(offset) = self.fixed {
+            return ms.div_euclid(1000) + offset;
+        }
+        let at = Timestamp::from_millisecond(ms).unwrap_or(if ms < 0 {
+            Timestamp::MIN
+        } else {
+            Timestamp::MAX
+        });
+        ms.div_euclid(1000) + i64::from(self.zone.to_offset(at).seconds())
     }
 
     /// A reading a clock change skips takes the offset before the gap; one it repeats, the first.
-    pub fn instant_of(self, wall: i64) -> i64 {
-        let Some(tz) = self.0 else {
-            return wall * 1000;
-        };
-        let Some(naive) = DateTime::from_timestamp(wall, 0).map(|at| at.naive_utc()) else {
-            return wall * 1000;
-        };
-        match tz.from_local_datetime(&naive) {
-            LocalResult::Single(at) => at.timestamp_millis(),
-            LocalResult::Ambiguous(first, second) => {
-                first.timestamp_millis().min(second.timestamp_millis())
-            }
-            LocalResult::None => {
-                let before = naive - TimeDelta::days(1);
-                let offset =
-                    i64::from(tz.offset_from_utc_datetime(&before).fix().local_minus_utc());
-                (wall - offset) * 1000
-            }
+    pub fn instant_of(&self, wall: i64) -> i64 {
+        (wall - self.offset_at_wall(wall)) * 1000
+    }
+
+    fn offset_at_wall(&self, wall: i64) -> i64 {
+        if let Some(offset) = self.fixed {
+            return offset;
         }
+        let days = wall.div_euclid(DAY);
+        let second = wall.rem_euclid(DAY);
+        let (year, month, day) = civil_from_days(days);
+        let reading = i16::try_from(year)
+            .ok()
+            .and_then(|year| {
+                DateTime::new(
+                    year,
+                    month as i8,
+                    day as i8,
+                    (second / 3600) as i8,
+                    (second / 60 % 60) as i8,
+                    (second % 60) as i8,
+                    0,
+                )
+                .ok()
+            })
+            .unwrap_or(if wall < 0 {
+                DateTime::MIN
+            } else {
+                DateTime::MAX
+            });
+        let offset = match self.zone.to_ambiguous_timestamp(reading).offset() {
+            AmbiguousOffset::Unambiguous { offset } => offset,
+            AmbiguousOffset::Gap { before, .. } | AmbiguousOffset::Fold { before, .. } => before,
+        };
+        i64::from(offset.seconds())
     }
 
     /// The day `ms` falls on, as a day number.
-    pub fn day_of(self, ms: i64) -> i64 {
+    pub fn day_of(&self, ms: i64) -> i64 {
         self.wall_of(ms).div_euclid(DAY)
     }
 
-    pub fn midnight(self, day: i64) -> i64 {
+    pub fn midnight(&self, day: i64) -> i64 {
         self.instant_of(day * DAY)
     }
 }
@@ -177,5 +206,71 @@ mod tests {
         assert!(Zone::named("europe/london").is_none());
         assert!(Zone::named("+01:00").is_none());
         assert!(Zone::named("US/Pacific").is_some());
+    }
+
+    #[test]
+    fn only_an_exact_database_spelling_is_a_zone() {
+        for taken in ["US/Eastern", "UTC", "Etc/UTC", "Asia/Kolkata"] {
+            assert!(Zone::named(taken).is_some(), "{taken}");
+        }
+        for refused in [
+            "Factory",
+            "posixrules",
+            "Etc/Unknown",
+            "utc",
+            "europe/London",
+            "US/EASTERN",
+            "",
+            " UTC",
+            "UTC ",
+            "EST5EDT,M3.2.0,M11.1.0",
+            "/usr/share/zoneinfo/UTC",
+        ] {
+            assert!(Zone::named(refused).is_none(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn every_name_of_the_earlier_database_still_resolves() {
+        let names: Vec<&str> = include_str!("zone-names.txt").lines().collect();
+        assert_eq!(names.len(), 597);
+        for name in names {
+            assert!(Zone::named(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_last_day_of_9999_reads_its_zones_offset() {
+        let sydney = Zone::named("Australia/Sydney").unwrap();
+        let london = Zone::named("Europe/London").unwrap();
+        let last_day = days_from_civil(9999, 12, 31) * DAY;
+        for hour in [0, 21, 22, 23] {
+            let ms = (last_day + hour * 3600 + 1800) * 1000;
+            assert_eq!(sydney.wall_of(ms), last_day + hour * 3600 + 1800 + 39_600);
+            assert_eq!(london.wall_of(ms), last_day + hour * 3600 + 1800);
+        }
+        let last_ms = (last_day + DAY) * 1000 - 1;
+        assert_eq!(sydney.wall_of(last_ms), last_day + DAY - 1 + 39_600);
+        assert_eq!(sydney.day_of(last_ms), days_from_civil(10_000, 1, 1));
+    }
+
+    #[test]
+    fn a_wall_on_the_last_day_of_9999_has_an_instant() {
+        let sydney = Zone::named("Australia/Sydney").unwrap();
+        let london = Zone::named("Europe/London").unwrap();
+        let last_day = days_from_civil(9999, 12, 31) * DAY;
+        for wall in [
+            last_day + 10 * 3600,
+            last_day + DAY - 1,
+            last_day + DAY,
+            last_day + 400 * DAY,
+        ] {
+            assert_eq!(london.instant_of(wall), wall * 1000, "{wall}");
+            assert_eq!(sydney.instant_of(wall), (wall - 39_600) * 1000, "{wall}");
+        }
+        assert_eq!(
+            london.midnight(days_from_civil(9999, 12, 31)),
+            last_day * 1000
+        );
     }
 }

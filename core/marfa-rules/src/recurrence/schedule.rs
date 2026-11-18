@@ -58,7 +58,7 @@ fn bare_day(value: &str) -> Option<i64> {
     Some(ms.div_euclid(1000).div_euclid(DAY))
 }
 
-fn day_of_value(value: &str, zone: Zone) -> Option<i64> {
+fn day_of_value(value: &str, zone: &Zone) -> Option<i64> {
     match bare_day(value) {
         Some(day) => Some(day),
         None => Some(zone.day_of(time::epoch_ms(value)?)),
@@ -96,7 +96,7 @@ pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
     let parsed_start =
         time::epoch_ms(input.starts_at).ok_or_else(|| "starts_at cannot be read".to_string())?;
     let (start_ms, start_wall) = if input.all_day {
-        let day = day_of_value(input.starts_at, zone)
+        let day = day_of_value(input.starts_at, &zone)
             .ok_or_else(|| "starts_at cannot be read".to_string())?;
         (zone.midnight(day), day * DAY)
     } else {
@@ -220,7 +220,7 @@ pub fn compile(input: &Input<'_>) -> Result<Schedule, Refusal> {
     let end = input.ends_at.and_then(time::epoch_ms);
     let length = if input.all_day {
         let days = match (
-            input.ends_at.and_then(|end| day_of_value(end, zone)),
+            input.ends_at.and_then(|end| day_of_value(end, &zone)),
             input.duration,
         ) {
             (Some(end_day), _) => end_day - start_wall / DAY,
