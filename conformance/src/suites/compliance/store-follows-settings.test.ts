@@ -121,3 +121,30 @@ it("ends blob-replicate as failed while the record of the folder the last write 
   await runJob(operator, "blob-replicate");
   expect((await stores()).attached).toEqual([filesOf(named)]);
 });
+
+it("ends blob-replicate as failed while the settings cannot be read again after a write to /config of unknown outcome, and as succeeded once they can", async () => {
+  const { operator } = clientsFor(server!);
+  await name(folder("reloaded"));
+  // The witness that a run succeeds before the write.
+  await runJob(operator, "blob-replicate");
+
+  try {
+    await server!.setFault("fail:commit=config.update");
+    await server!.setFault("fail:settings-reload");
+    const unknown = await operator.patchConfig({
+      backup_interval_seconds: 3600,
+    });
+    expect(unknown.status, JSON.stringify(unknown.error)).toBe(500);
+    await firedOnce("fail:settings-reload");
+    await server!.clearFault("fail:commit");
+    // Each run's reload needs its own fault because the fault fires only once.
+    await server!.setFault("fail:settings-reload");
+    const failed = await runJob(operator, "blob-replicate", "failed");
+    expect(failed.error).toEqual(expect.any(String));
+  } finally {
+    await server!.clearFault("fail:settings-reload");
+    await server!.clearFault("fail:commit");
+  }
+
+  await runJob(operator, "blob-replicate");
+});

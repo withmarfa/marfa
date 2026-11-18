@@ -102,6 +102,14 @@ If a run of `blob-replicate` cannot bring what `GET /blobs/stores` lists as atta
 
 **Tests:** `compliance/store-follows-settings.test.ts › ends blob-replicate as failed while the record of the folder the last write to /config names cannot be written, and lists that folder once it can`.
 
+### `stores/attached-follows-settings-unread`
+
+If a run of `blob-replicate` cannot read the settings again after a write to `/config` whose outcome the server could not confirm, then the server MUST end that run with the outcome `failed` and an `error`.
+
+**Reason:** until the server reads its settings again, it does not know which settings it acts on, so a run that succeeded would tell the owner that the change took effect.
+
+**Tests:** `compliance/store-follows-settings.test.ts › ends blob-replicate as failed while the settings cannot be read again after a write to /config of unknown outcome, and as succeeded once they can`.
+
 ### `stores/detached-listed`
 
 When the configuration no longer names a store, the server MUST go on listing it with `detached_at` set to the time it was found detached.
