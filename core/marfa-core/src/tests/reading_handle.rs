@@ -655,9 +655,11 @@ fn a_reading_handle_that_closes_last_changes_neither_the_store_nor_its_log() {
     let seen: i64 = reader
         .conn()
         .unwrap()
-        .query_row("SELECT count(*) FROM meta WHERE key LIKE 'row-%'", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT count(*) FROM meta WHERE key LIKE 'row-%'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(seen, 50, "the reader did not read what the writer saved");
     drop(reader);
@@ -763,9 +765,11 @@ fn a_reader_alone_reads_what_a_writer_left_in_its_log() {
     let seen: i64 = reader
         .conn()
         .unwrap()
-        .query_row("SELECT count(*) FROM meta WHERE key LIKE 'row-%'", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT count(*) FROM meta WHERE key LIKE 'row-%'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(seen, 50, "the reader did not read the saves the log held");
     drop(reader);
@@ -773,4 +777,35 @@ fn a_reader_alone_reads_what_a_writer_left_in_its_log() {
         store_files(&copy) == before,
         "reading a log the writer left changed the store or the log"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_reader_that_cannot_make_the_logs_index_refuses_and_changes_nothing() {
+    for with_log in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writer = Core::open(&path, None).unwrap();
+        save_rows(&writer);
+        let left = dir.path().join("left");
+        std::fs::create_dir(&left).unwrap();
+        let copy = left.join("core.sqlite");
+        std::fs::copy(&path, &copy).unwrap();
+        if with_log {
+            std::fs::copy(
+                format!("{}-wal", path.display()),
+                format!("{}-wal", copy.display()),
+            )
+            .unwrap();
+        }
+        drop(writer);
+
+        let before = store_files(&copy);
+        let _locked = crate::test_folders::locked(&left, 0o555);
+        assert!(
+            Core::open_reader(&copy).is_err(),
+            "a reader in a folder it cannot write answered, with a log: {with_log}"
+        );
+        assert!(store_files(&copy) == before);
+    }
 }

@@ -404,6 +404,14 @@ While a device holds a reading handle, a device MUST queue nothing.
 
 **Tests:** `device/local-refusals.test.ts › refuses a write from a reading handle`.
 
+### `device/reading-handle-writes-nothing`
+
+While a device holds a reading handle, a device MUST NOT change the store's file or its log, including when it closes after the writer.
+
+**Reason:** a connection that can write and closes last checkpoints the log the writer left into the file and removes it, so a reader would write to a store another process owns.
+
+**Tests:** `device/binding-reading-handle-writes-nothing.test.ts › leaves the store and its log as the writer left them when it closes after the writer`.
+
 ### `device/read-partial-answers`
 
 While a hydration that is not a refill (`device/refill-in-place`) has started and not completed, whether it still runs or was interrupted, a device MUST answer a local listing or search from the items its copy holds, through a reading handle as through the writer.
