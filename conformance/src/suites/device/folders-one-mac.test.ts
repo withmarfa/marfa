@@ -3266,11 +3266,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const picture = Buffer.from(
       "a picture fetched before the brief is taken\n",
     );
-    // The pull must fetch the picture before it tries to move the brief.
+    // Made later than the brief, so the pull that takes the brief in
+    // fetches it first.
     const image = {
       id: "01a00000-0000-7000-8000-0000000041d4",
       type: "core.file.image",
-      created_at: "2026-09-17T00:00:00.000Z",
+      created_at: "2026-09-19T00:00:00.000Z",
       properties: {
         title: "picture.png",
         blob_ref: hashOf(picture),

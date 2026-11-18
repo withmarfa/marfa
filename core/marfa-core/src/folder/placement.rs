@@ -75,7 +75,8 @@ struct Refused {
     placements: Withheld,
 }
 
-/// Placement edges give devices a shared order for contested paths.
+/// How a pull ranks items: the older edge, then its id; an item with no
+/// placement after every one with, one already there first.
 pub(super) type Rank = (bool, bool, String, String);
 
 impl Folder {
@@ -649,7 +650,12 @@ pub(super) fn rank_of(edge: &Edge) -> Rank {
     (false, false, edge.created_at.clone(), edge.id.clone())
 }
 
-pub(super) fn unplaced_rank(settled: bool, item: &Item) -> Rank {
+pub(super) fn unplaced_rank(settled: bool) -> Rank {
+    (true, !settled, String::new(), String::new())
+}
+
+/// Who gets a contested name: an unplaced item ranks by when it was made.
+pub(super) fn unplaced_claim(settled: bool, item: &Item) -> Rank {
     (true, !settled, item.created_at.clone(), item.id.clone())
 }
 

@@ -23,8 +23,12 @@ struct Pulling {
 }
 
 fn pulling() -> Pulling {
+    pulling_with(json!({ "query": {} }), None)
+}
+
+fn pulling_with(settings: serde_json::Value, types: Option<serde_json::Value>) -> Pulling {
     let (_, registry) = registry::tests::own_registry();
-    let (dir, folder) = folder_with(&id(1), json!({ "query": {} }), None);
+    let (dir, folder) = folder_with(&id(1), settings, types);
     {
         let conn = folder.core.conn().unwrap();
         meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -181,4 +185,38 @@ fn of_three_notes_the_written_one_keeps_the_plain_name_and_the_others_follow_in_
         assert_eq!(folder.file_of(2), "plan (2).md", "{arrival:?}");
         assert_eq!(folder.file_of(4), "plan (3).md", "{arrival:?}");
     }
+}
+
+#[test]
+fn names_are_given_by_when_items_were_made_and_files_are_written_in_the_listing_order() {
+    // A memo's first placement is a directory named as a note's file: the
+    // newer note keeps `Brief.md`, so the older memo cannot be written there.
+    let folder = pulling_with(
+        json!({ "query": {}, "first_placement": { "user.memo": "Brief.md" } }),
+        Some(json!([{ "id": "user.memo", "parent": "core.note" }])),
+    );
+    folder.arrives(2, "Brief", 20);
+    {
+        let conn = folder.folder.core.conn().unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        let memo = store::testing::wire_item(
+            &id(3),
+            "user.memo",
+            "active",
+            &at(10),
+            json!({ "title": "Brief", "body": "words" }),
+        );
+        crate::reach::set_listed(&conn, &id(3), true).unwrap();
+        store::put_server_item(&conn, &memo, None, &catalog).unwrap();
+    }
+    folder.pull();
+    assert_eq!(folder.file_of(2), "Brief.md");
+    assert!(
+        state::bound_to_item(&folder.folder.core.conn().unwrap(), &id(3))
+            .unwrap()
+            .is_none(),
+        "the memo wants a path under a file, so it is left unwritten"
+    );
+    folder.pull();
+    assert_eq!(folder.file_of(2), "Brief.md", "a later pull keeps it too");
 }

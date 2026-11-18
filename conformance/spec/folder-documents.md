@@ -290,7 +290,7 @@ When a folder item that has no placement edge has its file at a path and another
 
 **Reason:** the person can keep using the file at its existing path. An item with a placement edge is ordered by `folder-files/placement-collision-order`.
 
-**Tests:** `device/folders-placement.test.ts › gives a contested path to a placed item before an unplaced one, and to a file already there before a new one`.
+**Tests:** `device/folders.test.ts › keeps the plain name of a file already written when an item created earlier arrives with the same name`, `device/folders-placement.test.ts › gives a contested path to a placed item before an unplaced one, and to a file already there before a new one`.
 
 ### `folder-documents/case-rename-unsent`
 
