@@ -2504,7 +2504,7 @@ Where a copy names the instance it was hydrated from, if the server's root at th
 
 Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a count, then a device MUST send that server no count request.
 
-**Reason:** the device reads the root before every count it asks of the server, so no id leaves for an instance the copy was not built from.
+**Reason:** a mismatch at the root lets the device stop before it sends item ids.
 
 **Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
 

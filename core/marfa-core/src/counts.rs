@@ -295,7 +295,6 @@ impl Core {
 }
 
 impl Core {
-    /// Sends no id until the server at the address answers as the copy's instance, and names it on the request.
     fn ask_own_instance(
         &self,
         asked: &[&String],
@@ -1022,8 +1021,6 @@ mod tests {
         assert_eq!(server.seen("/items/counts").len(), 1);
     }
 
-    /// A copy at the origin it recorded, built from `scripted::INSTANCE`, whose
-    /// server answers its root as `instance`.
     fn at_its_own_address(instance: &str) -> (Scripted, std::sync::Arc<Core>) {
         let server = Scripted::start();
         server.on("/", vec![scripted::root(instance)]);

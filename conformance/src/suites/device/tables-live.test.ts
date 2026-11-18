@@ -567,7 +567,7 @@ describe("how a device fills a table", () => {
           ),
         "the follow telling its caller it filled the table",
       );
-      // A notice repeated at the follow's next idle pass comes before the second sentinel's event.
+      // Later events let the listener drain fill notices already queued.
       for (const round of [1, 2]) {
         const sentinel = await itemOf(type);
         await until(
