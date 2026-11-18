@@ -444,7 +444,11 @@ impl Core {
         if let Some(http) = &http {
             let db = Arc::clone(&conn);
             let pending = Arc::clone(&renewals);
+            let writes = lock.handle() == Handle::Writer;
             http.on_renewed(Box::new(move |from, to| {
+                if !writes {
+                    return;
+                }
                 pending
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)

@@ -405,7 +405,7 @@ fn relocation_http_clone_keeps_writer_ownership_until_confirmation_ends() {
 }
 
 #[test]
-fn relocation_reader_cannot_commit_a_verified_origin_or_send_credentials() {
+fn relocation_reader_sends_once_the_identity_agrees_and_leaves_the_origin_to_the_writer() {
     let server = Scripted::start();
     doors(&server);
     let (dir, writer) = moving_copy(&server.url(), Some(scripted::INSTANCE));
@@ -418,18 +418,18 @@ fn relocation_reader_cannot_commit_a_verified_origin_or_send_credentials() {
     )
     .unwrap();
     assert_eq!(reader.handle(), crate::Handle::Reader);
-    assert!(matches!(
-        reader.http().unwrap().types(),
-        Err(CoreError::ReadingHandle)
-    ));
-    assert_eq!(server.asked(), 1);
+    reader.http().unwrap().types().unwrap();
+    assert_eq!(server.asked(), 2);
     assert_eq!(server.seen("/")[0].authorization, None);
+    assert_eq!(
+        server.seen("/types")[0].authorization.as_deref(),
+        Some("Bearer reader-key")
+    );
     assert_eq!(origin(&writer), OLD_ORIGIN);
-    // The writer that owns the copy can commit the same confirmation.
     writer.http().unwrap().types().unwrap();
     assert_eq!(origin(&writer), server.url());
     assert_eq!(
-        server.seen("/types")[0].authorization.as_deref(),
+        server.seen("/types")[1].authorization.as_deref(),
         Some("Bearer held-key")
     );
 }

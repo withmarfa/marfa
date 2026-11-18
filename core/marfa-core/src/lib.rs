@@ -78,6 +78,8 @@ mod scaffold;
 mod scripted;
 mod search;
 mod sending;
+#[cfg(test)]
+mod server_reads_tests;
 mod slice;
 #[cfg(test)]
 mod slice_query_tests;

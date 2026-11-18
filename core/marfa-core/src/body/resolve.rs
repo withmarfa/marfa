@@ -3,6 +3,7 @@
 //! the server answers.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::AtomicBool;
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};
@@ -216,12 +217,18 @@ pub(crate) struct Resolver<'a> {
     /// Why the server refused a title lookup as a whole this pass, where it
     /// did: the refusal named no one name, so the names it carried wait.
     refused_call: Option<String>,
+    stop: &'a AtomicBool,
     /// Whether a title lookup call was answered with its results this pass.
     answered: bool,
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(core: &'a Core, catalog: &'a Catalog, paths: &'a dyn Paths) -> Resolver<'a> {
+    pub fn new(
+        core: &'a Core,
+        catalog: &'a Catalog,
+        paths: &'a dyn Paths,
+        stop: &'a AtomicBool,
+    ) -> Resolver<'a> {
         Resolver {
             core,
             catalog,
@@ -232,6 +239,7 @@ impl<'a> Resolver<'a> {
             looked: HashMap::new(),
             offered: true,
             refused_call: None,
+            stop,
             answered: false,
         }
     }
@@ -279,12 +287,18 @@ impl<'a> Resolver<'a> {
         if !self.online {
             return Ok(Resolved::Waiting);
         }
-        Ok(match self.core.http()?.item(id) {
+        let http = self.core.http()?;
+        let confirm = crate::catch_up::confirm_each_attempt(self.core, http, self.stop);
+        crate::catch_up::refuse_if_stopped(self.stop)?;
+        let asked = http.item_checked(id, Some(&confirm));
+        crate::catch_up::refuse_if_stopped(self.stop)?;
+        Ok(match asked {
             Ok(Some(row)) => Resolved::Found {
                 id: row.item.id,
                 r#type: Some(row.item.r#type),
             },
             Ok(None) => Resolved::Unmatched,
+            Err(error) if error.is_copy_wide() => return Err(error),
             Err(error) => self.failed(error),
         })
     }
@@ -328,8 +342,7 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    /// A failed lookup never ends the pass; after one the network failed, no
-    /// later name is asked of the server.
+    /// A network failure defers the remaining remote lookups in this pass.
     fn failed(&mut self, error: crate::error::CoreError) -> Resolved {
         match self.failure(error) {
             Looked::Unanswered(why) => Resolved::Unanswered(why),
@@ -836,7 +849,12 @@ mod tests {
     }
 
     fn resolver<'a>(core: &'a Core, catalog: &'a Catalog) -> Resolver<'a> {
-        Resolver::new(core, catalog, &crate::body::rule::Placements)
+        Resolver::new(
+            core,
+            catalog,
+            &crate::body::rule::Placements,
+            &crate::NEVER_STOPPED,
+        )
     }
 
     fn catalog_of(core: &Core) -> Catalog {

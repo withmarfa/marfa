@@ -336,12 +336,24 @@ impl Core {
             .collect())
     }
 
-    /// Asks again about the names bodies written here carry and no edge says
-    /// yet. Best effort: a failure leaves them for the next pass, but for a
-    /// store that can no longer be written.
+    /// A name the server could not resolve can wait for the next pass.
     pub(crate) fn settle_bodies(&self, stop: &AtomicBool) -> Result<()> {
         match body::rule::settle(self, stop) {
-            Err(error @ (CoreError::StorageFull(_) | CoreError::Store(_))) => Err(error),
+            Err(
+                error @ (CoreError::StorageFull(_)
+                | CoreError::Store(_)
+                | CoreError::CopyExpired { .. }
+                | CoreError::Canceled),
+            ) => Err(error),
+            Err(incomplete @ CoreError::StreamIncomplete { .. }) => {
+                if crate::reach::expired(&*self.conn()?)? {
+                    Err(CoreError::expired(
+                        "the copy was expired while the server's instance was being confirmed",
+                    ))
+                } else {
+                    Err(incomplete)
+                }
+            }
             _ => Ok(()),
         }
     }

@@ -1474,6 +1474,63 @@ describe("the working copy belongs to one server", () => {
     }
   });
 
+  it("lets a reading handle send to a moved origin of its own instance without recording it", async () => {
+    harness = await startHarness("origin-moved-reader");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const elsewhere = await startHarness("origin-moved-reader-peer");
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyHeldLog([
+        copyItemEvent("11", "item.created", wireItem({ id: "followed" })),
+      ]),
+    );
+    // Only the writer can apply the event and report its cursor.
+    const writer = device.holdFollow(20);
+    try {
+      await vi.waitFor(
+        () =>
+          expect(
+            writer.stdout,
+            `the writer never applied the event: ${writer.stderr}`,
+          ).toContain('"cursor":"11"'),
+        { timeout: 10_000, interval: 25 },
+      );
+      elsewhere.server.answer(
+        "GET",
+        "/",
+        answers.root(Number(BUILT_FOR), SCRIPTED_INSTANCE),
+      );
+      elsewhere.server.answer("GET", "/types", typeCatalog());
+      elsewhere.server.answer("GET", "/edge-types", edgeTypeCatalog());
+      const reader = device.reopen({ url: elsewhere.server.url });
+      const served = await reader.servedItemTypes();
+      expect(served.ok, JSON.stringify(served)).toBe(true);
+      expect(elsewhere.server.requests[0].pathname).toBe("/");
+      expect(
+        elsewhere.server.requests[0].headers.authorization,
+      ).toBeUndefined();
+      expect(elsewhere.server.requests.length).toBeGreaterThan(1);
+      expect(
+        elsewhere.server.requests
+          .slice(1)
+          .every(
+            (request) => request.headers.authorization === `Bearer ${KEY}`,
+          ),
+      ).toBe(true);
+      const after = await reader.status();
+      expect(
+        after.ok && after.value.server_origin,
+        "a reading handle recorded the origin it was moved to",
+      ).toBe(server.url);
+    } finally {
+      await writer.stop();
+      await elsewhere.stop();
+    }
+  });
+
   it("opens a store under another key at the origin it is bound to", async () => {
     harness = await startHarness("origin-key");
     const { server, device } = harness;

@@ -708,17 +708,21 @@ impl Folder {
                 let mut removed: Vec<state::Line> = Vec::new();
                 if changes.r#type.is_some() && bound.is_some() {
                     let mut ids = Vec::new();
-                    let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
+                    let mut resolver =
+                        Resolver::new(&self.core, catalog, &BoundFiles, &crate::NEVER_STOPPED);
                     // A line that cannot be read yet removes nothing, and the
                     // retype is judged with its edge standing.
-                    let _ = self.queue_edges(
+                    if let Err(error) = self.queue_edges(
                         &self.edge_work(file, item_id, bound),
                         edge_types,
                         catalog,
                         &mut resolver,
                         &mut ids,
                         Some(&mut removed),
-                    );
+                    ) && error.is_copy_wide()
+                    {
+                        return Err(error);
+                    }
                     queued.extend(ids.into_iter().map(|id| (id, None)));
                 }
                 let updated = if read_at.is_some() {

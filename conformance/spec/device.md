@@ -240,9 +240,25 @@ While a copy records another origin, a device MUST send no credentials, credenti
 
 ### `device/origin-confirm-recorded`
 
-When the anonymous root at another origin confirms a copy's recorded instance identity, a device MUST record that origin before sending any other request there.
+While a device holds a copy as its writer, when the anonymous root at another origin confirms the copy's recorded instance identity, a device MUST record that origin before sending any other request there.
 
 **Tests:** `device/working-copy.test.ts › follows the same instance to a new origin without replacing its copy or queue`.
+
+### `device/origin-confirm-reader-sends`
+
+While a device holds a copy as a reading handle, when the anonymous root at another origin confirms the copy's recorded instance identity, a device MUST send the call's requests to that origin.
+
+**Reason:** a reader that is refused at a moved origin cannot read from its own instance until the writer has moved.
+
+**Tests:** `device/working-copy.test.ts › lets a reading handle send to a moved origin of its own instance without recording it`.
+
+### `device/origin-confirm-reader-records-nothing`
+
+While a device holds a copy as a reading handle, when the anonymous root at another origin confirms the copy's recorded instance identity, a device MUST NOT record that origin.
+
+**Reason:** only the writer changes the store (`device/reader-writes-nothing`), and the writer records the origin on its own next request there.
+
+**Tests:** `device/working-copy.test.ts › lets a reading handle send to a moved origin of its own instance without recording it`.
 
 ### `device/origin-unconfirmed-keeps-copy`
 
@@ -2523,6 +2539,60 @@ Where a copy names the instance it was hydrated from, a device MUST name that in
 **Reason:** the root read and the count are two requests, so another instance that takes the address between them still receives the count. Because the count names the copy's instance, that server refuses it `409 instance_changed` and answers no count (`instance/write-names-other`).
 
 **Tests:** `device/counts-live.test.ts › sends no count to another instance its root names at the copy's own address, and names its instance on each count`.
+
+### `device/table-reads-instance`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a table's rows, one row or a table's totals, then a device MUST refuse the read `copy_expired`.
+
+**Reason:** a replacement instance at the same address can return a different table or report that the row is missing.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy: rows`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: a row`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: totals`.
+
+### `device/table-reads-instance-no-id`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a table's rows, one row or a table's totals, then a device MUST send that server no request that names the item.
+
+**Reason:** the table's URL contains the item ID. The server ignores the instance header on a GET (`instance/write-instance-ignored`).
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy: rows`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: a row`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: totals`.
+
+### `device/table-reads-instance-expires`
+
+Where a copy names the instance it was hydrated from, while a device holds the copy as its writer, if the server's root at the copy's origin names another instance when the device is about to ask the server for a table's rows, one row or a table's totals, then a device MUST expire the copy.
+
+**Reason:** a reading handle changes nothing in the store (`device/reader-writes-nothing`), so the writer alone records that the copy was built from another instance.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy: rows`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: a row`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy: totals`.
+
+### `device/link-lookup-instance`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for an item a link names by its id, then a device MUST refuse the call that asked `copy_expired`.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address`.
+
+### `device/link-lookup-instance-no-id`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for an item a link names by its id, then a device MUST send that server no request that names the id.
+
+**Reason:** the item ID in the request would tell another instance which item the person linked to.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address`.
+
+### `device/link-lookup-instance-expires`
+
+Where a copy names the instance it was hydrated from, while a device holds the copy as its writer, if the server's root at the copy's origin names another instance when the device is about to ask the server for an item a link names by its id, then a device MUST expire the copy.
+
+**Reason:** a reading handle changes nothing in the store (`device/reader-writes-nothing`), so the writer alone records that the copy was built from another instance.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address`.
+
+### `device/server-reads-instance-each-request`
+
+Where a copy names the instance it was hydrated from, a device MUST confirm that the server's root names that instance before each server request for a direct table read (rows, one row or totals) or a link lookup by item ID, including a retry after credential renewal.
+
+**Reason:** the instance at an address can change between requests, including while a device renews its credential. Hydration and catch-up confirm the instance once per pass for table fills and row rereads under a reach.
+
+**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it repeats a table read after a credential renewal`, `› sends no second link id to an instance that replaced the first between two lookups`.
 
 ### `device/counts-from-server-groups`
 

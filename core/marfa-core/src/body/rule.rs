@@ -1158,12 +1158,7 @@ pub(crate) fn waiting(conn: &Connection) -> Result<bool> {
         .is_some())
 }
 
-/// Looks again at every name a body written here carries and no edge says
-/// yet: one the server has not been asked about or did not answer, and one
-/// it answered naming nothing or more than one item where the copy now holds
-/// a different number of items it names. A name the body no longer carries
-/// stops waiting. A failure leaves the names to the next pass, which a
-/// drain does not wait for.
+/// Rechecks missing or ambiguous names when the number of local matches changes.
 pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
     let rows: Vec<Row> = {
         let conn = core.conn()?;
@@ -1184,7 +1179,17 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
         rows.collect::<rusqlite::Result<_>>()?
     };
     let catalog = crate::catalog::load(&*core.conn()?)?;
-    let mut resolver = Resolver::new(core, &catalog, &Placements);
+    let ended = settle_rows(core, &catalog, rows, stop);
+    if ended.is_err()
+        && let Ok(conn) = core.conn()
+    {
+        let _ = rows_changed(&conn);
+    }
+    ended
+}
+
+fn settle_rows(core: &Core, catalog: &Catalog, rows: Vec<Row>, stop: &AtomicBool) -> Result<()> {
+    let mut resolver = Resolver::new(core, catalog, &Placements, stop);
     let mut by_item: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     for row in rows {
         by_item.entry(row.item_id.clone()).or_default().push(row);
@@ -1196,13 +1201,12 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
                 .execute("DELETE FROM body_names WHERE item_id = ?1", [&host])?;
             continue;
         };
-        let body = body_of(&catalog, &item).to_string();
+        let body = body_of(catalog, &item).to_string();
         let links = text::links(&body);
         let embeds = text::embeds(&body);
         for row in rows {
             if stop.load(Ordering::Relaxed) {
-                rows_changed(&*core.conn()?)?;
-                return Ok(());
+                return Err(CoreError::Canceled);
             }
             let carried = match row.kind {
                 Kind::Link => links.contains(&row.text),
@@ -1218,12 +1222,12 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
                 continue;
             }
             let asked = match row.kind {
-                Kind::Link => link_online(core, &catalog, &mut resolver, &host, &row)?,
+                Kind::Link => link_online(core, catalog, &mut resolver, &host, &row)?,
                 Kind::Embed => {
                     let Some(embed) = embeds.iter().find(|embed| embed.raw() == row.text) else {
                         continue;
                     };
-                    embed_online(core, &catalog, &mut resolver, &host, embed, &row)?
+                    embed_online(core, catalog, &mut resolver, &host, embed, &row)?
                 }
             };
             if let Some((resolved, held)) = asked {

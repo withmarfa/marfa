@@ -93,7 +93,6 @@ pub(crate) fn keep_relocated_origin(
     origin: &str,
     stopped: &AtomicBool,
 ) -> Result<()> {
-    claim.refuse_unless_writer()?;
     let mut conn = loop {
         if stopped.load(Ordering::SeqCst) {
             return Err(CoreError::Canceled);
@@ -114,7 +113,12 @@ pub(crate) fn keep_relocated_origin(
     if stopped.load(Ordering::SeqCst) {
         return Err(CoreError::Canceled);
     }
-    if store::meta_get(&tx, store::META_SERVER_ORIGIN)?.as_deref() != Some(recorded_origin)
+    let writer = claim.handle() == Handle::Writer;
+    let held_origin = store::meta_get(&tx, store::META_SERVER_ORIGIN)?;
+    // The writer may have recorded this very move since the reading handle opened.
+    let origin_held = held_origin.as_deref() == Some(recorded_origin)
+        || (!writer && held_origin.as_deref() == Some(origin));
+    if !origin_held
         || store::meta_get(&tx, store::META_INSTANCE_ID)?.as_deref() != recorded_instance
     {
         return Err(CoreError::WrongServer {
@@ -122,8 +126,10 @@ pub(crate) fn keep_relocated_origin(
             got: origin.into(),
         });
     }
-    store::meta_set(&tx, store::META_SERVER_ORIGIN, origin)?;
-    tx.commit()?;
+    if writer {
+        store::meta_set(&tx, store::META_SERVER_ORIGIN, origin)?;
+        tx.commit()?;
+    }
     Ok(())
 }
 

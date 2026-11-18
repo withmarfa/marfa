@@ -1,14 +1,18 @@
 //! A file held because a name it links matches no item, or more than one,
 //! is resolved again once the copy changes, and not before.
 
-use super::tests::{ScannedDir, scanned_folder};
+use super::tests::{ScannedDir, scanned_folder_with};
 use super::*;
 use crate::scripted::{Scripted, refusal};
 
 /// A folder of notes with nothing in it yet, whose copy has synced, over a
 /// server that answers every title lookup with `lookup`.
 pub(super) fn online_folder(lookup: Answer) -> (ScannedDir, Folder, Scripted) {
-    let (dir, folder) = scanned_folder();
+    online_folder_with(serde_json::json!({ "query": {} }), lookup)
+}
+
+fn online_folder_with(settings: Value, lookup: Answer) -> (ScannedDir, Folder, Scripted) {
+    let (dir, folder) = scanned_folder_with(settings, None);
     {
         use crate::store::{self, meta_set};
         let conn = folder.core.conn().unwrap();
@@ -379,5 +383,68 @@ fn a_scan_queues_all_the_edges_of_a_file_in_one_transaction() {
     assert_eq!(
         six, one,
         "a file with six new links committed {six} transactions and one with a single link {one}"
+    );
+}
+
+const FIRST: &str = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+const SECOND: &str = "01a1011a-4902-76cf-a4a9-88e99c038c8e";
+const OTHER_INSTANCE: &str = "00000000-0000-7000-8000-000000000001";
+
+fn item_asked(server: &Scripted, id: &str) -> usize {
+    server.seen(&format!("/items/{id}")).len()
+}
+
+fn folder_asking_by_id(settings: Value) -> (ScannedDir, Folder, Scripted) {
+    let (dir, folder, server) = online_folder_with(settings, nothing_found());
+    for id in [FIRST, SECOND] {
+        server.on(&format!("/items/{id}"), vec![refusal(404, "not_found")]);
+    }
+    server.on("/", vec![crate::scripted::root(crate::scripted::INSTANCE)]);
+    (dir, folder, server)
+}
+
+fn replaced(server: &Scripted) {
+    server.on("/", vec![crate::scripted::root(OTHER_INSTANCE)]);
+}
+
+#[test]
+fn a_scan_that_finds_another_instance_at_a_link_by_id_ends_copy_expired_and_sends_no_id() {
+    let (dir, folder, server) = folder_asking_by_id(serde_json::json!({ "query": {} }));
+    std::fs::write(dir.path().join("A.md"), format!("See [[{FIRST}]].\n")).unwrap();
+    let first = folder.scan().unwrap();
+    assert_eq!(first.created, 1, "{first:?}");
+    assert_eq!(item_asked(&server, FIRST), 1, "the witness asked nothing");
+
+    replaced(&server);
+    std::fs::write(dir.path().join("B.md"), format!("See [[{SECOND}]].\n")).unwrap();
+    let error = folder.scan().unwrap_err();
+    assert_eq!(error.code(), "copy_expired", "{error:?}");
+    assert_eq!(
+        item_asked(&server, SECOND),
+        0,
+        "an id reached the other instance"
+    );
+    assert!(crate::reach::expired(&folder.core.conn().unwrap()).unwrap());
+}
+
+#[test]
+fn a_scan_that_holds_a_file_outside_the_query_ends_copy_expired_where_its_link_finds_another_instance()
+ {
+    let settings = serde_json::json!({ "query": { "state": ["active"] }, "outside_query": "hold" });
+    let (dir, folder, server) = folder_asking_by_id(settings);
+    let file = |id: &str| format!("---\nstate: archived\nchild-of: \"[[{id}]]\"\n---\nbody\n");
+    std::fs::write(dir.path().join("A.md"), file(FIRST)).unwrap();
+    let held = folder.scan().unwrap();
+    assert_eq!((held.created, held.held_outside), (0, 1), "{held:?}");
+    assert!(item_asked(&server, FIRST) > 0, "the witness asked nothing");
+
+    replaced(&server);
+    std::fs::write(dir.path().join("B.md"), file(SECOND)).unwrap();
+    let error = folder.scan().unwrap_err();
+    assert_eq!(error.code(), "copy_expired", "{error:?}");
+    assert_eq!(
+        item_asked(&server, SECOND),
+        0,
+        "an id reached the other instance"
     );
 }

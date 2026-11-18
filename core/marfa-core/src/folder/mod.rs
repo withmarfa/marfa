@@ -3059,7 +3059,10 @@ mod tests {
 
     /// The same, with these settings and, where given, these types in the
     /// copy's catalog.
-    fn scanned_folder_with(settings: Value, types: Option<Value>) -> (ScannedDir, Folder) {
+    pub(super) fn scanned_folder_with(
+        settings: Value,
+        types: Option<Value>,
+    ) -> (ScannedDir, Folder) {
         let (_, registry) = registry::tests::own_registry();
         let (dir, folder) = folder_with("01a00000-0000-7000-8000-000000000001", settings, types);
         (
