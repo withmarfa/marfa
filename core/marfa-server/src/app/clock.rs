@@ -6,8 +6,7 @@ use std::sync::{Mutex, PoisonError};
 
 use std::fmt;
 
-use chrono::{DateTime, Utc};
-use marfa_rules::time;
+use marfa_rules::time::{self, FIRST_MS, LAST_MS};
 use rusqlite::OptionalExtension;
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use tokio::sync::watch;
@@ -16,8 +15,6 @@ use crate::app::refusal::{self, Refusal};
 
 #[cfg(feature = "test-hooks")]
 pub const MAX_OFFSET_MS: u64 = 3_153_600_000_000;
-const FIRST_MS: i64 = -62_167_219_200_000;
-const LAST_MS: i64 = 253_402_300_799_999;
 
 const DAY_MS: i64 = 86_400_000;
 /// How far the wall clock may run ahead of the trusted time before clean-up holds.
@@ -156,7 +153,7 @@ pub enum Refused {
 
 #[allow(clippy::disallowed_methods, reason = "this is the clock")]
 fn system_ms() -> i64 {
-    Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 /// A clock that counts the time the host sleeps and that nothing sets.
@@ -299,10 +296,6 @@ impl Clock {
         Stamp::clamped(self.now_ms())
     }
 
-    pub fn now(&self) -> DateTime<Utc> {
-        self.instant().at()
-    }
-
     pub fn stamp(&self) -> String {
         self.instant().text()
     }
@@ -428,20 +421,18 @@ pub fn kept(tx: &rusqlite::Transaction<'_>) -> refusal::Result<Option<Kept>> {
 
 /// A time as every table holds it: RFC 3339 UTC text with milliseconds, which sorts as it reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Stamp(DateTime<Utc>);
+pub struct Stamp(i64);
 
 impl Stamp {
     fn clamped(ms: i64) -> Stamp {
-        Stamp(DateTime::from_timestamp_millis(ms.clamp(FIRST_MS, LAST_MS)).unwrap_or_default())
+        Stamp(ms.clamp(FIRST_MS, LAST_MS))
     }
 
     /// Refuses an instant outside the years 0000 to 9999, which no text of this form can hold.
     pub fn from_ms(ms: i64) -> refusal::Result<Stamp> {
         (FIRST_MS..=LAST_MS)
             .contains(&ms)
-            .then(|| DateTime::from_timestamp_millis(ms))
-            .flatten()
-            .map(Stamp)
+            .then_some(Stamp(ms))
             .ok_or_else(|| Refusal::internal("a time outside the years 0000 to 9999"))
     }
 
@@ -452,22 +443,18 @@ impl Stamp {
 
     /// For a caller that reports an unreadable time itself.
     pub fn parsed(stored: &str) -> Option<Stamp> {
-        time::instant(stored, "")
+        time::read(stored)
             .ok()
-            .filter(|at| time::written(at) == stored)
+            .filter(|ms| time::written(*ms) == stored)
             .map(Stamp)
     }
 
     pub fn ms(self) -> i64 {
-        self.0.timestamp_millis()
-    }
-
-    pub fn at(self) -> DateTime<Utc> {
         self.0
     }
 
     pub fn text(self) -> String {
-        time::written(&self.0)
+        time::written(self.0)
     }
 
     pub fn plus_ms(self, ms: i64) -> refusal::Result<Stamp> {
@@ -477,10 +464,7 @@ impl Stamp {
     /// `None` once no stored time can be that early, so a cutoff there keeps everything.
     pub fn earlier_by(self, ms: i64) -> Option<Stamp> {
         let at = self.ms().saturating_sub(ms);
-        (at >= FIRST_MS)
-            .then(|| DateTime::from_timestamp_millis(at))
-            .flatten()
-            .map(Stamp)
+        (at >= FIRST_MS).then_some(Stamp(at))
     }
 }
 

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, Datelike, Utc};
 use marfa_rules::schema::resolve;
+use marfa_rules::time;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
@@ -42,12 +42,20 @@ struct Kept {
     created_at: String,
 }
 
-fn parsed(text: &str) -> Option<DateTime<Utc>> {
-    let read = Stamp::parsed(text).map(Stamp::at);
+fn parsed(text: &str) -> Option<Stamp> {
+    let read = Stamp::parsed(text);
     if read.is_none() {
         tracing::warn!("A snapshot's stored time does not read; the snapshot is kept");
     }
     read
+}
+
+/// The ISO week of an instant's UTC date, as `YYYY-Www` by the week's own year.
+fn iso_week(ms: i64) -> String {
+    time::date_of(ms).map_or_else(String::new, |date| {
+        let week = date.iso_week_date();
+        format!("{}-W{:02}", week.year(), week.week())
+    })
 }
 
 /// The newest version and any snapshot whose age cannot be read always stay, the cap included.
@@ -70,15 +78,14 @@ fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
             unread[at] = true;
             continue;
         };
-        let ms = created.timestamp_millis();
+        let ms = created.ms();
         let bucket = if ms >= recent {
             keep[at] = true;
             continue;
         } else if ms >= daily {
-            created.format("%Y-%m-%d").to_string()
+            time::date_text(ms)
         } else if ms >= weekly {
-            let week = created.iso_week();
-            format!("{}-W{:02}", week.year(), week.week())
+            iso_week(ms)
         } else {
             keep[at] = policy.weekly_days == 0;
             continue;

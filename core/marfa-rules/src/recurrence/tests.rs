@@ -5,10 +5,7 @@ fn ms(text: &str) -> i64 {
 }
 
 fn iso(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .unwrap()
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
+    format!("{}Z", &crate::time::written(ms)[..19])
 }
 
 /// A start, a rule, the end of the window and the occurrences expected in it.

@@ -549,14 +549,14 @@ fn publish(path: &Path, pid: u32, mut mine: Process, wait: Duration) -> Result<L
 /// Whether an entry another process wrote was written lately enough to keep:
 /// within the hour, and not at a time still to come.
 fn recent(process: &Process) -> bool {
-    let Ok(at) = chrono::DateTime::parse_from_rfc3339(&process.heartbeat_at) else {
+    let Ok(at) = marfa_rules::time::read(&process.heartbeat_at) else {
         return false;
     };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    let age = now - at.timestamp_millis();
+    let age = now - at;
     (0..KEPT.as_millis() as i64).contains(&age)
 }
 

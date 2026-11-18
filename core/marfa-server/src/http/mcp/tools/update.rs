@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use chrono::DateTime;
+use marfa_rules::time;
 use serde_json::{Map, Value, json};
 
 use super::{Definition, item_id, parsed, text, texts};
@@ -188,13 +188,7 @@ fn same_time(a: Option<&str>, b: Option<&str>) -> bool {
     let (Some(a), Some(b)) = (a, b) else {
         return false;
     };
-    match (
-        DateTime::parse_from_rfc3339(a),
-        DateTime::parse_from_rfc3339(b),
-    ) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
+    matches!((time::read(a), time::read(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// Reports fields both sides changed, including fields removed by replacement.

@@ -3,9 +3,8 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
-
 use crate::app::clock::Stamp;
+use crate::app::housekeeping::DAY_MS;
 
 const SUFFIX: &str = ".json";
 /// The newest backup of each of this many days, the most recent that hold one, is kept.
@@ -53,12 +52,12 @@ pub fn parse(name: &str) -> Option<Stamp> {
 }
 
 /// The backups among `listed` whose names read, newest first.
-fn by_age(listed: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(DateTime<Utc>, String)> {
-    let mut backups: Vec<(DateTime<Utc>, String)> = listed
+fn by_age(listed: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(Stamp, String)> {
+    let mut backups: Vec<(Stamp, String)> = listed
         .into_iter()
         .filter_map(|name| {
             let name = name.as_ref();
-            parse(name).map(|at| (at.at(), name.to_string()))
+            parse(name).map(|at| (at, name.to_string()))
         })
         .collect();
     backups.sort_by(|a, b| b.cmp(a));
@@ -70,24 +69,28 @@ pub fn doomed(listed: &[String], taken: Stamp) -> Vec<String> {
     doomed_of(&by_age(listed), taken).cloned().collect()
 }
 
-fn doomed_of(by_age: &[(DateTime<Utc>, String)], taken: Stamp) -> impl Iterator<Item = &String> {
-    let since = taken.at() - Duration::days(1);
-    let mut days: HashSet<NaiveDate> = HashSet::new();
+fn doomed_of(by_age: &[(Stamp, String)], taken: Stamp) -> impl Iterator<Item = &String> {
+    let since = taken.ms() - DAY_MS;
+    let mut days: HashSet<i64> = HashSet::new();
     by_age
         .iter()
         .enumerate()
         .filter(move |(index, (at, _))| {
-            !(*index == 0 || *at > since || newest_of_a_kept_day(&mut days, *at))
+            !(*index == 0 || at.ms() > since || newest_of_a_kept_day(&mut days, *at))
         })
         .map(|(_, (_, name))| name)
 }
 
-fn newest_of_a_kept_day(days: &mut HashSet<NaiveDate>, at: DateTime<Utc>) -> bool {
-    days.len() < DAYS_KEPT && days.insert(at.date_naive())
+fn newest_of_a_kept_day(days: &mut HashSet<i64>, at: Stamp) -> bool {
+    days.len() < DAYS_KEPT && days.insert(day_of(at))
+}
+
+fn day_of(at: Stamp) -> i64 {
+    at.ms().div_euclid(DAY_MS)
 }
 
 /// The backups a listing holds, newest first.
-pub struct Listing(Vec<(DateTime<Utc>, String)>);
+pub struct Listing(Vec<(Stamp, String)>);
 
 impl Listing {
     pub fn of<'a>(listed: impl IntoIterator<Item = &'a String>) -> Listing {
@@ -99,7 +102,7 @@ impl Listing {
         let Some(at) = parse(missing) else {
             return false;
         };
-        let entry = (at.at(), missing.to_string());
+        let entry = (at, missing.to_string());
         let mut backups = self.0.clone();
         backups.insert(backups.partition_point(|listed| *listed > entry), entry);
         doomed_of(&backups, taken).any(|name| name == missing)
@@ -280,10 +283,10 @@ mod tests {
         let before = thinned(&hours("2026-09-20T12:00:00.000Z", 40 * 24));
         let mut newest_of_days: Vec<String> = Vec::new();
         for (at, name) in by_age(&before) {
-            let date = at.date_naive();
+            let date = day_of(at);
             if newest_of_days
                 .iter()
-                .all(|kept| parse(kept).unwrap().at().date_naive() != date)
+                .all(|kept| day_of(parse(kept).unwrap()) != date)
             {
                 newest_of_days.push(name);
             }
@@ -305,7 +308,7 @@ mod tests {
         let (mut counted, mut spanned): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
         let mut differ = Vec::new();
         for name in &taken {
-            let now = parse(name).unwrap().at();
+            let now = parse(name).unwrap().ms();
             counted.push(name.clone());
             let gone = doomed(&counted, parse(name).unwrap());
             counted.retain(|kept| !gone.contains(kept));
@@ -316,13 +319,13 @@ mod tests {
                 .enumerate()
                 .filter(|(index, (at, _))| {
                     *index == 0
-                        || *at > now - Duration::days(1)
-                        || (*at > now - Duration::days(31) && days.insert(at.date_naive()))
+                        || at.ms() > now - DAY_MS
+                        || (at.ms() > now - 31 * DAY_MS && days.insert(day_of(*at)))
                 })
                 .map(|(_, (_, name))| name)
                 .collect();
             let extra: Vec<&String> = counted.iter().filter(|n| !spanned.contains(n)).collect();
-            let at_23 = now.format("%H").to_string() == "23";
+            let at_23 = now.rem_euclid(DAY_MS) / 3_600_000 == 23;
             if spanned.iter().any(|n| !counted.contains(n)) || extra.len() > usize::from(at_23) {
                 differ.push(name.clone());
             }

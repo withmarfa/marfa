@@ -57,7 +57,7 @@ pub async fn archive(
     sender: Sender,
     idle: Duration,
 ) {
-    let mtime = u64::try_from(prepared.created_at.at().timestamp()).unwrap_or(0);
+    let mtime = u64::try_from(prepared.created_at.ms().div_euclid(1000)).unwrap_or(0);
     let out = Out {
         app: &app,
         caller: &caller,
