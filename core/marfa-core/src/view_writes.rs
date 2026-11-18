@@ -12,6 +12,7 @@ impl Core {
         settings: &Map<String, Value>,
         idempotency_key: Option<&str>,
     ) -> Result<ViewRow> {
+        self.refuse_removing(None)?;
         let answer = self.send_to_view_door(
             Method::Post,
             vec!["views".into()],
@@ -36,6 +37,7 @@ impl Core {
                 "a view's version is the one the change is based on, not a setting".into(),
             ));
         }
+        self.refuse_removing(Some(id))?;
         let mut body = changes.clone();
         body.insert("version".into(), Value::from(version));
         let answer = self.send_to_view_door(
@@ -51,6 +53,10 @@ impl Core {
     /// `NotFound`; replaying an accepted delete with its key succeeds.
     pub fn delete_view(&self, id: &str, idempotency_key: Option<&str>) -> Result<()> {
         self.lock.refuse_unless_writer()?;
+        let _held = {
+            let conn = self.conn()?;
+            self.hold_removing(&conn, vec![id.to_string()], crate::store::Removing::Purge)?
+        };
         self.purge_sent(id, || {
             self.send_to_view_door(
                 Method::Delete,

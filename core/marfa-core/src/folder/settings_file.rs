@@ -344,6 +344,12 @@ impl Folder {
         // The same edit keeps its key, so one whose answer was lost is
         // answered from the server's record.
         let key = format!("{}-settings-{}", self.folder, state::hash(body.as_bytes()));
+        if let Err(error) = self.core.refuse_removing(Some(&self.folder)) {
+            return Ok(SettingsFileReport {
+                flagged: Some(format!("not sent yet: {error}")),
+                ..Default::default()
+            });
+        }
         // Held to the instance as a drain's sends are: never sent while it is
         // unconfirmed.
         match crate::catch_up::refuse_another_instance(&self.core, self.core.http()?) {

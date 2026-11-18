@@ -265,6 +265,7 @@ impl Core {
         settings: &Map<String, Value>,
         idempotency_key: Option<&str>,
     ) -> Result<FolderRow> {
+        self.refuse_removing(None)?;
         Settings::read("(new)", FOLDER_TYPE, "active", settings)?
             .check_types(&self.catalog_held()?)?;
         self.send_to_folder_door(
@@ -285,6 +286,7 @@ impl Core {
         version: i64,
         idempotency_key: Option<&str>,
     ) -> Result<FolderRow> {
+        self.refuse_removing(Some(id))?;
         if changes.is_empty() {
             return Err(CoreError::Invalid(
                 "a change to a folder names at least one setting".into(),
@@ -316,6 +318,7 @@ impl Core {
     /// A revoked folder is final: it changes no more, and a second revoke
     /// is refused `400 invalid_transition`.
     pub fn revoke_folder(&self, id: &str, idempotency_key: Option<&str>) -> Result<FolderRow> {
+        self.refuse_removing(Some(id))?;
         self.send_to_folder_door(
             Method::Post,
             vec!["folders".into(), id.into(), "revoke".into()],
