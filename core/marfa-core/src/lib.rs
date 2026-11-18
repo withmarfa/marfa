@@ -278,8 +278,9 @@ pub struct Core {
     http: Option<Arc<http::Http>>,
     cache: Option<blob::Cache>,
     catch_up_idle: Duration,
-    /// A relocation callback retains the claim while its read ends, so it
-    /// cannot record an origin after another process becomes the writer.
+    /// A relocation callback holds the claim while it commits, so it cannot
+    /// record an origin after another process becomes the writer. A transport
+    /// made to be let go does not keep it, so dropping the core frees it.
     lock: Arc<lock::WriterLock>,
     /// Hydration, catch-up and follow each move the one cursor, so two at
     /// once could move it backwards, apply an event twice, or apply one to a

@@ -166,6 +166,9 @@ pub struct Http {
     /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
+    /// Keeps what `keep` writes through, the writer lock among it, alive.
+    /// `to_let_go` drops it, so a transport left running frees the lock.
+    keeps: Option<Arc<dyn std::any::Any + Send + Sync>>,
     reach: Option<String>,
     /// The instance a write names (`X-Marfa-Instance-Id`), so another
     /// instance at the address refuses it rather than writing it.
@@ -714,6 +717,7 @@ impl Http {
             renewing: Arc::new(Mutex::new(())),
             let_go: Arc::new(AtomicBool::new(false)),
             relocation: Arc::new(OnceLock::new()),
+            keeps: None,
             reach: None,
             instance: None,
             call_budget: None,
@@ -774,6 +778,7 @@ impl Http {
     pub(crate) fn to_let_go(&self) -> Self {
         Self {
             let_go: Arc::new(AtomicBool::new(false)),
+            keeps: None,
             ..self.clone()
         }
     }
@@ -840,11 +845,13 @@ impl Http {
     }
 
     pub(crate) fn relocating(
-        &self,
+        &mut self,
         expected_origin: String,
         expected_instance: Option<String>,
         keep: KeepOrigin,
+        keeps: Arc<dyn std::any::Any + Send + Sync>,
     ) {
+        self.keeps = Some(keeps);
         let _ = self.relocation.set(Mutex::new(Relocation {
             expected_origin,
             expected_instance,
