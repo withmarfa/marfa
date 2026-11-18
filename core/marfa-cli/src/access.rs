@@ -39,7 +39,10 @@ pub const POWERS: [(&str, &str); 14] = [
         "instance.read",
         "See health, metrics, storage and job status",
     ),
-    ("instance.maintain", "Run housekeeping and cancel bulk jobs"),
+    (
+        "instance.maintain",
+        "Run housekeeping and update the server",
+    ),
     ("schema.write", "Replace or remove type definitions"),
     (
         "blobs.manage",
@@ -52,7 +55,7 @@ pub const POWERS: [(&str, &str); 14] = [
     ("connectors.manage", "See, manage and remove all connectors"),
     ("audit.read", "Read the activity log"),
     ("items.purge", "Delete items in the trash for good"),
-    ("backups.manage", "See, take and adopt backups"),
+    ("backups.manage", "See, take, adopt and restore backups"),
     (
         "sign_ins.manage",
         "See, rename and end sign-ins and passkeys",

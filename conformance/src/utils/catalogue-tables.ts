@@ -67,16 +67,16 @@ export interface EventTypeRow {
 const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "audit.read": "Reading the audit log.",
   "backups.manage":
-    "Listing the backups, taking one now and adopting the backup folder.",
+    "Listing the backups, taking one now, adopting the backup folder and restoring a backup or an archive.",
   "blobs.manage":
     "Managing blob bytes and copies across the instance, without granting item content access.",
   "config.manage":
-    "Reading and replacing the instance configuration at `/config`: the enforcement levers and the cleanup-job retention overrides.",
+    "Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and every stored setting, such as the addresses, the object store, the backup destination and the heartbeat and error notice settings.",
   "connectors.manage":
     "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.",
   "grants.manage": "Listing, narrowing and revoking other apps' access.",
   "instance.maintain":
-    "Running housekeeping, canceling bulk jobs and confirming the server's clock.",
+    "Running housekeeping, canceling bulk jobs, updating the server and confirming the server's clock.",
   "instance.read":
     "Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
   "items.purge":
@@ -86,7 +86,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "keys.mint":
     "Minting keys within the caller's current access, and listing, changing and revoking keys within that access.",
   "sign_ins.manage":
-    "Listing, renaming and ending the owner's sign-ins, and listing, renaming and removing the owner's passkeys and getting the link that adds one.",
+    "Listing, renaming and ending the owner's sign-ins, listing, renaming and removing the owner's passkeys, getting the link that adds one and changing the owner's password.",
   "schema.write":
     "Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.",
   "webhooks.manage":

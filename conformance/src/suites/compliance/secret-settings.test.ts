@@ -1,9 +1,14 @@
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -14,10 +19,12 @@ import { archiveLines } from "../../utils/archive.js";
 import { attentionOf, ownerOf } from "../../utils/backups.js";
 import {
   bootFreshServer,
+  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
+import { listened } from "../../utils/refused-boot.js";
 import { waitFor } from "../../utils/wait.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -382,5 +389,63 @@ describe("a secret setting", () => {
       }
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses to start on a settings key it cannot open, and keeps the file as it was",
+    async () => {
+      const cases: [string, (key: string, beside: string) => void][] = [
+        [
+          "a symbolic link",
+          (key, beside) => {
+            writeFileSync(join(beside, "target"), "settings_key=short\n", {
+              mode: 0o600,
+            });
+            symlinkSync(join(beside, "target"), key);
+          },
+        ],
+        ["a directory", (key) => mkdirSync(key, { mode: 0o700 })],
+      ];
+      // A process that runs as root opens a file whatever its mode.
+      if (process.getuid?.() !== 0) {
+        cases.push([
+          "a file with mode 000",
+          (key) => {
+            writeFileSync(key, "settings_key=short\n");
+            chmodSync(key, 0o000);
+          },
+        ]);
+      }
+      for (const [kind, arrange] of cases) {
+        let before = "";
+        const refused = await bootRefused("secret-key-unopened", {
+          prepare: (_sqlitePath, state) => {
+            const key = join(state, "marfa.settings.key");
+            arrange(key, state);
+            const found = lstatSync(key);
+            before = `${String(found.mode)} ${found.isSymbolicLink() ? readlinkSync(key) : ""}`;
+          },
+        });
+        try {
+          expect(refused.code, kind).not.toBe(0);
+          expect(listened(refused), kind).toBe(false);
+          const key = join(refused.stateDir, "marfa.settings.key");
+          const found = lstatSync(key);
+          expect(
+            `${String(found.mode)} ${found.isSymbolicLink() ? readlinkSync(key) : ""}`,
+            kind,
+          ).toBe(before);
+          expect(
+            readdirSync(refused.stateDir).filter((name) =>
+              name.startsWith("marfa.settings.key.damaged-"),
+            ),
+            kind,
+          ).toEqual([]);
+        } finally {
+          await refused.stop();
+        }
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS * 3,
   );
 });

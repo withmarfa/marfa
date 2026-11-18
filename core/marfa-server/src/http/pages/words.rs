@@ -61,8 +61,10 @@ const POWERS: [(&str, PowerWords); 14] = [
     (
         "instance.maintain",
         PowerWords {
-            title: "Run housekeeping and cancel bulk jobs",
-            note: Some("Some jobs permanently delete data that is due to go."),
+            title: "Run housekeeping and update the server",
+            note: Some(
+                "Includes canceling bulk jobs and confirming the clock. Some jobs permanently delete data that is due to go.",
+            ),
         },
     ),
     (
@@ -110,7 +112,7 @@ const POWERS: [(&str, PowerWords); 14] = [
     (
         "backups.manage",
         PowerWords {
-            title: "See, take and adopt backups",
+            title: "See, take, adopt and restore backups",
             note: None,
         },
     ),
@@ -118,7 +120,7 @@ const POWERS: [(&str, PowerWords); 14] = [
         "sign_ins.manage",
         PowerWords {
             title: "See, rename and end sign-ins and passkeys",
-            note: Some("Includes ending this app's own access."),
+            note: Some("Includes changing the owner's password and ending this app's own access."),
         },
     ),
 ];

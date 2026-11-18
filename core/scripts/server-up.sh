@@ -158,7 +158,7 @@ owner_email="${MARFA_TEST_OWNER_EMAIL}"
 owner_password="${MARFA_TEST_OWNER_PASSWORD}"
 working="$(curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
   -X POST http://localhost/keys -H 'Content-Type: application/json' --data-binary @- <<'JSON'
-{"label":"core-proof","source":"core-proof","permissions":["schema.write","keys.mint","items.purge","webhooks.manage","config.manage","audit.read","grants.manage","instance.read","instance.maintain","connectors.manage","blobs.manage","keys.manage"],"type_permissions":{"*":"write"},"extension_permissions":{"*":"write"},"edge_permissions":{"*":"write"},"metadata_permissions":{"*":"write"},"profile_permissions":{"*":"read"}}
+{"label":"core-proof","source":"core-proof","permissions":["schema.write","keys.mint","items.purge","webhooks.manage","config.manage","audit.read","grants.manage","instance.read","instance.maintain","connectors.manage","blobs.manage","keys.manage","backups.manage","sign_ins.manage"],"type_permissions":{"*":"write"},"extension_permissions":{"*":"write"},"edge_permissions":{"*":"write"},"metadata_permissions":{"*":"write"},"profile_permissions":{"*":"read"}}
 JSON
 )" || fail "the local authority could not mint a working key"
 key="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))' <<<"${working}")"

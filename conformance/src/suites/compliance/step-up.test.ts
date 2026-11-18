@@ -710,10 +710,20 @@ describe("max_age at the authorization endpoint", () => {
     expect(landed!.searchParams.get("code")).toBeNull();
   });
 
-  it("refuses a max_age that is not a whole number of seconds with invalid_request at the redirect URI", async () => {
+  it("refuses a max_age that is not a whole number of seconds or is too large with invalid_request at the redirect URI", async () => {
     const app = await registerApp(server, SCOPE);
     const cookie = await signIn();
-    for (const value of ["-1", "5.5", "soon"]) {
+    await connect(app, cookie);
+    // The largest whole number of seconds the server holds as milliseconds is
+    // 9223372036854775, so the next one and a longer run of digits are too large.
+    const refused = [
+      "-1",
+      "5.5",
+      "soon",
+      "9223372036854776",
+      "99999999999999999999",
+    ];
+    for (const value of refused) {
       const landed = await sentTo(
         server,
         await authorize(
@@ -733,6 +743,21 @@ describe("max_age at the authorization endpoint", () => {
       expect(landed!.searchParams.get("state"), value).toBe("kept");
       expect(landed!.searchParams.get("code"), value).toBeNull();
     }
+    // The witness: the largest number the server holds is not refused.
+    const held = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, SCOPE, pkce(), {
+          max_age: "9223372036854775",
+          state: "kept",
+        }),
+        cookie,
+      ),
+    );
+    expect(held?.href.startsWith(CALLBACK), String(held)).toBe(true);
+    expect(held!.searchParams.get("error")).toBeNull();
+    expect(held!.searchParams.get("code")).toBeTruthy();
   });
 
   it("advertises prompt=login in the authorization server metadata", async () => {
@@ -832,14 +857,25 @@ describe("max_age at the device authorization endpoint", () => {
     ).toBe(200);
   });
 
-  it("refuses a max_age that is not a whole number of seconds with 400 invalid_request", async () => {
+  it("refuses a max_age that is not a whole number of seconds or is too large with 400 invalid_request", async () => {
     const clientId = await deviceClient();
-    for (const value of ["-1", "5.5", "soon", ""]) {
+    const refused = [
+      "-1",
+      "5.5",
+      "soon",
+      "",
+      "9223372036854776",
+      "99999999999999999999",
+    ];
+    for (const value of refused) {
       const asked = await deviceCode(clientId, { max_age: value });
       expect(asked.status, `${value}: ${JSON.stringify(asked.body)}`).toBe(400);
       expect(asked.body.error, value).toBe("invalid_request");
       expect(asked.body.device_code, value).toBeUndefined();
     }
+    // The witness: the largest number the server holds is not refused.
+    const held = await deviceCode(clientId, { max_age: "9223372036854775" });
+    expect(held.status, JSON.stringify(held.body)).toBe(200);
   });
 });
 
