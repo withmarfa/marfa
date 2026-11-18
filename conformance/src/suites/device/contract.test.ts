@@ -3745,7 +3745,7 @@ describe("the contract the working copy was built for", () => {
     expect(
       sent(scripted).slice(before),
       "the device opened the stream after a catalog on another contract",
-    ).toEqual(["GET /types"]);
+    ).toEqual(["GET /", "GET /types"]);
 
     // The witness: with the catalog on the core's own contract, the stream
     // is opened and its event applied.

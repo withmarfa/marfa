@@ -22,6 +22,7 @@ pub mod number;
 pub mod pattern;
 pub mod query;
 pub mod recurrence;
+pub mod release;
 pub mod rows;
 pub mod schema;
 pub mod search;

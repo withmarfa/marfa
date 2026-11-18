@@ -443,6 +443,7 @@ impl CliError {
                 | CoreError::Validation { .. }
                 | CoreError::UnknownType { .. }
                 | CoreError::ContractMismatch { .. }
+                | CoreError::ServerTooOld { .. }
                 | CoreError::FirstSyncWaiting
                 | CoreError::Invalid(_)
                 | CoreError::NotAnswerable(_) => Exit::Refused,

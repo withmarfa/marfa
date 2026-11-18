@@ -2,8 +2,8 @@
 //! threads run as they do against a real server.
 //!
 //! Each path answers from its own list in order, and the last answer
-//! repeats. Every answer names the core's contract unless a JSON answer
-//! names its own.
+//! repeats. The root names the scripted instance unless a script answers it.
+//! Every answer names the core's contract unless a JSON answer names its own.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -273,6 +273,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         match script.answers.get_mut(&path) {
             Some(answers) if answers.len() > 1 => Some(answers.remove(0)),
             Some(answers) => answers.first().cloned(),
+            None if path == "/" => Some(root(INSTANCE)),
             None => None,
         }
     };

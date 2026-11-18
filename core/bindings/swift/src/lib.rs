@@ -1578,6 +1578,15 @@ pub enum MarfaError {
         /// The answer's status, where it was read; its body was not.
         server: Option<ServerAnswer>,
     },
+    /// The server runs a release older than the oldest this build works with.
+    /// Nothing was sent past its root and nothing was applied.
+    ServerTooOld {
+        /// The release the server's root names.
+        served: String,
+        /// The oldest release this build works with.
+        oldest: String,
+        message: String,
+    },
     /// The `Stop` the call was given was raised before it finished.
     Canceled {
         message: String,
@@ -1635,6 +1644,7 @@ impl MarfaError {
             | MarfaError::BytesAbsent { message, .. }
             | MarfaError::NoRoom { message, .. }
             | MarfaError::ContractMismatch { message, .. }
+            | MarfaError::ServerTooOld { message, .. }
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
             | MarfaError::Invalid { message }
@@ -1682,6 +1692,7 @@ impl MarfaError {
             MarfaError::BytesAbsent { .. } => marfa_core::CoreErrorKind::BytesAbsent,
             MarfaError::NoRoom { .. } => marfa_core::CoreErrorKind::NoRoom,
             MarfaError::ContractMismatch { .. } => marfa_core::CoreErrorKind::ContractMismatch,
+            MarfaError::ServerTooOld { .. } => marfa_core::CoreErrorKind::ServerTooOld,
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
@@ -1845,6 +1856,11 @@ impl From<marfa_core::CoreError> for MarfaError {
                 write_sent,
                 message,
                 server,
+            },
+            E::ServerTooOld { served, oldest } => MarfaError::ServerTooOld {
+                served,
+                oldest,
+                message,
             },
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
@@ -3552,6 +3568,10 @@ mod tests {
                 write_sent: false,
                 refusal: marfa_core::ContractRefusal::Unread,
             },
+            E::ServerTooOld {
+                served: "0.0.74".into(),
+                oldest: "0.0.75".into(),
+            },
             E::Invalid(text()),
             E::NotAnswerable(text()),
             E::Fault(text()),
@@ -4033,6 +4053,14 @@ mod tests {
                 .into(),
                 "ContractMismatch",
             ),
+            (
+                E::ServerTooOld {
+                    served: "0.0.74".into(),
+                    oldest: "0.0.75".into(),
+                }
+                .into(),
+                "ServerTooOld",
+            ),
             (E::Invalid(text()).into(), "Invalid"),
             (E::Fault(text()).into(), "Fault"),
             (
@@ -4059,6 +4087,12 @@ mod tests {
         assert!(matches!(
             &crossed.iter().find(|(_, name)| *name == "ContractMismatch").unwrap().0,
             MarfaError::ContractMismatch { served: Some(served), expected: 3, .. } if served == "4"
+        ));
+        assert!(matches!(
+            &crossed.iter().find(|(_, name)| *name == "ServerTooOld").unwrap().0,
+            MarfaError::ServerTooOld { served, oldest, message }
+                if served == "0.0.74" && oldest == "0.0.75"
+                    && message.contains("0.0.74") && message.contains("0.0.75")
         ));
         assert!(matches!(
             &crossed

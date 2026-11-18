@@ -62,6 +62,7 @@ fn hydrate_inner(
     if let Some(query) = query {
         declared_query(query, &edge_types)?;
     }
+    crate::catch_up::refuse_an_old_server(http, stop)?;
     let mut restart = None;
     let mut pages = 0;
     loop {

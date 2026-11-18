@@ -16,6 +16,14 @@ fn keep_token(keychain: &Isolated, origin: &str) {
     }).to_string());
 }
 
+/// What a root names, which a hydration reads before it asks for anything else.
+fn root() -> String {
+    format!(
+        r#"{{"name":"marfa","version":"dev","instance_id":"00000000-0000-7000-8000-000000000000","contract":{},"features":[]}}"#,
+        marfa_core::contract::CONTRACT_VERSION
+    )
+}
+
 fn hydrate(keychain: &Isolated, origin: &str, code: &str, exit: i32) {
     let store = keychain.directory().join("copy.sqlite");
     let output = keychain
@@ -51,6 +59,7 @@ fn hydrate(keychain: &Isolated, origin: &str, code: &str, exit: i32) {
 fn device_renewal_reports_signed_out_without_inventing_server_status() {
     let keychain = Isolated::new("renewal-signed-out");
     let door = door::Door::open(vec![
+        door::Answer::json("200 OK", &root()),
         door::Answer::json(
             "401 Unauthorized",
             r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
@@ -70,8 +79,8 @@ fn device_renewal_reports_signed_out_without_inventing_server_status() {
     keep_token(&keychain, &door.url);
     hydrate(&keychain, &door.url, "signed_out", 5);
     let received = door.received();
-    assert_eq!(received.len(), 3);
-    assert_eq!(received[2].path(), "/token");
+    assert_eq!(received.len(), 4);
+    assert_eq!(received[3].path(), "/token");
 }
 
 #[test]
@@ -82,6 +91,11 @@ fn device_renewal_reports_local_keychain_failure_without_server_status() {
     keep_token(&keychain, &origin);
     let path = keychain.keychain_path();
     let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        door::read_request(&mut stream);
+        let body = root();
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", marfa_core::contract::CONTRACT_VERSION, body.len()).unwrap();
+        drop(stream);
         let (mut stream, _) = listener.accept().unwrap();
         door::read_request(&mut stream);
         std::fs::remove_file(path).unwrap();
