@@ -210,7 +210,7 @@ impl Folder {
     /// without the file, and one by the server only after a later save of the
     /// file, since the server would refuse the same write again.
     pub(super) fn settle_default_edges(&self, settings: &Settings) -> Result<()> {
-        let bounds = state::every_bound(&*self.core.conn()?)?;
+        let bounds = state::bound_refused(&*self.core.conn()?)?;
         for mut bound in bounds {
             if !bound.writes.refused.iter().any(is_default) {
                 continue;

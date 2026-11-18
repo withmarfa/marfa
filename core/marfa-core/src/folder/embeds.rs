@@ -54,6 +54,31 @@ impl Files {
         files
     }
 
+    /// Whether a file already stands at `path` or at a name a folder reads as
+    /// the same.
+    pub fn holds_as(&self, path: &str) -> bool {
+        self.by_path.contains_key(&folded(path))
+    }
+
+    pub fn insert(&mut self, path: &str) {
+        self.by_path.insert(folded(path), path.to_string());
+        self.by_name
+            .entry(folded(name_of(path)))
+            .or_default()
+            .push(path.to_string());
+    }
+
+    pub fn remove(&mut self, path: &str) {
+        self.by_path.remove(&folded(path));
+        let name = folded(name_of(path));
+        if let Some(found) = self.by_name.get_mut(&name) {
+            found.retain(|held| held != path);
+            if found.is_empty() {
+                self.by_name.remove(&name);
+            }
+        }
+    }
+
     fn at(&self, path: &str) -> Option<String> {
         self.by_path.get(&folded(path)).cloned()
     }

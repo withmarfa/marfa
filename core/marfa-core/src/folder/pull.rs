@@ -303,7 +303,17 @@ impl Folder {
         self.pull_with(Some(selection))
     }
 
-    fn pull_with(&self, mut selection: Option<&mut Selection>) -> Result<PullReport> {
+    /// A pull that adds, moves or takes away a file, or fails part way,
+    /// leaves a watch's inventory of the folder out of date.
+    fn pull_with(&self, selection: Option<&mut Selection>) -> Result<PullReport> {
+        let pulled = self.pull_writing(selection);
+        if !pulled.as_ref().is_ok_and(super::scoped::keeps_the_files) {
+            self.forget_inventory();
+        }
+        pulled
+    }
+
+    fn pull_writing(&self, mut selection: Option<&mut Selection>) -> Result<PullReport> {
         self.refuse_while_waiting()?;
         let mut earlier = PullReport::default();
         let mut attempts = 1;

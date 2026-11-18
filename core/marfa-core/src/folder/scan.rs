@@ -5,6 +5,7 @@ use crate::Seen;
 
 use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
+use super::scoped::{Guard, Inventory, Looked, Plan, Reading};
 use super::settings::OutsideQuery;
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
@@ -58,6 +59,8 @@ struct ScanStart {
     /// The registry, where the copy's own folder was lost from it.
     doubt: Option<String>,
     settings: Settings,
+    /// What a later pass's reading of the folder rests on.
+    guard: Guard,
     catalog: Catalog,
     edge_types: EdgeTypes,
     lists: Lists,
@@ -73,6 +76,12 @@ struct ScanState {
     /// When the pass began, before it captured any file's size and time.
     began: std::time::SystemTime,
     full: bool,
+    guard: Guard,
+    /// Set where the pass looked only at the paths events named.
+    scope: Option<Scoping>,
+    /// Files the pass counted as skipped: nothing sends them and no embed
+    /// names them.
+    skipped_keys: Vec<String>,
     /// Whether this pass reads every document's edges again
     /// (`EMBEDS_REREAD`).
     reread_embeds: bool,
@@ -110,6 +119,15 @@ struct ScanState {
     files: Vec<Scanned>,
     /// Why each stale save waits, by path.
     stale: HashMap<String, String>,
+}
+
+/// What a pass that looked only at the paths events named keeps for its end.
+struct Scoping {
+    /// What the last pass found, without its keys, which the pass holds as
+    /// `seen`.
+    inventory: Inventory,
+    /// Files the last pass found that are gone.
+    vanished: Vec<String>,
 }
 
 /// Why a file naming an id the copy does not hold waits, from the server's
@@ -222,7 +240,7 @@ impl Folder {
     }
 
     pub fn scan(&self) -> Result<ScanReport> {
-        self.scan_as(true, None, Files::Write)
+        self.scan_as(true, None, Files::Write, Reading::Walk)
     }
 
     /// `scan`, but no file in the directory is written, moved or removed: a
@@ -231,7 +249,7 @@ impl Folder {
     /// temporary file a crashed write left stays, all for a pass that writes
     /// files.
     pub(super) fn scan_keeping_files(&self) -> Result<ScanReport> {
-        self.scan_as(true, None, Files::Keep)
+        self.scan_as(true, None, Files::Keep, Reading::Walk)
     }
 
     /// A watch's pass. Short of `full`, it skips a file whose size, time and
@@ -240,10 +258,28 @@ impl Folder {
     /// or is a file item at a document name, and changed within `settle`,
     /// which a copy or a download may still be writing.
     pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
-        self.scan_as(full, Some(settle), Files::Write)
+        self.scan_watching_within(full, settle, Reading::Walk)
     }
 
-    fn scan_as(&self, full: bool, settle: Option<Duration>, mode: Files) -> Result<ScanReport> {
+    /// `scan_watching`, where `reading` says whether a quick pass may look at
+    /// the paths the events a watch heard named, and leave what it finds for
+    /// one that does.
+    pub(super) fn scan_watching_within(
+        &self,
+        full: bool,
+        settle: Duration,
+        reading: Reading<'_>,
+    ) -> Result<ScanReport> {
+        self.scan_as(full, Some(settle), Files::Write, reading)
+    }
+
+    fn scan_as(
+        &self,
+        full: bool,
+        settle: Option<Duration>,
+        mode: Files,
+        reading: Reading<'_>,
+    ) -> Result<ScanReport> {
         self.read_limit_if_holding();
         let start = match self.scan_root()? {
             ControlFlow::Break(report) => return Ok(report),
@@ -252,12 +288,33 @@ impl Folder {
         // The first pass under the rule reads every file, so no document
         // is skipped as unchanged.
         let reread_embeds = crate::store::meta_get(&*self.core.conn()?, EMBEDS_REREAD)?.is_none();
-        let mut scan = match self.walk_for_scan(start, full || reread_embeds, settle, mode)? {
+        // A watch's quick pass over a folder it holds the inventory of looks
+        // at what events named; any other pass walks.
+        let watching = !full && !reread_embeds && mode == Files::Write && settle.is_some();
+        let plan = match reading {
+            Reading::Named(touched) if watching => {
+                self.plan_scoped(&start.settings, &start.lists, touched)?
+            }
+            _ => {
+                self.forget_inventory();
+                None
+            }
+        };
+        let keep = watching && !matches!(reading, Reading::Walk);
+        let mut scan = match self.walk_for_scan(start, full || reread_embeds, settle, mode, plan)? {
             ControlFlow::Break(report) => return Ok(report),
             ControlFlow::Continue(scan) => scan,
         };
         scan.reread_embeds = reread_embeds;
-        self.read_unchanged_and_documents(&mut scan)?;
+        if self.read_unchanged_and_documents(&mut scan)?.is_break() {
+            // Only a walk will do, and nothing has been written yet.
+            let again = if keep {
+                Reading::Keeping
+            } else {
+                Reading::Walk
+            };
+            return self.scan_as(full, settle, mode, again);
+        }
         self.count_unchanged(&mut scan);
         self.read_rest(&mut scan)?;
         if self.root_left(&mut scan).is_break() {
@@ -287,7 +344,60 @@ impl Folder {
             return Ok(scan.report);
         }
         scan.report.root_gone = scan.report.root_gone.or_else(|| self.root_gone());
+        if keep && !scan.incomplete && scan.report.root_gone.is_none() {
+            self.leave_inventory(&mut scan);
+        }
         Ok(scan.report)
+    }
+
+    /// Keeps what the pass found for the next quick pass: every file, and
+    /// which of them it must judge again. Nothing is kept where the pass
+    /// set a save aside or folded a name, which only a walk can follow.
+    fn leave_inventory(&self, scan: &mut ScanState) {
+        if !scan.stale.is_empty()
+            || scan.files.iter().any(|file| file.folded)
+            || scan.seen.len() != scan.keys.len() && scan.scope.is_none()
+            || scan.keys.iter().any(|key| !scan.seen.contains(key))
+        {
+            return;
+        }
+        let skipped: HashSet<&str> = scan.skipped_keys.iter().map(String::as_str).collect();
+        let settled = |key: &String| scan.unchanged.contains(key) || skipped.contains(key.as_str());
+        let inventory = match scan.scope.take() {
+            Some(Scoping {
+                mut inventory,
+                vanished,
+            }) => {
+                for key in vanished.iter().chain(&scan.keys) {
+                    inventory.dirty.remove(key);
+                    inventory.skipped.remove(key);
+                }
+                for key in &scan.keys {
+                    if skipped.contains(key.as_str()) {
+                        inventory.skipped.insert(key.clone());
+                    } else if !settled(key) {
+                        inventory.dirty.insert(key.clone());
+                    }
+                }
+                inventory.keys = std::mem::take(&mut scan.seen);
+                inventory
+            }
+            None => Inventory {
+                guard: scan.guard.clone(),
+                dirty: scan
+                    .keys
+                    .iter()
+                    .filter(|key| !settled(key))
+                    .cloned()
+                    .collect(),
+                skipped: scan.skipped_keys.iter().cloned().collect(),
+                index: embeds::Files::of(&scan.keys),
+                keys: std::mem::take(&mut scan.seen),
+                directories: scan.walked.directories.clone(),
+                secrets: scan.walked.secrets.clone(),
+            },
+        };
+        self.keep_inventory(inventory);
     }
 
     /// Reads the root where a file is held over the limit it last named, so a
@@ -335,10 +445,12 @@ impl Folder {
             (crate::catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let lists = settings.lists()?;
+        let guard = self.guard_of(&settings)?;
         Ok(ControlFlow::Continue(ScanStart {
             report,
             doubt,
             settings,
+            guard,
             catalog,
             edge_types,
             lists,
@@ -354,11 +466,13 @@ impl Folder {
         full: bool,
         settle: Option<Duration>,
         mode: Files,
+        plan: Option<Plan>,
     ) -> Result<ControlFlow<ScanReport, ScanState>> {
         let ScanStart {
             mut report,
             doubt,
             settings,
+            guard,
             catalog,
             edge_types,
             lists,
@@ -369,8 +483,31 @@ impl Folder {
             std::fs::rename(self.root.with_extension("replacement"), &self.root)
                 .expect("install replacement root for fault");
         }
-        let began = std::time::SystemTime::now();
-        let walked = self.walked(&lists);
+        let began = plan
+            .as_ref()
+            .map_or_else(std::time::SystemTime::now, |plan| plan.began);
+        let (walked, scoped) = match plan {
+            Some(plan) => {
+                let Plan {
+                    inventory,
+                    found,
+                    opened,
+                    vanished,
+                    snapshot,
+                    ..
+                } = plan;
+                let walked = Walked {
+                    files: found.iter().map(|(path, _)| path.clone()).collect(),
+                    opened,
+                    directories: inventory.directories.clone(),
+                    secrets: inventory.secrets.clone(),
+                    ..Walked::default()
+                };
+                let keys = found.into_iter().map(|(_, key)| key).collect();
+                (walked, Some((inventory, vanished, keys, snapshot)))
+            }
+            None => (self.walked(&lists), None),
+        };
         let incomplete = walked.incomplete();
         swap_root(&self.root, "replace-root-before-capture");
         if let Some(gone) = self.root_gone() {
@@ -396,21 +533,43 @@ impl Folder {
         }
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
-        let snapshot = {
-            let conn = self.core.conn()?;
-            state::every_bound(&conn)?
-        };
-        let found = walked
-            .files
-            .iter()
-            .map(|path| identity::relative(&self.root, path))
-            .collect::<Result<Vec<String>>>()?;
-        let seen: HashSet<String> = found.iter().cloned().collect();
-        let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
+        let (snapshot, seen, paths, keys, scope) = match scoped {
+            Some((mut inventory, vanished, keys, snapshot)) => {
+                let seen = std::mem::take(&mut inventory.keys);
+                let paths = walked.files.clone();
+                (
+                    snapshot,
+                    seen,
+                    paths,
+                    keys,
+                    Some(Scoping {
+                        inventory,
+                        vanished,
+                    }),
+                )
+            }
+            None => {
+                let snapshot = {
+                    let conn = self.core.conn()?;
+                    state::every_bound(&conn)?
+                };
+                let found = walked
+                    .files
+                    .iter()
+                    .map(|path| identity::relative(&self.root, path))
+                    .collect::<Result<Vec<String>>>()?;
+                let seen: HashSet<String> = found.iter().cloned().collect();
+                let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
+                (snapshot, seen, paths, keys, None)
+            }
+        };
         Ok(ControlFlow::Continue(ScanState {
             began,
             full,
+            guard,
+            scope,
+            skipped_keys: Vec::new(),
             reread_embeds: false,
             settle,
             mode,
@@ -442,18 +601,40 @@ impl Folder {
     /// and identity are as the last read left them, and reads the Markdown
     /// files first, so a file only an embed names is sent too. A file
     /// carrying the item id of a skipped file is read, and so is the skipped
-    /// file, until no skipped file's item is named.
-    fn read_unchanged_and_documents(&self, scan: &mut ScanState) -> Result<()> {
+    /// file, until no skipped file's item is named. Where the pass looks only
+    /// at the paths events named, a file outside them that is so named is
+    /// looked at too; `Break` says one cannot be, and only a walk will do.
+    fn read_unchanged_and_documents(&self, scan: &mut ScanState) -> Result<ControlFlow<()>> {
         let full = scan.full;
         let by_path = bound_by_path(&scan.snapshot);
-        let (paths, keys, walked) = (&scan.paths, &scan.keys, &scan.walked);
-        let (unchanged, stats) = (&mut scan.unchanged, &mut scan.stats);
-        let (early, shown, embedded) = (&mut scan.early, &mut scan.shown, &mut scan.embedded);
+        let by_item: HashMap<&str, &str> = if scan.scope.is_some() {
+            scan.snapshot
+                .iter()
+                .map(|bound| (bound.item_id.as_str(), bound.path.as_str()))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let ScanState {
+            paths,
+            keys,
+            walked,
+            unchanged,
+            stats,
+            early,
+            shown,
+            embedded,
+            scope,
+            seen,
+            lists,
+            incomplete,
+            ..
+        } = scan;
         if !full {
             // Resolved over every file, so a hard link shares no mark.
             let marks = captured_identities(paths, walked);
             let conn = self.core.conn()?;
-            for (path, key) in paths.iter().zip(keys) {
+            for (path, key) in paths.iter().zip(keys.iter()) {
                 if let Some(bound) = by_path.get(key.as_str())
                     && bound.held.is_none()
                     && !bound.holds_refusal()
@@ -471,10 +652,23 @@ impl Folder {
             }
         }
         // Markdown files first, so a file only an embed names is sent too.
-        let index = embeds::Files::of(keys);
+        let walking_index;
+        let index: &embeds::Files = match &*scope {
+            Some(scoping) => &scoping.inventory.index,
+            None => {
+                walking_index = embeds::Files::of(keys);
+                &walking_index
+            }
+        };
+        let mut in_scope: HashSet<String> = if scope.is_some() {
+            keys.iter().cloned().collect()
+        } else {
+            HashSet::new()
+        };
         let mut reading: Vec<usize> = (0..paths.len()).collect();
         while !reading.is_empty() {
             let mut named: HashSet<String> = HashSet::new();
+            let mut targets: HashSet<String> = HashSet::new();
             for at in reading {
                 let (path, key) = (&paths[at], &keys[at]);
                 if !carries_frontmatter(path) || unchanged.contains(key) {
@@ -486,7 +680,7 @@ impl Folder {
                     .ok_or_else(|| std::io::Error::other("file not opened"))
                     .and_then(Captured::read)
                 else {
-                    scan.incomplete = true;
+                    *incomplete = true;
                     continue;
                 };
                 if let Some(stat) = walked
@@ -512,9 +706,10 @@ impl Folder {
                 );
                 let mut found = Vec::new();
                 for embed in crate::body::text::embeds(&read.body) {
-                    if let Some(target) = embeds::on_disk(key, &embed, &index) {
+                    if let Some(target) = embeds::on_disk(key, &embed, index) {
                         if let embeds::Target::At(at) = &target {
                             embedded.insert(at.clone());
+                            targets.insert(at.clone());
                         }
                         found.push((embed.raw().to_string(), target));
                     }
@@ -526,7 +721,7 @@ impl Folder {
             }
             // A file carrying the id of a skipped file's item may be its copy,
             // and which keeps the id is decided with both read.
-            reading = (0..paths.len())
+            let mut next: Vec<usize> = (0..paths.len())
                 .filter(|at| {
                     unchanged.contains(&keys[*at])
                         && by_path
@@ -534,28 +729,81 @@ impl Folder {
                             .is_some_and(|bound| named.contains(&bound.item_id))
                 })
                 .collect();
-            for at in &reading {
+            for at in &next {
                 unchanged.remove(&keys[*at]);
             }
+            if let Some(scoping) = scope.as_ref() {
+                // A file the pass did not look at that a file read names: its
+                // item's file, or a file an embed names that nothing sends.
+                let outside = named
+                    .iter()
+                    .filter_map(|id| by_item.get(id.as_str()).copied())
+                    .chain(
+                        targets
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|key| scoping.inventory.skipped.contains(*key)),
+                    )
+                    .filter(|key| seen.contains(*key) && !in_scope.contains(*key))
+                    .map(str::to_string)
+                    .collect::<std::collections::BTreeSet<String>>();
+                for key in outside {
+                    let Some(Looked::File(path, captured)) =
+                        self.look_at(lists, &scoping.inventory, &key)
+                    else {
+                        return Ok(ControlFlow::Break(()));
+                    };
+                    next.push(paths.len());
+                    walked.opened.insert(path.clone(), captured);
+                    walked.files.push(path.clone());
+                    paths.push(path);
+                    in_scope.insert(key.clone());
+                    keys.push(key);
+                }
+            }
+            reading = next;
         }
-        Ok(())
+        if scope.is_some() {
+            let mut both: Vec<(PathBuf, String)> = std::mem::take(paths)
+                .into_iter()
+                .zip(std::mem::take(keys))
+                .collect();
+            both.sort();
+            (*paths, *keys) = both.into_iter().unzip();
+        }
+        Ok(ControlFlow::Continue(()))
     }
 
     /// Counts the files left unread as unchanged, or as waiting where the
-    /// server has not answered their item's write.
+    /// server has not answered their item's write. Where the pass looked only
+    /// at some files, the others are counted as the last pass left them.
     fn count_unchanged(&self, scan: &mut ScanState) {
         let by_path = bound_by_path(&scan.snapshot);
-        let (unchanged, unanswered) = (&scan.unchanged, &scan.unanswered);
-        let waiting = unchanged
-            .iter()
-            .filter(|key| {
-                by_path
-                    .get(key.as_str())
-                    .is_some_and(|bound| unanswered.contains(&bound.item_id))
-            })
-            .count();
+        let unanswered = &scan.unanswered;
+        let waits = |key: &str| {
+            by_path
+                .get(key)
+                .is_some_and(|bound| unanswered.contains(&bound.item_id))
+        };
+        let mut unchanged = scan.unchanged.len();
+        let mut waiting = scan.unchanged.iter().filter(|key| waits(key)).count();
+        if let Some(scoping) = &scan.scope {
+            let looked: HashSet<&str> = scan.keys.iter().map(String::as_str).collect();
+            for key in scan
+                .seen
+                .iter()
+                .filter(|key| !looked.contains(key.as_str()))
+            {
+                if scoping.inventory.skipped.contains(key) {
+                    scan.report.skipped += 1;
+                    continue;
+                }
+                unchanged += 1;
+                waiting += usize::from(waits(key));
+            }
+        }
         scan.report.waiting += waiting;
-        scan.report.unchanged += unchanged.len() - waiting;
+        scan.report.unchanged += unchanged - waiting;
     }
 
     /// Reads every file the pass has not skipped or read, and holds what the
@@ -567,7 +815,7 @@ impl Folder {
             (&scan.snapshot, &scan.walked, &scan.paths, &scan.keys);
         let (unchanged, embedded) = (&scan.unchanged, &scan.embedded);
         let (early, stats, report) = (&mut scan.early, &mut scan.stats, &mut scan.report);
-        let only_embedded = &mut scan.only_embedded;
+        let (only_embedded, skipped_keys) = (&mut scan.only_embedded, &mut scan.skipped_keys);
         // A file already a file item is read whatever the query says, so one
         // no longer embedded, or moved, is followed rather than journaled. A
         // file item may be bound at a document name, which the item says.
@@ -608,6 +856,7 @@ impl Folder {
                 held.push(path.clone());
             } else {
                 report.skipped += 1;
+                skipped_keys.push(key.clone());
             }
         }
         // Resolved over pushed files only, so a file the folder never touches
@@ -812,7 +1061,7 @@ impl Folder {
         let (files, walked) = (&scan.files, &scan.walked);
         let (unanswered, embedded) = (&scan.unanswered, &scan.embedded);
         let (only_embedded, shown) = (&scan.only_embedded, &scan.shown);
-        let report = &mut scan.report;
+        let (report, skipped_keys) = (&mut scan.report, &mut scan.skipped_keys);
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
         let mut moved_since: Vec<(String, EdgeWork)> = Vec::new();
@@ -826,6 +1075,7 @@ impl Folder {
             if only_embedded.contains(&file.key) && !embedded.contains(&file.key) {
                 report.settling.retain(|path| *path != file.key);
                 report.skipped += 1;
+                skipped_keys.push(file.key.clone());
                 continue;
             }
             if let Some(reason) = waiting.remove(&at) {
@@ -1291,10 +1541,7 @@ impl Folder {
         let (incomplete, report) = (scan.incomplete, &mut scan.report);
         // Journaled rather than deleted: the first half of a rename looks
         // exactly like a delete.
-        let bound = {
-            let conn = self.core.conn()?;
-            state::every_bound(&conn)?
-        };
+        let bound = state::bound_paths(&*self.core.conn()?)?;
         // By path and item: another item's file at the path answers no delete.
         let journaled: HashSet<(String, String)> = {
             let conn = self.core.conn()?;
@@ -1305,38 +1552,42 @@ impl Folder {
         };
         let present: HashSet<String> = bound
             .iter()
-            .filter(|row| seen.contains(&row.path))
-            .map(|row| row.item_id.clone())
+            .filter(|(path, _)| seen.contains(path))
+            .map(|(_, item_id)| item_id.clone())
             .collect();
-        for row in bound {
+        for (path, item_id) in bound {
+            let held = journaled.contains(&(path.clone(), item_id.clone()));
+            let stands = seen.contains(&path);
+            // The root is looked at only where a row is acted on: most rows are
+            // files that stand and were not journaled.
+            if stands && !held {
+                continue;
+            }
             if let Some(gone) = self.root_gone() {
                 report.root_gone = Some(gone);
                 return Ok(ControlFlow::Break(()));
             }
-            let held = journaled.contains(&(row.path.clone(), row.item_id.clone()));
-            if seen.contains(&row.path) {
+            if stands {
                 // Back inside the grace, so the server never hears of it.
-                if held {
-                    let conn = self.core.conn()?;
-                    state::journal_clear(&conn, &row.path)?;
-                }
+                let conn = self.core.conn()?;
+                state::journal_clear(&conn, &path)?;
                 continue;
             }
             // Not reached is not gone: the item of a file the lists stopped
             // taking, or one the walk could not read or passed over, is not trashed.
-            if !self.reaches(lists, &row.path) || walked.passed_over(&row.path) {
+            if !self.reaches(lists, &path) || walked.passed_over(&path) {
                 if held {
                     let conn = self.core.conn()?;
-                    state::journal_clear(&conn, &row.path)?;
+                    state::journal_clear(&conn, &path)?;
                 }
                 report.unreached += 1;
                 continue;
             }
             // An interrupted move can leave a binding at its missing source path.
-            if present.contains(&row.item_id) {
+            if present.contains(&item_id) {
                 let conn = self.core.conn()?;
-                state::unbind(&conn, &row.path)?;
-                state::journal_clear(&conn, &row.path)?;
+                state::unbind(&conn, &path)?;
+                state::journal_clear(&conn, &path)?;
                 continue;
             }
             // An unread part of the inventory may hold a file moved from
@@ -1345,7 +1596,7 @@ impl Folder {
                 continue;
             }
             let conn = self.core.conn()?;
-            state::journal_missing(&conn, &row.path, &row.item_id)?;
+            state::journal_missing(&conn, &path, &item_id)?;
             report.missing += 1;
         }
         if !incomplete && self.root_gone().is_none() {
