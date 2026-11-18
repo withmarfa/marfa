@@ -12,8 +12,7 @@ pub mod tuning;
 mod unknown;
 
 use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use arc_swap::ArcSwap;
 
@@ -86,7 +85,7 @@ impl Accepted {
             sealer: Arc::new(sealer),
             start_only: self.start_only,
             live: ArcSwap::from_pointee(live),
-            generation: AtomicU64::new(0),
+            steer: Mutex::new(0),
         })
     }
 }
@@ -117,7 +116,8 @@ pub struct Settings {
     sealer: Arc<Sealer>,
     start_only: Vec<start_only::Listed>,
     live: ArcSwap<Snapshot>,
-    generation: AtomicU64,
+    /// The generation of the last change staged; held only for a read, a step or a swap.
+    steer: Mutex<u64>,
 }
 
 impl Settings {
@@ -174,7 +174,21 @@ impl Settings {
     /// Numbers a change. Taken inside the write transaction, where writes are
     /// serial, so the numbers follow the order of the commits.
     pub(crate) fn next_generation(&self) -> u64 {
-        self.generation.fetch_add(1, Ordering::Relaxed) + 1
+        let mut generation = self.steer.lock().unwrap_or_else(PoisonError::into_inner);
+        *generation += 1;
+        *generation
+    }
+
+    /// The generation of the last change staged.
+    pub(crate) fn generation(&self) -> u64 {
+        *self.steer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `change` only while no change has been staged since `generation`, so no change is
+    /// staged while it runs.
+    pub(crate) fn unless_staged<T>(&self, generation: u64, change: impl FnOnce() -> T) -> Option<T> {
+        let staged = self.steer.lock().unwrap_or_else(PoisonError::into_inner);
+        (*staged == generation).then(change)
     }
 
     pub(crate) fn publish(&self, generation: u64, stored: &[(String, String)]) {

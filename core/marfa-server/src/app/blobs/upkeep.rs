@@ -410,7 +410,12 @@ fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
 }
 
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
+/// Brings the stores in use to the committed settings first, which also mends a follow whose
+/// record or reload failed.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
+    if let Err(refused) = app.settle_stores(super::Retry::Settle).await {
+        tracing::warn!(%refused, "The stores in use could not be brought to the settings");
+    }
     let tuning = &app.settings.start.tuning;
     let (batch, batch_bytes) = (
         tuning.blob_replicate_batch,

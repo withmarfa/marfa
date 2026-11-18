@@ -453,6 +453,18 @@ pub fn folder_at(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> 
         .optional()?)
 }
 
+/// The backup folder's store the record names attached, where one is.
+pub fn attached_folder(tx: &Transaction<'_>) -> Result<Option<String>> {
+    Ok(tx
+        .query_row(
+            "SELECT id FROM stores WHERE kind = 'folder' AND detached_at IS NULL \
+             ORDER BY attached_at DESC, id LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 /// Whether the server has recorded an object store with this id, attached or not.
 pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     Ok(tx.query_row(

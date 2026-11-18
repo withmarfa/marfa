@@ -29,9 +29,11 @@ use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
-use super::blobs::{Blob, Hash, folder_shortfall};
+use super::blobs::{Blob, Hash, Retry, folder_shortfall};
 use super::clock::Stamp;
-use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE};
+use super::faults::{
+    HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
+};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
@@ -1279,6 +1281,18 @@ impl App {
     /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
     pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         caller.require(Permission::BackupsManage)?;
+        let (app, caller) = (self.clone(), caller.clone());
+        tokio::spawn(super::provenance::carried(async move {
+            app.adopting(&caller).await
+        }))
+        .await
+        .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
+    }
+
+    /// Holds the stores in use from the choice of the folder to its claim, so no follow records
+    /// another id for it in between.
+    async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
+        let _changing = self.blobs.changing().await;
         let destination = self.destination()?;
         let Destination::Folder(folder) = &destination else {
             return Err(Refusal::new(
@@ -1329,13 +1343,15 @@ impl App {
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
         let (forgotten, new_id) = (old_id.clone(), id.clone());
-        let standing = caller.clone();
-        let (copies, backups) = self
+        let (standing, checking, named) = (caller.clone(), self.clone(), folder.root().to_path_buf());
+        self.faults.hold(HOLD_STORES_RECORD, None).await;
+        let written = self
             .db
             .write(Write::own(), move |tx| {
                 standing
                     .current(tx, &at)?
                     .require(Permission::BackupsManage)?;
+                super::blobs::Blobs::check_adoptable(tx, &checking, &named, &forgotten)?;
                 let backups = forget_backups(tx, &forgotten)?;
                 let copies = super::blobs::Blobs::replace_folder_store(
                     tx, &forgotten, &new_id, &locator, &at,
@@ -1343,7 +1359,20 @@ impl App {
                 housekeeping::bring_forward(tx, REPLICATION, &at)?;
                 Ok((copies, backups))
             })
-            .await?;
+            .await;
+        let (copies, backups) = match written {
+            Ok(counted) => counted,
+            Err(refusal) => {
+                if refusal.commit_failed
+                    && let Err(refused) = self.retake_folder(folder).await
+                {
+                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
+                    self.blobs.doubt_record();
+                }
+                return Err(refusal);
+            }
+        };
+        self.faults.hold(HOLD_STORES_SWAP, None).await;
         let (claimed, new_id) = (folder.clone(), id.clone());
         blocking(move || claimed.claim(&new_id))
             .await
@@ -1729,8 +1758,14 @@ async fn refuse_if_gone(app: &App, store: String, name: String, asker: Caller) {
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<Outcome> {
-    if app.blobs.trouble().is_some() {
-        app.follow_stores().await;
+    if app.blobs.trouble().is_some() || !app.blobs.settled() {
+        app.settle_stores(Retry::Trouble).await?;
+        if !app.blobs.settled() {
+            return Err(Refusal::new(
+                Code::BlobStoreUnavailable,
+                "The stores in use are not known to be the ones the settings name; try again.",
+            ));
+        }
     }
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {
