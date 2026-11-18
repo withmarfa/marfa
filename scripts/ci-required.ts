@@ -472,8 +472,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The lockfile and the compiler version: a new dependency or a new compiler
   // can break an Apple build. `version-fields` installs the compiler too.
   [
-    /^core\/(Cargo\.lock|rust-toolchain\.toml)$/,
+    /^core\/rust-toolchain\.toml$/,
     [...RUST, ...ENRICHMENT, "image", "version-fields"],
+  ],
+  // `ci/jiff-tzdb-pin.test.ts` reads this lockfile and the Swift crate's.
+  [
+    /^core\/Cargo\.lock$/,
+    [...RUST, ...ENRICHMENT, "image", "version-fields", "workspace"],
   ],
   [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "image", "workspace"]],
   [
@@ -502,8 +507,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
   [/^core\/scripts\//, ["core-checks", "core-checks-linux", "core"]],
+  // The manifest and the lockfile are read by `ci/` tests: the budget, and the
+  // `jiff-tzdb` pin (`ci/jiff-tzdb-pin.test.ts`).
   [
-    /^core\/bindings\/swift\/(Cargo\.toml|\.config\/)/,
+    /^core\/bindings\/swift\/(Cargo\.(toml|lock)|\.config\/)/,
     ["core-checks", "core", "workspace", "swift-package"],
   ],
   // The Linux job checks the core workspace and not the Swift crate, which

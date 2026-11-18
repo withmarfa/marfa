@@ -268,7 +268,7 @@ describe("what a change runs", () => {
       [...DEVICE, "quick-checks"],
     ],
     [
-      "the core's lockfile, since a dependency bump can break an Apple build",
+      "the core's lockfile, since a dependency bump can break an Apple build, and the jiff-tzdb pin test reads it",
       ["core/Cargo.lock"],
       [
         ...RUST,
@@ -277,6 +277,7 @@ describe("what a change runs", () => {
         "image",
         "quick-checks",
         "version-fields",
+        "workspace",
       ],
     ],
     [
@@ -362,10 +363,11 @@ describe("what a change runs", () => {
       ],
     ],
     [
-      "the Swift crate's lockfile, which pins the uniffi the glue is made with",
+      "the Swift crate's lockfile, which pins the uniffi the glue is made with and the jiff-tzdb the pin test reads",
       ["core/bindings/swift/Cargo.lock"],
       [
         "quick-checks",
+        "workspace",
         "core-checks",
         "core",
         "core-deny",
