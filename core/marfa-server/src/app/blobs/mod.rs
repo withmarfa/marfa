@@ -33,9 +33,9 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
-    FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, FAIL_STORES_RECORD,
-    FAIL_STORES_RECORD_LOST, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ,
-    HOLD_BLOB_WRITE, HOLD_STORES_RECORD, HOLD_STORES_SWAP, Lie,
+    FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST,
+    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
+    HOLD_STORES_SWAP, Lie,
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;

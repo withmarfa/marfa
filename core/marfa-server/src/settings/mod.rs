@@ -186,7 +186,11 @@ impl Settings {
 
     /// Runs `change` only while no change has been staged since `generation`, so no change is
     /// staged while it runs.
-    pub(crate) fn unless_staged<T>(&self, generation: u64, change: impl FnOnce() -> T) -> Option<T> {
+    pub(crate) fn unless_staged<T>(
+        &self,
+        generation: u64,
+        change: impl FnOnce() -> T,
+    ) -> Option<T> {
         let staged = self.steer.lock().unwrap_or_else(PoisonError::into_inner);
         (*staged == generation).then(change)
     }

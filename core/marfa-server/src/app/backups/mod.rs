@@ -1343,7 +1343,8 @@ impl App {
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
         let (forgotten, new_id) = (old_id.clone(), id.clone());
-        let (standing, checking, named) = (caller.clone(), self.clone(), folder.root().to_path_buf());
+        let (standing, checking, named) =
+            (caller.clone(), self.clone(), folder.root().to_path_buf());
         self.faults.hold(HOLD_STORES_RECORD, None).await;
         let written = self
             .db

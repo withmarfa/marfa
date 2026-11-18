@@ -233,14 +233,10 @@ async fn a_store_named_again_while_another_attaches_stays_in_use() {
 
     assert_eq!(instance.in_use(), locator("a"));
     assert_eq!(instance.attached().await, [locator("a")]);
+    let recorded = instance.recorded().await;
     assert!(
-        !instance
-            .recorded()
-            .await
-            .iter()
-            .any(|(at, attached)| *at == locator("b") && *attached),
-        "{:?}",
-        instance.recorded().await
+        !recorded.iter().any(|(at, _)| *at == locator("b")),
+        "{recorded:?}"
     );
     // The witness that b can be attached: named alone, it is.
     instance.name(bucket(&s3, "b")).await;
@@ -478,7 +474,10 @@ async fn a_change_staged_between_a_record_and_its_swap_stops_the_swap() {
     instance.settle().await;
 
     let after = instance.app.blobs.folder().unwrap();
-    assert!(Arc::ptr_eq(&before, &after), "the passed folder was swapped in");
+    assert!(
+        Arc::ptr_eq(&before, &after),
+        "the passed folder was swapped in"
+    );
     assert_eq!(
         instance.attached().await,
         [instance.area(&first).display().to_string()]
@@ -529,7 +528,11 @@ async fn a_failed_reload_is_mended_by_the_replication_job_before_the_stores_coun
         .faults
         .set("fail:commit", Some("config.update"))
         .unwrap();
-    instance.app.faults.set("fail:settings-reload", None).unwrap();
+    instance
+        .app
+        .faults
+        .set("fail:settings-reload", None)
+        .unwrap();
     let unknown = instance
         .patch(json!({ "backup_interval_seconds": 3600 }))
         .await;
@@ -545,7 +548,11 @@ async fn a_failed_reload_is_mended_by_the_replication_job_before_the_stores_coun
     };
     assert_eq!(live().as_deref(), Some("a"));
 
-    instance.app.faults.set("fail:settings-reload", None).unwrap();
+    instance
+        .app
+        .faults
+        .set("fail:settings-reload", None)
+        .unwrap();
     instance.replicate().await;
     assert_eq!(instance.fired("fail:settings-reload"), 1);
     assert_eq!(live().as_deref(), Some("a"));
@@ -643,7 +650,14 @@ async fn replaced(instance: &Instance, parent: &TempDir) -> (PathBuf, String) {
     let folder = folder_in(parent, "disk");
     instance.name(json!({ "backup_path": folder })).await;
     instance.settle().await;
-    let old = instance.app.blobs.folder().unwrap().files().id().to_string();
+    let old = instance
+        .app
+        .blobs
+        .folder()
+        .unwrap()
+        .files()
+        .id()
+        .to_string();
     fs::rename(&folder, parent.path().join("old disk")).unwrap();
     fs::create_dir(&folder).unwrap();
     (folder, old)
@@ -728,7 +742,14 @@ async fn an_adopt_whose_request_goes_away_after_its_record_still_claims_the_fold
     instance.app.faults.clear(None);
     following.await.unwrap();
 
-    let id = instance.app.blobs.folder().unwrap().files().id().to_string();
+    let id = instance
+        .app
+        .blobs
+        .folder()
+        .unwrap()
+        .files()
+        .id()
+        .to_string();
     assert_ne!(id, old);
     let marker = fs::read_to_string(instance.area(&folder).join(MARKER)).unwrap();
     assert_eq!(marker.trim(), id);
