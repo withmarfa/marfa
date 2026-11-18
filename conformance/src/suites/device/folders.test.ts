@@ -5004,35 +5004,62 @@ describe("what a folder takes", () => {
     ]);
   });
 
-  it("gives the numbered name to the item created later, whatever order the server lists them in", async () => {
-    const note = (id: string, title: string, created: string) => ({
-      item: {
-        id,
-        created_at: created,
-        properties: { title, body: `${title}\n` },
+  it("gives the numbered name to the item created later, whichever spelling was created first and whatever order the server lists them in", async () => {
+    type Case = {
+      spellings: readonly [string, string];
+      earlier: 0 | 1;
+      tie: boolean;
+      reversed: boolean;
+    };
+    const cases: Case[] = [];
+    for (const reversed of [false, true]) {
+      for (const spellings of [
+        ["ΟΔΟΣ", "οδος"],
+        ["Straße", "STRASSE"],
+        ["ſtar", "Star"],
+      ] as const) {
+        for (const earlier of [0, 1] as const) {
+          cases.push({ spellings, earlier, tie: false, reversed });
+        }
+      }
+      for (const spellings of [
+        ["Plan", "plan"],
+        ["plan", "Plan"],
+      ] as const) {
+        cases.push({ spellings, earlier: 0, tie: true, reversed });
+      }
+    }
+    // The lower id belongs to the first spelling, so an item created first
+    // has the lower id for one order and the greater for the other.
+    const made = (n: number) => `01a00000-0000-7000-8000-000000${172000 + n}`;
+    const expected = new Map<string, string>();
+    const listed = cases.flatMap(
+      ({ spellings, earlier, tie, reversed }, at) => {
+        const notes = spellings.map((spelling, which) => {
+          const title = `${spelling} ${at}`;
+          const created =
+            tie || which === earlier
+              ? "2026-09-18T10:00:00.000Z"
+              : "2026-09-18T10:00:01.000Z";
+          return {
+            title,
+            item: {
+              item: {
+                id: made(at * 2 + which),
+                created_at: created,
+                properties: { title, body: `${title}\n` },
+              },
+            },
+          };
+        });
+        const plain = notes[earlier];
+        const numbered = notes[1 - earlier];
+        expected.set(plain.item.item.id, `${plain.title}.md`);
+        expected.set(numbered.item.item.id, `${numbered.title} (2).md`);
+        return (reversed ? [...notes].reverse() : notes).map(
+          ({ item }) => item,
+        );
       },
-    });
-    const made = (n: number) => `01a00000-0000-7000-8000-0000000172${n}`;
-    const pairs = [
-      [
-        note(made(10), "ΟΔΟΣ", "2026-09-18T10:00:00.000Z"),
-        note(made(11), "οδος", "2026-09-18T10:00:01.000Z"),
-      ],
-      [
-        note(made(21), "STRASSE", "2026-09-18T10:00:00.000Z"),
-        note(made(20), "Straße", "2026-09-18T10:00:01.000Z"),
-      ],
-      [
-        note(made(30), "Star", "2026-09-18T10:00:00.000Z"),
-        note(made(31), "ſtar", "2026-09-18T10:00:01.000Z"),
-      ],
-      [
-        note(made(40), "Plan", "2026-09-18T10:00:00.000Z"),
-        note(made(41), "plan", "2026-09-18T10:00:00.000Z"),
-      ],
-    ] as const;
-    const listed = pairs.flatMap(([earlier, later], at) =>
-      at % 2 === 0 ? [earlier, later] : [later, earlier],
     );
     harness = await folderHarness("folder-later-name", {
       items: { "core.note": listed },
@@ -5045,15 +5072,9 @@ describe("what a folder takes", () => {
     );
     const fileOf = (id: string) =>
       files.find((name) => idIn(harness!, name) === id);
-    for (const [earlier, later] of pairs) {
-      expect(
-        [fileOf(earlier.item.id), fileOf(later.item.id)],
-        `${earlier.item.properties.title} and ${later.item.properties.title}`,
-      ).toEqual([
-        `${earlier.item.properties.title}.md`,
-        `${later.item.properties.title} (2).md`,
-      ]);
-    }
+    expect(
+      Object.fromEntries([...expected.keys()].map((id) => [id, fileOf(id)])),
+    ).toEqual(Object.fromEntries(expected));
   });
 
   it("keeps the plain name of a file already written when an item created earlier arrives with the same name", async () => {

@@ -278,13 +278,17 @@ When distinct folder files have paths equal without regard to case or Unicode no
 
 ### `folder-documents/same-name-beside`
 
-When two folder items are placed at names equal without regard to case or Unicode normalization, a device MUST place the item with the later `created_at` beside the other under a numbered name, and where both have the same `created_at`, the item with the greater `id`.
+When two folder items that have no placement edge and no file at the path are to be written at paths equal without regard to case or Unicode normalization, a device MUST give the numbered name to the item with the later `created_at`, and where both have the same `created_at`, to the item with the greater `id`.
 
-**Tests:** `device/folders.test.ts › gives the numbered name to the item created later, whatever order the server lists them in`.
+**Reason:** every device then gives the plain name to the same item, whatever order the server lists the items in. An item with a placement edge is ordered by `folder-files/placement-collision-order`.
+
+**Tests:** `device/folders.test.ts › gives the numbered name to the item created later, whichever spelling was created first and whatever order the server lists them in`.
 
 ### `folder-documents/same-name-beside-held-file`
 
-When a folder file already holds a name and an item with the earlier `created_at` is placed at a name equal to it without regard to case or Unicode normalization, a device MUST leave the file at its name and place the item beside it under a numbered name.
+When a folder item that has no placement edge has its file at a path and another item that has no placement edge is to be written at a path equal to it without regard to case or Unicode normalization, a device MUST leave the file at its path and write the other item beside it under a numbered name, whichever item has the earlier `created_at`.
+
+**Reason:** a file already written is never moved to make way for an item that arrives later. An item with a placement edge is ordered by `folder-files/placement-collision-order`.
 
 **Tests:** `device/folders.test.ts › keeps the plain name of a file already written when an item created earlier arrives with the same name`.
 
