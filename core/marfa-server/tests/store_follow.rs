@@ -550,10 +550,14 @@ async fn a_failed_reload_is_mended_by_the_replication_job_before_the_stores_coun
         .faults
         .set("fail:settings-reload", None)
         .unwrap();
-    instance.replicate().await;
+    let ended = housekeeping::run_now(&instance.app, &Caller::Server, "blob-replicate")
+        .await
+        .unwrap();
     assert_eq!(instance.fired("fail:settings-reload"), 1);
     assert_eq!(live().as_deref(), Some("a"));
     assert!(!instance.app.blobs.settled());
+    assert_eq!(ended.outcome, "failed", "{ended:?}");
+    assert!(ended.error.is_some(), "{ended:?}");
 
     instance.app.faults.clear(None);
     instance.replicate().await;

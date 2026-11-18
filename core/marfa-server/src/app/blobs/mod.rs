@@ -1065,6 +1065,7 @@ impl App {
     }
 
     /// Reads the live settings again if a reload failed, then follows the committed settings.
+    /// Fails while a reload has not published since the last one that failed.
     pub async fn settle_stores(self: &Arc<App>, retry: Retry) -> Result<()> {
         let doubted = self.blobs.settings_doubted.load(Ordering::SeqCst);
         if doubted > 0 && stored::reload(self).await {
@@ -1075,7 +1076,15 @@ impl App {
                 Ordering::SeqCst,
             );
         }
-        self.follow_stores(retry).await
+        self.follow_stores(retry).await?;
+        if self.blobs.settings_doubted.load(Ordering::SeqCst) > 0 {
+            return Err(Refusal::new(
+                Code::BlobStoreUnavailable,
+                "The settings could not be read again after a change of them whose outcome is \
+                 not known.",
+            ));
+        }
+        Ok(())
     }
 
     /// The store the committed settings name beside the disk.

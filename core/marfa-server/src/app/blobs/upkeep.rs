@@ -409,14 +409,14 @@ fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
     )
 }
 
-/// Keep a failed follow visible even when file copying succeeds.
+/// Keep a failed settle visible even when file copying succeeds.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let unsettled = match app.settle_stores(super::Retry::Settle).await {
         Ok(()) => None,
         Err(refused) => {
             tracing::warn!(%refused, "The stores in use could not be brought to the settings");
             Some(format!(
-                "The store the settings name could not be put in use. {}",
+                "The stores in use are not known to be the ones the settings name. {}",
                 refused.message
             ))
         }
