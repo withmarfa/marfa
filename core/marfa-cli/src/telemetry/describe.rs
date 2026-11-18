@@ -123,6 +123,9 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::ContractMismatch { .. } => {
             "the server speaks a different contract than this build"
         }
+        CoreError::ServerTooOld { .. } => {
+            "the server runs a release older than this build works with"
+        }
         CoreError::Canceled => "the operation was stopped before it finished",
         CoreError::FirstSyncWaiting => "a folder's first sync waits for confirmation",
         CoreError::Invalid(_) => "a value was not accepted",

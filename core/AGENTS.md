@@ -69,6 +69,10 @@ These rules add to the root `AGENTS.md` for work under `core/`. Under `core/marf
 - `cargo-swift` embeds one UniFFI bindgen, and the crate's `uniffi` must match it. `bindings/swift/build.sh` pins `cargo-swift`, and `bindings/swift/Cargo.toml` and `.github/dependabot.yml` hold `uniffi`. Move all three in one pull request, once a `cargo-swift` release embeds the newer bindgen.
 - `core/BINDINGS.md` is the reference for app developers.
 
+## The oldest server
+
+- `marfa-rules/src/release.rs` names the oldest server release the device core works with. A change that makes the core depend on a server change raises it in the same pull request, with the statements in `conformance/spec/device.md` under "The oldest server a device works with".
+
 ## Elsewhere
 
 - To boot a throwaway server, claim it and make a key, use the `local-server` skill.

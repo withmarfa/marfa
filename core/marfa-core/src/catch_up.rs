@@ -676,6 +676,7 @@ pub(crate) fn catch_up(
 ) -> Result<CatchUpReport> {
     refuse_if_stopped(stop)?;
     start(core)?;
+    refuse_an_old_server(http, stop)?;
     let tables_before = store::last_table_change(&*core.conn()?)?;
     let context = Context::capture(&*core.conn()?)?;
     let scoped = context.http(http);
@@ -1003,6 +1004,10 @@ pub(crate) fn divergence(reason: &str) -> Option<crate::model::HydrateRestart> {
 /// stores nothing; the writer expires it on its own next call.
 pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
+}
+
+pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<()> {
+    ask_unless_stopped(stop, http, Http::served).map(drop)
 }
 
 /// The instance may change during credential renewal. The root is read on the

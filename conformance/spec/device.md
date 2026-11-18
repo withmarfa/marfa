@@ -3542,6 +3542,52 @@ If a drain meets a refusal that names no contract, then a device MUST end the pa
 
 **Tests:** `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
 
+## The oldest server a device works with
+
+A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The release a server runs is the `version` its root answers (`instance/root-version`).
+
+### `device/server-too-old`
+
+If the root of a server names a release older than the oldest a device works with, then a device MUST refuse a hydration, a catch-up or a drain of that server `server_too_old`.
+
+**Reason:** a server that old answers the copy's requests in shapes the device does not read, so a copy would fail partway with an error that names nothing the owner can fix.
+
+**Tests:** `device/oldest-server.test.ts › refuses a hydration at the root, holding nothing and sending nothing else`, `› refuses a catch-up at the root, leaving the cursor where it was`, `› refuses a drain at the root, leaving the write queued and unsent`.
+
+### `device/server-too-old-sends-nothing`
+
+When a device refuses a server `server_too_old`, a device MUST send the server no request other than the read of its root.
+
+**Tests:** `device/oldest-server.test.ts › refuses a hydration at the root, holding nothing and sending nothing else`, `› refuses a catch-up at the root, leaving the cursor where it was`, `› refuses a drain at the root, leaving the write queued and unsent`.
+
+### `device/server-too-old-keeps-copy`
+
+When a device refuses a server `server_too_old`, a device MUST leave the working copy, its event cursor and its queued writes as they were.
+
+**Tests:** `device/oldest-server.test.ts › refuses a hydration at the root, holding nothing and sending nothing else`, `› refuses a catch-up at the root, leaving the cursor where it was`, `› refuses a drain at the root, leaving the write queued and unsent`.
+
+### `device/server-too-old-names`
+
+When a device refuses a server `server_too_old`, a device MUST name the release the server runs and the oldest release the device works with.
+
+**Tests:** `device/oldest-server.test.ts › refuses a hydration at the root, holding nothing and sending nothing else`, `› refuses a catch-up at the root, leaving the cursor where it was`, `› refuses a drain at the root, leaving the write queued and unsent`.
+
+### `device/server-release-allowed`
+
+If the root of a server names the oldest release a device works with or a later one, then a device MUST NOT refuse the server `server_too_old`.
+
+**Reason:** a newer server is covered by the rules that make a device ignore what it does not know (`device/answer-added-members`).
+
+**Tests:** `device/oldest-server.test.ts › is hydrated from, whether the release is the oldest, newer or unjudged`.
+
+### `device/server-release-unjudged`
+
+If the root of a server names no release, a release that is not three whole numbers separated by dots, or the release `0.0.0` of a build that was never stamped, then a device MUST NOT refuse the server `server_too_old`.
+
+**Reason:** a release that cannot be read, and the placeholder of a development build, say nothing of what the server does.
+
+**Tests:** `device/oldest-server.test.ts › is hydrated from, whether the release is the oldest, newer or unjudged`, `› is hydrated from, though its root names no release`.
+
 ## Held open
 
 A held stream is a catch-up that does not end at the head. It takes each event by the rules a catch-up takes it by.
@@ -7772,6 +7818,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `bytes_absent`         | The bytes of a file are not held and cannot be fetched.                                                                                                                                                                                                                                                                 |
 | `no_room`              | A file would not fit in the room left on the volume that holds the file cache.                                                                                                                                                                                                                                          |
 | `contract_mismatch`    | An answer was on a contract this build does not speak.                                                                                                                                                                                                                                                                  |
+| `server_too_old`       | The server runs a release older than the oldest this build works with, so nothing was sent past its root.                                                                                                                                                                                                               |
 | `canceled`             | The caller's stop was raised before the call finished.                                                                                                                                                                                                                                                                  |
 | `first_sync_waiting`   | A folder's first sync waits for confirmation, and nothing is written or sent until it is given.                                                                                                                                                                                                                         |
 | `not_answerable`       | The copy does not hold what a count needs, so only the server can answer it. No other failure carries it, so a caller that asks the server on it never repeats a request that failed for another reason.                                                                                                                |

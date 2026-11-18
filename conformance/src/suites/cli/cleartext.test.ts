@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -63,7 +64,11 @@ interface Arrival {
   authorization: string | undefined;
 }
 
-/** Records every request, and answers a 503 naming no contract after `holdMs`. */
+/**
+ * Records every request, and answers a 503 naming no contract after `holdMs`.
+ * With `root`, it answers the root at once as a server of the oldest release a
+ * device works with, which a working copy reads before it sends its key.
+ */
 class Listener {
   readonly arrivals: Arrival[] = [];
   connections = 0;
@@ -72,7 +77,11 @@ class Listener {
     readonly port: number,
   ) {}
 
-  static async start(bind: string, holdMs: number): Promise<Listener> {
+  static async start(
+    bind: string,
+    holdMs: number,
+    root = false,
+  ): Promise<Listener> {
     const arrivals: Arrival[] = [];
     let counted = 0;
     const server = createServer((request, response) => {
@@ -82,6 +91,16 @@ class Listener {
         authorization: request.headers.authorization,
       });
       request.resume();
+      if (root && request.method === "GET" && request.url === "/") {
+        response.writeHead(200, {
+          "content-type": "application/json",
+          "x-marfa-contract": "0",
+        });
+        response.end(
+          JSON.stringify({ instance_id: randomUUID(), version: "0.0.78" }),
+        );
+        return;
+      }
       setTimeout(() => {
         response.writeHead(503, { "content-type": "application/json" });
         response.end("{}");
@@ -176,7 +195,7 @@ describe("a key sent over plain http", () => {
   });
 
   it("warns before a working copy sends a key to a plain http address on another host", async () => {
-    const listener = await Listener.start("0.0.0.0", 1500);
+    const listener = await Listener.start("0.0.0.0", 1500, true);
     const origin = listener.origin(otherHost());
     const run = watched(
       c.cli
@@ -192,12 +211,16 @@ describe("a key sent over plain http", () => {
           "library",
         ]),
     );
-    await listener.arrival();
+    await listener.arrival(2);
     await settle();
 
     expect(run.running()).toBe(true);
     expect(lines(run.stderr())[0]!.match(WARNING)?.[1]).toBe(origin);
-    expect(listener.arrivals[0]!.authorization).toBe(`Bearer ${c.apiKey}`);
+    expect(listener.arrivals[0]).toMatchObject({
+      path: "/",
+      authorization: undefined,
+    });
+    expect(listener.arrivals[1]!.authorization).toBe(`Bearer ${c.apiKey}`);
     await run.exit();
     expect(
       lines(run.stderr()).filter((line) => WARNING.test(line)),

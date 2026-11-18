@@ -60,13 +60,6 @@ pub(super) fn send_queue(
             Err(error) => return Err(error),
         }
     }
-    {
-        let conn = core.conn()?;
-        // Left blocked, a self-clearing row would skip a dependency that has
-        // since been answered.
-        store::unblock_self_clearing(&conn)?;
-    }
-    send_uploads_as(core, http)?;
     // Confirmed once, and only where the pass talks to the server: a pass
     // with nothing to send, read or look up sends nothing at all, and one that cannot
     // confirm the instance is a server that cannot take writes, since a
@@ -93,6 +86,19 @@ pub(super) fn send_queue(
             Err(error) => Err(error),
         }
     };
+    // A refused server leaves the queue as it was, so its release is read
+    // before any row changes. Only a pass that has a row to return reads the
+    // root here; the rest read it where they send.
+    if store::any_self_clearing(&*core.conn()?)? {
+        confirm(report)?;
+    }
+    {
+        let conn = core.conn()?;
+        // Left blocked, a self-clearing row would skip a dependency that has
+        // since been answered.
+        store::unblock_self_clearing(&conn)?;
+    }
+    send_uploads_as(core, http)?;
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
     let unconfirmed = owed && !confirm(report)?;

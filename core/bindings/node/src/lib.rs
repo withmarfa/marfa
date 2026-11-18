@@ -1667,6 +1667,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::BytesAbsent { .. }
         | E::NoRoom { .. }
         | E::ContractMismatch { .. }
+        | E::ServerTooOld { .. }
         | E::FirstSyncWaiting
         | E::Canceled => error.to_string(),
     };
@@ -1745,6 +1746,9 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             ("expected", json!(expected)),
             ("writeSent", json!(write_sent)),
         ],
+        E::ServerTooOld { served, oldest } => {
+            vec![("served", json!(served)), ("oldest", json!(oldest))]
+        }
         E::RenewalFailed(_)
         | E::Io(_)
         | E::Network(_)
@@ -3802,6 +3806,13 @@ mod tests {
                     json!({ "status": 201, "code": null, "details": null })
                 ),
             ]
+        );
+        assert_eq!(
+            fields(E::ServerTooOld {
+                served: "0.0.74".into(),
+                oldest: "0.0.78".into(),
+            }),
+            vec![("served", json!("0.0.74")), ("oldest", json!("0.0.78"))]
         );
         assert_eq!(
             fields(E::Validation {

@@ -636,15 +636,15 @@ describe("stopping a call whose first request is not answered", () => {
     // A server that takes the connection and never answers, as one still
     // being reached does.
     server.answer("GET", path, { kind: "stall" });
+    const asked = () =>
+      server.requests.filter((request) => request.pathname === path).length;
+    // A copy hydrated before this may have asked the path already.
+    const before = asked();
     const call = device.hold(command);
     try {
       await vi.waitFor(
         () => {
-          expect(
-            server.requests.filter((request) => request.pathname === path)
-              .length,
-            call.stderr,
-          ).toBe(1);
+          expect(asked(), call.stderr).toBe(before + 1);
         },
         { timeout: 10_000, interval: 25 },
       );

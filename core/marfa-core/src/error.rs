@@ -207,6 +207,11 @@ pub enum CoreError {
         /// Whether the server itself refused the request for its contract.
         refusal: ContractRefusal,
     },
+    /// The server's root names a release older than this core supports.
+    #[error(
+        "This server runs Marfa {served}. Update the server to Marfa {oldest} or later to use this app."
+    )]
+    ServerTooOld { served: String, oldest: String },
     /// The caller's stop was raised. What had been taken is consistent: a
     /// hydration left unfinished answers lists and searches marked partial,
     /// and takes writes only to the rows it holds and new ones, and no edge writes, until a hydration completes (the next one of the same slice carries on from the page it reached where it can), a catch-up keeps the cursor it reached, and a drain leaves what it had not sent queued, and an
@@ -304,6 +309,7 @@ codes! {
     BytesAbsent: CoreError::BytesAbsent { .. } => "bytes_absent",
     NoRoom: CoreError::NoRoom { .. } => "no_room",
     ContractMismatch: CoreError::ContractMismatch { .. } => "contract_mismatch",
+    ServerTooOld: CoreError::ServerTooOld { .. } => "server_too_old",
     Canceled: CoreError::Canceled => "canceled",
     FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",
     Invalid: CoreError::Invalid(_) => "invalid",

@@ -18,6 +18,7 @@ use crate::wire::{
     WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
     WireReadOnly,
 };
+use marfa_rules::release;
 use marfa_rules::wire::{WireCatalog, WireEdgeType, WireType};
 
 fn connection_refused(cause: &(dyn std::error::Error + 'static)) -> bool {
@@ -1464,6 +1465,16 @@ impl Http {
         if root.instance_id.is_empty() {
             return Err(CoreError::Decoding("the root names no instance".into()));
         }
+        if let Some(served) = root
+            .version
+            .as_deref()
+            .filter(|version| release::is_too_old(version))
+        {
+            return Err(CoreError::ServerTooOld {
+                served: served.into(),
+                oldest: release::OLDEST_SERVER.into(),
+            });
+        }
         Ok(root)
     }
 
@@ -2529,10 +2540,21 @@ fn http_date(raw: &str) -> Option<i64> {
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct Served {
     pub instance_id: String,
+    /// The release the server runs, `None` from a root that names none or
+    /// names it as something other than text.
+    #[serde(default, deserialize_with = "published_release")]
+    pub version: Option<String>,
     /// `None` from a server that publishes no limit, or none a device can use,
     /// which says nothing of what it takes.
     #[serde(default, deserialize_with = "published_limit")]
     pub max_request_bytes: Option<usize>,
+}
+
+fn published_release<'de, D: serde::Deserializer<'de>>(
+    from: D,
+) -> Result<Option<String>, D::Error> {
+    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(from)?;
+    Ok(value.and_then(|value| value.as_str().map(str::to_owned)))
 }
 
 fn published_limit<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<usize>, D::Error> {
