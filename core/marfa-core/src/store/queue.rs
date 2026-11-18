@@ -65,10 +65,20 @@ fn refuse_too_deep(payload: &str) -> Result<(), CoreError> {
 /// The idempotency key is minted here, not at send: a key minted per send
 /// would let a retry of a write whose answer was lost write it twice.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
-    refuse_too_deep(write.payload)?;
     if let Some(item) = write.item_id {
         super::removing::refuse_removing(conn, item)?;
     }
+    insert(conn, write)
+}
+
+/// Queues a write to an item whose id this device just minted, which no
+/// removal out can hold by name.
+pub fn enqueue_fresh(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
+    insert(conn, write)
+}
+
+fn insert(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
+    refuse_too_deep(write.payload)?;
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
     let depends_on = if write.depends_on.is_empty() {

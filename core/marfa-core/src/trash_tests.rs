@@ -1063,17 +1063,25 @@ fn a_cut_preview_holds_creates_and_a_refused_purge_keeps_its_hold() {
     let mut preview = previewed(&core, &server, &["a"], &[]);
     preview.items[0].truncated = true;
     log_holds(&server, &[("a", 2)]);
-    let draft = crate::Draft {
+    let named = crate::Draft {
+        id: Some("018f0000-0000-7000-8000-000000000002".into()),
+        r#type: NOTE.into(),
+        ..Default::default()
+    };
+    let keyed = crate::Draft {
+        source_id: Some("key".into()),
         r#type: NOTE.into(),
         ..Default::default()
     };
     while_held(&core, &server, &preview, || {
-        refused_as_being_removed(core.create_item(&draft));
+        refused_as_being_removed(core.create_item(&named));
+        refused_as_being_removed(core.create_item(&keyed));
         refused_as_being_removed(core.purge_item("b", None));
-        refused_as_being_removed(core.create_item(&draft));
+        refused_as_being_removed(core.create_item(&named));
     })
     .unwrap();
-    core.create_item(&draft).unwrap();
+    core.create_item(&named).unwrap();
+    core.create_item(&keyed).unwrap();
     core.restore_item("b").unwrap();
 }
 
@@ -1096,6 +1104,30 @@ fn a_view_or_folder_the_trash_holds_is_neither_changed_nor_deleted() {
     assert!(server.seen("/views/a").is_empty());
     assert!(server.seen("/folders/a").is_empty());
     assert!(server.seen("/folders/a/revoke").is_empty());
+}
+
+const HELD: &str = "018f0000-0000-7000-8000-000000000001";
+
+#[test]
+fn a_cut_preview_leaves_a_create_with_a_new_id_alone_and_its_edge_to_a_held_item() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &[HELD]);
+    let mut preview = previewed(&core, &server, &[HELD], &[]);
+    preview.items[0].truncated = true;
+    log_holds(&server, &[(HELD, 2)]);
+    let draft = crate::Draft {
+        r#type: NOTE.into(),
+        tags: vec!["t".into()],
+        edges: [("links".to_string(), vec![HELD.to_string()])].into(),
+        ..Default::default()
+    };
+    while_held(&core, &server, &preview, || {
+        core.create_item(&draft).unwrap();
+        assert_eq!(queue_len(&core), 2, "the create and its tag");
+        refused_as_being_removed(core.update_item(HELD, &edit()));
+    })
+    .unwrap();
 }
 
 #[test]

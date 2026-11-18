@@ -6630,9 +6630,9 @@ While a several-item trash is out, if a caller writes to an item the trash names
 
 ### `device/trash-holds-items-cut`
 
-While a several-item trash whose preview cut `takes` is out, if a caller writes to an item that exists, a change to a view or a folder included, or queues a create, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
+While a several-item trash whose preview cut `takes` is out, if a caller writes to an item that exists, a change to a view or a folder included, or queues a create that names an ID or a natural key, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
 
-**Reason:** the items a cut `takes` leaves out cannot be known, so no write to an item that exists can be ruled out, and a queued create can name such an item's natural key or an edge to it. A new view or folder is not among them: the server makes it under a new ID, with no natural key and no edges.
+**Reason:** the items a cut `takes` leaves out cannot be known, so no write to an item that exists can be ruled out, and a create that names an ID or a natural key can be one of them. A create that names neither is not: the device mints its ID, so it is a new item, and an edge from it to a held item is allowed, as an edge to a held item always is. A new view or folder is likewise new.
 
 **Tests:** waiting on #3238.
 

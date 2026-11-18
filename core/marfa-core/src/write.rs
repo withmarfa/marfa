@@ -230,6 +230,15 @@ pub(crate) fn queue_create(
     let chosen = chosen.filter(|_| draft.source_id.is_some());
     let draft = &draft;
     let shown_tier = draft.tier.or(keyed_tier);
+    // An id minted here cannot be held by name, and with no natural key the
+    // create cannot land on a held item, so a cut trash's hold on every item
+    // does not refuse it.
+    let fresh = draft.id.is_none() && draft.source_id.is_none();
+    let enqueue = if fresh {
+        store::enqueue_fresh
+    } else {
+        store::enqueue
+    };
     let id = draft
         .id
         .clone()
@@ -301,7 +310,7 @@ pub(crate) fn queue_create(
     if !declared {
         store::pin(tx, &id)?;
     }
-    let queued = store::enqueue(
+    let queued = enqueue(
         tx,
         &store::NewWrite {
             kind: WriteKind::CreateItem,
@@ -325,7 +334,7 @@ pub(crate) fn queue_create(
     // Queued in the same transaction, so a create never drops its tags.
     for tag in &draft.tags {
         let body = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
-        store::enqueue(
+        enqueue(
             tx,
             &store::NewWrite {
                 kind: WriteKind::AddTag,
