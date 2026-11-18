@@ -620,3 +620,157 @@ fn a_reading_open_answers_held_bytes_and_says_why_it_fetches_no_others() {
     assert!(reason(&reader).contains("reading handle"));
     assert!(!reason(&writer).contains("reading handle"));
 }
+
+/// The store's file and its log, byte for byte, with a missing file as `None`.
+fn store_files(path: &std::path::Path) -> [Option<Vec<u8>>; 2] {
+    let log = std::path::PathBuf::from(format!("{}-wal", path.display()));
+    [path, log.as_path()].map(|file| std::fs::read(file).ok())
+}
+
+/// Commits enough rows that the log holds pages the file does not.
+fn save_rows(writer: &Core) {
+    let conn = writer.conn().unwrap();
+    for at in 0..50 {
+        store::meta_set(&conn, &format!("row-{at}"), &"x".repeat(2000)).unwrap();
+    }
+}
+
+/// `device/reading-handle-writes-nothing`
+#[test]
+fn a_reading_handle_that_closes_last_changes_neither_the_store_nor_its_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+
+    let writer = Core::open(&path, None).unwrap();
+    save_rows(&writer);
+    let reader = Core::open(&path, None).unwrap();
+    assert_eq!(reader.handle(), Handle::Reader);
+    drop(writer);
+
+    let left = store_files(&path);
+    assert!(
+        left[1].is_some(),
+        "the writer left no log, so there is nothing for a reader to checkpoint"
+    );
+    let seen: i64 = reader
+        .conn()
+        .unwrap()
+        .query_row("SELECT count(*) FROM meta WHERE key LIKE 'row-%'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(seen, 50, "the reader did not read what the writer saved");
+    drop(reader);
+    assert!(
+        store_files(&path) == left,
+        "a reading handle that closed last changed the store or its log"
+    );
+}
+
+#[test]
+fn a_connection_that_can_write_and_closes_last_checkpoints_the_log_of_the_writer_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+
+    let writer = Core::open(&path, None).unwrap();
+    save_rows(&writer);
+    let second = store::open(&path).unwrap();
+    drop(writer);
+    let left = store_files(&path);
+    assert!(left[1].is_some());
+    drop(second);
+    // The witness for the test above: what closing last does to a store
+    // opened to write.
+    assert!(
+        store_files(&path) != left,
+        "closing last changed nothing, so the test above shows nothing"
+    );
+}
+
+#[test]
+fn a_reading_handle_opened_where_a_writer_holds_the_directory_store_leaves_it_unchanged() {
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let state = dir.path().join("state");
+    std::fs::create_dir(&state).unwrap();
+    let path = state.join("core.sqlite");
+    let directory = directory::Directory::open(&state).unwrap();
+
+    let writer = Core::open_directory(&directory, &path, None).unwrap();
+    save_rows(&writer);
+    let lock = Arc::new(Core::claim_directory(&directory).unwrap());
+    assert_eq!(lock.handle(), Handle::Reader);
+    let reader = Core::open_claimed(&directory, &path, None, lock).unwrap();
+    assert_eq!(reader.handle(), Handle::Reader);
+    drop(writer);
+    let left = store_files(&path);
+    assert!(left[1].is_some());
+    drop(reader);
+    assert!(
+        store_files(&path) == left,
+        "a reading handle on a folder's store changed it when it closed"
+    );
+}
+
+#[test]
+fn a_reading_handle_cannot_write_to_the_store_through_its_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let writer = Core::open(&path, None).unwrap();
+    let reader = Core::open(&path, None).unwrap();
+    assert_eq!(reader.handle(), Handle::Reader);
+    let conn = reader.conn().unwrap();
+    assert!(conn.is_readonly("main").unwrap());
+    assert!(store::meta_set(&conn, "from-the-reader", "x").is_err());
+    drop(conn);
+    drop(writer);
+}
+
+#[test]
+fn a_reading_handle_opens_a_store_a_writer_has_not_yet_made_with_a_refusal_and_makes_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let held = lock::WriterLock::claim(Some(&path)).unwrap();
+    assert_eq!(held.handle(), Handle::Writer);
+    assert!(Core::open(&path, None).is_err());
+    assert!(
+        !path.exists(),
+        "a reading handle made the store the writer had not yet made"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_reader_alone_reads_what_a_writer_left_in_its_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let writer = Core::open(&path, None).unwrap();
+    save_rows(&writer);
+    // What a writer that died leaves: the file and a log that holds saves
+    // the file does not, and no shared index.
+    let left = dir.path().join("left");
+    std::fs::create_dir(&left).unwrap();
+    let copy = left.join("core.sqlite");
+    std::fs::copy(&path, &copy).unwrap();
+    std::fs::copy(
+        format!("{}-wal", path.display()),
+        format!("{}-wal", copy.display()),
+    )
+    .unwrap();
+    drop(writer);
+
+    let before = store_files(&copy);
+    let reader = Core::open_reader(&copy).unwrap();
+    let seen: i64 = reader
+        .conn()
+        .unwrap()
+        .query_row("SELECT count(*) FROM meta WHERE key LIKE 'row-%'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(seen, 50, "the reader did not read the saves the log held");
+    drop(reader);
+    assert!(
+        store_files(&copy) == before,
+        "reading a log the writer left changed the store or the log"
+    );
+}
