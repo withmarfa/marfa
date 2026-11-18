@@ -5004,6 +5004,112 @@ describe("what a folder takes", () => {
     ]);
   });
 
+  it("gives the numbered name to the item created later, whichever spelling was created first and whatever order the server lists them in", async () => {
+    type Case = {
+      spellings: readonly [string, string];
+      earlier: 0 | 1;
+      tie: boolean;
+      reversed: boolean;
+    };
+    const cases: Case[] = [];
+    for (const reversed of [false, true]) {
+      for (const spellings of [
+        ["ΟΔΟΣ", "οδος"],
+        ["Straße", "STRASSE"],
+        ["ſtar", "Star"],
+      ] as const) {
+        for (const earlier of [0, 1] as const) {
+          cases.push({ spellings, earlier, tie: false, reversed });
+        }
+      }
+      for (const spellings of [
+        ["Plan", "plan"],
+        ["plan", "Plan"],
+      ] as const) {
+        cases.push({ spellings, earlier: 0, tie: true, reversed });
+      }
+    }
+    // The first spelling always has the lower id.
+    const made = (n: number) => `01a00000-0000-7000-8000-000000${172000 + n}`;
+    const expected = new Map<string, string>();
+    const listed = cases.flatMap(
+      ({ spellings, earlier, tie, reversed }, at) => {
+        const notes = spellings.map((spelling, which) => {
+          const title = `${spelling} ${at}`;
+          const created =
+            tie || which === earlier
+              ? "2026-09-18T10:00:00.000Z"
+              : "2026-09-18T10:00:01.000Z";
+          return {
+            title,
+            item: {
+              item: {
+                id: made(at * 2 + which),
+                created_at: created,
+                properties: { title, body: `${title}\n` },
+              },
+            },
+          };
+        });
+        const plain = notes[earlier];
+        const numbered = notes[1 - earlier];
+        expected.set(plain.item.item.id, `${plain.title}.md`);
+        expected.set(numbered.item.item.id, `${numbered.title} (2).md`);
+        return (reversed ? [...notes].reverse() : notes).map(
+          ({ item }) => item,
+        );
+      },
+    );
+    harness = await folderHarness("folder-later-name", {
+      items: { "core.note": listed },
+    });
+    scriptFolderWrites(harness, { edges: new EdgeDoor() });
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    const files = readdirSync(harness.dir).filter((name) =>
+      name.endsWith(".md"),
+    );
+    const fileOf = (id: string) =>
+      files.find((name) => idIn(harness!, name) === id);
+    expect(
+      Object.fromEntries([...expected.keys()].map((id) => [id, fileOf(id)])),
+    ).toEqual(Object.fromEntries(expected));
+  });
+
+  it("keeps the plain name of a file already written when an item created earlier arrives with the same name", async () => {
+    const written = {
+      id: "01a00000-0000-7000-8000-000000017251",
+      created_at: "2026-09-18T10:00:01.000Z",
+      properties: { title: "Straße", body: "held\n" },
+    };
+    const arriving = {
+      id: "01a00000-0000-7000-8000-000000017250",
+      version: 1,
+      created_at: "2026-09-18T10:00:00.000Z",
+      properties: { title: "STRASSE", body: "arrived\n" },
+    };
+    harness = await folderHarness("folder-held-name", {
+      items: { "core.note": [{ item: written }] },
+      events: [
+        copyReplay("2", [
+          copyItemEvent("2", "item.created", wireItem(arriving)),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness, { edges: new EdgeDoor() });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      readdirSync(harness.dir).filter((name) => name.endsWith(".md")),
+    ).toEqual(["Straße.md"]);
+    const before = read(harness, "Straße.md");
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(read(harness, "Straße.md")).toBe(before);
+    expect(idIn(harness, "Straße.md")).toBe(written.id);
+    expect(idIn(harness, "STRASSE (2).md")).toBe(arriving.id);
+  });
+
   it("keeps its own state in .marfa and never pushes it", async () => {
     // An include line naming `.marfa/` takes nothing under it either.
     harness = await folderHarness("folder-state", {

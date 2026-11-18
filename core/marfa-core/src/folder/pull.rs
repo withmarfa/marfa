@@ -126,7 +126,10 @@ struct Placing<'a> {
     item: &'a Item,
     bound: Option<state::Bound>,
     want: String,
+    // The order files are written in.
     rank: placement::Rank,
+    // The order contested names are given out in.
+    claim: placement::Rank,
     taken: Option<(transfer::Entry, state::Bound)>,
 }
 
@@ -689,26 +692,26 @@ impl Folder {
                 );
                 continue;
             }
-            let rank = match &placed {
-                Some(edge) => placement::rank_of(edge),
-                None => {
-                    placement::unplaced_rank(bound.as_ref().is_some_and(|bound| bound.path == want))
-                }
+            let settled = bound.as_ref().is_some_and(|bound| bound.path == want);
+            let (rank, claim) = match &placed {
+                Some(edge) => (placement::rank_of(edge), placement::rank_of(edge)),
+                None => (
+                    placement::unplaced_rank(settled),
+                    placement::unplaced_claim(settled, item),
+                ),
             };
             placing.push(Placing {
                 item,
                 bound,
                 want,
                 rank,
+                claim,
                 taken,
             });
         }
         if narrow.is_some() && self.wants_a_path_held_elsewhere(&placing)? {
             return Ok(false);
         }
-        // Ranked by what the server holds, so every machine gives a shared
-        // path to the same item; stable, so the listing orders the rest.
-        placing.sort_by(|a, b| a.rank.cmp(&b.rank));
         // Compared as a folder compares names, so two items never get paths
         // one disk holds as one file.
         let wanted: HashSet<String> = placing
@@ -716,7 +719,12 @@ impl Folder {
             .map(|entry| marfa_rules::names::folded(&entry.want))
             .collect();
         let mut taken: HashSet<String> = HashSet::new();
-        for entry in &mut placing {
+        // Ranked by what the server holds, so every machine gives a shared
+        // path to the same item.
+        let mut claiming: Vec<usize> = (0..placing.len()).collect();
+        claiming.sort_by(|&a, &b| placing[a].claim.cmp(&placing[b].claim));
+        for index in claiming {
+            let entry = &mut placing[index];
             if taken.contains(&marfa_rules::names::folded(&entry.want)) {
                 let own = entry.bound.as_ref().map(|bound| bound.path.as_str());
                 let free = |candidate: &str| {
@@ -731,6 +739,8 @@ impl Folder {
             }
             taken.insert(marfa_rules::names::folded(&entry.want));
         }
+        // Written in this order, with the listing ordering the rest.
+        placing.sort_by(|a, b| a.rank.cmp(&b.rank));
         if let Some(plan) = planning {
             // Every entry still unbound is a file the pull will write, but
             // where a file is at its path. A file the scan bound is sent
@@ -2858,6 +2868,7 @@ mod tests {
                 bound: None,
                 want: "fixture.bin".into(),
                 rank: placement::unplaced_rank(true),
+                claim: placement::unplaced_rank(true),
                 taken: None,
             };
             let mut report = PullReport::default();
@@ -3011,6 +3022,7 @@ mod tests {
                 bound: Some(bound),
                 want: "a.md".into(),
                 rank: placement::unplaced_rank(false),
+                claim: placement::unplaced_rank(false),
                 taken: None,
             };
             let mut report = PullReport::default();

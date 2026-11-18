@@ -75,8 +75,8 @@ struct Refused {
     placements: Withheld,
 }
 
-/// How a pull ranks items wanting one path: the older edge, then its id; an
-/// item with no placement after every one with, one already there first.
+/// How a pull ranks items: the older edge, then its id; an item with no
+/// placement after every one with, one already there first.
 pub(super) type Rank = (bool, bool, String, String);
 
 impl Folder {
@@ -652,6 +652,11 @@ pub(super) fn rank_of(edge: &Edge) -> Rank {
 
 pub(super) fn unplaced_rank(settled: bool) -> Rank {
     (true, !settled, String::new(), String::new())
+}
+
+/// Who gets a contested name: an unplaced item ranks by when it was made.
+pub(super) fn unplaced_claim(settled: bool, item: &Item) -> Rank {
+    (true, !settled, item.created_at.clone(), item.id.clone())
 }
 
 pub(crate) fn is_duplicate(answer: &str) -> bool {
