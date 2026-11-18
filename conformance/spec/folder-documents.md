@@ -288,9 +288,9 @@ When two folder items that have no placement edge and no file at the path are to
 
 When a folder item that has no placement edge has its file at a path and another item that has no placement edge is to be written at a path equal to it without regard to case or Unicode normalization, a device MUST leave the file at its path and write the other item beside it under a numbered name, whichever item has the earlier `created_at`.
 
-**Reason:** a file already written is never moved to make way for an item that arrives later. An item with a placement edge is ordered by `folder-files/placement-collision-order`.
+**Reason:** the person can keep using the file at its existing path. An item with a placement edge is ordered by `folder-files/placement-collision-order`.
 
-**Tests:** `device/folders.test.ts › keeps the plain name of a file already written when an item created earlier arrives with the same name`.
+**Tests:** `device/folders-placement.test.ts › gives a contested path to a placed item before an unplaced one, and to a file already there before a new one`.
 
 ### `folder-documents/case-rename-unsent`
 

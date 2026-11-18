@@ -5029,8 +5029,7 @@ describe("what a folder takes", () => {
         cases.push({ spellings, earlier: 0, tie: true, reversed });
       }
     }
-    // The lower id belongs to the first spelling, so an item created first
-    // has the lower id for one order and the greater for the other.
+    // The first spelling always has the lower id.
     const made = (n: number) => `01a00000-0000-7000-8000-000000${172000 + n}`;
     const expected = new Map<string, string>();
     const listed = cases.flatMap(
