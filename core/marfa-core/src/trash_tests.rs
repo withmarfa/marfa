@@ -690,3 +690,52 @@ fn a_trash_left_out_by_a_process_that_ended_holds_nothing_once_the_store_opens_a
 fn clear_queue(core: &Core) {
     core.conn().unwrap().execute("DELETE FROM queue", []).unwrap();
 }
+
+fn in_the_bin(core: &Core, id: &str) {
+    let item = store::testing::wire_item(id, NOTE, "trashed", AT, json!({ "title": id }));
+    store::upsert_item(&core.conn().unwrap(), &item, None, &Default::default()).unwrap();
+}
+
+fn removing_keys(core: &Core) -> i64 {
+    core.conn()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM meta WHERE key LIKE 'removing/%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_write_to_an_item_a_purge_has_out_is_refused_until_it_returns() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "z"]);
+    in_the_bin(&core, "a");
+    server.on("/items/a/purge", vec![scripted::json(200, r#"{"ok":true}"#)]);
+    held_at_instance_check(
+        &server,
+        || core.purge_item("a", None),
+        || {
+            being_removed(core.update_item("a", &edit()), "a");
+            core.update_item("z", &edit()).unwrap();
+        },
+    )
+    .unwrap();
+    assert_eq!(queue_len(&core), 1, "only the write to z was queued");
+    assert_eq!(server.seen("/items/a/purge").len(), 1);
+    assert_eq!(removing_keys(&core), 0);
+}
+
+#[test]
+fn a_refused_purge_lets_its_item_go() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    in_the_bin(&core, "a");
+    server.on("/items/a/purge", vec![scripted::refusal(409, "version_conflict")]);
+    core.purge_item("a", None).unwrap_err();
+    assert_eq!(removing_keys(&core), 0);
+    core.update_item("a", &edit()).unwrap();
+}

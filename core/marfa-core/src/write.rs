@@ -684,39 +684,45 @@ impl Core {
     /// which its `item.purged` event then shows.
     pub fn purge_item(&self, id: &str, version: Option<i64>) -> Result<()> {
         self.lock.refuse_unless_writer()?;
-        let (held, waiting) = {
-            let conn = self.conn()?;
+        let reserved = vec![id.to_string()];
+        let version = {
+            let mut conn = self.conn()?;
             store::refuse_unless_usable(&conn)?;
-            (
-                store::items_by_ids(&conn, &[id.to_string()])?.pop(),
-                store::waiting_writes_for_item(&conn, id)?,
-            )
+            let tx = conn.transaction()?;
+            let held = store::items_by_ids(&tx, &reserved)?.pop();
+            if let Some(held) = &held
+                && held.state != ItemState::Trashed
+            {
+                return Err(CoreError::Validation {
+                    server: None,
+                    code: "invalid_transition".into(),
+                    message: format!(
+                        "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
+                        held.state.as_str()
+                    ),
+                    details: None,
+                });
+            }
+            let waiting = store::waiting_writes_for_item(&tx, id)?;
+            if !waiting.is_empty() {
+                drop(tx);
+                drop(conn);
+                return Err(CoreError::Invalid(format!(
+                    "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {}",
+                    waiting.len(),
+                    self.exits_of(&waiting)?
+                )));
+            }
+            let Some(version) = version.or(held.as_ref().map(|held| held.version)) else {
+                return Err(CoreError::not_held(format!(
+                    "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
+                )));
+            };
+            store::hold_removing(&tx, &reserved, store::Removing::Purge)?;
+            tx.commit()?;
+            version
         };
-        if let Some(held) = &held
-            && held.state != ItemState::Trashed
-        {
-            return Err(CoreError::Validation {
-                server: None,
-                code: "invalid_transition".into(),
-                message: format!(
-                    "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
-                    held.state.as_str()
-                ),
-                details: None,
-            });
-        }
-        if !waiting.is_empty() {
-            return Err(CoreError::Invalid(format!(
-                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {}",
-                waiting.len(),
-                self.exits_of(&waiting)?
-            )));
-        }
-        let Some(version) = version.or(held.as_ref().map(|held| held.version)) else {
-            return Err(CoreError::not_held(format!(
-                "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
-            )));
-        };
+        let _held = self.removing_held(reserved);
         let http = self.http()?;
         catch_up::refuse_another_instance(self, http)?;
         self.purge_sent(id, || {
