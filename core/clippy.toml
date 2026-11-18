@@ -3,6 +3,6 @@
 disallowed-methods = [
     { path = "std::time::SystemTime::now", reason = "read the time through app::clock, which a test can move" },
     { path = "std::time::SystemTime::elapsed", reason = "read the time through app::clock, which a test can move" },
-    { path = "chrono::Utc::now", reason = "read the time through app::clock, which a test can move" },
-    { path = "chrono::Local::now", reason = "read the time through app::clock, which a test can move" },
+    { path = "jiff::Timestamp::now", reason = "read the time through app::clock, which a test can move" },
+    { path = "jiff::ZonedDateTime::now", reason = "read the time through app::clock, which a test can move" },
 ]

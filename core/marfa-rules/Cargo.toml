@@ -23,5 +23,4 @@ url = "2"
 ryu = "1"
 
 [dev-dependencies]
-chrono = { version = "0.4", default-features = false, features = ["std"] }
 uuid.workspace = true
