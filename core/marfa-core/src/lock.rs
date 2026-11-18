@@ -683,7 +683,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn writer_probe() {
-        let Ok(store) = std::env::var("MARFA_LOCK_PROBE") else {
+        let Ok(store) = std::env::var("MARFA_TEST_LOCK_PROBE") else {
             return;
         };
         let lock = WriterLock::claim(Some(Path::new(&store))).unwrap();
@@ -700,7 +700,7 @@ mod tests {
         let probe = |path: &Path| {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "lock::tests::writer_probe", "--nocapture"])
-                .env("MARFA_LOCK_PROBE", path)
+                .env("MARFA_TEST_LOCK_PROBE", path)
                 .output()
                 .unwrap();
             assert!(
