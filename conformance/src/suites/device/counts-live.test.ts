@@ -910,26 +910,28 @@ describe("a device counts as the server does", () => {
   });
 
   it("sends no id to a server at another origin that answers as an instance other than its copy's", async () => {
-    const store = newStore(`counts-wrong-server-${String(counter)}`);
-    value(
-      await copyOf("wrong-server", server.apiUrl, store).hydrate(
-        [taskType],
-        "library",
-      ),
-    );
     proxy ??= await CountsProxy.start();
     proxy.answer = { counts: (counts) => counts };
-    const asked = async (copy: CliDevice) =>
+    const atAnotherOrigin = async (label: string) => {
+      const store = newStore(`counts-${label}-${String(counter)}`);
+      value(
+        await copyOf(label, server.apiUrl, store).hydrate(
+          [taskType],
+          "library",
+        ),
+      );
+      return copyOf(label, proxy!.url, store);
+    };
+    const ask = (copy: CliDevice) =>
       copy.counts([ids.parent], { backref: "parent-of" }, { fromServer: true });
     // The witness: a copy at another origin whose server answers as its instance asks it.
     const before = proxy.counted;
-    value(await asked(copyOf("wrong-server", proxy.url, store)));
+    value(await ask(await atAnotherOrigin("moved-same")));
     expect(proxy.counted).toBe(before + 1);
+    const moved = await atAnotherOrigin("moved-other");
     proxy.instance = UNKNOWN_ID;
     try {
-      const refused = await asked(
-        copyOf("wrong-server", proxy.url, store),
-      );
+      const refused = await ask(moved);
       expect(refused.ok, JSON.stringify(refused)).toBe(false);
       if (!refused.ok) expect(refused.refusal.code).toBe("wrong_server");
       expect(
@@ -954,8 +956,10 @@ describe("a device counts as the server does", () => {
       ["rows", { table: "lines" }, ids.served, [heldLedger, servedLedger]],
     ];
     for (const [what, counted, id, types] of cases) {
-      const device = copyOf(`same-address-${what}`, proxy.url);
-      value(await device.hydrate(types, "library"));
+      const store = newStore(`counts-same-address-${what}-${String(counter)}`);
+      value(await copyOf(what, server.apiUrl, store).hydrate(types, "library"));
+      // The copy follows its instance to the proxy's address, and records it as its own.
+      const device = copyOf(what, proxy.url, store);
       const ask = () =>
         device.counts(
           [id],
@@ -972,7 +976,8 @@ describe("a device counts as the server does", () => {
       try {
         const refused = await ask();
         expect(refused.ok, `${what}: ${JSON.stringify(refused)}`).toBe(false);
-        if (!refused.ok) expect(refused.refusal.code, what).toBe("copy_expired");
+        if (!refused.ok)
+          expect(refused.refusal.code, what).toBe("copy_expired");
         expect(
           proxy.counted,
           `${what}: an id reached another instance at the copy's address`,
