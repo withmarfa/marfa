@@ -12,7 +12,7 @@ use ureq::unversioned::transport::{
 use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
-use crate::error::{ContractRefusal, CoreError, ServerAnswer};
+use crate::error::{ContractRefusal, CoreError, CoreErrorKind, ServerAnswer};
 use crate::model::SliceTier;
 use crate::wire::{
     WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
@@ -920,9 +920,11 @@ impl Http {
             Ok(fresh) => Ok(fresh),
             Err(CoreError::Unauthorized { .. }) => Ok(None),
             // `not_answerable` is only the copy's word on a count, which a renewal never is.
-            Err(CoreError::NotAnswerable(message)) => Err(CoreError::RenewalFailed(Box::new(
-                CoreError::Invalid(format!("the credential renewal failed: {message}")),
-            ))),
+            Err(error) if error.kind() == CoreErrorKind::NotAnswerable => {
+                Err(CoreError::RenewalFailed(Box::new(CoreError::Invalid(
+                    format!("the credential renewal failed: {error}"),
+                ))))
+            }
             Err(error) => Err(CoreError::RenewalFailed(Box::new(error))),
         }
     }
