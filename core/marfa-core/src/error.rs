@@ -207,10 +207,9 @@ pub enum CoreError {
         /// Whether the server itself refused the request for its contract.
         refusal: ContractRefusal,
     },
-    /// The server runs a release older than the oldest this core works with.
-    /// Raised from the root before any other request goes out.
+    /// The server's root names a release older than this core supports.
     #[error(
-        "this server runs Marfa {served}, which is older than the oldest release this app works with, {oldest}: update the server"
+        "This server runs Marfa {served}. Update the server to Marfa {oldest} or later to use this app."
     )]
     ServerTooOld { served: String, oldest: String },
     /// The caller's stop was raised. What had been taken is consistent: a

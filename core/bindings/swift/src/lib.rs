@@ -1578,8 +1578,7 @@ pub enum MarfaError {
         /// The answer's status, where it was read; its body was not.
         server: Option<ServerAnswer>,
     },
-    /// The server runs a release older than the oldest this build works with.
-    /// Nothing was sent past its root and nothing was applied.
+    /// The server's root names a release older than this build supports.
     ServerTooOld {
         /// The release the server's root names.
         served: String,

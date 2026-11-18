@@ -1006,8 +1006,6 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
 
-/// Reads the server's root, which refuses a release older than this core
-/// works with before the copy is asked for anything else.
 pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<()> {
     ask_unless_stopped(stop, http, Http::served).map(drop)
 }

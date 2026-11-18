@@ -16,7 +16,6 @@ fn keep_token(keychain: &Isolated, origin: &str) {
     }).to_string());
 }
 
-/// What a root names, which a hydration reads before it asks for anything else.
 fn root() -> String {
     format!(
         r#"{{"name":"marfa","version":"dev","instance_id":"00000000-0000-7000-8000-000000000000","contract":{},"features":[]}}"#,
