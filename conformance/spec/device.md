@@ -410,7 +410,7 @@ While a device holds a reading handle, a device MUST NOT change the store's file
 
 **Reason:** SQLite can checkpoint and remove the writer's log when a writable connection closes last.
 
-**Tests:** `device/binding-reading-handle-writes-nothing.test.ts › leaves the store and its log as the writer left them when it closes after the writer`.
+**Tests:** `device/binding-reading-handle-writes-nothing.test.ts › changes the store or its log when the last connection can write`, `› leaves the store and its log as the writer left them when it closes after the writer`.
 
 ### `device/read-partial-answers`
 
