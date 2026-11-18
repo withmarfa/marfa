@@ -1,25 +1,9 @@
-use rusqlite::TransactionBehavior;
+use std::sync::MutexGuard;
+
+use rusqlite::{Connection, TransactionBehavior};
 
 use crate::model::Subject;
-use crate::{Core, Result, reach, store, telemetry};
-
-pub(crate) struct HeldRemoving<'a> {
-    core: &'a Core,
-    ids: Vec<String>,
-}
-
-impl Drop for HeldRemoving<'_> {
-    fn drop(&mut self) {
-        let conn = self
-            .core
-            .conn
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Err(error) = store::release_removing(&conn, &self.ids) {
-            telemetry::degraded!(&error);
-        }
-    }
-}
+use crate::{Core, Result, reach, store};
 
 impl Core {
     /// Sends a purge the server announces as `item.purged`, and once it is
@@ -53,11 +37,22 @@ impl Core {
 }
 
 impl Core {
-    /// Lets go of `ids`, which `store::hold_removing` held in a transaction
-    /// that has committed, once what it answers is dropped. Taken only with
-    /// the connection free, since the drop locks it.
-    pub(crate) fn removing_held(&self, ids: Vec<String>) -> HeldRemoving<'_> {
-        HeldRemoving { core: self, ids }
+    /// Holds `ids` against new writes until what it answers is dropped.
+    /// Taken with the connection held, so that no write is queued between
+    /// the caller's check for waiting writes and the hold.
+    pub(crate) fn hold_removing(
+        &self,
+        _checked: &MutexGuard<'_, Connection>,
+        ids: Vec<String>,
+        by: store::Removing,
+    ) -> Result<store::HeldRemoving> {
+        self.removing.hold(ids, by)
+    }
+
+    /// Refuses a write sent at once to `item`, or to a new item where `item`
+    /// is `None`, while a trash or a purge holds it.
+    pub(crate) fn refuse_removing(&self, item: Option<&str>) -> Result<()> {
+        self.removing.refuse(item)
     }
 
     /// Each write in `waiting`, with the way to clear it (or the write it waits on).

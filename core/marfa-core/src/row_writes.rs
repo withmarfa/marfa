@@ -1461,7 +1461,7 @@ mod tests {
 
     #[test]
     fn a_rows_kept_states_are_bounded_and_go_once_no_sent_write_waits_for_its_answer() {
-        let conn = store::open_in_memory().unwrap();
+        let conn = store::testing::conn();
         conn.execute(
             "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
             [],

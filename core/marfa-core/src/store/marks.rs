@@ -1,6 +1,6 @@
 //! Marks that a row was purged or removed, and the pins that keep a row.
 
-use super::meta::{meta_delete, meta_delete_under, meta_get, meta_set, meta_under, prefix_end};
+use super::meta::{meta_delete, meta_get, meta_set, prefix_end};
 use super::rows::WAITING;
 use crate::error::CoreError;
 use crate::model::{Subject, WriteKind};
@@ -73,116 +73,6 @@ pub fn removal_unsent(conn: &Connection, subject: Subject, id: &str) -> Result<(
 /// The event of the removal was read: every event after it is newer.
 pub fn removal_read(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
     meta_delete(conn, &removal_key(subject, id))
-}
-
-/// The start of the meta key `removing/<id>` of an item a trash or a purge
-/// this device has out at the server, whose value names which. In meta rather
-/// than in memory so that `enqueue` reads it under the lock of the write it
-/// refuses; a temporary table would not do, since a change of `temp_store`
-/// drops them. Every key goes when a writer opens the store.
-const REMOVING: &str = "removing/";
-
-/// Held for every item, by a trash whose preview cut what it takes.
-pub(crate) const EVERY_ITEM: &str = "*";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Removing {
-    Trash,
-    Purge,
-}
-
-impl Removing {
-    fn as_str(self) -> &'static str {
-        match self {
-            Removing::Trash => "trash",
-            Removing::Purge => "purge",
-        }
-    }
-}
-
-fn removing_key(id: &str) -> String {
-    format!("{REMOVING}{id}")
-}
-
-/// The item, of `ids`, that a removal already out holds, and which removal.
-fn removing_of(conn: &Connection, ids: &[String]) -> Result<Option<(String, String)>, CoreError> {
-    let held = meta_under(conn, REMOVING)?;
-    for id in ids {
-        let found = held
-            .iter()
-            .find(|(by_id, _)| id == EVERY_ITEM || by_id == id || by_id == EVERY_ITEM);
-        if let Some((by_id, by)) = found {
-            let named = if id == EVERY_ITEM { by_id } else { id };
-            return Ok(Some((named.clone(), by.clone())));
-        }
-    }
-    Ok(None)
-}
-
-fn being_removed(id: &str, by: &str) -> CoreError {
-    let what = if id == EVERY_ITEM {
-        "an item".to_string()
-    } else {
-        id.to_string()
-    };
-    let how = match by {
-        "purge" => "purged",
-        _ => "moved to the bin",
-    };
-    CoreError::Validation {
-        server: None,
-        code: ITEM_BEING_REMOVED.into(),
-        message: format!(
-            "{what} is being {how} on the server; try again once that has been answered"
-        ),
-        details: (id != EVERY_ITEM).then(|| Box::new(serde_json::json!({ "id": id }))),
-    }
-}
-
-/// The code a write is refused with while a trash or a purge of its item is out.
-pub(crate) const ITEM_BEING_REMOVED: &str = "item_being_removed";
-
-/// Holds `ids` against new writes, refused where a removal already out holds one.
-pub(crate) fn hold_removing(
-    conn: &Connection,
-    ids: &[String],
-    by: Removing,
-) -> Result<(), CoreError> {
-    if let Some((id, held)) = removing_of(conn, ids)? {
-        return Err(being_removed(&id, &held));
-    }
-    for id in ids {
-        meta_set(conn, &removing_key(id), by.as_str())?;
-    }
-    Ok(())
-}
-
-pub(crate) fn release_removing(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
-    for id in ids {
-        meta_delete(conn, &removing_key(id))?;
-    }
-    Ok(())
-}
-
-/// No removal is out once a writer holds the store afresh.
-pub(crate) fn forget_removing(conn: &Connection) -> Result<(), CoreError> {
-    meta_delete_under(conn, REMOVING)
-}
-
-/// Refuses a write to an item a trash or a purge has out at the server: the
-/// write would reach a row in the bin or gone.
-pub(crate) fn refuse_removing(conn: &Connection, item: &str) -> Result<(), CoreError> {
-    let held: Option<String> = conn
-        .prepare_cached("SELECT value FROM meta WHERE key IN (?1, ?2) LIMIT 1")?
-        .query_row(
-            params![removing_key(item), removing_key(EVERY_ITEM)],
-            |row| row.get(0),
-        )
-        .optional()?;
-    match held {
-        Some(by) => Err(being_removed(item, &by)),
-        None => Ok(()),
-    }
 }
 
 /// Whether the row has no held item, pin, answer mark or removal record.

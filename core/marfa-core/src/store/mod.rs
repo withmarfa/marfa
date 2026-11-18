@@ -12,6 +12,7 @@ mod queue;
 mod reach;
 mod read_only;
 mod reads;
+mod removing;
 mod rows;
 mod stamps;
 #[cfg(test)]
@@ -37,6 +38,7 @@ pub use queue::*;
 pub use reach::*;
 pub(crate) use read_only::*;
 pub use reads::*;
+pub(crate) use removing::*;
 pub use rows::*;
 pub use stamps::*;
 pub use time::*;

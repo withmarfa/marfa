@@ -292,6 +292,9 @@ pub struct Core {
     /// Two drains at once would each send every unanswered write, so a
     /// second waits for the one under way.
     draining: Mutex<()>,
+    /// What each trash or purge out at the server holds, read by the
+    /// connection's writes to the queue.
+    removing: Arc<store::Removals>,
     /// The one source this store's listeners share (`watch`).
     watch: Arc<watch::Watch>,
     /// Each renewal not yet written down, as the digests of the header it
