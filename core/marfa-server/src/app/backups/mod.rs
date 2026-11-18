@@ -505,7 +505,6 @@ pub(crate) enum Destination {
 }
 
 impl Destination {
-    /// Where `attached` keeps backups, if it keeps any.
     fn of(attached: &Attached) -> Option<Destination> {
         match attached.kept()? {
             Kept::Bucket { s3, .. } => Some(Destination::Bucket(s3)),
@@ -513,7 +512,6 @@ impl Destination {
         }
     }
 
-    /// Where `attached` keeps backups, or why it keeps none, both read from `attached`.
     fn required(attached: &Attached) -> Result<Destination> {
         Destination::of(attached).ok_or_else(|| match attached.trouble() {
             Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble.to_string()),
@@ -837,8 +835,6 @@ fn running(restoring: bool) -> Refusal {
     Refusal::new(Code::HousekeepingJobRunning, message)
 }
 
-/// Whether the schedule runs backups here: the settings name a destination and the interval is
-/// not 0.
 pub fn scheduled(app: &App) -> bool {
     let settings = app.settings.live();
     Wanted::of(&settings) != Wanted::Disk && settings.get(BACKUP_INTERVAL_SECONDS) > 0
@@ -994,8 +990,6 @@ impl Held {
 }
 
 impl App {
-    /// Where the committed settings say backups go, with the store taken first if it is not the
-    /// one in use. An operation reads it once and keeps it to its end.
     async fn destination(&self) -> Result<Destination> {
         let attached = self.stores_named().await?;
         Destination::required(&attached)

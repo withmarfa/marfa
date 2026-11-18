@@ -1,6 +1,3 @@
-//! A backup operation decides its destination from the committed settings, not from the store
-//! the server has attached by then.
-
 #[allow(dead_code)]
 mod fake_s3;
 
@@ -122,8 +119,7 @@ fn marker_of(prefix: &str) -> String {
     format!("/{BUCKET}/{prefix}/blobs/.marfa-store")
 }
 
-/// Sets the bucket under `prefix` while its attach is held at the first look at the store, and
-/// answers once that attach has begun, so the settings name a store that is not yet attached.
+/// Returns once the settings are visible and the marker read is blocked.
 async fn set_while_attaching(
     instance: &Instance,
     s3: &FakeS3,

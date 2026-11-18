@@ -1168,7 +1168,7 @@ Where neither `object_store_bucket` nor `backup_path` is set, when a caller the 
 
 When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST use that destination for the next `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore` from a caller the operation admits, answering none of them `409 no_backup_destination`.
 
-**Reason:** a script can set the destination and list, take or restore a backup in its next request, before the server has finished taking the store the setting names. A store that cannot be taken is `503 blob_store_unavailable`, never a missing destination.
+**Reason:** a script can set the destination and use it in its next request.
 
 **Tests:** `compliance/backup-destination.test.ts › is the one the next GET /backups, POST /backups and restore use, whether it is an object store or a backup folder`.
 
@@ -1176,15 +1176,13 @@ When a write to `/config` sets `object_store_bucket` or `backup_path` and return
 
 When a write to `/config` leaves both `object_store_bucket` and `backup_path` unset and returns `200`, the server MUST answer the next `GET /backups` or `POST /backups` from a caller the operation admits with `409 no_backup_destination`.
 
-**Reason:** removing the destination stops backups from reading or writing there, even where the server has not yet let go of the store.
-
 **Tests:** `compliance/backup-destination.test.ts › is no destination in the next GET /backups once a write to /config unsets it`.
 
 ### `instance/backup-destination-unusable`
 
 When a write to `/config` sets `object_store_bucket` to a store the server cannot use and returns `200`, the server MUST answer the next `GET /backups` from a caller holding `backups.manage` with `503 blob_store_unavailable`.
 
-**Reason:** the owner learns that the destination needs attention, and is not told that there is none.
+**Reason:** the owner needs to know that the configured store needs attention.
 
 **Tests:** `compliance/backup-destination.test.ts › is answered 503 blob_store_unavailable by the next GET /backups when the object store a write to /config names cannot be used`.
 

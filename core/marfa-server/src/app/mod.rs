@@ -279,8 +279,6 @@ impl App {
             .ok();
     }
 
-    /// The store beside the disk that the committed settings name now, taken first if it is not
-    /// the one in use. The settings are read once, so everything read from the answer agrees.
     pub async fn stores_named(&self) -> Result<Arc<blobs::Attached>, refusal::Refusal> {
         self.blobs
             .using(

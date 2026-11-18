@@ -109,7 +109,6 @@ pub struct Link {
     pub ttl_seconds: u64,
 }
 
-/// The store backups are kept in, as one attachment names it.
 pub enum Kept {
     Bucket { s3: Arc<S3>, prefix: String },
     Folder(Arc<Folder>),
@@ -153,22 +152,10 @@ pub struct Attached {
 }
 
 impl Attached {
-    /// The object store, where one is in use.
-    pub fn s3(&self) -> Option<&Arc<S3>> {
-        self.s3.as_ref()
-    }
-
-    /// The backup folder, where one is in use.
-    pub fn folder(&self) -> Option<&Arc<Folder>> {
-        self.folder.as_ref()
-    }
-
-    /// Why the store the settings name is not in use, in the owner's words.
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
     }
 
-    /// The store backups are kept in.
     pub fn kept(&self) -> Option<Kept> {
         match (&self.s3, &self.folder, &self.wanted) {
             (Some(s3), _, Wanted::Bucket(settings)) => Some(Kept::Bucket {
@@ -180,7 +167,6 @@ impl Attached {
         }
     }
 
-    /// Whether this is the store `wanted` names, and could be used.
     fn is(&self, wanted: &Wanted) -> bool {
         self.wanted == *wanted && self.trouble.is_none()
     }
@@ -468,13 +454,10 @@ impl Blobs {
         self.attached.load().is(wanted)
     }
 
-    /// The store beside the disk, as it is attached now.
     pub fn attachment(&self) -> Arc<Attached> {
         self.attached.load_full()
     }
 
-    /// The attachment for the store `wanted` names now: the one in use when it is that, else the
-    /// one `follow` takes. An attach under way is waited for, not repeated.
     pub async fn using(
         &self,
         db: &Db,
@@ -489,9 +472,7 @@ impl Blobs {
         self.follow(db, || wanted, at).await
     }
 
-    /// Takes the store `wanted` names in place of the one in use, or tries again to take one that
-    /// could not be used, and answers the attachment in use afterward. Work that began with the
-    /// old store keeps it until it ends.
+    /// A failed attachment can be retried even when the settings have not changed.
     pub async fn follow(
         &self,
         db: &Db,
@@ -499,7 +480,6 @@ impl Blobs {
         at: impl FnOnce() -> String,
     ) -> std::result::Result<Arc<Attached>, Refusal> {
         let _one = self.following.lock().await;
-        // Read once the lock is held, so the last change of the settings is the one followed.
         let wanted = wanted();
         let current = self.attached.load_full();
         if current.is(&wanted) {
@@ -551,7 +531,6 @@ impl Blobs {
         self.attached.load().folder.clone()
     }
 
-    /// The store backups are kept in, with its prefix, read from one attachment.
     pub fn kept(&self) -> Option<Kept> {
         self.attached.load().kept()
     }
