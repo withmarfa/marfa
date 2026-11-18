@@ -186,10 +186,9 @@ fn linked(
             "SELECT e.{anchor}, COUNT(*){groups}
                FROM edges e CROSS JOIN items ON items.id = e.{other}
               WHERE e.edge_type = ? AND e.{anchor} IN ({marks})
-                AND {counted} AND items.type NOT LIKE 'system.%'
-                AND NOT EXISTS (SELECT 1 FROM meta
-                                 WHERE key = 'item_listed/' || items.id AND value = 'false')
-              GROUP BY e.{anchor}"
+                AND {counted} AND items.type NOT LIKE 'system.%' AND {listed}
+              GROUP BY e.{anchor}",
+            listed = crate::query::LISTED
         );
         let mut params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
         params.extend(bound(ids, edge_type));
@@ -589,6 +588,26 @@ mod tests {
         crate::reach::set_listed(&conn, "hidden", false).unwrap();
         assert_eq!(counted("lone", true), 0);
         assert_eq!(counted("lone", false), 0);
+    }
+
+    #[test]
+    fn a_child_a_refill_keeps_unlisted_is_not_counted_as_the_listing_leaves_it_out() {
+        let conn = tasks();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        put(&conn, "hidden", "acme.task", "active", json!({}));
+        store::upsert_edge(&conn, &wire_edge("h", "lone", "hidden", "parent-of")).unwrap();
+        store::pin(&conn, "hidden").unwrap();
+        let counted =
+            || linked(&conn, &catalog, &named(&["lone"]), "parent-of", true).unwrap()[0].total;
+        let listing = || listed(&conn, "id eq \"hidden\"");
+        // The witness: listed before the refill, the child is counted and listed after it too.
+        crate::reach::set_listed(&conn, "hidden", true).unwrap();
+        store::start_refill(&conn).unwrap();
+        assert_eq!((counted(), listing()), (1, 1));
+        crate::reach::set_listed(&conn, "hidden", false).unwrap();
+        store::start_refill(&conn).unwrap();
+        assert_eq!(listing(), 0);
+        assert_eq!(counted(), 0);
     }
 
     #[test]
