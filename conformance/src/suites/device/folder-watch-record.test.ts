@@ -622,8 +622,11 @@ describe("the record of folder watches", () => {
 
   it("is never read half written, while two watches write it", async () => {
     const { a, b } = await twoFolders("record-whole");
-    const every = hold(a.folder.watchEvery());
+    // The watch of every folder lists b too, and a watch of one folder is
+    // refused a folder another process holds, so b is held first.
     const alone = hold(b.folder.watch());
+    await vi.waitFor(() => expect(alone.stderr).toContain("watching"), WAIT);
+    const every = hold(a.folder.watchEvery());
     await vi.waitFor(() => {
       const file = record(a);
       expect(file?.processes, `${every.stdout}${alone.stderr}`).toHaveLength(2);
