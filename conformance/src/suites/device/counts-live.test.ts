@@ -943,7 +943,7 @@ describe("a device counts as the server does", () => {
     }
   });
 
-  it("sends no id to another instance that takes the copy's own address, and names its instance on each count", async () => {
+  it("sends no count to another instance its root names at the copy's own address, and names its instance on each count", async () => {
     proxy ??= await CountsProxy.start();
     proxy.answer = { counts: (counts) => counts };
     const instance = (
@@ -980,7 +980,7 @@ describe("a device counts as the server does", () => {
           expect(refused.refusal.code, what).toBe("copy_expired");
         expect(
           proxy.counted,
-          `${what}: an id reached another instance at the copy's address`,
+          `${what}: a count reached the instance the root named`,
         ).toBe(before + 1);
       } finally {
         proxy.instance = undefined;

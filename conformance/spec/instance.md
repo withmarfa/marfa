@@ -218,7 +218,7 @@ When the server answers `PUT /config`, the server MUST go on answering at the ro
 
 ## A write that names an instance
 
-A client that keeps a copy of one instance names that instance in `X-Marfa-Instance-Id` on what it sends, so a write that reaches another instance at the same address is refused where it lands. In this section a write is a `POST`, `PUT`, `PATCH` or `DELETE` to an operation outside `/auth`, `/oauth` and `/grants`, `POST /items/bulk-get` and `POST /items/lookup` among them. An inbound webhook address is served ahead of any credential and is not one.
+A client that keeps a copy of one instance names that instance in `X-Marfa-Instance-Id` on what it sends, so a write that reaches another instance at the same address is refused where it lands. In this section a write is a `POST`, `PUT`, `PATCH` or `DELETE` to an operation outside `/auth`, `/oauth` and `/grants`, `POST /items/bulk-get`, `POST /items/lookup` and `POST /items/counts` among them. An inbound webhook address is served ahead of any credential and is not one.
 
 ### `instance/write-names-own`
 
@@ -232,7 +232,7 @@ If a write names in `X-Marfa-Instance-Id` a UUIDv7 other than the instance's own
 
 **Reason:** another instance at the address the client knew holds none of the items its copy was built from, so a write sent there would land on items the client never read.
 
-**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› refuses another instance on every write operation the document publishes outside /auth, /oauth and /grants`.
+**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› refuses another instance on every write operation the document publishes outside /auth, /oauth and /grants`, `› refuses a count naming another instance 409 instance_changed, answering no count`.
 
 ### `instance/write-names-other-unwritten`
 

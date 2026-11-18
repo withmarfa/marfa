@@ -2498,23 +2498,23 @@ Where a copy names the instance it was hydrated from, if the server's root at th
 
 **Reason:** another instance can take the address a copy was built from, as when an instance is replaced. The count is refused as a drain is (`device/instance-drain-expires`), and the copy is built again from the instance now there.
 
-**Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
+**Tests:** `device/counts-live.test.ts › sends no count to another instance its root names at the copy's own address, and names its instance on each count`.
 
 ### `device/counts-from-server-instance-no-id`
 
 Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a count, then a device MUST send that server no count request.
 
-**Reason:** a mismatch at the root lets the device stop before it sends item ids.
+**Reason:** a root that names another instance lets the device stop before it sends item ids. The root read and the count are two requests, so this does not cover an instance that takes the address between them: `device/counts-from-server-named` does.
 
-**Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
+**Tests:** `device/counts-live.test.ts › sends no count to another instance its root names at the copy's own address, and names its instance on each count`.
 
 ### `device/counts-from-server-named`
 
 Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each count it asks of the server.
 
-**Reason:** another instance can take the address between the read of the root and the count. Named, the count is refused where it lands (`instance/write-names-other`).
+**Reason:** the root read and the count are two requests, so another instance that takes the address between them still receives the count. Because the count names the copy's instance, that server refuses it `409 instance_changed` and answers no count (`instance/write-names-other`).
 
-**Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
+**Tests:** `device/counts-live.test.ts › sends no count to another instance its root names at the copy's own address, and names its instance on each count`.
 
 ### `device/counts-from-server-groups`
 
