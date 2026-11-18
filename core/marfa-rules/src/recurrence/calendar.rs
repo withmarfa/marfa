@@ -66,29 +66,42 @@ pub fn ceil_div(a: i64, b: i64) -> i64 {
 
 /// A time zone read from the bundled IANA database.
 #[derive(Clone, Debug)]
-pub struct Zone(TimeZone);
+pub struct Zone {
+    zone: TimeZone,
+    fixed: Option<i64>,
+}
 
 impl Zone {
-    pub const UTC: Zone = Zone(TimeZone::UTC);
+    pub const UTC: Zone = Zone {
+        zone: TimeZone::UTC,
+        fixed: Some(0),
+    };
 
     /// A name the bundled database holds in exactly this spelling.
     pub fn named(name: &str) -> Option<Zone> {
         let zone = TimeZone::get(name).ok()?;
-        (zone.iana_name() == Some(name) && name != "Factory").then_some(Zone(zone))
+        (zone.iana_name() == Some(name) && name != "Factory").then(|| Zone::from_time_zone(zone))
     }
 
     pub fn from_time_zone(zone: TimeZone) -> Zone {
-        Zone(zone)
+        let fixed = zone
+            .to_fixed_offset()
+            .ok()
+            .map(|offset| i64::from(offset.seconds()));
+        Zone { zone, fixed }
     }
 
     /// The reading of the wall clock at `ms`, in seconds counted as if the zone were UTC. Past the range jiff holds, the offset at its bound.
     pub fn wall_of(&self, ms: i64) -> i64 {
+        if let Some(offset) = self.fixed {
+            return ms.div_euclid(1000) + offset;
+        }
         let at = Timestamp::from_millisecond(ms).unwrap_or(if ms < 0 {
             Timestamp::MIN
         } else {
             Timestamp::MAX
         });
-        ms.div_euclid(1000) + i64::from(self.0.to_offset(at).seconds())
+        ms.div_euclid(1000) + i64::from(self.zone.to_offset(at).seconds())
     }
 
     /// A reading a clock change skips takes the offset before the gap; one it repeats, the first.
@@ -97,6 +110,9 @@ impl Zone {
     }
 
     fn offset_at_wall(&self, wall: i64) -> i64 {
+        if let Some(offset) = self.fixed {
+            return offset;
+        }
         let days = wall.div_euclid(DAY);
         let second = wall.rem_euclid(DAY);
         let (year, month, day) = civil_from_days(days);
@@ -119,7 +135,7 @@ impl Zone {
             } else {
                 DateTime::MAX
             });
-        let offset = match self.0.to_ambiguous_timestamp(reading).offset() {
+        let offset = match self.zone.to_ambiguous_timestamp(reading).offset() {
             AmbiguousOffset::Unambiguous { offset } => offset,
             AmbiguousOffset::Gap { before, .. } | AmbiguousOffset::Fold { before, .. } => before,
         };
