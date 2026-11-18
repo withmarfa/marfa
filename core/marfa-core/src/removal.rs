@@ -3,7 +3,6 @@ use rusqlite::TransactionBehavior;
 use crate::model::Subject;
 use crate::{Core, Result, reach, store, telemetry};
 
-/// Items held by `Core::hold_removing`, let go however the removal ends.
 pub(crate) struct HeldRemoving<'a> {
     core: &'a Core,
     ids: Vec<String>,
