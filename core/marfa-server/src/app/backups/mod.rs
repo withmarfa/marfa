@@ -1501,21 +1501,26 @@ impl App {
     pub async fn backup_health(&self) -> BackupHealth {
         let mut health = serde_json::Map::new();
         // While a follow is still running, the store in use is reported until it ends.
-        let attachment = match self.named_destination() {
-            Err(_) => None,
-            Ok(wanted) => Some(match self.blobs.stores_in_use(&wanted) {
+        let named = self.named_destination().ok();
+        let kind = named.as_ref().and_then(|wanted| match wanted {
+            Wanted::Bucket(_) => Some("bucket"),
+            Wanted::Folder(_) => Some("folder"),
+            Wanted::Disk => None,
+        });
+        if let Some(kind) = kind {
+            health.insert("destination".into(), kind.into());
+        }
+        let attachment = named
+            .as_ref()
+            .map(|wanted| match self.blobs.stores_in_use(wanted) {
                 Ok(attached) => Ok(attached),
                 Err(unsettled) if !self.blobs.settled() => Err(unsettled.message),
                 Err(_) => Ok(self.blobs.attachment()),
-            }),
-        };
+            });
         let destination = match &attachment {
             Some(Ok(attached)) => Destination::of(attached),
             _ => None,
         };
-        if let Some(destination) = &destination {
-            health.insert("destination".into(), destination.kind().into());
-        }
         let look = async {
             match &destination {
                 Some(Destination::Folder(folder)) => Some(self.folder_there(folder).await),

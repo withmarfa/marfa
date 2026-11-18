@@ -705,5 +705,38 @@ async fn health_reports_a_named_store_not_in_use_as_unusable_and_never_as_anothe
     assert_eq!(backups["status"], "failing", "{}", health.body);
     assert_eq!(backups["reason"], "destination_unusable", "{}", health.body);
     assert!(backups["store_error"].is_string(), "{}", health.body);
-    assert!(backups.get("destination").is_none(), "{}", health.body);
+    assert_eq!(backups["destination"], "bucket", "{}", health.body);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health_names_the_kind_the_settings_name_while_a_follow_runs() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    instance.name(bucket(&s3, "first")).await;
+    instance.settle().await;
+    let parent = TempDir::new().unwrap();
+    let folder = folder_in(&parent, "backups");
+
+    instance.app.faults.set("hold:stores-record", None).unwrap();
+    instance
+        .name(json!({ "object_store_bucket": "", "backup_path": folder }))
+        .await;
+    instance.reached("hold:stores-record").await;
+    let health = instance.send(Method::GET, "/health", None).await;
+    instance.app.faults.clear(Some("hold:stores-record"));
+    instance.settle().await;
+
+    assert_eq!(
+        instance.in_use(),
+        folder
+            .join("files")
+            .join(&instance.app.instance_id)
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        health.body["backups"]["destination"], "folder",
+        "{}",
+        health.body
+    );
 }
