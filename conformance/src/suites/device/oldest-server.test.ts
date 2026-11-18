@@ -129,18 +129,25 @@ describe("a server older than the oldest release a device works with", () => {
     const queued = await device.create({
       type: "core.note",
       properties: { title: "Waits for a newer server" },
+      source: "notes",
+      sourceId: "waits.md",
     });
     expect(queued.ok).toBe(true);
     scriptWrites(server, {
       create: [
-        refusal(403, "forbidden", "This credential may not write here.", {}),
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
       ],
     });
     expect((await device.drain()).ok).toBe(true);
     const held = await device.queue();
-    expect(held.ok && held.value.map((row) => [row.verdict, row.reason])).toEqual(
-      [["blocked", "credential_refused"]],
-    );
+    expect(
+      held.ok && held.value.map((row) => [row.verdict, row.reason]),
+    ).toEqual([["blocked", "credential_refused"]]);
     const requests = server.requests.length;
     server.answer("GET", "/", running(before(OLDEST!)));
     const refused = await device.drain();
