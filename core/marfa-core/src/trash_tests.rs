@@ -684,14 +684,38 @@ fn a_trash_lets_its_items_go_after_a_refusal_a_network_failure_and_no_server() {
     core.update_item("a", &edit()).unwrap();
 }
 
+/// Holds `ids` as a trash does, outside any request.
+fn hold(core: &Core, ids: &[&str]) -> store::HeldRemoving {
+    let conn = core.conn().unwrap();
+    core.hold_removing(
+        &conn,
+        ids.iter().map(|id| id.to_string()).collect(),
+        store::Removing::Trash,
+    )
+    .unwrap()
+}
+
 #[test]
-fn a_trash_left_out_by_a_process_that_ended_holds_nothing_once_the_store_opens_again() {
+fn a_hold_ends_with_the_core_that_took_it() {
     let dir = tempfile::tempdir().unwrap();
     let core = copy(None, dir.path(), &["a"]);
-    store::meta_set(&core.conn().unwrap(), "removing/a", "trash").unwrap();
+    std::mem::forget(hold(&core, &["a"]));
     being_removed(core.update_item("a", &edit()), "a");
     drop(core);
     let core = open(None, dir.path());
+    core.update_item("a", &edit()).unwrap();
+}
+
+#[test]
+fn a_hold_ends_when_its_holder_unwinds() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(None, dir.path(), &["a"]);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _held = hold(&core, &["a"]);
+        being_removed(core.update_item("a", &edit()), "a");
+        panic!("unwinding while the hold is out");
+    }));
+    assert!(unwound.is_err());
     core.update_item("a", &edit()).unwrap();
 }
 
@@ -705,17 +729,6 @@ fn clear_queue(core: &Core) {
 fn in_the_bin(core: &Core, id: &str) {
     let item = store::testing::wire_item(id, NOTE, "trashed", AT, json!({ "title": id }));
     store::upsert_item(&core.conn().unwrap(), &item, None, &Default::default()).unwrap();
-}
-
-fn removing_keys(core: &Core) -> i64 {
-    core.conn()
-        .unwrap()
-        .query_row(
-            "SELECT count(*) FROM meta WHERE key LIKE 'removing/%'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap()
 }
 
 #[test]
@@ -739,7 +752,7 @@ fn a_write_to_an_item_a_purge_has_out_is_refused_until_it_returns() {
     .unwrap();
     assert_eq!(queue_len(&core), 1, "only the write to z was queued");
     assert_eq!(server.seen("/items/a/purge").len(), 1);
-    assert_eq!(removing_keys(&core), 0);
+    core.refuse_removing(Some("a")).unwrap();
 }
 
 #[test]
@@ -753,6 +766,257 @@ fn a_refused_purge_lets_its_item_go() {
         vec![scripted::refusal(409, "version_conflict")],
     );
     core.purge_item("a", None).unwrap_err();
-    assert_eq!(removing_keys(&core), 0);
     core.restore_item("a").unwrap();
+}
+
+fn keyed(core: &Core, id: &str) -> crate::Draft {
+    core.conn()
+        .unwrap()
+        .execute(
+            "UPDATE items SET source = 'test', source_id = 'natural' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+    crate::Draft {
+        r#type: NOTE.into(),
+        source: Some("test".into()),
+        source_id: Some("natural".into()),
+        properties: serde_json::from_value(json!({"title": "new work"})).unwrap(),
+        ..Default::default()
+    }
+}
+
+fn refused_as_being_removed<T: std::fmt::Debug>(result: crate::Result<T>) {
+    match result {
+        Err(CoreError::Validation { code, .. }) => assert_eq!(code, "item_being_removed"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_create_under_the_natural_key_of_an_item_the_trash_holds_is_refused() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let draft = keyed(&core, "a");
+    let witness = core.create_item(&draft).unwrap();
+    assert_ne!(witness.item_id.as_deref(), Some("a"));
+    clear_queue(&core);
+    core.conn()
+        .unwrap()
+        .execute(
+            "DELETE FROM items WHERE id = ?1",
+            [witness.item_id.unwrap()],
+        )
+        .unwrap();
+    let preview = previewed(&core, &server, &["a"], &[]);
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &preview, || {
+        being_removed(core.create_item(&draft), "a");
+    })
+    .unwrap();
+    assert_eq!(queue_len(&core), 0);
+}
+
+#[test]
+fn a_create_waiting_under_the_natural_key_of_a_named_item_refuses_the_trash() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let draft = keyed(&core, "a");
+    let create = core.create_item(&draft).unwrap();
+    let preview = previewed(&core, &server, &["a"], &[]);
+    match core.trash_items(&preview) {
+        Err(CoreError::Invalid(message)) => assert!(message.contains(&create.id), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(server.seen("/items/trash").is_empty());
+    core.update_item("a", &edit()).unwrap();
+}
+
+#[test]
+fn a_create_waiting_under_the_natural_key_of_an_item_in_the_bin_refuses_its_purge() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    in_the_bin(&core, "a");
+    let draft = keyed(&core, "a");
+    let create = core.create_item(&draft).unwrap();
+    server.on(
+        "/items/a/purge",
+        vec![scripted::json(200, r#"{"ok":true}"#)],
+    );
+    match core.purge_item("a", None) {
+        Err(CoreError::Invalid(message)) => assert!(message.contains(&create.id), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(server.seen("/items/a/purge").is_empty());
+}
+
+#[test]
+fn releasing_a_refused_write_to_an_item_the_trash_holds_is_refused() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let write = core.update_item("a", &edit()).unwrap();
+    let refuse = || {
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'refused', reason = 'dependency_refused', sent = 0
+                  WHERE id = ?1",
+                [&write.id],
+            )
+            .unwrap();
+    };
+    refuse();
+    assert!(core.release(&write.id).unwrap());
+    refuse();
+    let preview = previewed(&core, &server, &["a"], &[]);
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &preview, || {
+        refused_as_being_removed(core.release(&write.id));
+        let verdict: Option<String> = core
+            .conn()
+            .unwrap()
+            .query_row("SELECT verdict FROM queue WHERE id = ?1", [&write.id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(verdict.as_deref(), Some("refused"));
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_trash_lets_its_items_go_when_the_store_cannot_be_written() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let preview = previewed(&core, &server, &["a"], &[]);
+    let result = held_at_instance_check(
+        &server,
+        || core.trash_items(&preview),
+        || {
+            server.on(
+                "/items/trash",
+                vec![scripted::refusal(409, "trash_plan_changed")],
+            );
+            being_removed(core.update_item("a", &edit()), "a");
+            core.conn()
+                .unwrap()
+                .execute_batch("PRAGMA query_only = ON")
+                .unwrap();
+        },
+    );
+    assert!(
+        matches!(result, Err(CoreError::Server { ref code, .. }) if code == "trash_plan_changed"),
+        "{result:?}"
+    );
+    core.conn()
+        .unwrap()
+        .execute_batch("PRAGMA query_only = OFF")
+        .unwrap();
+    core.update_item("a", &edit()).unwrap();
+}
+
+#[test]
+fn a_purge_of_an_item_the_trash_holds_is_refused_as_being_removed() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let preview = previewed(&core, &server, &["a"], &[]);
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &preview, || {
+        refused_as_being_removed(core.purge_item("a", Some(1)));
+    })
+    .unwrap();
+    assert!(server.seen("/items/a/purge").is_empty());
+}
+
+#[test]
+fn a_cut_preview_holds_creates_and_a_refused_purge_keeps_its_hold() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "b"]);
+    in_the_bin(&core, "b");
+    let mut preview = previewed(&core, &server, &["a"], &[]);
+    preview.items[0].truncated = true;
+    log_holds(&server, &[("a", 2)]);
+    let draft = crate::Draft {
+        r#type: NOTE.into(),
+        ..Default::default()
+    };
+    while_held(&core, &server, &preview, || {
+        refused_as_being_removed(core.create_item(&draft));
+        refused_as_being_removed(core.purge_item("b", None));
+        refused_as_being_removed(core.create_item(&draft));
+    })
+    .unwrap();
+    core.create_item(&draft).unwrap();
+    core.restore_item("b").unwrap();
+}
+
+#[test]
+fn a_view_or_folder_the_trash_holds_is_neither_changed_nor_deleted() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let preview = previewed(&core, &server, &["a"], &[]);
+    log_holds(&server, &[("a", 2)]);
+    let settings: serde_json::Map<String, Value> =
+        serde_json::from_value(json!({"title": "kept"})).unwrap();
+    while_held(&core, &server, &preview, || {
+        refused_as_being_removed(core.change_view("a", &settings, 1, None));
+        refused_as_being_removed(core.delete_view("a", None));
+        refused_as_being_removed(core.change_folder("a", &settings, 1, None));
+        refused_as_being_removed(core.revoke_folder("a", None));
+    })
+    .unwrap();
+    assert!(server.seen("/views/a").is_empty());
+    assert!(server.seen("/folders/a").is_empty());
+    assert!(server.seen("/folders/a/revoke").is_empty());
+}
+
+#[test]
+fn a_cut_preview_holds_a_new_view_or_folder() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let mut preview = previewed(&core, &server, &["a"], &[]);
+    preview.items[0].truncated = true;
+    log_holds(&server, &[("a", 2)]);
+    let settings: serde_json::Map<String, Value> =
+        serde_json::from_value(json!({"title": "new"})).unwrap();
+    while_held(&core, &server, &preview, || {
+        refused_as_being_removed(core.create_view(&settings, None));
+        refused_as_being_removed(core.create_folder(&settings, None));
+    })
+    .unwrap();
+    assert!(server.seen("/views").is_empty());
+    assert!(server.seen("/folders").is_empty());
+}
+
+#[test]
+fn an_accepted_trash_whose_log_stalls_returns_not_settled_and_a_catch_up_settles_it() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let preview = previewed(&core, &server, &["a"], &[]);
+    server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
+    server.on("/events", vec![Answer::Stall]);
+    let started = std::time::Instant::now();
+    let report = core.trash_items(&preview).unwrap();
+    assert!(!report.settled && report.behind.is_some(), "{report:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(state_of(&core, "a"), Some((ItemState::Active, 1)));
+    core.update_item("a", &edit()).unwrap();
+    clear_queue(&core);
+    log_holds(&server, &[("a", 2)]);
+    core.catch_up().unwrap();
+    assert_eq!(state_of(&core, "a"), Some((ItemState::Trashed, 2)));
 }
