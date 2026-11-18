@@ -96,27 +96,26 @@ impl Core {
         } else {
             every.clone()
         };
-        let waiting = {
-            let mut conn = self.conn()?;
+        let (waiting, _held) = {
+            let conn = self.conn()?;
             store::refuse_unless_usable(&conn)?;
-            let tx = conn.transaction()?;
+            let held = self.hold_removing(&conn, held, store::Removing::Trash)?;
             let mut waiting: Vec<QueuedWrite> = Vec::new();
             if truncated {
                 waiting.extend(
-                    store::queued_writes(&tx)?
+                    store::queued_writes(&conn)?
                         .into_iter()
                         .filter(|write| write.item_id.is_some() && waits(write)),
                 );
             } else {
                 for id in &every {
-                    waiting.extend(store::waiting_writes_for_item(&tx, id)?);
+                    waiting.extend(store::waiting_writes_for_item(&conn, id)?);
+                    waiting.extend(store::waiting_keyed_creates_for_item(&conn, id)?);
                 }
+                let mut counted = HashSet::new();
+                waiting.retain(|write| counted.insert(write.id.clone()));
             }
-            if waiting.is_empty() {
-                store::hold_removing(&tx, &held, store::Removing::Trash)?;
-                tx.commit()?;
-            }
-            waiting
+            (waiting, held)
         };
         if !waiting.is_empty() {
             let why = if truncated {
@@ -130,7 +129,6 @@ impl Core {
                 self.exits_of(&waiting)?
             )));
         }
-        let _held = self.removing_held(held);
         let http = self.http()?;
         catch_up::refuse_another_instance(self, http)?;
         let key = uuid::Uuid::now_v7().to_string();

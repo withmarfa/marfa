@@ -67,7 +67,7 @@ fn refuse_too_deep(payload: &str) -> Result<(), CoreError> {
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
     refuse_too_deep(write.payload)?;
     if let Some(item) = write.item_id {
-        super::marks::refuse_removing(conn, item)?;
+        super::removing::refuse_removing(conn, item)?;
     }
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
@@ -451,6 +451,51 @@ pub(super) fn waiting_writes_for_edge(
         "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
         [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
+}
+
+/// Waiting creates under another ID that land on row `id` through its
+/// natural key. One that names no source counts, since it goes under its
+/// credential's source, which may be the row's.
+pub fn waiting_keyed_creates_for_item(
+    conn: &Connection,
+    id: &str,
+) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE kind = ?2 AND item_id != ?1 AND (verdict IS NULL OR verdict IN (?3, ?4))
+           AND EXISTS (SELECT 1 FROM items WHERE items.id = ?1 AND items.source_id IS NOT NULL
+                 AND json_extract(queue.payload, '$.source_id') = items.source_id
+                 AND coalesce(json_extract(queue.payload, '$.source') = items.source, 1))",
+        params![
+            id,
+            WriteKind::CreateItem.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str()
+        ],
+    )
+}
+
+/// The rows a create lands on through its natural key, on the rule
+/// `waiting_keyed_creates_for_item` counts by.
+pub(crate) fn rows_under_key_of(
+    conn: &Connection,
+    write: &QueuedWrite,
+) -> Result<Vec<String>, CoreError> {
+    let Some(source_id) = write.body.get("source_id").and_then(Value::as_str) else {
+        return Ok(Vec::new());
+    };
+    if write.kind != WriteKind::CreateItem {
+        return Ok(Vec::new());
+    }
+    let source = write.body.get("source").and_then(Value::as_str);
+    let mut statement = conn.prepare_cached(
+        "SELECT id FROM items
+          WHERE source_id = ?1 AND id IS NOT ?2 AND coalesce(source = ?3, 1)",
+    )?;
+    let rows = statement
+        .query_map(params![source_id, write.item_id, source], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
 }
 
 pub(crate) fn read_writes(
