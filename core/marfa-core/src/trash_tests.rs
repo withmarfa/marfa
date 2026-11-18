@@ -819,6 +819,124 @@ fn a_create_under_the_natural_key_of_an_item_the_trash_holds_is_refused() {
 }
 
 #[test]
+fn a_create_naming_no_source_under_the_key_of_a_held_item_is_refused_while_its_source_is_unknown() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a"]);
+    let mut draft = keyed(&core, "a");
+    draft.source = None;
+    assert_eq!(
+        store::source_of(&core.conn().unwrap(), None, core.credential().as_deref()).unwrap(),
+        None
+    );
+    let witness = core.create_item(&draft).unwrap();
+    clear_queue(&core);
+    core.conn()
+        .unwrap()
+        .execute(
+            "DELETE FROM items WHERE id = ?1",
+            [witness.item_id.unwrap()],
+        )
+        .unwrap();
+    let preview = previewed(&core, &server, &["a"], &[]);
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &preview, || {
+        being_removed(core.create_item(&draft), "a");
+    })
+    .unwrap();
+    assert_eq!(queue_len(&core), 0);
+}
+
+/// Edge `edge` from `b` to `c`, and the edit that moves it to start from `a`.
+fn edge_from_b(core: &Core) -> (crate::wire::WireEdge, crate::EdgeEdit) {
+    let kind = json!({
+        "id": "test-edge", "cardinality": "one-to-one", "written_from": "from",
+        "from_type_constraints": [], "to_type_constraints": [],
+        "cascade_on_delete": "none", "property_schema": {}, "shipped": false
+    });
+    store::replace_catalog(
+        &core.conn().unwrap(),
+        &WireCatalog {
+            types: vec![store::testing::wire_type(NOTE, None, Some("title"))],
+            edge_types: vec![kind],
+        },
+    )
+    .unwrap();
+    let edge = store::testing::wire_edge("edge", "b", "c", "test-edge");
+    store::upsert_edge(&core.conn().unwrap(), &edge).unwrap();
+    let edit = crate::EdgeEdit {
+        from_id: Some("a".into()),
+        base_version: Some(1),
+        ..Default::default()
+    };
+    (edge, edit)
+}
+
+#[test]
+fn moving_an_edge_to_start_from_an_item_the_trash_holds_is_refused() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "b", "c"]);
+    let (edge, edit) = edge_from_b(&core);
+    assert!(core.update_edge("edge", &edit).unwrap().is_some());
+    clear_queue(&core);
+    store::upsert_edge(&core.conn().unwrap(), &edge).unwrap();
+    let preview = previewed(&core, &server, &["a"], &[]);
+    log_holds(&server, &[("a", 2)]);
+    while_held(&core, &server, &preview, || {
+        being_removed(core.update_edge("edge", &edit).map(Option::unwrap), "a");
+    })
+    .unwrap();
+    assert_eq!(queue_len(&core), 0);
+}
+
+#[test]
+fn an_edge_move_waiting_to_start_from_a_named_item_refuses_the_trash() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(Some(&server), dir.path(), &["a", "b", "c"]);
+    let (_, edit) = edge_from_b(&core);
+    let preview = previewed(&core, &server, &["a"], &[]);
+    server.on(
+        "/items/trash",
+        vec![scripted::refusal(409, "trash_plan_changed")],
+    );
+    assert!(matches!(
+        core.trash_items(&preview),
+        Err(CoreError::Server { code, .. }) if code == "trash_plan_changed"
+    ));
+    let moved = core.update_edge("edge", &edit).unwrap().unwrap();
+    match core.trash_items(&preview) {
+        Err(CoreError::Invalid(message)) => assert!(message.contains(&moved.id), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(server.seen("/items/trash").len(), 1);
+}
+
+#[test]
+fn releasing_a_refused_edge_move_to_start_from_a_held_item_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(None, dir.path(), &["a", "b", "c"]);
+    let (_, edit) = edge_from_b(&core);
+    let moved = core.update_edge("edge", &edit).unwrap().unwrap();
+    let refuse = || {
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'refused', reason = 'dependency_refused', sent = 0
+                  WHERE id = ?1",
+                [&moved.id],
+            )
+            .unwrap();
+    };
+    refuse();
+    assert!(core.release(&moved.id).unwrap());
+    refuse();
+    let _held = hold(&core, &["a"]);
+    refused_as_being_removed(core.release(&moved.id));
+}
+
+#[test]
 fn a_create_waiting_under_the_natural_key_of_a_named_item_refuses_the_trash() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();

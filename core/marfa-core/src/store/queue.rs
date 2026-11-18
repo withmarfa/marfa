@@ -453,47 +453,71 @@ pub(super) fn waiting_writes_for_edge(
     )
 }
 
-/// Waiting creates under another ID that land on row `id` through its
-/// natural key. One that names no source counts, since it goes under its
-/// credential's source, which may be the row's.
-pub fn waiting_keyed_creates_for_item(
+/// Waiting writes queued under another item that reach row `id`: a create
+/// under its natural key, or a move of an edge to start from it. A create
+/// that names no source counts, since it goes under its credential's source,
+/// which may be the row's.
+pub fn waiting_writes_reaching_item(
     conn: &Connection,
     id: &str,
 ) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
-        "WHERE kind = ?2 AND item_id != ?1 AND (verdict IS NULL OR verdict IN (?3, ?4))
-           AND EXISTS (SELECT 1 FROM items WHERE items.id = ?1 AND items.source_id IS NOT NULL
-                 AND json_extract(queue.payload, '$.source_id') = items.source_id
-                 AND coalesce(json_extract(queue.payload, '$.source') = items.source, 1))",
+        "WHERE item_id != ?1 AND (verdict IS NULL OR verdict IN (?4, ?5))
+           AND ((kind = ?2 AND EXISTS (SELECT 1 FROM items
+                   WHERE items.id = ?1 AND items.source_id IS NOT NULL
+                     AND json_extract(queue.payload, '$.source_id') = items.source_id
+                     AND coalesce(json_extract(queue.payload, '$.source') = items.source, 1)))
+             OR (kind = ?3 AND json_extract(queue.payload, '$.from_id') = ?1))",
         params![
             id,
             WriteKind::CreateItem.as_str(),
+            WriteKind::UpdateEdge.as_str(),
             Verdict::Blocked.as_str(),
             Verdict::Dead.as_str()
         ],
     )
 }
 
-/// The rows a create lands on through its natural key, on the rule
-/// `waiting_keyed_creates_for_item` counts by.
-pub(crate) fn rows_under_key_of(
+/// The rows other than its own item that `write` reaches, on the rule
+/// `waiting_writes_reaching_item` counts by.
+pub(crate) fn rows_reached_by(
     conn: &Connection,
     write: &QueuedWrite,
 ) -> Result<Vec<String>, CoreError> {
-    let Some(source_id) = write.body.get("source_id").and_then(Value::as_str) else {
-        return Ok(Vec::new());
-    };
-    if write.kind != WriteKind::CreateItem {
-        return Ok(Vec::new());
+    match write.kind {
+        WriteKind::CreateItem => {
+            let Some(source_id) = write.body.get("source_id").and_then(Value::as_str) else {
+                return Ok(Vec::new());
+            };
+            let source = write.body.get("source").and_then(Value::as_str);
+            rows_under_key(conn, source_id, source, write.item_id.as_deref())
+        }
+        WriteKind::UpdateEdge => Ok(write
+            .body
+            .get("from_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .into_iter()
+            .collect()),
+        _ => Ok(Vec::new()),
     }
-    let source = write.body.get("source").and_then(Value::as_str);
+}
+
+/// The rows other than `except` that a create naming `source_id` lands on:
+/// under `source`, or under any source where it is not known.
+pub(crate) fn rows_under_key(
+    conn: &Connection,
+    source_id: &str,
+    source: Option<&str>,
+    except: Option<&str>,
+) -> Result<Vec<String>, CoreError> {
     let mut statement = conn.prepare_cached(
         "SELECT id FROM items
           WHERE source_id = ?1 AND id IS NOT ?2 AND coalesce(source = ?3, 1)",
     )?;
     let rows = statement
-        .query_map(params![source_id, write.item_id, source], |row| row.get(0))?
+        .query_map(params![source_id, except, source], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     Ok(rows)
 }

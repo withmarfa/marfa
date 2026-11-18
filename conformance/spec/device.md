@@ -6452,7 +6452,7 @@ If the item the copy shows is not in the bin, then a device MUST refuse to purge
 
 ### `device/purge-waiting-write`
 
-If a write to an item has no answer yet, or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing, and name in the refusal only the commands that take each waiting write out of its wait, naming for a write held behind another the write that holds it, followed to the write that actually blocks, and that write's commands.
+If a write to an item, a move of an edge to start from the item included, has no answer yet, or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing, and name in the refusal only the commands that take each waiting write out of its wait, naming for a write held behind another the write that holds it, followed to the write that actually blocks, and that write's commands.
 
 **Reason:** the write would reach an item that is gone, and a write that carried a person's content would be lost to a purge they may not have meant it for. A write with no answer waits for a drain, a write blocked for a reason a release clears waits for a release, and a dead write or one blocked for a reason a withdraw takes waits for a release or a withdraw. A write held behind another waits for that write, so the refusal names the write it waits on, and a drain only where a drain can move that write. A discard takes only a refused write, so the refusal never names it.
 
@@ -6468,7 +6468,7 @@ If a create that names an item's `source_id`, under the item's `source` or namin
 
 ### `device/purge-holds-item`
 
-While a purge is out, if a caller writes to its item, a create that names the item's natural key and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
+While a purge is out, if a caller writes to its item, a create that names the item's natural key, a move of an edge to start from the item and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
 
 **Reason:** the purge checks for waiting writes before it is sent (`device/purge-waiting-write`), and a write made between that check and the call's return would reach a row that is gone. A purge is out from that check until the call returns.
 
@@ -6558,7 +6558,7 @@ If a purge is sent and no answer comes, then a device MUST keep the item and ref
 
 ### `device/trash-waiting-write`
 
-If a write to an item that a several-item trash names, or lists as taken with it, has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing and leaving the queue as it was.
+If a write to an item that a several-item trash names, or lists as taken with it, a move of an edge to start from the item included, has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing and leaving the queue as it was.
 
 **Reason:** the write would reach rows that are in the bin, and a write that carried a person's content would be lost. The refusal names the commands that take each waiting write out of its wait, as a purge's does.
 
@@ -6622,7 +6622,7 @@ When the server accepts a several-item trash, a device MUST answer `settled`, tr
 
 ### `device/trash-holds-items`
 
-While a several-item trash is out, if a caller writes to an item the trash names or lists as taken, a create that names the item's natural key and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
+While a several-item trash is out, if a caller writes to an item the trash names or lists as taken, a create that names the item's natural key, a move of an edge to start from the item and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
 
 **Reason:** the trash checks for waiting writes before it is sent, and a write made between that check and the call's return would reach a row in the bin. A trash is out from that check until the call returns.
 
@@ -6646,7 +6646,7 @@ While a several-item trash or a purge is out, if a caller trashes several items 
 
 ### `device/removal-holds-release`
 
-While a several-item trash or a purge is out, if a caller releases a write to an item it holds, or a create that names that item's natural key, then a device MUST refuse the release `validation` with the code `item_being_removed`, leaving the write as it was.
+While a several-item trash or a purge is out, if a caller releases a write to an item it holds, a create that names that item's natural key or a move of an edge to start from that item, then a device MUST refuse the release `validation` with the code `item_being_removed`, leaving the write as it was.
 
 **Reason:** a released write is sent again, so a release between the removal's check for waiting writes and the call's return would reach a row in the bin or one that is gone.
 

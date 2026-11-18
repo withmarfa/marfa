@@ -9,7 +9,7 @@ use super::dead::{
 use super::laying::{put_back, record_refusal, replaces_properties};
 use super::marks::removal_accepted;
 use super::meta::{META_INSTANCE_ID, meta_delete, meta_get, meta_keys, meta_set, meta_under};
-use super::queue::{queued_write, queued_writes, read_writes, rows_under_key_of};
+use super::queue::{queued_write, queued_writes, read_writes, rows_reached_by};
 use super::reach::{edge_write_ends, let_go_of_ends};
 use super::removing::refuse_removing;
 use super::rows::WAITING;
@@ -377,7 +377,7 @@ fn refuse_released_while_removing(conn: &Connection, id: &str) -> Result<(), Cor
     if let Some(item) = &write.item_id {
         refuse_removing(conn, item)?;
     }
-    for row in rows_under_key_of(conn, &write)? {
+    for row in rows_reached_by(conn, &write)? {
         refuse_removing(conn, &row)?;
     }
     Ok(())

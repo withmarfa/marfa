@@ -173,6 +173,10 @@ fn update_edge_in(tx: &Connection, id: &str, edit: &EdgeEdit) -> Result<Option<Q
     if edit.is_empty() {
         return Ok(None);
     }
+    // Queued under the old source, the write also becomes one from the new.
+    if let Some(source) = &edit.from_id {
+        store::refuse_removing(tx, source)?;
+    }
     let payload = edit.payload(base)?;
     let mut depends_on = store::untaken_create_for_edge(tx, id)?;
     let mut next = held.clone();

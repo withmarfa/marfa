@@ -150,8 +150,13 @@ pub(crate) fn queue_create(
         _ => None,
     };
     // The create lands on that row, under an ID the queue does not name.
+    // Where the key's source is not known, it may be any row under the key.
     if let Some(held) = &target {
         store::refuse_removing(tx, &held.id)?;
+    } else if let (None, Some(source_id)) = (&key_source, &draft.source_id) {
+        for row in store::rows_under_key(tx, source_id, None, None)? {
+            store::refuse_removing(tx, &row)?;
+        }
     }
     let unresolved = target
         .as_ref()
@@ -709,7 +714,7 @@ impl Core {
                 });
             }
             let mut waiting = store::waiting_writes_for_item(&conn, id)?;
-            waiting.extend(store::waiting_keyed_creates_for_item(&conn, id)?);
+            waiting.extend(store::waiting_writes_reaching_item(&conn, id)?);
             if !waiting.is_empty() {
                 drop(conn);
                 return Err(CoreError::Invalid(format!(

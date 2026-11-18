@@ -110,7 +110,7 @@ impl Core {
             } else {
                 for id in &every {
                     waiting.extend(store::waiting_writes_for_item(&conn, id)?);
-                    waiting.extend(store::waiting_keyed_creates_for_item(&conn, id)?);
+                    waiting.extend(store::waiting_writes_reaching_item(&conn, id)?);
                 }
                 let mut counted = HashSet::new();
                 waiting.retain(|write| counted.insert(write.id.clone()));
