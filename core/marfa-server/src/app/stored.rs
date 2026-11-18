@@ -155,8 +155,7 @@ where
     .map_err(|_| Refusal::internal("a settings change did not finish"))?
 }
 
-/// A write of its own: it waits for any write still running and follows it in the commit order.
-/// Answers whether it published; one that did not leaves the live settings in doubt.
+/// The writer orders this reload after any settings write still running.
 pub(crate) async fn reload(app: &Arc<App>) -> bool {
     let (numbering, faults) = (app.clone(), app.faults.clone());
     let staged = app

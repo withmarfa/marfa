@@ -1,6 +1,4 @@
-//! The store beside the disk ends up as the one the latest committed settings name: an attach
-//! the settings moved past is never used, a record and its swap happen together, and a record or
-//! reload that failed is mended by the replication job.
+//! Store-follow races, cancellation, and recovery after failed records and reloads.
 
 #[allow(dead_code)]
 mod fake_s3;
@@ -87,7 +85,7 @@ impl Instance {
         assert_eq!(set.status, StatusCode::OK, "{}", set.body);
     }
 
-    /// Waits for every follow asked for so far, as the replication job's first step does.
+    /// Runs a follow without retrying a troubled store.
     async fn settle(&self) {
         self.app.follow_stores(Retry::Settle).await.unwrap();
     }
@@ -520,8 +518,7 @@ async fn a_failed_reload_is_mended_by_the_replication_job_before_the_stores_coun
     instance.name(bucket(&s3, "a")).await;
     instance.settle().await;
 
-    // A commit that landed and was never made live, then a write of unknown outcome whose
-    // reload fails.
+    // The committed settings deliberately lead the live snapshot.
     support::commit_unpublished(&instance.app, "object_store_prefix", "b").await;
     instance
         .app

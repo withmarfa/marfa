@@ -455,7 +455,7 @@ impl Blobs {
         })
     }
 
-    /// Whether the store in use, the stores record and the live settings are known to agree.
+    /// Whether no record failure or failed settings reload remains unresolved.
     pub fn settled(&self) -> bool {
         !self.record_doubted.load(Ordering::SeqCst)
             && self.settings_doubted.load(Ordering::SeqCst) == 0
@@ -471,8 +471,7 @@ impl Blobs {
         self.following.lock().await
     }
 
-    /// Marks the stores record as not known to name the store in use. The caller holds
-    /// `changing`.
+    /// The caller must hold `changing`.
     pub(crate) fn doubt_record(&self) {
         self.record_doubted.store(true, Ordering::SeqCst);
     }
@@ -527,8 +526,6 @@ impl Blobs {
         Ok(forgotten)
     }
 
-    /// Refuses an adopt once the committed settings name another store, or the record names
-    /// another store for the folder than the one the adopt replaces.
     pub fn check_adoptable(
         tx: &rusqlite::Transaction<'_>,
         app: &App,
@@ -1057,8 +1054,7 @@ pub enum Retry {
 }
 
 impl App {
-    /// Asks for a follow of the committed settings; one already asked for and not yet begun
-    /// covers this one.
+    /// A queued follow covers requests made before it reads the settings.
     pub fn ask_stores_to_follow(self: &Arc<App>) {
         if !self.blobs.asked.swap(true, Ordering::SeqCst) {
             let app = self.clone();
@@ -1117,8 +1113,7 @@ impl App {
         Ok(recorded)
     }
 
-    /// Takes again the id the record now names for the backup folder in use, where its files
-    /// area holds no marker: an adopt may have recorded a new id and not claimed it.
+    /// An adopt may have recorded a new ID without claiming the folder.
     pub(crate) async fn retake_folder(&self, folder: &Arc<Folder>) -> Result<()> {
         let looked = folder.clone();
         if joined(tokio::task::spawn_blocking(move || looked.reachable()).await)? {
@@ -1140,9 +1135,7 @@ impl App {
         Ok(())
     }
 
-    /// Brings the store in use and its record to what the committed settings name. Only
-    /// `follow_stores` runs it, on a task of its own, so no caller can stop it between a record
-    /// and its swap.
+    /// Its own task keeps cancellation from separating the record and swap.
     async fn follow(self: &Arc<App>, retry: Retry) -> Result<()> {
         let blobs = &self.blobs;
         let _one = blobs.following.lock().await;

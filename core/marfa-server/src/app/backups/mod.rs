@@ -1289,8 +1289,7 @@ impl App {
         .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
     }
 
-    /// Holds the stores in use from the choice of the folder to its claim, so no follow records
-    /// another id for it in between.
+    /// The follow lock prevents another follow from recording the old folder ID.
     async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         let _changing = self.blobs.changing().await;
         let destination = self.destination()?;

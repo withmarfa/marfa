@@ -11,15 +11,7 @@ import {
 import { clientsFor, runJob } from "../../utils/own-blob-server.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
-/**
- * Which store beside the disk the server ends up with when the settings
- * change while it attaches the store an earlier write named, on a server of
- * the fixture's own with no object store, so `backup_path` can name each
- * folder in turn. `hold:stores-record` holds the attach after it has taken
- * the folder and before the stores record names it. A run of
- * `blob-replicate` begins by bringing the stores in use to the settings, so
- * the listing read after it is the one the settings leave.
- */
+// A separate server keeps object-store settings from overriding the backup folder.
 const parent = tempFolder("marfa-store-follows-");
 let server: FreshServer | undefined;
 let instance: string;

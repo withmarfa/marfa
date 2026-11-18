@@ -184,8 +184,7 @@ impl Settings {
         *self.steer.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Runs `change` only while no change has been staged since `generation`, so no change is
-    /// staged while it runs.
+    /// Keeps settings staging out of the generation check and store swap.
     pub(crate) fn unless_staged<T>(
         &self,
         generation: u64,
