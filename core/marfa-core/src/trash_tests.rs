@@ -140,6 +140,7 @@ fn log_holds(server: &Scripted, rows: &[(&str, i64)]) {
 fn edit() -> crate::Edit {
     crate::Edit {
         properties: serde_json::from_value(json!({"title": "new work"})).unwrap(),
+        base_version: Some(1),
         ..Default::default()
     }
 }
@@ -608,7 +609,7 @@ fn a_write_to_an_item_the_trash_holds_is_refused_until_it_returns_and_others_are
     assert!(report.settled);
     assert_eq!(server.seen("/items/trash").len(), 1);
     assert_eq!(queue_len(&core), 1, "only the write to z was queued");
-    core.update_item("a", &edit()).unwrap();
+    core.restore_item("a").unwrap();
 }
 
 #[test]
@@ -718,7 +719,7 @@ fn a_write_to_an_item_a_purge_has_out_is_refused_until_it_returns() {
         &server,
         || core.purge_item("a", None),
         || {
-            being_removed(core.update_item("a", &edit()), "a");
+            being_removed(core.restore_item("a"), "a");
             core.update_item("z", &edit()).unwrap();
         },
     )
@@ -737,5 +738,5 @@ fn a_refused_purge_lets_its_item_go() {
     server.on("/items/a/purge", vec![scripted::refusal(409, "version_conflict")]);
     core.purge_item("a", None).unwrap_err();
     assert_eq!(removing_keys(&core), 0);
-    core.update_item("a", &edit()).unwrap();
+    core.restore_item("a").unwrap();
 }
