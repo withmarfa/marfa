@@ -2443,30 +2443,29 @@ fn http_date(raw: &str) -> Option<i64> {
     if parts.len() != 6 || parts[5] != "GMT" {
         return None;
     }
-    let day: i64 = parts[1].parse().ok()?;
+    let number = |text: &str, most: usize| -> Option<i64> {
+        (!text.is_empty() && text.len() <= most && text.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| text.parse().ok())
+            .flatten()
+    };
+    let day = number(parts[1], 2)?;
     let month = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ]
     .iter()
     .position(|name| *name == parts[2])? as i64
         + 1;
-    let year: i64 = parts[3].parse().ok()?;
+    let year = number(parts[3], 4)?;
     let clock: Vec<&str> = parts[4].split(':').collect();
     if clock.len() != 3 {
         return None;
     }
-    let (hour, minute, second): (i64, i64, i64) = (
-        clock[0].parse().ok()?,
-        clock[1].parse().ok()?,
-        clock[2].parse().ok()?,
+    let (hour, minute, second) = (
+        number(clock[0], 2)?,
+        number(clock[1], 2)?,
+        number(clock[2], 2)?,
     );
-    // The days-from-civil algorithm.
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
+    let days = marfa_rules::time::days_from_civil(year, month, day);
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
@@ -3089,6 +3088,18 @@ mod tests {
         assert_eq!(http_date("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
         assert_eq!(http_date("Sunday, 06-Nov-94 08:49:37 GMT"), None);
         assert_eq!(http_date("nonsense"), None);
+        assert_eq!(
+            http_date("Sun, 06 Nov 99999999999999999 08:49:37 GMT"),
+            None
+        );
+        assert_eq!(
+            http_date("Sun, 06 Nov 1994 9999999999999999:00:00 GMT"),
+            None
+        );
+        assert_eq!(
+            http_date("Sun, 9999999999999999 Nov 1994 08:49:37 GMT"),
+            None
+        );
     }
 
     #[test]

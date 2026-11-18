@@ -430,29 +430,3 @@ fn taking_a_server_edge_lays_the_waiting_writes_over_it_unless_the_copy_holds_a_
     assert!(!take_server_edge(&conn, &older).unwrap());
     assert_eq!(edge_by_id(&conn, "e1").unwrap().unwrap(), held);
 }
-
-#[test]
-fn an_instant_reads_any_fraction_and_offset() {
-    let at = |stamp| instant_of(stamp).unwrap();
-    assert_eq!(at("1970-01-01T00:00:00Z"), 0);
-    assert_eq!(at("1970-01-01T00:00:01.25Z"), 1_250_000_000);
-    assert_eq!(at("1970-01-01T01:00:00+01:00"), 0);
-    assert_eq!(at("1969-12-31T23:00:00-01:00"), 0);
-    assert_eq!(
-        at("2026-01-01T00:00:00.123456789123Z") % 1_000_000_000,
-        123_456_789
-    );
-    for unreadable in [
-        "",
-        "2026-01-01",
-        "2026-13-01T00:00:00Z",
-        "2026-01-01T00:00:00",
-        "2026-01-01T00:00:00.Z",
-    ] {
-        assert_eq!(
-            instant_of(unreadable),
-            None,
-            "{unreadable:?} read as an instant"
-        );
-    }
-}

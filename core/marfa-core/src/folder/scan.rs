@@ -199,22 +199,14 @@ impl Sweep {
     }
 }
 
-fn millis_since_epoch(at: std::time::SystemTime) -> i64 {
-    at.duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as i64)
-}
-
-/// A pair this cannot read has not passed, since a delete cannot be taken
+/// A time this cannot read has not passed, since a delete cannot be taken
 /// back.
-fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
-    let (Some(since), Some(now)) = (millis_of(since), millis_of(now)) else {
-        return false;
-    };
-    now.saturating_sub(since) >= grace.as_millis() as i64
+fn elapsed_past(since: &str, now_ms: i64, grace: Duration) -> bool {
+    millis_of(since).is_some_and(|since| now_ms.saturating_sub(since) >= grace.as_millis() as i64)
 }
 
 fn millis_of(stamp: &str) -> Option<i64> {
-    i64::try_from(crate::store::instant_of(stamp)? / 1_000_000).ok()
+    marfa_rules::time::read(stamp).ok()
 }
 
 impl Folder {
@@ -222,9 +214,7 @@ impl Folder {
     /// the passing of time moves on: the sweep acts on it once it has. A stamp
     /// this cannot read never runs out, so nothing waits on it.
     pub(super) fn grace_running(&self, at: std::time::SystemTime) -> Result<bool> {
-        let Some(now) = millis_of(&crate::store::iso_at(at)) else {
-            return Ok(false);
-        };
+        let now = crate::store::millis_at(at);
         let grace = RENAME_GRACE.as_millis() as i64;
         Ok(state::journaled(&*self.core.conn()?)?.iter().any(|row| {
             millis_of(&row.missing_since).is_some_and(|since| now.saturating_sub(since) < grace)
@@ -2165,7 +2155,7 @@ impl Folder {
             .copied()
             .filter(|at| !every && !confirmed.contains(&scan.files[*at].key))
             .collect();
-        let now_ms = millis_since_epoch(crate::clock::system_time());
+        let now_ms = crate::store::millis_at(crate::clock::system_time());
         let mut sent = state::additions_sent(&conn)?;
         let lately = state::within_window(&mut sent, now_ms);
         let mut held = HashSet::new();
@@ -2414,11 +2404,11 @@ impl Folder {
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
         let look = full || self.kept_look_due()?;
-        let now = crate::store::iso_at(crate::clock::system_time());
+        let now = crate::store::millis_at(crate::clock::system_time());
         let sweep = Sweep::default();
         let mut due = Vec::new();
         for row in journaled {
-            if !elapsed_past(&row.missing_since, &now, RENAME_GRACE) {
+            if !elapsed_past(&row.missing_since, now, RENAME_GRACE) {
                 continue;
             }
             match row.kept {
