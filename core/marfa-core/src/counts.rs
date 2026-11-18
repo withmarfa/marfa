@@ -220,10 +220,7 @@ fn linked(
 }
 
 impl Core {
-    /// Counts linked items or table rows for up to [`MOST_IDS`] IDs, once per distinct ID in request order.
-    /// Link counts follow the server's anchored listing with its default state.
-    /// A link count returns `NotAnswerable`, and no other refusal, if the copy lacks edges or items needed for the count.
-    /// The server counts rows for tables the copy does not hold whole; an answer that is not the asked IDs once each, in order, fails the call.
+    /// Counts links locally and asks the server for rows in tables the copy does not hold whole.
     pub fn counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
         let ids = distinct(ids)?;
         refuse_unnamed(counted)?;
@@ -275,10 +272,7 @@ impl Core {
         }
     }
 
-    /// Asks the copy's own server for the counts of up to [`MOST_IDS`] IDs, once per
-    /// distinct ID in request order, under the copy's instance check and current key.
-    /// Refuses an answer that is not the asked IDs once each in order, a link count
-    /// without its four status groups and a count of rows with any.
+    /// Requests every count from the copy's server using its current credential.
     pub fn served_counts(&self, ids: &[String], counted: &Counted) -> Result<Vec<ItemCount>> {
         let ids = distinct(ids)?;
         refuse_unnamed(counted)?;

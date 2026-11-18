@@ -264,12 +264,7 @@ impl MarfaCore {
         }))
     }
 
-    /// For each of up to 100 ids, the active items an edge type links to it
-    /// by status group, or the rows it holds in a table, as
-    /// `POST /items/counts` answers. Links are counted from the copy and
-    /// refused `not_answerable`, which no other failure gives, where it
-    /// cannot answer, and `servedCounts` asks the server then; rows come from the copy for a table held whole, and
-    /// `held` says which answered.
+    /// Counts from the copy where possible. On `not_answerable`, call `servedCounts(ids, counted)`.
     #[napi(
         ts_return_type = "Promise<{ counts: { id: string; total: number; status_groups?: { not_started: number; in_progress: number; completed: number; canceled: number }; held: boolean }[] }>"
     )]
@@ -279,12 +274,7 @@ impl MarfaCore {
         }))
     }
 
-    /// The same counts asked of the copy's own server, with its current key
-    /// and after the instance check a moved copy makes, so a server that is
-    /// not the copy's is refused `wrong_server` and sent no id. Each count
-    /// says `held: false`. An answer that is not the asked ids once each in
-    /// order, a link count without its four status groups and a count of
-    /// rows with any are refused `decoding`.
+    /// Requests every count from the copy's server. Each result has `held` set to false.
     #[napi(
         ts_return_type = "Promise<{ counts: { id: string; total: number; status_groups?: { not_started: number; in_progress: number; completed: number; canceled: number }; held: boolean }[] }>"
     )]

@@ -64,11 +64,7 @@ impl From<marfa_core::ItemCount> for ItemCount {
 
 #[uniffi::export]
 impl Core {
-    /// Counts linked items or table rows for up to 100 IDs, once per distinct ID in request order.
-    /// Link counts use the anchored listing's default state and include status groups.
-    /// They throw `NotAnswerable` if the copy lacks edges or items needed for the count,
-    /// and no other failure throws it, so a caller calls `served_counts` on it and on nothing else.
-    /// For row counts, `held` is true when the copy answered and false when the server answered.
+    /// Counts from the copy where possible. On `NotAnswerable`, call `servedCounts(ids:counted:)`.
     pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
         Ok(self
             .inner
@@ -78,12 +74,7 @@ impl Core {
             .collect())
     }
 
-    /// Asks the copy's own server for the counts of up to 100 IDs, once per distinct ID in
-    /// request order, with `held` false. The request carries the copy's current key and
-    /// goes only to the server the copy was opened with, after the instance check a moved
-    /// copy makes, so it throws `WrongServer` rather than send an ID elsewhere. It throws
-    /// `Decoding` for an answer that is not the asked IDs once each in order, a link count
-    /// without its four status groups or a count of rows with any.
+    /// Requests every count from the copy's server. Each result has `held` set to false.
     pub fn served_counts(
         &self,
         ids: Vec<String>,

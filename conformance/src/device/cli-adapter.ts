@@ -351,7 +351,7 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite>(["rows", "undo", item, table, batch]);
   }
 
-  /** `marfa device items counts`: links from the copy, rows from the copy or the server, with `held`. */
+  /** `fromServer` requests every count from the copy's server. */
   async counts(
     ids: string[],
     counted: { backref: string } | { edge: string } | { table: string },

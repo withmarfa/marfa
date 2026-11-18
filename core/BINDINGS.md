@@ -26,7 +26,9 @@ The Swift binding exposes these as `get_items`, `edge`, `get_edges`, `body_links
 
 In Swift, pass `Counted.backref(edgeType:)` to count the items each anchor links to, `Counted.edge(edgeType:)` to count the items that link to each anchor, or `Counted.table(table:)` to count rows. In Node, pass one of `{ backref: edgeType }`, `{ edge: edgeType }` or `{ table: name }` as the second argument. Node returns an object with a `counts` array.
 
-A local link count fails with `not_answerable` if the copy lacks edges or items needed for the count. No other failure carries that code, so ask the server for the count on it and on nothing else, through the copy: `servedCounts(ids:counted:)` in Swift or `servedCounts(ids, counted)` in Node takes the same arguments and asks the copy's own server with the key the copy holds now, and every count it returns has `held` false. A copy opened at an origin other than the one it recorded first checks that the server answers as its instance, and fails with `wrong_server` without sending an ID if it does not. Any other failure, such as a server's refusal, a failed credential renewal, an ended sign-in or a network failure, keeps its own code.
+If a local link count fails with `not_answerable`, ask the server with `servedCounts(ids:counted:)` in Swift or `servedCounts(ids, counted)` in Node. Pass the same arguments. Each result has `held` set to false. Propagate other errors to the caller.
+
+The request uses the server and credential held by the copy. When a copy opens at a new origin, it checks the instance there before sending IDs. An instance mismatch returns `wrong_server`.
 
 Whenever the copy asks the server for counts, the whole call fails with `decoding` if the answer is not the requested IDs once each in the order requested, if a link count lacks any of its four status groups or if a row count carries status groups.
 
@@ -118,7 +120,7 @@ Use `removeStoreLosingAll` only when the person agrees to lose every write, incl
 - `tableRows`, `tableRow` and `tableTotals` answer in the server's shapes, with `held` set where the copy answered from a table it holds whole and unset where it asked the server. Node answers a plain object, and Swift a `JsonObject`.
 - `writeRows` queues one write of kind `write_rows` for each call, and `undoRows` one of kind `undo_rows` for the batch named. A drain sends consecutive row writes to the same table in one request and gives each write its own verdict.
 - A hold's and a fill's counts cross as numbers. In Swift, a held table's `state` is the enum `TableState` (`owed`, `filling`, `whole` and `online` in Node), its item is `itemId` (`item` in Node), and a read's options are the record `RowsAsked`, whose `direction` is `SortDirection` and whose `limit` is a `UInt32`.
-- A follow fills held tables between events. When its fill leaves a table whole or finds it past the cap, it tells the change `TableFilled` (`tableFilled` in Node) once, with the item and the table, so a view of that table reads it again (`device/follow-table-filled`).
+- When a follow finishes filling a table or finds it over the cap, it emits one `tableFilled` change with the item ID and table name. Read the table again when you receive this change (`device/follow-table-filled`).
 
 ## Folders in an app
 

@@ -144,14 +144,7 @@ fn unexplained(
         .find(|named| !refreshed.contains(named))
 }
 
-/// What a held stream changed in the copy: an event it applied, with the
-/// item or edge it was about, a table of an item it filled, or a catalog
-/// that differs from the one held, naming neither. Or what became of the
-/// server: unreachable, with why, once when a stream cannot be had or an
-/// event it sends cannot be taken, and reachable once when one is had, or
-/// the event taken, again.
-/// Or what became of the queue it drained then. `cursor` is the cursor held
-/// after it.
+/// A follow or watch notification with the cursor held after the change.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
     pub event: ChangeEvent,
@@ -208,10 +201,7 @@ impl Serialize for Change {
     }
 }
 
-/// What a `Change` tells. Written as text by its name: the applied event's
-/// type, or `catalog.changed`, `server.unreachable`, `server.reachable`,
-/// `queue.drained`, `queue.not_drained`, `table.filled`, and, from a watch
-/// only, `store.saved` or `watch.failed`.
+/// The event or local change reported by a follow or watch.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
     /// An event the stream applied, by the event's type, or a change to the
@@ -238,9 +228,7 @@ pub enum ChangeEvent {
     /// catch-up; a reading handle's reads go on, and the first that works is
     /// told as `Saved`.
     WatchFailed(CoreError),
-    /// A follow's fill left this table of the change's item whole, or found
-    /// it past the cap, so reads of it now answer from the copy or the
-    /// server as `held_tables` says.
+    /// The follow finished filling this table or found it over the cap.
     TableFilled(String),
 }
 

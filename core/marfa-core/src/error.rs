@@ -217,8 +217,7 @@ pub enum CoreError {
     FirstSyncWaiting,
     #[error("{0}")]
     Invalid(String),
-    /// The copy does not hold what a count needs, so only the server can
-    /// answer it. No other failure carries this code.
+    /// The working copy lacks the edges or items needed for a link count.
     #[error("{0}")]
     NotAnswerable(String),
     /// The core, or a caller's code it ran, panicked, and the core caught it

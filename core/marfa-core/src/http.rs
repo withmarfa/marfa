@@ -1470,10 +1470,7 @@ impl Http {
             .collect())
     }
 
-    /// `POST /items/counts` for `ids`, which are distinct, answering each id's
-    /// total and its status groups. Refused unless the answer is the asked ids
-    /// once each in the order asked, with all four groups for a link count and
-    /// none for a table's rows.
+    /// Reads counts for distinct IDs in request order.
     pub(crate) fn item_counts(
         &self,
         ids: &[&String],

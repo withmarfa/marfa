@@ -1588,8 +1588,7 @@ pub enum MarfaError {
     Invalid {
         message: String,
     },
-    /// The copy does not hold what a count needs, so only the server can
-    /// answer it. No other failure is this case.
+    /// The working copy lacks the edges or items needed for a link count.
     NotAnswerable {
         message: String,
     },
@@ -2321,8 +2320,7 @@ pub enum Change {
     /// holds no stream until the next hydration or catch-up; a reading
     /// handle's reads go on, and the first that works is told as `Saved`.
     WatchFailed { reason: MarfaError, cursor: String },
-    /// A follow's fill left `table` of the item whole, or found it past the
-    /// cap, so reads of it now answer as `heldTables` says.
+    /// The follow finished filling this table or found it over the cap.
     TableFilled {
         item_id: String,
         table: String,

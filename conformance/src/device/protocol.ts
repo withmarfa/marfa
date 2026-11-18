@@ -168,7 +168,7 @@ export interface HeldTables {
   }[];
 }
 
-/** One event a held stream applied (`device/follow-applies`). */
+/** A change reported by a follow or watch. */
 export interface Change {
   event: string;
   item_id: string | null;
@@ -184,8 +184,7 @@ export interface Change {
   /** The store's data version, on `store.saved` alone
    *  (`device/watch-saves`). */
   data_version?: number;
-  /** The table a follow's fill settled, on `table.filled` alone
-   *  (`device/follow-table-filled`). */
+  /** Table name for `table.filled` (`device/follow-table-filled`). */
   table?: string;
 }
 

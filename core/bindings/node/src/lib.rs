@@ -1840,8 +1840,7 @@ pub enum Change {
         reason: String,
         cursor: String,
     },
-    /// A follow's fill left `table` of the item whole, or found it past the
-    /// cap, so reads of it now answer as `heldTables` says.
+    /// The follow finished filling this table or found it over the cap.
     TableFilled {
         item_id: String,
         table: String,
