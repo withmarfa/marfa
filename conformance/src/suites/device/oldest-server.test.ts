@@ -78,7 +78,8 @@ describe("a server older than the oldest release a device works with", () => {
       head: "10",
       items: { "core.note": [{ item: { id: "n1" } }] },
     });
-    server.answer("GET", "/", running(before(OLDEST!)));
+    // Queued in the order the root is asked: the last answer then stays.
+    server.answer("GET", "/", running(before(OLDEST!)), running(OLDEST));
     const refused = await device.hydrate(["core.note"], "library");
     expect(refused.ok, "a copy hydrated from a server that is too old").toBe(
       false,
@@ -94,7 +95,6 @@ describe("a server older than the oldest release a device works with", () => {
 
     // The witness: the same script on the oldest release hydrates, and the
     // item is held.
-    server.answer("GET", "/", running(OLDEST));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     expect((await device.get("n1")).ok).toBe(true);
   });
@@ -104,7 +104,7 @@ describe("a server older than the oldest release a device works with", () => {
     const { server, device } = harness;
     const held = await device.status();
     const requests = server.requests.length;
-    server.answer("GET", "/", running(before(OLDEST!)));
+    server.answer("GET", "/", running(before(OLDEST!)), running(OLDEST));
     const refused = await device.catchUp();
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -119,7 +119,6 @@ describe("a server older than the oldest release a device works with", () => {
     );
 
     // The witness: the oldest release is caught up with.
-    server.answer("GET", "/", running(OLDEST));
     expect((await device.catchUp()).ok).toBe(true);
   });
 

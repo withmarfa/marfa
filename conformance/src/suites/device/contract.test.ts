@@ -2939,7 +2939,7 @@ describe("the contract the working copy was built for", () => {
       expect(
         scripted.requests.map((request) => request.pathname),
         "the redirect was followed",
-      ).toEqual(["/events"]);
+      ).toEqual(["/", "/events"]);
       const status = await device.status();
       expect(status.ok && status.value.hydration).toBe("never");
     },
@@ -3020,7 +3020,7 @@ describe("the contract the working copy was built for", () => {
     expect(
       sent(scripted),
       "the device asked for more after an answer that named another contract",
-    ).toEqual(["GET /events"]);
+    ).toEqual(["GET /"]);
     const status = await device.status();
     expect(status.ok && status.value.hydration).toBe("never");
 
@@ -3696,6 +3696,7 @@ describe("the contract the working copy was built for", () => {
     );
     if (!refused.ok) expect(refused.refusal.code).toBe("contract_mismatch");
     expect(sent(scripted)).toEqual([
+      "GET /",
       "GET /events",
       "GET /types",
       "GET /edge-types",
