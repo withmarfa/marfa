@@ -21,6 +21,7 @@ mod packed;
 mod reads;
 mod renewal;
 mod tables;
+mod trash;
 mod views;
 
 pub use counts::{Counted, ItemCount, StatusGroups};
@@ -28,6 +29,7 @@ pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError};
 use tables::ChangedTable;
+pub use trash::{TrashPreview, TrashPreviewItem, TrashTaken};
 
 /// The tier an item is in: `library` for lasting material, `feed` for an
 /// incoming stream.
