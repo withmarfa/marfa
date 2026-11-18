@@ -29,7 +29,7 @@ use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
-use super::blobs::{Blob, Hash, Retry, folder_shortfall};
+use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
     HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
@@ -507,12 +507,19 @@ pub(crate) enum Destination {
 }
 
 impl Destination {
-    fn of(app: &App) -> Option<Destination> {
-        match (app.blobs.s3(), app.blobs.folder()) {
-            (Some(bucket), _) => Some(Destination::Bucket(bucket)),
-            (None, Some(folder)) => Some(Destination::Folder(folder)),
-            (None, None) => None,
+    fn of(attached: &Attached) -> Option<Destination> {
+        match attached.kept()? {
+            Kept::Bucket { s3, .. } => Some(Destination::Bucket(s3)),
+            Kept::Folder(folder) => Some(Destination::Folder(folder)),
         }
+    }
+
+    /// For an attachment of a named store, which is never a missing destination.
+    fn required(attached: &Attached) -> Result<Destination> {
+        Destination::of(attached).ok_or_else(|| match attached.trouble() {
+            Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble.to_string()),
+            None => unsettled(),
+        })
     }
 
     /// The id of the store the backups' files are held in.
@@ -819,15 +826,12 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     Ok(held)
 }
 
-fn no_backup_destination(app: &App) -> Refusal {
-    match app.blobs.trouble() {
-        Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble),
-        None => Refusal::new(
-            Code::NoBackupDestination,
-            "This instance keeps no backups, because it has nowhere to put them. Set \
-             backup_path to a folder, or object_store_bucket to an object store, to keep them.",
-        ),
-    }
+fn no_backup_destination() -> Refusal {
+    Refusal::new(
+        Code::NoBackupDestination,
+        "This instance keeps no backups, because it has nowhere to put them. Set backup_path to \
+         a folder, or object_store_bucket to an object store, to keep them.",
+    )
 }
 
 fn running(restoring: bool) -> Refusal {
@@ -838,9 +842,10 @@ fn running(restoring: bool) -> Refusal {
     Refusal::new(Code::HousekeepingJobRunning, message)
 }
 
-/// Whether the schedule runs backups here: a destination is set and the interval is not 0.
+/// Whether the settings enable scheduled backups.
 pub fn scheduled(app: &App) -> bool {
-    Destination::of(app).is_some() && app.settings.live().get(BACKUP_INTERVAL_SECONDS) > 0
+    let settings = app.settings.live();
+    Wanted::of(&settings) != Wanted::Disk && settings.get(BACKUP_INTERVAL_SECONDS) > 0
 }
 
 fn key_of(area: Area, instance: &str, name: &str) -> String {
@@ -993,15 +998,40 @@ impl Held {
 }
 
 impl App {
-    fn destination(&self) -> Result<Destination> {
-        Destination::of(self).ok_or_else(|| no_backup_destination(self))
+    /// The destination the live settings name, which no attachment can stand in for.
+    fn named_destination(&self) -> Result<Wanted> {
+        match Wanted::of(&self.settings.live()) {
+            Wanted::Disk => Err(no_backup_destination()),
+            wanted => Ok(wanted),
+        }
+    }
+
+    /// The settings are read again after the follow, which may outlast several changes to them.
+    async fn backup_stores(self: &Arc<App>) -> Result<Arc<Attached>> {
+        let wanted = self.named_destination()?;
+        let current = self.blobs.attachment();
+        if current.is(&wanted) && self.blobs.settled() {
+            return Ok(current);
+        }
+        let followed = self.follow_stores(Retry::Trouble).await;
+        let wanted = self.named_destination()?;
+        followed?;
+        if !self.blobs.settled() {
+            return Err(unsettled());
+        }
+        self.blobs.stores_in_use(&wanted)
+    }
+
+    async fn destination(self: &Arc<App>) -> Result<Destination> {
+        let attached = self.backup_stores().await?;
+        Destination::required(&attached)
     }
 
     /// The backups where this instance keeps them, of every instance that put them there, newest
     /// first.
-    pub async fn list_backups(&self, caller: &Caller) -> Result<Vec<Value>> {
+    pub async fn list_backups(self: &Arc<App>, caller: &Caller) -> Result<Vec<Value>> {
         caller.require(Permission::BackupsManage)?;
-        let destination = self.destination()?;
+        let destination = self.destination().await?;
         let found = destination
             .list_all()
             .await
@@ -1066,7 +1096,8 @@ impl App {
         whole: bool,
     ) -> Result<Value> {
         caller.require_step_up(Permission::BackupsManage, &started_at)?;
-        let destination = self.destination()?;
+        let attached = self.backup_stores().await?;
+        let destination = Destination::required(&attached)?;
         if !instance_of(instance) || parse(name).is_none() {
             return Err(destination.not_found(instance, name));
         }
@@ -1104,7 +1135,7 @@ impl App {
             received.carried.extend(copies);
         }
         let mut answer = self
-            .restore(caller, started_at, received, whole)
+            .restore(caller, started_at, received, whole, attached.kept())
             .await
             .map_err(|refused| match destination {
                 Destination::Bucket(_) => lacking_in_bucket(refused),
@@ -1289,10 +1320,19 @@ impl App {
         .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
     }
 
-    /// The follow lock prevents another follow from recording the old folder ID.
+    /// The follow lock covers folder selection through its claim.
     async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
+        let followed = match self.backup_stores().await {
+            Err(refused) if refused.code == Code::NoBackupDestination => return Err(refused),
+            followed => followed,
+        };
         let _changing = self.blobs.changing().await;
-        let destination = self.destination()?;
+        let wanted = self.named_destination()?;
+        let attached = self
+            .blobs
+            .stores_in_use(&wanted)
+            .map_err(|unsettled| followed.as_ref().err().cloned().unwrap_or(unsettled))?;
+        let destination = Destination::required(&attached)?;
         let Destination::Folder(folder) = &destination else {
             return Err(Refusal::new(
                 Code::Conflict,
@@ -1316,6 +1356,9 @@ impl App {
             return Err(unanswered(
                 "has not answered an earlier adopt, so nothing was adopted",
             ));
+        }
+        if !self.blobs.settled() {
+            return Err(followed.err().unwrap_or_else(unsettled));
         }
         let looked = folder.clone();
         let found = tokio::time::timeout(self.blobs.check(), blocking(move || looked.adoptable()))
@@ -1457,10 +1500,27 @@ impl App {
     /// What `/health` says of backups: whether they run, how the last went, and the store's state.
     pub async fn backup_health(&self) -> BackupHealth {
         let mut health = serde_json::Map::new();
-        let destination = Destination::of(self);
-        if let Some(destination) = &destination {
-            health.insert("destination".into(), destination.kind().into());
+        // While a follow is still running, the store in use is reported until it ends.
+        let named = self.named_destination().ok();
+        let kind = named.as_ref().and_then(|wanted| match wanted {
+            Wanted::Bucket(_) => Some("bucket"),
+            Wanted::Folder(_) => Some("folder"),
+            Wanted::Disk => None,
+        });
+        if let Some(kind) = kind {
+            health.insert("destination".into(), kind.into());
         }
+        let attachment = named
+            .as_ref()
+            .map(|wanted| match self.blobs.stores_in_use(wanted) {
+                Ok(attached) => Ok(attached),
+                Err(unsettled) if !self.blobs.settled() => Err(unsettled.message),
+                Err(_) => Ok(self.blobs.attachment()),
+            });
+        let destination = match &attachment {
+            Some(Ok(attached)) => Destination::of(attached),
+            _ => None,
+        };
         let look = async {
             match &destination {
                 Some(Destination::Folder(folder)) => Some(self.folder_there(folder).await),
@@ -1515,10 +1575,11 @@ impl App {
                 .and_then(|result| refused_by(result, &destination.id()));
             store_trouble(destination, looked, refused)
         });
-        let unusable = destination
-            .is_none()
-            .then(|| self.blobs.trouble())
-            .flatten();
+        let unusable = match (&destination, &attachment) {
+            (None, Some(Ok(attached))) => attached.trouble().map(str::to_string),
+            (None, Some(Err(unsettled))) => Some(unsettled.to_string()),
+            _ => None,
+        };
         let trouble = trouble.or(unusable.map(|error| (StoreFault::Unusable, error)));
         let fault = trouble.as_ref().map(|(fault, _)| *fault);
         let store_error = trouble.map(|(_, error)| error);
@@ -1795,16 +1856,7 @@ async fn refuse_if_gone(app: &App, store: String, name: String, asker: Caller) {
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<Outcome> {
-    if app.blobs.trouble().is_some() || !app.blobs.settled() {
-        app.settle_stores(Retry::Trouble).await?;
-        if !app.blobs.settled() {
-            return Err(Refusal::new(
-                Code::BlobStoreUnavailable,
-                "The stores in use are not known to be the ones the settings name; try again.",
-            ));
-        }
-    }
-    let destination = app.destination()?;
+    let destination = app.destination().await?;
     let Ok(_running) = app.backups.running.try_lock() else {
         let restoring = app.backups.restoring.load(Ordering::Acquire);
         return Ok(Outcome::Running { restoring });
@@ -3153,7 +3205,7 @@ mod tests {
         let (missing, _) = put(app.clone()).await;
         app.clock.advance(1).unwrap();
         put(app.clone()).await;
-        let destination = app.destination().unwrap();
+        let destination = app.destination().await.unwrap();
         let (store, found) = (destination.id(), missing.clone());
         app.db
             .write(Write::own(), move |tx| {
@@ -3277,7 +3329,7 @@ mod tests {
         let late = name_of(app.clock.instant());
         let own = folder.join(Area::Backups.name()).join(&app.instance_id);
         std::fs::copy(own.join(&kept), own.join(&late)).unwrap();
-        let (store, refused_name) = (app.destination().unwrap().id(), late.clone());
+        let (store, refused_name) = (app.destination().await.unwrap().id(), late.clone());
         app.db
             .write(Write::own(), move |tx| {
                 begin(tx, &store, &refused_name)?;
@@ -3287,6 +3339,7 @@ mod tests {
             .unwrap();
         let read = app
             .destination()
+            .await
             .unwrap()
             .manifest(&app.instance_id, &late, app.blob_read_idle())
             .await
@@ -3345,7 +3398,7 @@ mod tests {
             "{}",
             outcome.to_json()
         );
-        let destination = app.destination().unwrap();
+        let destination = app.destination().await.unwrap();
         let listed: Vec<String> = destination
             .list_in(Area::Backups, &app.instance_id)
             .await
@@ -3381,7 +3434,7 @@ mod tests {
             .join(Area::Backups.name())
             .join(&app.instance_id);
         std::fs::copy(own.join(&kept), own.join(&late)).unwrap();
-        let store = app.destination().unwrap().id();
+        let store = app.destination().await.unwrap().id();
         let (looked, named, refused_name) = (store.clone(), found.clone(), late.clone());
         app.db
             .write(Write::own(), move |tx| {
@@ -3426,9 +3479,14 @@ mod tests {
             .await
             .unwrap();
         let listing = [newest, late.clone(), kept.clone()];
-        found::survey(&app, &app.destination().unwrap(), &listing, Some(second))
-            .await
-            .unwrap();
+        found::survey(
+            &app,
+            &app.destination().await.unwrap(),
+            &listing,
+            Some(second),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             omissions().await.unwrap(),
             None,

@@ -1164,6 +1164,42 @@ Where neither `object_store_bucket` nor `backup_path` is set, when a caller the 
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
+### `instance/backup-destination-set-list`
+
+When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST answer the next `GET /backups` from a caller holding `backups.manage` with the backups the destination that write set holds.
+
+**Reason:** a script can set the destination and use it in its next request.
+
+**Tests:** `compliance/backup-destination.test.ts › is the one the next GET /backups lists, whether it is an object store or a backup folder, with a backup in each destination to tell them apart`.
+
+### `instance/backup-destination-set-take`
+
+When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST put the backup the next `POST /backups` from a caller holding `backups.manage` takes in the destination that write set.
+
+**Tests:** `compliance/backup-destination.test.ts › is the one the next POST /backups writes to, whether it is an object store or a backup folder`.
+
+### `instance/backup-destination-set-restore`
+
+When a write to `/config` sets `object_store_bucket` or `backup_path` and returns `200`, the server MUST read the backup that the next `POST /backups/{instance_id}/{name}/restore` names from the destination that write set, for a caller the operation admits.
+
+**Tests:** `compliance/backup-destination.test.ts › is the one the next restore reads from, whether it is an object store or a backup folder, with a backup in each destination to tell them apart`.
+
+### `instance/backup-destination-unset`
+
+When a write to `/config` leaves both `object_store_bucket` and `backup_path` unset and returns `200`, the server MUST answer the next `GET /backups`, `POST /backups`, `POST /backups/folder/adopt` or `POST /backups/{instance_id}/{name}/restore` from a caller the operation admits with `409 no_backup_destination`, also when the server could not record that it let the earlier store go.
+
+**Reason:** the settings decide whether there is a destination, and a store the server still holds does not make one.
+
+**Tests:** `compliance/backup-destination.test.ts › is no destination in the next GET /backups, POST /backups, adopt and restore once a write to /config unsets it, even when the server could not record that it let the store go`.
+
+### `instance/backup-destination-unusable`
+
+When a write to `/config` sets `object_store_bucket` to a store the server cannot use and returns `200`, the server MUST answer the next `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore` from a caller the operation admits with `503 blob_store_unavailable`, and with no other status.
+
+**Reason:** the owner needs to know that the configured store needs attention, and a store the settings name is never a missing destination.
+
+**Tests:** `compliance/backup-destination.test.ts › is answered 503 blob_store_unavailable by the next GET /backups, POST /backups and restore when the object store a write to /config names cannot be used, and never 409`.
+
 ### `instance/backups-list`
 
 When a caller holding `backups.manage` sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<object_store_prefix>/backups/` or `<backup_path>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.

@@ -111,6 +111,12 @@ pub struct Link {
     pub ttl_seconds: u64,
 }
 
+/// The store beside the disk that backups and file copies go to, as one attachment holds it.
+pub enum Kept {
+    Bucket { s3: Arc<S3>, prefix: String },
+    Folder(Arc<Folder>),
+}
+
 /// What the destination settings ask the store beside the disk to be.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Wanted {
@@ -139,8 +145,8 @@ pub struct Beside<'a> {
     pub kept: Vec<(&'static str, PathBuf)>,
 }
 
-/// The store beside the disk, as one reading of the settings attached it.
-struct Attached {
+/// One attachment keeps a store, its prefix, and its failure consistent.
+pub struct Attached {
     wanted: Wanted,
     s3: Option<Arc<S3>>,
     folder: Option<Arc<Folder>>,
@@ -149,6 +155,28 @@ struct Attached {
 }
 
 impl Attached {
+    /// Why the store the settings name is not attached, in the owner's words.
+    pub fn trouble(&self) -> Option<&str> {
+        self.trouble.as_deref()
+    }
+
+    /// The store backups and file copies go to, where one is attached.
+    pub fn kept(&self) -> Option<Kept> {
+        match (&self.s3, &self.folder, &self.wanted) {
+            (Some(s3), _, Wanted::Bucket(settings)) => Some(Kept::Bucket {
+                s3: s3.clone(),
+                prefix: settings.prefix.clone(),
+            }),
+            (None, Some(folder), _) => Some(Kept::Folder(folder.clone())),
+            _ => None,
+        }
+    }
+
+    /// Whether this is the store `wanted` names, and could be used.
+    pub(crate) fn is(&self, wanted: &Wanted) -> bool {
+        self.wanted == *wanted && self.trouble.is_none()
+    }
+
     /// Lets another server take the backup folder this attachment opened.
     fn let_go(&self) {
         if let Some(folder) = &self.folder {
@@ -476,9 +504,23 @@ impl Blobs {
         self.record_doubted.store(true, Ordering::SeqCst);
     }
 
+    /// The store beside the disk in use now, to be held to the end of whatever reads it.
+    pub fn attachment(&self) -> Arc<Attached> {
+        self.attached.load_full()
+    }
+
+    /// The attachment in use, if it is of the store `wanted` names.
+    pub(crate) fn stores_in_use(&self, wanted: &Wanted) -> Result<Arc<Attached>> {
+        let attached = self.attachment();
+        if attached.wanted != *wanted {
+            return Err(unsettled());
+        }
+        Ok(attached)
+    }
+
     /// Why the store the settings name is not in use, in the owner's words.
     pub fn trouble(&self) -> Option<String> {
-        self.attached.load().trouble.clone()
+        self.attachment().trouble().map(str::to_string)
     }
 
     /// How long a store is given to answer.
@@ -496,12 +538,9 @@ impl Blobs {
         self.attached.load().folder.clone()
     }
 
-    /// The object store's prefix, where one is in use.
-    pub fn bucket_prefix(&self) -> Option<String> {
-        match &self.attached.load().wanted {
-            Wanted::Bucket(settings) if self.s3().is_some() => Some(settings.prefix.clone()),
-            _ => None,
-        }
+    /// The store backups and file copies go to, where one is in use.
+    pub fn kept(&self) -> Option<Kept> {
+        self.attached.load().kept()
     }
 
     /// Lets another server open the blob folder and the backup folder's files area.
@@ -925,6 +964,21 @@ fn below(live: usize, min_copies: u64) -> Refusal {
     .with_detail("min_copies", min_copies)
 }
 
+fn unrecorded() -> Refusal {
+    Refusal::new(
+        Code::BlobStoreUnavailable,
+        "The store the settings name could not be recorded as in use, so the server kept the one \
+         it had; try again.",
+    )
+}
+
+pub(crate) fn unsettled() -> Refusal {
+    Refusal::new(
+        Code::BlobStoreUnavailable,
+        "The stores in use are not known to be the ones the settings name; try again.",
+    )
+}
+
 fn unavailable() -> Refusal {
     Refusal::new(
         Code::BlobStoreUnavailable,
@@ -1183,7 +1237,7 @@ impl App {
                     }
                     blobs.doubt_record();
                     tracing::error!(%refused, "The settings could not be read to follow them");
-                    return Err(unavailable());
+                    return Err(unrecorded());
                 }
             };
             if let Some(stale) = kept.take_if(|next| next.wanted != wanted) {
@@ -1204,14 +1258,14 @@ impl App {
                         && let Err(refused) = self.retake_folder(folder).await
                     {
                         tracing::error!(%refused, "The backup folder in use could not be checked against its record");
-                        return Err(unavailable());
+                        return Err(unrecorded());
                     }
                     match self.record_stores(&current).await {
                         Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),
                         Ok(Recorded::Superseded) => {}
                         Err(refused) => {
                             tracing::error!(%refused, "The stores in use could not be recorded");
-                            return Err(unavailable());
+                            return Err(unrecorded());
                         }
                     }
                     continue;
@@ -1231,7 +1285,7 @@ impl App {
                     next.let_go();
                     blobs.doubt_record();
                     tracing::error!(%refused, "The stores in use could not be recorded; the old ones stay");
-                    return Err(unavailable());
+                    return Err(unrecorded());
                 }
             };
             self.faults.hold(HOLD_STORES_SWAP, None).await;
