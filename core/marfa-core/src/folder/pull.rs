@@ -707,9 +707,6 @@ impl Folder {
         if narrow.is_some() && self.wants_a_path_held_elsewhere(&placing)? {
             return Ok(false);
         }
-        // Ranked by what the server holds, so every machine gives a shared
-        // path to the same item, and by creation where nothing is placed, so
-        // the later of two items takes the number whatever order they list in.
         placing.sort_by(|a, b| a.rank.cmp(&b.rank));
         // Compared as a folder compares names, so two items never get paths
         // one disk holds as one file.

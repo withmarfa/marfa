@@ -75,9 +75,7 @@ struct Refused {
     placements: Withheld,
 }
 
-/// How a pull ranks items wanting one path: the older edge, then its id; an
-/// item with no placement after every one with, one already there first, then
-/// the one created earlier, then the lower id.
+/// Placement edges give devices a shared order for contested paths.
 pub(super) type Rank = (bool, bool, String, String);
 
 impl Folder {

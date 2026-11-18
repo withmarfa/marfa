@@ -5013,8 +5013,6 @@ describe("what a folder takes", () => {
       },
     });
     const made = (n: number) => `01a00000-0000-7000-8000-0000000172${n}`;
-    // Each pair is [earlier, later]; the server lists the later one first in
-    // the second and third pair, and a pair made at one time is ordered by id.
     const pairs = [
       [
         note(made(10), "ΟΔΟΣ", "2026-09-18T10:00:00.000Z"),

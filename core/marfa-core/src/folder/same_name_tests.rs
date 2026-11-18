@@ -1,6 +1,4 @@
-//! Of items whose names compare as one, the one created later takes the
-//! numbered name, whatever order the copy lists them in, and a file already
-//! at a name keeps it.
+//! First placement of items with equivalent names.
 
 use serde_json::json;
 
@@ -10,7 +8,6 @@ use crate::store::{self, meta_set};
 
 const PAIRS: [(&str, &str); 3] = [("ΟΔΟΣ", "οδος"), ("Straße", "STRASSE"), ("ſtar", "Star")];
 
-/// Ids that sort in the order the items are made, as a UUIDv7 does.
 fn id(n: u32) -> String {
     format!("01a00000-0000-7000-8000-{n:012}")
 }
@@ -44,7 +41,6 @@ fn pulling() -> Pulling {
 }
 
 impl Pulling {
-    /// A note the server holds, made at `second` past the minute.
     fn arrives(&self, n: u32, title: &str, second: u32) -> String {
         let conn = self.folder.core.conn().unwrap();
         let catalog = crate::catalog::load(&conn).unwrap();
@@ -54,7 +50,6 @@ impl Pulling {
         id(n)
     }
 
-    /// The file an item's note was written to.
     fn file_of(&self, n: u32) -> String {
         let conn = self.folder.core.conn().unwrap();
         let bound = state::bound_to_item(&conn, &id(n))
@@ -77,7 +72,6 @@ impl Pulling {
 fn of_two_notes_made_in_either_order_the_later_takes_the_numbered_name_on_a_first_sync() {
     for (first, second) in PAIRS {
         for (older, newer) in [(first, second), (second, first)] {
-            // Both listing orders: the older item arrives first, then last.
             for older_arrives_first in [true, false] {
                 let folder = pulling();
                 let arrivals = [(2, older, 10), (3, newer, 20)];
