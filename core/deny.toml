@@ -20,7 +20,7 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zbus 6 replaces zvariant; keyring on Linux reaches it through secret-service, which uses zbus 5" },
     { id = "RUSTSEC-2026-0371", reason = "zbus 6 replaces zbus_names; keyring on Linux reaches it through secret-service, which uses zbus 5" },
     { id = "RUSTSEC-2026-0372", reason = "zbus 6 replaces zvariant_derive; keyring on Linux reaches it through secret-service, which uses zbus 5" },
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained with no vulnerability; object_store, which the server uses for S3 file storage, depends on it and no maintained release replaces it yet" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained with no vulnerability; object_store (the server's S3 file storage) and pdfium-render (PDF reading in a release build) depend on it, and no maintained release replaces it in either yet" },
     { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained only because it wraps chrono; object_store depends on it and no maintained release replaces it yet" },
 ]
 

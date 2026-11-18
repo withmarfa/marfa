@@ -531,8 +531,7 @@ fn day_of_text(text: &str, zone: &Zone) -> Option<i64> {
     if text.len() == 10 {
         return time::epoch_ms(text).map(|ms| ms.div_euclid(DAY * 1000));
     }
-    let normalized = time::rfc3339(text, "view date").ok()?;
-    time::epoch_ms(&normalized).map(|ms| zone.day_of(ms))
+    time::read(text).ok().map(|ms| zone.day_of(ms))
 }
 
 fn date_bucket(value: &Value, bucket: &str, zone: &Zone) -> Value {
@@ -548,12 +547,10 @@ fn date_bucket(value: &Value, bucket: &str, zone: &Zone) -> Value {
         "year" => days_from_civil(civil_from_days(day).0, 1, 1),
         _ => day,
     });
-    let year = if (0..=9999).contains(&year) {
-        format!("{year:04}")
-    } else {
-        format!("{year:+05}")
-    };
-    Value::String(format!("{year}-{month:02}-{day_of_month:02}"))
+    Value::String(format!(
+        "{}-{month:02}-{day_of_month:02}",
+        time::year_text(year)
+    ))
 }
 
 #[cfg(test)]
