@@ -112,6 +112,23 @@ fn a_reading_handle_is_refused_at_every_write_door() {
         ("restore_item", reader.restore_item("x").unwrap_err()),
         ("purge_item", reader.purge_item("x", None).unwrap_err()),
         (
+            "trash_items",
+            reader
+                .trash_items(&TrashPreview {
+                    items: vec![TrashPreviewItem {
+                        id: "x".into(),
+                        r#type: "core.note".into(),
+                        version: 1,
+                        takes: Vec::new(),
+                        count: 1,
+                        truncated: false,
+                    }],
+                    count: 1,
+                    digest: "d".repeat(64),
+                })
+                .unwrap_err(),
+        ),
+        (
             "transition_item",
             reader
                 .transition_item("x", ItemState::Archived)
@@ -357,7 +374,7 @@ fn a_reading_handle_is_refused_at_every_write_door() {
     );
     assert_eq!(
         refusals.len(),
-        60,
+        61,
         "an entry has gone from the list above, and a door dropped from \
          it is a door nothing here covers"
     );

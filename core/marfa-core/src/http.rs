@@ -1318,6 +1318,55 @@ impl Http {
         ))
     }
 
+    /// `POST /items/trash-preview`: what trashing `ids` would take.
+    pub fn preview_item_trash(&self, ids: &[String]) -> Result<crate::TrashPreview, CoreError> {
+        let body = serde_json::json!({ "ids": ids }).to_string();
+        let reply = self.call(Call {
+            method: Method::Post,
+            segments: &["items", "trash-preview"],
+            params: &[],
+            headers: &[],
+            body: CallBody::Json(&body),
+            credential: true,
+            stream: false,
+        })?;
+        self.answered_trash(reply)
+    }
+
+    /// `POST /items/trash`, keyed so that a replay of it is the same trash.
+    pub fn trash_items(
+        &self,
+        ids: &[String],
+        digest: &str,
+        idempotency_key: &str,
+    ) -> Result<(), CoreError> {
+        let body = serde_json::json!({ "ids": ids, "digest": digest }).to_string();
+        let reply = self.call(Call {
+            method: Method::Post,
+            segments: &["items", "trash"],
+            params: &[],
+            headers: &[("Idempotency-Key", idempotency_key)],
+            body: CallBody::Json(&body),
+            credential: true,
+            stream: false,
+        })?;
+        self.answered_trash::<serde::de::IgnoredAny>(reply)
+            .map(drop)
+    }
+
+    fn answered_trash<T: DeserializeOwned>(&self, reply: Reply<String>) -> Result<T, CoreError> {
+        if !(200..300).contains(&reply.status) {
+            return Err(self.refused(
+                reply.status,
+                reply.contract.is_some(),
+                &reply.body,
+                reply.retry_after_seconds,
+            ));
+        }
+        serde_json::from_str(&reply.body)
+            .map_err(|error| crate::error::unreadable("the trash door's answer", &error))
+    }
+
     /// Readable on another contract, so a client can identify the server before opening a copy.
     pub fn instance_description(&self) -> Result<crate::InstanceDescription, CoreError> {
         let mut anonymous = self.clone();

@@ -98,6 +98,9 @@ mod test_folders;
 mod tests;
 #[cfg(test)]
 mod tier_tests;
+mod trash;
+#[cfg(test)]
+mod trash_tests;
 #[cfg(test)]
 mod trashed_at_tests;
 mod types;
@@ -175,6 +178,7 @@ pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use slice::SliceQuery;
 pub use store::CEILING;
+pub use trash::{TrashPreview, TrashPreviewItem, TrashTaken};
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
 pub use watch::{Listening, WatchListener};
 #[cfg(debug_assertions)]
