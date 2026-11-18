@@ -408,7 +408,7 @@ While a device holds a reading handle, a device MUST queue nothing.
 
 While a device holds a reading handle, a device MUST NOT change the store's file or its log, including when it closes after the writer.
 
-**Reason:** a connection that can write and closes last checkpoints the log the writer left into the file and removes it, so a reader would write to a store another process owns.
+**Reason:** SQLite can checkpoint and remove the writer's log when a writable connection closes last.
 
 **Tests:** `device/binding-reading-handle-writes-nothing.test.ts › leaves the store and its log as the writer left them when it closes after the writer`.
 

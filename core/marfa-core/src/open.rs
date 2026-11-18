@@ -34,8 +34,7 @@ impl Core {
         lock::WriterLock::claim_directory(&directory_vfs::DirectoryVfs::new(state.file())?)
     }
 
-    /// Opens the store in `state` under `lock`, which `claim_directory`
-    /// claimed there.
+    /// A writer must hold the lock for this directory.
     #[cfg(unix)]
     pub(crate) fn open_claimed(
         state: &directory::Directory,
@@ -94,11 +93,7 @@ impl Core {
         ))
     }
 
-    /// Creates the file when absent. A changed origin is confirmed against
-    /// the recorded instance before the first request. A second opener while
-    /// another holds the writer role gets a reading handle, which opens the
-    /// store read-only as `open_reader` does, so it needs a store the writer
-    /// has made and writes nothing to it.
+    /// Only the writer creates a missing store. The first request to a changed origin verifies the recorded instance.
     pub fn open(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Claimed before the store is opened: a second opener that read the

@@ -621,13 +621,11 @@ fn a_reading_open_answers_held_bytes_and_says_why_it_fetches_no_others() {
     assert!(!reason(&writer).contains("reading handle"));
 }
 
-/// The store's file and its log, byte for byte, with a missing file as `None`.
 fn store_files(path: &std::path::Path) -> [Option<Vec<u8>>; 2] {
     let log = std::path::PathBuf::from(format!("{}-wal", path.display()));
     [path, log.as_path()].map(|file| std::fs::read(file).ok())
 }
 
-/// Commits enough rows that the log holds pages the file does not.
 fn save_rows(writer: &Core) {
     let conn = writer.conn().unwrap();
     for at in 0..50 {
@@ -635,7 +633,6 @@ fn save_rows(writer: &Core) {
     }
 }
 
-/// `device/reading-handle-writes-nothing`
 #[test]
 fn a_reading_handle_that_closes_last_changes_neither_the_store_nor_its_log() {
     let dir = tempfile::tempdir().unwrap();
@@ -681,11 +678,9 @@ fn a_connection_that_can_write_and_closes_last_checkpoints_the_log_of_the_writer
     let left = store_files(&path);
     assert!(left[1].is_some());
     drop(second);
-    // The witness for the test above: what closing last does to a store
-    // opened to write.
     assert!(
         store_files(&path) != left,
-        "closing last changed nothing, so the test above shows nothing"
+        "closing the last writable connection left the store and its log unchanged"
     );
 }
 
@@ -747,8 +742,7 @@ fn a_reader_alone_reads_what_a_writer_left_in_its_log() {
     let path = dir.path().join("core.sqlite");
     let writer = Core::open(&path, None).unwrap();
     save_rows(&writer);
-    // What a writer that died leaves: the file and a log that holds saves
-    // the file does not, and no shared index.
+    // A crashed writer can leave committed pages in the log without a shared index.
     let left = dir.path().join("left");
     std::fs::create_dir(&left).unwrap();
     let copy = left.join("core.sqlite");

@@ -2541,10 +2541,8 @@ impl Core {
         }))
     }
 
-    /// Opens the file at `path`, creating it when absent. `url` and `key`
-    /// go together; without them only local reads work. `renewer` renews
-    /// `key` when the server refuses it, as an app signed in with OAuth
-    /// does with its refresh token; it needs `url` and `key`.
+    /// Only the writer creates a missing store. Omit both `url` and `key` for offline use.
+    /// With both set, `renewer` can refresh a key the server refuses.
     #[uniffi::constructor(default(renewer = None))]
     pub fn open(
         path: String,

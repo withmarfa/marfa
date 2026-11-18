@@ -2475,8 +2475,7 @@ impl MarfaCore {
         })
     }
 
-    /// Opens the file at `path`, creating it when absent. `url` and `key` go
-    /// together; without them only local reads work.
+    /// Only the writer creates a missing store. Omit both `url` and `key` for offline use.
     #[napi(factory)]
     pub fn open(
         env: Env,
