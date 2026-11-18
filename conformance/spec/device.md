@@ -404,6 +404,14 @@ While a device holds a reading handle, a device MUST queue nothing.
 
 **Tests:** `device/local-refusals.test.ts › refuses a write from a reading handle`.
 
+### `device/reading-handle-writes-nothing`
+
+While a device holds a reading handle, a device MUST NOT change the store's file or the content of an existing log, including when it closes after the writer.
+
+**Reason:** SQLite can checkpoint and remove the writer's log when a writable connection closes last. To read a store in write-ahead mode, SQLite may create an empty log and populate its shared-memory index.
+
+**Tests:** `device/binding-reading-handle-writes-nothing.test.ts › changes the store or its log when the last connection can write`, `› leaves the store and its log as the writer left them when it closes after the writer`.
+
 ### `device/read-partial-answers`
 
 While a hydration that is not a refill (`device/refill-in-place`) has started and not completed, whether it still runs or was interrupted, a device MUST answer a local listing or search from the items its copy holds, through a reading handle as through the writer.

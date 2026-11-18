@@ -34,8 +34,7 @@ impl Core {
         lock::WriterLock::claim_directory(&directory_vfs::DirectoryVfs::new(state.file())?)
     }
 
-    /// Opens the store in `state` under `lock`, which `claim_directory`
-    /// claimed there.
+    /// A writer must hold the lock for this directory.
     #[cfg(unix)]
     pub(crate) fn open_claimed(
         state: &directory::Directory,
@@ -46,25 +45,24 @@ impl Core {
         damage::refuse_emptied_in(state, store_label)?;
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         let writer = lock.handle() == Handle::Writer;
-        let cache = blob::Cache::anchored(state, store_label, writer)?;
-        Self::from_connection(
-            store::open_directory(&vfs, store_label)?,
-            server,
-            lock,
-            Some(cache),
-        )
-        .map(Core::swept)
+        let (conn, cache) = if writer {
+            let cache = blob::Cache::anchored(state, store_label, true)?;
+            (store::open_directory(&vfs, store_label)?, cache)
+        } else {
+            // A blob folder error must not hide a schema mismatch from folder status.
+            let conn = store::read_directory(&vfs, store_label)?;
+            (conn, blob::Cache::anchored(state, store_label, false)?)
+        };
+        Self::from_connection(conn, server, lock, Some(cache)).map(Core::swept)
     }
 
     #[cfg(unix)]
     pub(crate) fn read_directory(state: &directory::Directory, store_label: &Path) -> Result<Core> {
-        damage::refuse_emptied_in(state, store_label)?;
-        let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
-        Self::from_connection(
-            store::read_directory(&vfs, store_label)?,
+        Self::open_claimed(
+            state,
+            store_label,
             None,
             Arc::new(lock::WriterLock::reader()),
-            Some(blob::Cache::anchored(state, store_label, false)?),
         )
     }
 
@@ -97,19 +95,21 @@ impl Core {
         ))
     }
 
-    /// Creates the file when absent. A changed origin is confirmed against
-    /// the recorded instance before the first request.
+    /// Only the writer creates a missing store. The first request to a changed origin verifies the recorded instance.
     pub fn open(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Claimed before the store is opened: a second opener that read the
         // store first would act as a writer until it found out it was not.
         let lock = lock::WriterLock::claim(Some(path))?;
         let cache = blob::Cache::beside(path);
-        if lock.handle() == Handle::Writer {
+        let conn = if lock.handle() == Handle::Writer {
             damage::refuse_unfinished(path)?;
             owner_only(path)?;
-        }
-        Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
+            store::open(path)?
+        } else {
+            store::open_to_read(path)?
+        };
+        Self::from_connection(conn, server, Arc::new(lock), Some(cache))
             .map(Core::swept)
             .map_err(|error| damage::at_path(error, path))
     }

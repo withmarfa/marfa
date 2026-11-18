@@ -605,6 +605,34 @@ mod tests {
     }
 
     #[test]
+    fn status_names_the_schema_before_it_reaches_the_blob_folder() {
+        let (dir, path) = refused_folder(true, "");
+        let blobs = dir.path().join(STATE_DIR).join("core.sqlite.blobs");
+        let _ = std::fs::remove_dir_all(&blobs);
+        std::fs::write(&blobs, b"not a folder").unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA user_version = 6")
+            .unwrap();
+
+        let refused = Folder::status_of(dir.path()).expect_err("status read it");
+        assert!(
+            matches!(&refused, CoreError::WrongSchema { reason, .. } if reason.contains('6')),
+            "{refused:?}"
+        );
+
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch(&format!("PRAGMA user_version = {}", store::SCHEMA_VERSION))
+            .unwrap();
+        let blocked = Folder::status_of(dir.path()).expect_err("status read it");
+        assert!(
+            !matches!(blocked, CoreError::WrongSchema { .. }),
+            "{blocked:?}"
+        );
+    }
+
+    #[test]
     fn a_refusal_the_folder_has_recorded_does_not_keep_its_store_refused() {
         let (dir, path) = refused_folder(true, &recorded_refusal("refused"));
         let record = read(&path, "SELECT writes FROM folder_files");
