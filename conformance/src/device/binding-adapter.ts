@@ -659,10 +659,7 @@ export class BindingDevice {
       : { ok: false, refusal: refusalOf(reply.error) };
   }
 
-  /**
-   * Removes the store, agreeing to lose every write it holds, whatever they
-   * are and whether or not they can be read. Call `forget` first.
-   */
+  /** Call `forget` first; refuses a readable, nonempty unsent queue. */
   async removeStoreLosingAll(): Promise<Outcome<null>> {
     const reply = await this.request({
       op: "remove-store-all",

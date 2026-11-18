@@ -348,14 +348,12 @@ describe("removing a store", () => {
 
   it("refuses to remove, agreeing to lose every write, a store whose unsent writes can be read when the removal begins, and keeps them", async () => {
     const { device, shown } = await storeWithOneUnsent("remove-all-readable");
-    // The queue does not read when an app looks.
     edit(
       device.store,
       "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
     );
     const looked = await device.readUnsent();
     expect(looked.ok, "the queue read when it was meant not to").toBe(false);
-    // It reads again before the removal.
     edit(
       device.store,
       "ALTER TABLE queue RENAME COLUMN answer_kind TO verdict",
@@ -552,7 +550,6 @@ describe("removing a store", () => {
 
     const done = await command.setAside();
     expect(done.ok && done.value.carried, JSON.stringify(done)).toBe(1);
-    // The carried write reads, so only its confirmation removes the store.
     expect(refusalOf(await device.removeStoreLosingAll()).code).toBe(
       "unsent_differs",
     );

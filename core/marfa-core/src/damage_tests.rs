@@ -387,13 +387,11 @@ fn a_damaged_store_is_removed_only_when_every_write_is_agreed_lost() {
 #[test]
 fn removing_losing_all_refuses_a_store_whose_queue_reads_and_keeps_its_writes() {
     let (_dir, path, queued) = store_with(2);
-    // The witness: a store whose queue does not read goes.
     let good = bytes(&path).unwrap();
     damage_table(&path, "queue");
     assert!(matches!(Core::read_unsent(&path), Err(CoreError::Store(_))));
 
-    // The queue reads again before the removal, as when the person's app
-    // looked while a lock was held, or the store was swapped.
+    // The app's earlier read does not establish what removal will find.
     std::fs::write(&path, &good).unwrap();
     damage_table(&path, "items");
     let before = bytes(&path);

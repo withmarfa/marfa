@@ -322,14 +322,7 @@ impl Core {
         Self::remove_agreed(path.as_ref(), Some(confirmation))
     }
 
-    /// Removes the store at `path` as `remove_store` does, agreeing to lose
-    /// every write it holds that the server has not taken, for a store whose
-    /// queue SQLite cannot read. Refuses as `remove_store` does but for the
-    /// confirmation, and with `UnsentDiffers`, naming how many, where the
-    /// queue reads and holds a write when the removal takes the writer lock:
-    /// an app reads the writes (`read_unsent`) and removes with their
-    /// confirmation. A queue that reads and holds none loses nothing, so the
-    /// store goes.
+    /// Like `remove_store`, but accepts loss without a list only for an unreadable or empty queue.
     pub fn remove_store_losing_all(path: impl AsRef<Path>) -> Result<()> {
         Self::remove_agreed(path.as_ref(), None)
     }

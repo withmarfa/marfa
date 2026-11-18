@@ -1518,9 +1518,7 @@ pub enum MarfaError {
         /// Writes in its queue the server has not taken; `None` where the
         /// queue cannot be read whole.
         unsent: Option<u64>,
-        /// True where a set-aside of the store stopped part way: only
-        /// `setAsideDamaged` finishes it, and removing or replacing the store
-        /// is refused until then.
+        /// True while set-aside recovery blocks removal or replacement.
         set_aside_stopped: bool,
         message: String,
     },
@@ -3314,12 +3312,7 @@ pub fn remove_store(path: String, confirmation: String) -> Result<(), MarfaError
     Ok(marfa_core::Core::remove_store(path, &confirmation)?)
 }
 
-/// Removes the store at `path` as `removeStore` does, agreeing to lose every
-/// write it holds that the server has not taken, for a store whose queue
-/// cannot be read. Throws as `removeStore` does but for the confirmation, and
-/// throws `UnsentDiffers`, counting them, where the queue reads and holds a
-/// write when the removal begins: read them with `readUnsent` and remove with
-/// their confirmation.
+/// Like `removeStore`, but accepts loss without a list only for an unreadable or empty queue.
 #[uniffi::export]
 pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store_losing_all(path)?)
