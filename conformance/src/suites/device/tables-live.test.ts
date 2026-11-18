@@ -567,6 +567,18 @@ describe("how a device fills a table", () => {
           ),
         "the follow telling its caller it filled the table",
       );
+      // A notice repeated at the follow's next idle pass comes before the second sentinel's event.
+      for (const round of [1, 2]) {
+        const sentinel = await itemOf(type);
+        await until(
+          () =>
+            follow.changes.some(
+              (change) =>
+                change.kind === "applied" && change.itemId === sentinel,
+            ),
+          `the follow applying sentinel ${String(round)}`,
+        );
+      }
       expect(
         follow.changes.filter(
           (change) => change.kind === "tableFilled" && change.itemId === item,

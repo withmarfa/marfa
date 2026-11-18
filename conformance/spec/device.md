@@ -2466,19 +2466,55 @@ If the server's answer to a count the device asked it does not name exactly the 
 
 ### `device/counts-from-server`
 
-When a caller asks a device to ask the server for a count, a device MUST send the request only to the server the copy was opened with, under the copy's current credential, and answer each asked id once, in the order it first appears, with `held` false.
+When a caller asks a device to ask the server for a count, a device MUST send the request only to the server the copy was opened with, under the credential the copy holds at that moment.
 
 **Reason:** an app asks the server for a count the copy refuses `not_answerable`. Asked through the copy, the request reaches the copy's own server with the key the copy holds now, and never a server or key the app passed alongside it.
 
+**Tests:** `device/counts-live.test.ts › asks the server under the key the copy is opened with now, not the one it was hydrated with`.
+
+### `device/counts-from-server-order`
+
+When the server answers a count a device asked it, a device MUST answer each asked id once, in the order it first appears, with `held` false.
+
 **Tests:** `device/counts-live.test.ts › asks its own server for every count when told to, refusing an answer whose status groups do not fit the count`.
 
-### `device/counts-from-server-instance`
+### `device/counts-from-server-moved`
 
-If the copy was opened with a server at an origin other than the one it recorded, and that server answers as an instance other than the copy's, then a device MUST refuse a count asked of the server `wrong_server` and send that server no id.
+If the copy was opened with a server at an origin other than the one it recorded, and that server answers as an instance other than the copy's, then a device MUST refuse a count asked of the server `wrong_server`.
+
+**Tests:** `device/counts-live.test.ts › sends no id to a server at another origin that answers as an instance other than its copy's`.
+
+### `device/counts-from-server-moved-no-id`
+
+If the copy was opened with a server at an origin other than the one it recorded, and that server answers as an instance other than the copy's, then a device MUST send that server no count request.
 
 **Reason:** the ids a copy holds belong to its instance. A server that answers as another instance is not the copy's, whatever its address, and sending it ids would tell it which items the copy holds.
 
-**Tests:** `device/counts-live.test.ts › sends no id to a server that answers as an instance other than its copy's`.
+**Tests:** `device/counts-live.test.ts › sends no id to a server at another origin that answers as an instance other than its copy's`.
+
+### `device/counts-from-server-instance`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a count, then a device MUST refuse the count `copy_expired`.
+
+**Reason:** another instance can take the address a copy was built from, as when an instance is replaced. The count is refused as a drain is (`device/instance-drain-expires`), and the copy is built again from the instance now there.
+
+**Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
+
+### `device/counts-from-server-instance-no-id`
+
+Where a copy names the instance it was hydrated from, if the server's root at the copy's origin names another instance when a device is about to ask the server for a count, then a device MUST send that server no count request.
+
+**Reason:** the device reads the root before every count it asks of the server, so no id leaves for an instance the copy was not built from.
+
+**Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
+
+### `device/counts-from-server-named`
+
+Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each count it asks of the server.
+
+**Reason:** another instance can take the address between the read of the root and the count. Named, the count is refused where it lands (`instance/write-names-other`).
+
+**Tests:** `device/counts-live.test.ts › sends no id to another instance that takes the copy's own address, and names its instance on each count`.
 
 ### `device/counts-from-server-groups`
 

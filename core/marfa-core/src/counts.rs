@@ -247,7 +247,7 @@ impl Core {
                 let mut served = if asked.is_empty() {
                     Vec::new()
                 } else {
-                    self.http()?.item_counts(&asked, counted)?
+                    self.ask_own_instance(&asked, counted)?
                 }
                 .into_iter()
                 .map(|(total, _)| total);
@@ -280,7 +280,7 @@ impl Core {
             return Ok(Vec::new());
         }
         let asked: Vec<&String> = ids.iter().collect();
-        let served = self.http()?.item_counts(&asked, counted)?;
+        let served = self.ask_own_instance(&asked, counted)?;
         Ok(ids
             .into_iter()
             .zip(served)
@@ -291,6 +291,19 @@ impl Core {
                 held: false,
             })
             .collect())
+    }
+}
+
+impl Core {
+    /// Sends no id until the server at the address answers as the copy's instance, and names it on the request.
+    fn ask_own_instance(
+        &self,
+        asked: &[&String],
+        counted: &Counted,
+    ) -> Result<Vec<(i64, Option<StatusGroups>)>> {
+        let http = self.http()?;
+        crate::catch_up::refuse_another_instance(self, http)?;
+        crate::catch_up::write_naming_instance(self, http, |http| http.item_counts(asked, counted))
     }
 }
 
@@ -747,6 +760,7 @@ mod tests {
                 origin: server.url(),
             },
             CoreError::Network("offline".into()),
+            CoreError::NotAnswerable("a count the renewer asked".into()),
         ] {
             let server = Scripted::start();
             let core = copy(&server);
@@ -758,7 +772,13 @@ mod tests {
             let expected = failure.clone();
             core.renew_credential_with(Box::new(move |_| Err(failure.clone())));
             let refusal = core.counts(&ids, &table).unwrap_err();
-            assert_eq!(refusal, CoreError::RenewalFailed(Box::new(expected)));
+            match expected {
+                CoreError::NotAnswerable(_) => assert!(
+                    matches!(&refusal, CoreError::RenewalFailed(cause) if matches!(**cause, CoreError::Invalid(_))),
+                    "{refusal:?}"
+                ),
+                expected => assert_eq!(refusal, CoreError::RenewalFailed(Box::new(expected))),
+            }
             assert_ne!(refusal.code(), "not_answerable");
         }
     }
@@ -878,6 +898,86 @@ mod tests {
     }
 
     #[test]
+    fn a_served_answer_of_another_shape_or_an_impossible_number_is_refused_whole() {
+        let one = "01a1011a-4902-76cf-a4a9-88e99c038c8d";
+        let link = Counted::Edge("in-collection".into());
+        let rows = Counted::Table("messages".into());
+        let asked = [one.to_string()];
+        let body = |count: Value| json!({ "counts": [count] }).to_string();
+        let cases = [
+            (
+                "groups null on a row",
+                &rows,
+                body(json!({ "id": one, "total": 1, "status_groups": null })),
+            ),
+            (
+                "groups null on a link",
+                &link,
+                body(json!({ "id": one, "total": 1, "status_groups": null })),
+            ),
+            (
+                "unnamed groups",
+                &link,
+                body(json!({ "id": one, "total": 4, "status_groups": [1, 1, 1, 1] })),
+            ),
+            ("a positional count", &rows, body(json!([one, 1]))),
+            (
+                "a positional answer",
+                &rows,
+                json!([[{ "id": one, "total": 1 }]]).to_string(),
+            ),
+            (
+                "a negative total",
+                &rows,
+                body(json!({ "id": one, "total": -1 })),
+            ),
+            (
+                "a fractional total",
+                &rows,
+                body(json!({ "id": one, "total": 1.5 })),
+            ),
+            (
+                "a negative group",
+                &link,
+                body(
+                    json!({ "id": one, "total": 1, "status_groups": { "not_started": 2, "in_progress": -1, "completed": 0, "canceled": 0 } }),
+                ),
+            ),
+            (
+                "groups above the total",
+                &link,
+                body(
+                    json!({ "id": one, "total": 1, "status_groups": { "not_started": 1, "in_progress": 1, "completed": 0, "canceled": 0 } }),
+                ),
+            ),
+            ("no counts", &rows, json!({}).to_string()),
+        ];
+        for (what, counted, answer) in cases {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on("/items/counts", vec![scripted::json(200, &answer)]);
+            let refusal = core.served_counts(&asked, counted).unwrap_err();
+            assert!(
+                matches!(refusal, CoreError::Decoding(_)),
+                "{what}: {refusal:?}"
+            );
+        }
+        // The witness: groups below the total, and members the device does not know, are answered.
+        for (counted, count) in [
+            (
+                &link,
+                json!({ "id": one, "total": 3, "status_groups": { "not_started": 1, "in_progress": 0, "completed": 1, "canceled": 0, "later": 9 }, "later": true }),
+            ),
+            (&rows, json!({ "id": one, "total": 0, "later": true })),
+        ] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            server.on("/items/counts", vec![scripted::json(200, &body(count))]);
+            assert_eq!(core.served_counts(&asked, counted).unwrap().len(), 1);
+        }
+    }
+
+    #[test]
     fn served_counts_send_no_id_to_a_server_that_is_not_the_copys() {
         let server = Scripted::start();
         server.on(
@@ -920,6 +1020,67 @@ mod tests {
         )
         .unwrap();
         assert_eq!(server.seen("/items/counts").len(), 1);
+    }
+
+    /// A copy at the origin it recorded, built from `scripted::INSTANCE`, whose
+    /// server answers its root as `instance`.
+    fn at_its_own_address(instance: &str) -> (Scripted, std::sync::Arc<Core>) {
+        let server = Scripted::start();
+        server.on("/", vec![scripted::root(instance)]);
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        store::meta_set(
+            &core.conn().unwrap(),
+            store::META_INSTANCE_ID,
+            scripted::INSTANCE,
+        )
+        .unwrap();
+        (server, core)
+    }
+
+    #[test]
+    fn a_count_asked_of_the_server_sends_no_id_to_another_instance_at_the_copys_address() {
+        let id = "01a1011a-4902-76cf-a4a9-88e99c038c8d".to_string();
+        let link = Counted::Backref("parent-of".into());
+        let rows = Counted::Table("messages".into());
+        let answer = |counted: &Counted| {
+            let count = match counted {
+                Counted::Table(_) => json!({ "id": id, "total": 0 }),
+                _ => json!({ "id": id, "total": 0, "status_groups": groups(0) }),
+            };
+            scripted::json(200, &json!({ "counts": [count] }).to_string())
+        };
+        let ask = |core: &Core, counted: &Counted| match counted {
+            Counted::Table(_) => core.counts(std::slice::from_ref(&id), counted),
+            _ => core.served_counts(std::slice::from_ref(&id), counted),
+        };
+        for counted in [&link, &rows] {
+            // The witness: the copy's own instance is asked, and named on the request.
+            let (server, core) = at_its_own_address(scripted::INSTANCE);
+            server.on("/items/counts", vec![answer(counted)]);
+            ask(&core, counted).unwrap();
+            let seen = server.seen("/items/counts");
+            assert_eq!(seen.len(), 1, "{counted:?}");
+            assert_eq!(seen[0].instance.as_deref(), Some(scripted::INSTANCE));
+
+            let (server, core) = at_its_own_address("00000000-0000-7000-8000-000000000001");
+            server.on("/items/counts", vec![answer(counted)]);
+            let refusal = ask(&core, counted).unwrap_err();
+            assert_eq!(refusal.code(), "copy_expired", "{counted:?}: {refusal:?}");
+            assert!(server.seen("/items/counts").is_empty(), "{counted:?}");
+
+            // Another instance that takes the address after the root was read refuses the named request.
+            let (server, core) = at_its_own_address(scripted::INSTANCE);
+            server.on(
+                "/items/counts",
+                vec![scripted::refusal(409, crate::http::INSTANCE_CHANGED)],
+            );
+            let refusal = ask(&core, counted).unwrap_err();
+            assert!(
+                matches!(&refusal, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED),
+                "{counted:?}: {refusal:?}"
+            );
+        }
     }
 
     #[test]

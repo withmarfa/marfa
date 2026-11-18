@@ -28,9 +28,9 @@ In Swift, pass `Counted.backref(edgeType:)` to count the items each anchor links
 
 If a local link count fails with `not_answerable`, ask the server with `servedCounts(ids:counted:)` in Swift or `servedCounts(ids, counted)` in Node. Pass the same arguments. Each result has `held` set to false. Propagate other errors to the caller.
 
-The request uses the server and credential held by the copy. When a copy opens at a new origin, it checks the instance there before sending IDs. An instance mismatch returns `wrong_server`.
+The request uses the server and credential held by the copy. Before it sends any ID, the copy reads the server's root and checks that the server is the instance the copy was built from, and it names that instance in `X-Marfa-Instance-Id` on the request. At a new origin, another instance returns `wrong_server`. At the copy's own origin, another instance expires the copy and returns `copy_expired`.
 
-Whenever the copy asks the server for counts, the whole call fails with `decoding` if the answer is not the requested IDs once each in the order requested, if a link count lacks any of its four status groups or if a row count carries status groups.
+Whenever the copy asks the server for counts, the whole call fails with `decoding` if the answer is not an object holding a list of counts, if it is not the requested IDs once each in the order requested, if a total or a group is not a whole number of zero or more, if a link count lacks any of its four status groups or its groups sum to more than its total, or if a row count carries `status_groups` at all.
 
 To time these reads and a whole listing over a copy of many notes, run from `core/`:
 

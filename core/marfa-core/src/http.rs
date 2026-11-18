@@ -919,6 +919,10 @@ impl Http {
         match self.renewal(sent) {
             Ok(fresh) => Ok(fresh),
             Err(CoreError::Unauthorized { .. }) => Ok(None),
+            // `not_answerable` is only the copy's word on a count, which a renewal never is.
+            Err(CoreError::NotAnswerable(message)) => Err(CoreError::RenewalFailed(Box::new(
+                CoreError::Invalid(format!("the credential renewal failed: {message}")),
+            ))),
             Err(error) => Err(CoreError::RenewalFailed(Box::new(error))),
         }
     }
@@ -1476,24 +1480,7 @@ impl Http {
         ids: &[&String],
         counted: &crate::counts::Counted,
     ) -> Result<Vec<(i64, Option<crate::counts::StatusGroups>)>, CoreError> {
-        use crate::counts::{Counted, StatusGroups};
-        #[derive(serde::Deserialize)]
-        struct Groups {
-            not_started: i64,
-            in_progress: i64,
-            completed: i64,
-            canceled: i64,
-        }
-        #[derive(serde::Deserialize)]
-        struct Count {
-            id: String,
-            total: i64,
-            status_groups: Option<Groups>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Answer {
-            counts: Vec<Count>,
-        }
+        use crate::counts::Counted;
         let (field, name, linked) = match counted {
             Counted::Backref(name) => ("backref", name, true),
             Counted::Edge(name) => ("edge", name, true),
@@ -1503,41 +1490,8 @@ impl Http {
         body.insert("ids".into(), serde_json::json!(ids));
         body.insert(field.into(), serde_json::json!(name));
         let body = serde_json::Value::Object(body).to_string();
-        let answer: Answer = self.read_json(&["items", "counts"], &[], Some(&body))?;
-        if answer.counts.len() != ids.len()
-            || answer
-                .counts
-                .iter()
-                .zip(ids)
-                .any(|(count, id)| count.id != **id)
-        {
-            return Err(CoreError::Decoding(
-                "the server's counts are not the asked ids, once each and in the order asked"
-                    .into(),
-            ));
-        }
-        answer
-            .counts
-            .into_iter()
-            .map(|count| match (linked, count.status_groups) {
-                (true, Some(groups)) => Ok((
-                    count.total,
-                    Some(StatusGroups {
-                        not_started: groups.not_started,
-                        in_progress: groups.in_progress,
-                        completed: groups.completed,
-                        canceled: groups.canceled,
-                    }),
-                )),
-                (false, None) => Ok((count.total, None)),
-                (true, None) => Err(CoreError::Decoding(
-                    "the server's link counts carry no status groups".into(),
-                )),
-                (false, Some(_)) => Err(CoreError::Decoding(
-                    "the server's counts of rows carry status groups".into(),
-                )),
-            })
-            .collect()
+        let answer: serde_json::Value = self.read_json(&["items", "counts"], &[], Some(&body))?;
+        decode_item_counts(&answer, ids, linked)
     }
 
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, answering only
@@ -2540,6 +2494,80 @@ fn credential_ended(refused: &CoreError) -> CoreError {
         reason: "credential_ended".into(),
         server: refused.answer().map(Box::new),
     }
+}
+
+/// Members the device does not know are ignored; anything else off the declared shape is refused.
+fn decode_item_counts(
+    answer: &serde_json::Value,
+    ids: &[&String],
+    linked: bool,
+) -> Result<Vec<(i64, Option<crate::counts::StatusGroups>)>, CoreError> {
+    let wrong = |what: &str| CoreError::Decoding(format!("the server's counts {what}"));
+    let counts = answer
+        .as_object()
+        .and_then(|answer| answer.get("counts"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| wrong("are not an object holding a list of counts"))?;
+    if counts.len() != ids.len() {
+        return Err(wrong(
+            "are not the asked ids, once each and in the order asked",
+        ));
+    }
+    let number = |count: &serde_json::Map<String, serde_json::Value>, name: &str| {
+        count
+            .get(name)
+            .and_then(serde_json::Value::as_i64)
+            .filter(|number| *number >= 0)
+            .ok_or_else(|| {
+                wrong(&format!(
+                    "do not give `{name}` as a whole number of zero or more"
+                ))
+            })
+    };
+    counts
+        .iter()
+        .zip(ids)
+        .map(|(count, id)| {
+            let count = count
+                .as_object()
+                .ok_or_else(|| wrong("hold a count that is not an object"))?;
+            if count.get("id").and_then(serde_json::Value::as_str) != Some(id.as_str()) {
+                return Err(wrong(
+                    "are not the asked ids, once each and in the order asked",
+                ));
+            }
+            let total = number(count, "total")?;
+            let groups = match (linked, count.get("status_groups")) {
+                (false, None) => None,
+                (false, Some(_)) => return Err(wrong("of rows carry status groups")),
+                (true, None) => return Err(wrong("of links carry no status groups")),
+                (true, Some(groups)) => {
+                    let groups = groups
+                        .as_object()
+                        .ok_or_else(|| wrong("give status groups that are not an object"))?;
+                    let groups = crate::counts::StatusGroups {
+                        not_started: number(groups, "not_started")?,
+                        in_progress: number(groups, "in_progress")?,
+                        completed: number(groups, "completed")?,
+                        canceled: number(groups, "canceled")?,
+                    };
+                    let grouped = [
+                        groups.not_started,
+                        groups.in_progress,
+                        groups.completed,
+                        groups.canceled,
+                    ]
+                    .iter()
+                    .try_fold(0_i64, |sum, group| sum.checked_add(*group));
+                    if grouped.is_none_or(|grouped| grouped > total) {
+                        return Err(wrong("give status groups that sum to more than the total"));
+                    }
+                    Some(groups)
+                }
+            };
+            Ok((total, groups))
+        })
+        .collect()
 }
 
 #[cfg(test)]

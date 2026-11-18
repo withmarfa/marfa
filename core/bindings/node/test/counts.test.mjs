@@ -34,7 +34,7 @@ test("a count of links is refused not_answerable where the copy holds no edge ty
   }
 });
 
-test("servedCounts asks the copy's own server, says held: false and refuses a link answer without its status groups", async () => {
+test("servedCounts asks the copy's own server, says held: false and refuses an answer off the declared shape or with an impossible number", async () => {
   /** @type {unknown} */
   let answer;
   /** @type {unknown[]} */
@@ -78,14 +78,37 @@ test("servedCounts asks the copy's own server, says held: false and refuses a li
       },
     );
     assert.deepEqual(asked, [{ ids: [ONE], backref: "parent-of" }]);
-    answer = { counts: [{ id: ONE, total: 1 }] };
-    await assert.rejects(
-      core.servedCounts([ONE], { backref: "parent-of" }),
-      (/** @type {any} */ error) => {
-        assert.equal(error.code, "decoding");
-        return true;
-      },
-    );
+    const link = { backref: "parent-of" };
+    const rows = { table: "messages" };
+    for (const [what, counted, refused] of [
+      ["a link without groups", link, { counts: [{ id: ONE, total: 1 }] }],
+      [
+        "groups null on a row",
+        rows,
+        { counts: [{ id: ONE, total: 1, status_groups: null }] },
+      ],
+      [
+        "unnamed groups",
+        link,
+        { counts: [{ id: ONE, total: 4, status_groups: [1, 1, 1, 1] }] },
+      ],
+      ["a positional answer", rows, [[{ id: ONE, total: 1 }]]],
+      ["a negative total", rows, { counts: [{ id: ONE, total: -1 }] }],
+      [
+        "groups above the total",
+        link,
+        { counts: [{ id: ONE, total: 0, status_groups: groups }] },
+      ],
+    ]) {
+      answer = refused;
+      await assert.rejects(
+        core.servedCounts([ONE], /** @type {any} */ (counted)),
+        (/** @type {any} */ error) => {
+          assert.equal(error.code, "decoding", String(what));
+          return true;
+        },
+      );
+    }
   } finally {
     server.close();
     rmSync(dir, { recursive: true, force: true });
