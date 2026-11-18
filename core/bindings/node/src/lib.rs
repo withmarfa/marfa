@@ -3810,9 +3810,9 @@ mod tests {
         assert_eq!(
             fields(E::ServerTooOld {
                 served: "0.0.74".into(),
-                oldest: "0.0.75".into(),
+                oldest: "0.0.78".into(),
             }),
-            vec![("served", json!("0.0.74")), ("oldest", json!("0.0.75"))]
+            vec![("served", json!("0.0.74")), ("oldest", json!("0.0.78"))]
         );
         assert_eq!(
             fields(E::Validation {

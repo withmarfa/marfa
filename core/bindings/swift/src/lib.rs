@@ -3569,7 +3569,7 @@ mod tests {
             },
             E::ServerTooOld {
                 served: "0.0.74".into(),
-                oldest: "0.0.75".into(),
+                oldest: "0.0.78".into(),
             },
             E::Invalid(text()),
             E::NotAnswerable(text()),
@@ -4055,7 +4055,7 @@ mod tests {
             (
                 E::ServerTooOld {
                     served: "0.0.74".into(),
-                    oldest: "0.0.75".into(),
+                    oldest: "0.0.78".into(),
                 }
                 .into(),
                 "ServerTooOld",
@@ -4090,8 +4090,8 @@ mod tests {
         assert!(matches!(
             &crossed.iter().find(|(_, name)| *name == "ServerTooOld").unwrap().0,
             MarfaError::ServerTooOld { served, oldest, message }
-                if served == "0.0.74" && oldest == "0.0.75"
-                    && message.contains("0.0.74") && message.contains("0.0.75")
+                if served == "0.0.74" && oldest == "0.0.78"
+                    && message.contains("0.0.74") && message.contains("0.0.78")
         ));
         assert!(matches!(
             &crossed
