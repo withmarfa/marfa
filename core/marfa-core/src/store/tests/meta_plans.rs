@@ -115,3 +115,78 @@ fn a_prefix_lookup_on_meta_never_reads_the_whole_table() {
     let scanning: Vec<&String> = asked.iter().filter(|sql| scans_meta(&conn, sql)).collect();
     assert!(scanning.is_empty(), "these read all of meta: {scanning:#?}");
 }
+
+/// What `lapsed` was before it asked for as little as it could.
+fn lapsed_by_each_part(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(hydration_complete(conn)?
+        && holds_slice(conn)?
+        && meta_get(conn, META_EVENT_CURSOR)?.is_some()
+        && !hydrated(conn)?)
+}
+
+#[test]
+fn a_copy_lapses_exactly_where_it_holds_a_slice_it_cannot_keep_current() {
+    let conn = conn();
+    let set = |key: &str, value: Option<&str>| match value {
+        Some(value) => meta_set(&conn, key, value).unwrap(),
+        None => meta_delete(&conn, key).unwrap(),
+    };
+    let fence = crate::scripted::FENCE;
+    let instance = crate::scripted::INSTANCE;
+    let mut lapsed_states = 0;
+    for state in [None, Some(HYDRATE_IN_PROGRESS)] {
+        for cursor in [None, Some("10"), Some("garbage")] {
+            for fence in [None, Some(fence), Some("garbage")] {
+                for instance in [None, Some(""), Some(instance)] {
+                    for types in [None, Some("[]"), Some("[\"core.note\"]")] {
+                        for tier in [None, Some("library")] {
+                            set(META_HYDRATE_STATE, state);
+                            set(META_EVENT_CURSOR, cursor);
+                            set(crate::reach::FENCE, fence);
+                            set(META_INSTANCE_ID, instance);
+                            set(META_SLICE_TYPES, types);
+                            set(META_SLICE_TIER, tier);
+                            let now = lapsed(&conn).unwrap();
+                            assert_eq!(
+                                now,
+                                lapsed_by_each_part(&conn).unwrap(),
+                                "{state:?} {cursor:?} {fence:?} {instance:?} {types:?} {tier:?}"
+                            );
+                            lapsed_states += usize::from(now);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(lapsed_states > 0, "no state lapsed, so nothing was compared");
+}
+
+#[test]
+fn a_copy_that_is_current_is_judged_on_a_few_reads() {
+    let conn = conn();
+    meta_set(&conn, META_EVENT_CURSOR, "10").unwrap();
+    meta_set(&conn, crate::reach::FENCE, crate::scripted::FENCE).unwrap();
+    meta_set(&conn, META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+    meta_set(&conn, META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+    meta_set(&conn, META_SLICE_TIER, "library").unwrap();
+    assert!(hydrated(&conn).unwrap());
+
+    let mut conn = conn;
+    SEEN.with(|seen| seen.borrow_mut().clear());
+    conn.trace_v2(
+        TraceEventCodes::SQLITE_TRACE_STMT,
+        Some(|event: TraceEvent<'_>| {
+            if let TraceEvent::Stmt(_, sql) = event {
+                SEEN.with(|seen| seen.borrow_mut().push(sql.to_string()));
+            }
+        }),
+    )
+    .unwrap();
+    assert!(!lapsed(&conn).unwrap());
+    conn.trace_v2(TraceEventCodes::empty(), None::<fn(TraceEvent<'_>)>)
+        .unwrap();
+    let asked = SEEN.with(|seen| seen.borrow().len());
+    assert!(asked > 0, "the trace saw no statement");
+    assert!(asked <= 3, "judging a current copy took {asked} statements");
+}

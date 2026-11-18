@@ -38,6 +38,18 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     holds_slice(conn)
 }
 
+/// Whether the copy holds a slice and an event cursor yet can no longer be
+/// kept current, so the rows it holds only through the slice have lapsed.
+pub fn lapsed(conn: &Connection) -> Result<bool, CoreError> {
+    let Some(cursor) = meta_get(conn, META_EVENT_CURSOR)? else {
+        return Ok(false);
+    };
+    let current = crate::reach::cursor(&cursor).is_some()
+        && meta_get(conn, crate::reach::FENCE)?.is_some_and(|f| crate::reach::valid_fence(&f))
+        && meta_get(conn, META_INSTANCE_ID)?.is_some_and(|instance| !instance.is_empty());
+    Ok(!current && hydration_complete(conn)? && holds_slice(conn)?)
+}
+
 pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
 }
