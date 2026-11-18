@@ -16,6 +16,7 @@ use tokio::task::JoinHandle;
 use super::checks;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
+use crate::app::blobs::Kept;
 use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
 use crate::app::catalog::{self, Snapshot};
@@ -69,11 +70,11 @@ const QUEUED: usize = 8;
 
 /// The instance that wrote an archive, and where the backup destination in use keeps what it
 /// wrote. Nothing here is known to be unused: that instance may still run, or be restored again.
-fn previous_instance(app: &App, id: &str) -> Value {
+fn previous_instance(kept_here: Option<Kept>, id: &str) -> Value {
     const WHEN: &str =
         "Delete them only once that instance no longer runs and nothing else restores from them.";
-    let (destination, kept, message) = match (app.blobs.bucket_prefix(), app.blobs.folder()) {
-        (Some(prefix), _) => {
+    let (destination, kept, message) = match kept_here {
+        Some(Kept::Bucket { prefix, .. }) => {
             let kept: Vec<String> = [crate::app::backups::FOLDER, crate::app::backups::PARTS]
                 .iter()
                 .map(|folder| format!("{prefix}/{folder}/{id}"))
@@ -89,7 +90,7 @@ fn previous_instance(app: &App, id: &str) -> Value {
             );
             (json!("bucket"), kept, message)
         }
-        (None, Some(_)) => {
+        Some(Kept::Folder(_)) => {
             use crate::app::blobs::folder::{BACKUPS, FILES, PARTS};
             let kept = vec![
                 format!("{BACKUPS}/{id}"),
@@ -103,7 +104,7 @@ fn previous_instance(app: &App, id: &str) -> Value {
             );
             (json!("folder"), kept, message)
         }
-        (None, None) => (
+        None => (
             Value::Null,
             Vec::new(),
             format!(
@@ -277,6 +278,7 @@ impl App {
         started_at: String,
         received: Received,
         whole: bool,
+        kept_here: Option<Kept>,
     ) -> Result<Value> {
         caller.require_step_up(Permission::BackupsManage, &started_at)?;
         let holding = self.db.hold_writes(restore_running::refusal())?;
@@ -537,7 +539,7 @@ impl App {
                 .map(|(kind, message)| json!({ "kind": kind, "message": message }))
                 .collect();
             if let Some(id) = previous {
-                answer["previous_instance"] = previous_instance(&app, &id);
+                answer["previous_instance"] = previous_instance(kept_here, &id);
             }
             Ok(answer)
         };

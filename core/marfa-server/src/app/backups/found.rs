@@ -277,7 +277,7 @@ pub(super) async fn survey(
 
 /// Lists this instance's folder and surveys it.
 pub async fn survey_folder(app: &App) -> Result<()> {
-    let Some(destination) = Destination::of(app) else {
+    let Some(destination) = Destination::of(&app.blobs.attachment()) else {
         return Ok(());
     };
     let listed: Vec<String> = destination
