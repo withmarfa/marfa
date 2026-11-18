@@ -369,10 +369,6 @@ pub(super) const SELF_CLEARING: [&str; 2] = [
     crate::model::AWAITING_DEPENDENCY,
 ];
 
-/// The released row keeps its key unless the server holds an answer under it
-/// that refused the write (`fresh_key_on_release`); a spent key is kept so a
-/// late answer under it is not taken for an answer to the new attempt. A row
-/// write releases every write of its batch, to go again as it went.
 /// A released write goes to the server, so it is refused as a new one is.
 fn refuse_released_while_removing(conn: &Connection, id: &str) -> Result<(), CoreError> {
     let Some(write) = queued_write(conn, id)? else {
@@ -387,6 +383,7 @@ fn refuse_released_while_removing(conn: &Connection, id: &str) -> Result<(), Cor
     Ok(())
 }
 
+/// A spent key is retained so a late answer cannot settle a new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, reason, kind, sent)) = conn
         .query_row(
