@@ -765,6 +765,110 @@ async fn an_adopt_whose_request_goes_away_after_its_record_still_claims_the_fold
     assert_eq!(attached, [id.as_str()]);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_same_folder() {
+    let parent = TempDir::new().unwrap();
+    let instance = Instance::start().await;
+    let (folder, _) = replaced(&instance, &parent).await;
+    // The folder is recorded under a link to it as well as under its own path.
+    let link = parent.path().join("link");
+    std::os::unix::fs::symlink(&folder, &link).unwrap();
+    for named in [json!(null), json!(link), json!(null)] {
+        instance.name(json!({ "backup_path": named })).await;
+        instance.settle().await;
+    }
+    fs::rename(&folder, parent.path().join("link disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+    instance.name(json!({ "backup_path": folder })).await;
+    instance.settle().await;
+    instance
+        .app
+        .faults
+        .set("store-check-deadline", Some("300"))
+        .unwrap();
+    let first = instance.app.blobs.folder().unwrap();
+    let area = instance.area(&folder);
+    fs::create_dir_all(&area).unwrap();
+    let marker = area.join(MARKER);
+
+    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .send(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    instance.reached("hold:stores-swap").await;
+    stall_at(&marker);
+    instance.app.faults.clear(Some("hold:stores-swap"));
+    let writer = read_stalls(&marker).await;
+    let adopted = adopting.await.unwrap();
+    // The stalled claim keeps the FIFO open, and a look at the folder now finds no marker.
+    fs::remove_file(&marker).unwrap();
+    let switched = instance.patch(json!({ "backup_path": link })).await;
+    let followed = instance.app.follow_stores(Retry::Settle).await;
+    let through_link = instance
+        .send(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    // The claim waiting on the marker finishes now and writes it.
+    drop(writer);
+    for _ in 0..500 {
+        if !first.claim_unended() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(
+        adopted.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        adopted.body
+    );
+    assert_eq!(switched.status, StatusCode::OK, "{}", switched.body);
+    assert!(followed.is_ok(), "{followed:?}");
+    assert_eq!(
+        through_link.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "an adopt through the link ran while the first claim ran: {}",
+        through_link.body
+    );
+    assert!(
+        through_link.body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("earlier adopt"),
+        "{}",
+        through_link.body
+    );
+    assert!(!first.claim_unended());
+    let late = fs::read_to_string(&marker).unwrap();
+    let recorded: Vec<String> = folder_ids(&instance, &area)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert!(recorded.contains(&late), "{late} is not in {recorded:?}");
+    assert!(!instance.app.blobs.folder().unwrap().reachable());
+
+    // Named by its own path again, the folder holds the store its record names.
+    drop(first);
+    instance.name(json!({ "backup_path": folder })).await;
+    instance.settle().await;
+    assert!(instance.app.blobs.settled());
+    let current = instance.app.blobs.folder().unwrap();
+    assert!(current.reachable());
+    assert_eq!(current.files().id(), late);
+    let attached: Vec<String> = folder_ids(&instance, &area)
+        .await
+        .into_iter()
+        .filter_map(|(id, attached)| attached.then_some(id))
+        .collect();
+    assert_eq!(attached, [late]);
+}
+
 /// Puts a FIFO where `marker` was, so a read of it waits for a writer.
 fn stall_at(marker: &Path) {
     let _ = fs::remove_file(marker);

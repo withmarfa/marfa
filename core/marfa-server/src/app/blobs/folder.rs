@@ -49,6 +49,8 @@ pub struct Folder {
     instance: String,
     /// Replaced only when the owner adopts a folder whose files area lost its marker.
     files: RwLock<Arc<Disk>>,
+    /// The files area with its links resolved when opened, so every path to it shares one claim.
+    claim_key: PathBuf,
     /// A temporary file staged before this is a leftover of a process that ended.
     started: SystemTime,
 }
@@ -129,9 +131,11 @@ impl Folder {
     pub async fn open(db: &Db, root: &Path, instance: &str) -> Result<Folder, Failure> {
         let area = root.join(FILES).join(instance);
         let probed = area.clone();
-        let found = tokio::task::spawn_blocking(move || Disk::probe(&probed, Place::BackupFiles))
-            .await
-            .map_err(started)??;
+        let (found, claim_key) = tokio::task::spawn_blocking(move || {
+            Disk::probe(&probed, Place::BackupFiles).map(|found| (found, resolved(&probed)))
+        })
+        .await
+        .map_err(started)??;
         let files = if found == disk::Found::Marked {
             let opened = area.clone();
             tokio::task::spawn_blocking(move || Disk::open(&opened, Place::BackupFiles, None))
@@ -181,6 +185,7 @@ impl Folder {
             root: root.to_path_buf(),
             instance: instance.to_string(),
             files: RwLock::new(Arc::new(files)),
+            claim_key,
             #[allow(
                 clippy::disallowed_methods,
                 reason = "compared with files' modification times, which are the host's time"
@@ -230,7 +235,7 @@ impl Folder {
 
     /// Whether a claim has started whose blocking work has not ended.
     pub fn claim_unended(&self) -> bool {
-        claiming().contains(&self.area())
+        claiming().contains(&self.claim_key)
     }
 
     /// A timeout does not cancel the blocking claim.
@@ -239,11 +244,10 @@ impl Folder {
         id: String,
         deadline: Duration,
     ) -> Option<io::Result<()>> {
-        let area = self.area();
-        if !claiming().insert(area.clone()) {
+        if !claiming().insert(self.claim_key.clone()) {
             return None;
         }
-        let (folder, claiming) = (self.clone(), Claiming(area));
+        let (folder, claiming) = (self.clone(), Claiming(self.claim_key.clone()));
         let claimed = tokio::task::spawn_blocking(move || {
             let _claiming = claiming;
             folder.claim(&id)
@@ -612,6 +616,7 @@ mod tests {
             files: RwLock::new(Arc::new(
                 Disk::open(&area, Place::BackupFiles, None).unwrap(),
             )),
+            claim_key: resolved(&area),
             started: SystemTime::now(),
         }
     }
@@ -790,11 +795,21 @@ mod tests {
         assert!(outside(&dir.path().join("data2"), &[("data directory", &data)]).is_ok());
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_claim_given_up_on_keeps_any_folder_at_its_area_from_claiming_until_it_ends() {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let dir = TempDir::new().unwrap();
-        let area = dir.path().join(FILES).join("instance");
+    /// A folder at `root` whose files area went unmounted, as `open` takes it.
+    fn unmounted_at(root: &Path) -> Arc<Folder> {
+        let area = root.join(FILES).join("instance");
+        Arc::new(Folder {
+            root: root.to_path_buf(),
+            instance: "instance".into(),
+            files: RwLock::new(Arc::new(Disk::unmounted("old".into(), area.clone()))),
+            claim_key: resolved(&area),
+            started: SystemTime::now(),
+        })
+    }
+
+    /// Makes `root`'s files area with a FIFO as its marker, so a claim there waits for a writer.
+    fn stalling(root: &Path) -> PathBuf {
+        let area = root.join(FILES).join("instance");
         fs::create_dir_all(&area).unwrap();
         let marker = area.join(disk::MARKER);
         assert!(
@@ -804,17 +819,44 @@ mod tests {
                 .unwrap()
                 .success()
         );
-        let at_area = || {
-            Arc::new(Folder {
-                root: dir.path().to_path_buf(),
-                instance: "instance".into(),
-                files: RwLock::new(Arc::new(Disk::unmounted("old".into(), area.clone()))),
-                started: SystemTime::now(),
-            })
-        };
-        // A folder opened again at the same root, as a switch away and back opens one.
-        let (given_up, again) = (at_area(), at_area());
+        marker
+    }
 
+    /// Lets the claim waiting on `marker` go on, having written `sent` to it.
+    async fn release(marker: &Path, sent: &[u8]) {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut writer = None;
+        for _ in 0..500 {
+            // Opening a FIFO's write end without blocking fails until a reader holds it.
+            writer = OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(marker)
+                .ok();
+            if writer.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let _ = fs::remove_file(marker);
+        if let Some(writer) = writer.as_mut() {
+            writer.write_all(sent).unwrap();
+        }
+    }
+
+    async fn until_ended(folders: &[&Arc<Folder>]) {
+        for _ in 0..500 {
+            if folders.iter().all(|folder| !folder.claim_unended()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// A claim on a folder at `root` is given up on; a folder at `other` then tries to claim.
+    async fn claimed_beside(root: &Path, other: &Path) -> (bool, bool, Arc<Folder>) {
+        let marker = stalling(root);
+        let (given_up, again) = (unmounted_at(root), unmounted_at(other));
         let late = given_up
             .claim_within("late".into(), Duration::from_millis(50))
             .await;
@@ -822,39 +864,70 @@ mod tests {
         let held = again.claim_unended();
         let refused = again
             .claim_within("other".into(), Duration::from_millis(50))
-            .await;
-
+            .await
+            .is_none();
         // Release the stalled claim before assertions so a failing test can end.
-        let mut writer = None;
-        for _ in 0..500 {
-            // Opening a FIFO's write end without blocking fails until a reader holds it.
-            writer = OpenOptions::new()
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&marker)
-                .ok();
-            if writer.is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let _ = fs::remove_file(&marker);
-        drop(writer);
-        for _ in 0..500 {
-            if !given_up.claim_unended() && !again.claim_unended() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        release(&marker, &[]).await;
+        until_ended(&[&given_up, &again]).await;
+        assert!(!given_up.claim_unended());
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "late");
+        assert_eq!(given_up.files().id(), "late");
+        (held, refused, again)
+    }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_claim_given_up_on_keeps_any_folder_at_its_area_from_claiming_until_it_ends() {
+        let dir = TempDir::new().unwrap();
+        // A folder opened again at the same root, as a switch away and back opens one.
+        let (held, refused, again) = claimed_beside(dir.path(), dir.path()).await;
         assert!(
             held,
             "a folder at the same area could claim while the first claim ran"
         );
-        assert!(refused.is_none());
-        assert!(!given_up.claim_unended());
-        assert_eq!(fs::read_to_string(&marker).unwrap(), "late");
-        assert_eq!(given_up.files().id(), "late");
+        assert!(refused);
         assert_eq!(again.files().id(), "old");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_claim_given_up_on_keeps_a_folder_named_through_a_link_from_claiming() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("disk");
+        fs::create_dir(&root).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        let (held, refused, again) = claimed_beside(&root, &link).await;
+        assert!(
+            held,
+            "a folder named through a link could claim while the first claim ran"
+        );
+        assert!(refused);
+        assert_eq!(again.files().id(), "old");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_claim_given_up_on_that_then_fails_ends_its_claim_and_keeps_its_id_unmounted() {
+        let dir = TempDir::new().unwrap();
+        let marker = stalling(dir.path());
+        let folder = unmounted_at(dir.path());
+        let late = folder
+            .claim_within("recorded".into(), Duration::from_millis(50))
+            .await;
+        let held = folder.claim_unended();
+        // A marker that is not text fails the claim.
+        release(&marker, &[0xff]).await;
+        until_ended(&[&folder]).await;
+
+        assert!(late.is_none());
+        assert!(held);
+        assert!(!folder.claim_unended());
+        assert_eq!(folder.files().id(), "recorded");
+        assert!(!folder.reachable());
+        assert!(matches!(
+            folder
+                .claim_within("retry".into(), Duration::from_secs(2))
+                .await,
+            Some(Ok(()))
+        ));
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "retry");
     }
 }
