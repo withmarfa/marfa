@@ -6458,6 +6458,14 @@ If a write to an item has no answer yet, or is blocked or dead, then a device MU
 
 **Tests:** `device/purge.test.ts › refuses an item a write to which still waits, sending nothing`, `› refuses an item a blocked write names, sending nothing`, `› refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn`, `› names, for a write held behind another, the write that holds it and that write's commands`.
 
+### `device/purge-holds-item`
+
+While a purge is out, if a caller writes to its item, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing nothing.
+
+**Reason:** the purge checks for waiting writes before it is sent (`device/purge-waiting-write`), and a write queued between that check and the call's return would reach a row that is gone. A purge is out from that check until the call returns.
+
+**Tests:** waiting on #3238.
+
 ### `device/purge-other-instance`
 
 Where the copy names the instance it was hydrated from, if another instance answers at the copy's origin, then a device MUST refuse a purge `copy_expired`, sending nothing.
@@ -6582,9 +6590,41 @@ Where the copy names the instance it was hydrated from, if another instance answ
 
 ### `device/trash-accepted-copy`
 
-When the server accepts a several-item trash, a device MUST show every item the copy holds among the named and the taken items in the bin, with the version the server holds for it, before the call returns.
+When the server accepts a several-item trash, a device MUST take the server's events through the last one its log holds before the call returns.
 
-**Reason:** the acceptance carries no versions, so the copy reads each held row from the bin, and an app deleting a selection sees all of it gone at once.
+**Reason:** the acceptance carries no versions and names only the items asked for, while the `item.trashed` events carry every item the trash took, listed or not. The copy takes them through the one cursor that moves events, so none is applied twice or skipped, and a restore read meanwhile stays.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-accepted-settled`
+
+When the server accepts a several-item trash, a device MUST answer whether the copy took the server's events through it and, where it did not, why.
+
+**Reason:** the trash happened on the server either way, so an error would read as a trash that did not happen. Where the copy is behind, the follow or the next catch-up takes the events.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-holds-items`
+
+While a several-item trash is out, if a caller writes to an item the trash names or lists as taken, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing nothing.
+
+**Reason:** the trash checks for waiting writes before it is sent, and a write queued between that check and the call's return would reach a row in the bin. A trash is out from that check until the call returns.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-holds-items-cut`
+
+While a several-item trash whose preview cut `takes` is out, if a caller writes to any item, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing nothing.
+
+**Reason:** the items a cut `takes` leaves out cannot be known, so no write to an item can be ruled out.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-held-again`
+
+While a several-item trash or a purge is out, if a caller trashes several items or purges an item and any of them is one it holds, then a device MUST refuse it `validation` with the code `item_being_removed`, sending nothing.
+
+**Reason:** the second request would race the first for the same rows, and only one answer can settle them.
 
 **Tests:** waiting on #3238.
 
