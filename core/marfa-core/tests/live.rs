@@ -230,13 +230,22 @@ fn several_items_are_previewed_and_trashed_together_against_a_live_server() {
         .iter()
         .map(|title| seed(&["note", title, &format!("{marker} {title}")]))
         .collect();
+    let child = seed(&["note", "Child", &format!("{marker} child")]);
+    let live = server();
+    post(
+        &format!("{}/edges", live.url),
+        &[("Authorization", &format!("Bearer {}", live.key))],
+        "application/json",
+        &serde_json::json!({ "type": "parent-of", "from_id": ids[0], "to_id": child }).to_string(),
+    );
     let core = Core::open(&path, Some(server())).unwrap();
     core.hydrate(&["core.note".into()], SliceTier::Library)
         .unwrap();
 
     let preview = core.preview_trash(&ids[..2]).unwrap();
     assert_eq!(preview.items.len(), 2);
-    assert_eq!(preview.count, 2);
+    assert_eq!(preview.count, 3);
+    assert!(preview.items[0].takes.iter().any(|taken| taken.id == child));
     assert!(!preview.digest.is_empty());
 
     let mut stale = preview.clone();
@@ -253,7 +262,8 @@ fn several_items_are_previewed_and_trashed_together_against_a_live_server() {
         "a refusal changes nothing"
     );
 
-    core.trash_items(&preview).unwrap();
+    let report = core.trash_items(&preview).unwrap();
+    assert!(report.settled, "{report:?}");
     assert!(core.queue().unwrap().is_empty());
     let with_bin = core
         .list(
@@ -265,7 +275,7 @@ fn several_items_are_previewed_and_trashed_together_against_a_live_server() {
         )
         .unwrap()
         .rows;
-    for id in &ids[..2] {
+    for id in ids[..2].iter().chain([&child]) {
         let row = with_bin.iter().find(|item| &item.id == id).unwrap();
         assert_eq!(row.state, ItemState::Trashed, "{id} is in the bin at once");
     }
