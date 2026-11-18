@@ -524,7 +524,7 @@ impl App {
             let emptying = app.clone();
             tokio::spawn(async move { emptying.db.empty_log().await });
             if let Some(staged) = staged {
-                staged.publish(&app);
+                staged.publish(&app).await;
             }
             app.publish_catalog().await;
             answer["not_restored"] = NOT_RESTORED

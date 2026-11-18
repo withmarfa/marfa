@@ -427,8 +427,12 @@ impl Blobs {
 
     /// Whether the store in use is what `wanted` names, and could be used.
     pub fn follows(&self, wanted: &Wanted) -> bool {
-        let attached = self.attached.load();
-        attached.wanted == *wanted && attached.trouble.is_none()
+        self.names(wanted) && self.attached.load().trouble.is_none()
+    }
+
+    /// Whether the store in use was taken for `wanted`, whether or not it could be used.
+    pub fn names(&self, wanted: &Wanted) -> bool {
+        self.attached.load().wanted == *wanted
     }
 
     /// Takes the store `wanted` names in place of the one in use, or tries again to take one that

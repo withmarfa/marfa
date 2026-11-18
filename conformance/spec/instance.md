@@ -1164,6 +1164,30 @@ Where neither `object_store_bucket` nor `backup_path` is set, when a caller the 
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
 
+### `instance/backup-destination-set`
+
+When the server answers `200` to a write to `/config` that sets `object_store_bucket` or `backup_path`, the server MUST NOT answer a `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore` that a caller the operation admits sends next with `409 no_backup_destination`.
+
+**Reason:** a script sets the destination and takes or lists a backup at once, so the store the write names has to be in use by the time the write is answered. A destination that cannot be used is answered `503 blob_store_unavailable` instead.
+
+**Tests:** `compliance/backup-destination.test.ts › is the one the next GET /backups, POST /backups and restore use, whether it is an object store or a backup folder`.
+
+### `instance/backup-destination-unset`
+
+When the server answers `200` to a write to `/config` that leaves neither `object_store_bucket` nor `backup_path` set, the server MUST answer a `GET /backups` or `POST /backups` that a caller the operation admits sends next with `409 no_backup_destination`.
+
+**Reason:** a backup taken after the owner removed the destination must not go to it.
+
+**Tests:** `compliance/backup-destination.test.ts › is no destination in the next GET /backups once a write to /config unsets it`.
+
+### `instance/backup-destination-unusable`
+
+When the server answers `200` to a write to `/config` that sets `object_store_bucket` to an object store the server cannot use, the server MUST answer the `GET /backups` that a caller holding `backups.manage` sends next with `503 blob_store_unavailable`.
+
+**Reason:** the write is kept so the owner can correct it, and the store's failure is what the next backup operation says, not that no destination is set.
+
+**Tests:** `compliance/backup-destination.test.ts › is answered 503 blob_store_unavailable by the next GET /backups when the object store a write to /config names cannot be used`.
+
 ### `instance/backups-list`
 
 When a caller holding `backups.manage` sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<object_store_prefix>/backups/` or `<backup_path>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`, the bytes of its manifest and of every part the manifest names, or of the manifest alone where it does not read.
