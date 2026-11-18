@@ -105,6 +105,8 @@ Each job is named as GitHub shows it.
 
    When the variable is not `publish`, the tap stays at the last version it was given. Say so in the hand-back; it is not a failed release.
 
+6. Stop. Publishing starts WithMarfa's release automation, which writes the release notes, syncs and rewrites the docs from the open docs issues, and moves the Swift package and the connectors to the release. Do none of these yourself.
+
 ## Finish a failed or partial run
 
 - **Before `Publish`,** nothing is public under the version: the image job pushes untagged digests only. Fix what failed outside the code (a runner, a secret, a network fault) and re-run the failed jobs with `gh run rerun <run id> --failed`. The build and signing artifacts are kept for one day; after that, re-run the whole run with `gh run rerun <run id>`.
