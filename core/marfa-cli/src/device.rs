@@ -1252,6 +1252,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 path,
                 reason,
                 unsent,
+                set_aside_stopped,
             }),
             Some(db),
         ) if path.is_empty() => match Core::check_store(&db) {
@@ -1260,6 +1261,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 path: db.display().to_string(),
                 reason,
                 unsent,
+                set_aside_stopped,
             }),
         },
         (error, _) => error,

@@ -144,12 +144,15 @@ async function nothing(device: BindingDevice): Promise<string> {
 
 function refusalOf(
   outcome: Awaited<ReturnType<BindingHarness["device"]["removeStore"]>>,
-): { code: string; unsent?: number | null } {
+): { code: string; unsent?: number | null; setAsideStopped?: boolean } {
   expect(outcome.ok, "the removal was not refused").toBe(false);
   if (outcome.ok) throw new Error("unreachable");
   return {
     code: outcome.refusal.code,
-    ...(JSON.parse(outcome.refusal.raw) as { unsent?: number | null }),
+    ...(JSON.parse(outcome.refusal.raw) as {
+      unsent?: number | null;
+      setAsideStopped?: boolean;
+    }),
   };
 }
 
@@ -329,6 +332,64 @@ describe("removing a store", () => {
     expect(held(device.store)).toEqual({});
   });
 
+  it("removes a store whose unsent writes it can read and finds none when every write is agreed lost", async () => {
+    const started = await startBindingHarness("remove-all-empty", {
+      server: false,
+    });
+    harness = started;
+    const { device } = started;
+    await device.forget();
+    expect((await unsent(device)).writes).toEqual([]);
+
+    const removed = await device.removeStoreLosingAll();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(held(device.store)).toEqual({});
+  });
+
+  it("refuses to remove, agreeing to lose every write, a store whose unsent writes can be read when the removal begins, and keeps them", async () => {
+    const { device, shown } = await storeWithOneUnsent("remove-all-readable");
+    // The queue does not read when an app looks.
+    edit(
+      device.store,
+      "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
+    );
+    const looked = await device.readUnsent();
+    expect(looked.ok, "the queue read when it was meant not to").toBe(false);
+    // It reads again before the removal.
+    edit(
+      device.store,
+      "ALTER TABLE queue RENAME COLUMN answer_kind TO verdict",
+    );
+    const before = kept(device.store);
+
+    const refused = refusalOf(await device.removeStoreLosingAll());
+    expect(refused.code).toBe("unsent_differs");
+    expect(refused.unsent).toBe(1);
+    expect(kept(device.store), "a refused removal changed the store").toEqual(
+      before,
+    );
+
+    const listed = await unsent(device);
+    expect(listed.confirmation).toBe(shown);
+    const removed = await device.removeStore(listed.confirmation);
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(held(device.store)).toEqual({});
+  });
+
+  it("refuses a store SQLite cannot read store_damaged without saying a set-aside stopped", async () => {
+    const { device } = await storeWithOneUnsent("damaged-flag");
+    const store = readFileSync(device.store);
+    writeFileSync(
+      device.store,
+      Buffer.concat([Buffer.alloc(100, 0xa5), store.subarray(100)]),
+    );
+
+    const opened = await device.tryOpen();
+    expect(opened.opened, JSON.stringify(opened)).toBe(false);
+    expect(opened.error?.code).toBe("store_damaged");
+    expect(opened.error?.setAsideStopped).toBe(false);
+  });
+
   it("removes a store the writer refuses wrong_schema with the confirmation of the unsent writes it lists", async () => {
     const { device, written } = await storeWithOneUnsent("remove-schema");
     edit(device.store, "PRAGMA user_version = 0");
@@ -481,13 +542,23 @@ describe("removing a store", () => {
       if (refused.ok) continue;
       expect(refused.refusal.code, refused.refusal.raw).toBe("store_damaged");
       expect(refused.refusal.raw).toContain("stopped part way");
+      expect(
+        (JSON.parse(refused.refusal.raw) as { setAsideStopped?: boolean })
+          .setAsideStopped,
+      ).toBe(true);
     }
     expect(kept(device.store)).toEqual(before);
     expect(digest(made)).toBe(carried);
 
     const done = await command.setAside();
     expect(done.ok && done.value.carried, JSON.stringify(done)).toBe(1);
-    const removed = await device.removeStoreLosingAll();
+    // The carried write reads, so only its confirmation removes the store.
+    expect(refusalOf(await device.removeStoreLosingAll()).code).toBe(
+      "unsent_differs",
+    );
+    const removed = await device.removeStore(
+      (await unsent(device)).confirmation,
+    );
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
     expect(held(device.store)).toEqual({});
   });

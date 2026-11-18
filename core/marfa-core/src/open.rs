@@ -323,9 +323,13 @@ impl Core {
     }
 
     /// Removes the store at `path` as `remove_store` does, agreeing to lose
-    /// every write it holds that the server has not taken, whatever they are
-    /// and whether or not they can be read, as for a store SQLite cannot
-    /// read. Refuses as `remove_store` does but for the writes.
+    /// every write it holds that the server has not taken, for a store whose
+    /// queue SQLite cannot read. Refuses as `remove_store` does but for the
+    /// confirmation, and with `UnsentDiffers`, naming how many, where the
+    /// queue reads and holds a write when the removal takes the writer lock:
+    /// an app reads the writes (`read_unsent`) and removes with their
+    /// confirmation. A queue that reads and holds none loses nothing, so the
+    /// store goes.
     pub fn remove_store_losing_all(path: impl AsRef<Path>) -> Result<()> {
         Self::remove_agreed(path.as_ref(), None)
     }
@@ -333,7 +337,13 @@ impl Core {
     /// `agreed` is `None` where every write is agreed to be lost.
     fn remove_agreed(path: &Path, agreed: Option<&str>) -> Result<()> {
         let differs = |held: Option<Vec<UnsentWrite>>| match agreed {
-            None => Ok(()),
+            None => match held {
+                Some(held) if !held.is_empty() => Err(CoreError::UnsentDiffers {
+                    path: path.display().to_string(),
+                    unsent: Some(held.len() as u64),
+                }),
+                _ => Ok(()),
+            },
             Some(agreed)
                 if held
                     .as_deref()
