@@ -16,8 +16,8 @@ use tokio::task::JoinHandle;
 use super::checks;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
+use crate::app::blobs::{Kept, Scratch};
 use crate::app::catalog::{self, Snapshot};
 use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
@@ -72,8 +72,8 @@ const QUEUED: usize = 8;
 fn previous_instance(app: &App, id: &str) -> Value {
     const WHEN: &str =
         "Delete them only once that instance no longer runs and nothing else restores from them.";
-    let (destination, kept, message) = match (app.blobs.bucket_prefix(), app.blobs.folder()) {
-        (Some(prefix), _) => {
+    let (destination, kept, message) = match app.blobs.kept() {
+        Some(Kept::Bucket { prefix, .. }) => {
             let kept: Vec<String> = [crate::app::backups::FOLDER, crate::app::backups::PARTS]
                 .iter()
                 .map(|folder| format!("{prefix}/{folder}/{id}"))
@@ -89,7 +89,7 @@ fn previous_instance(app: &App, id: &str) -> Value {
             );
             (json!("bucket"), kept, message)
         }
-        (None, Some(_)) => {
+        Some(Kept::Folder(_)) => {
             use crate::app::blobs::folder::{BACKUPS, FILES, PARTS};
             let kept = vec![
                 format!("{BACKUPS}/{id}"),
@@ -103,7 +103,7 @@ fn previous_instance(app: &App, id: &str) -> Value {
             );
             (json!("folder"), kept, message)
         }
-        (None, None) => (
+        None => (
             Value::Null,
             Vec::new(),
             format!(
@@ -504,7 +504,7 @@ impl App {
                         unit.audit_set("restore_archive", Some(answer.clone()))?;
                         let staged = restored_settings
                             .changed()
-                            .then(|| stored::stage(tx, &settings))
+                            .then(|| stored::stage_unknown(tx, &settings))
                             .transpose()?;
                         faults.hold_writing(HOLD_RESTORE_COMMIT);
                         tracing::info!(

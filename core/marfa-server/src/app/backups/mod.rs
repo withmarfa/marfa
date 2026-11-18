@@ -29,7 +29,7 @@ use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
-use super::blobs::{Blob, Hash, folder_shortfall};
+use super::blobs::{Blob, Hash, Kept, folder_shortfall};
 use super::clock::Stamp;
 use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE};
 use super::housekeeping::{self, Report, Run};
@@ -506,10 +506,9 @@ pub(crate) enum Destination {
 
 impl Destination {
     fn of(app: &App) -> Option<Destination> {
-        match (app.blobs.s3(), app.blobs.folder()) {
-            (Some(bucket), _) => Some(Destination::Bucket(bucket)),
-            (None, Some(folder)) => Some(Destination::Folder(folder)),
-            (None, None) => None,
+        match app.blobs.kept()? {
+            Kept::Bucket { s3, .. } => Some(Destination::Bucket(s3)),
+            Kept::Folder(folder) => Some(Destination::Folder(folder)),
         }
     }
 
@@ -1730,7 +1729,8 @@ async fn refuse_if_gone(app: &App, store: String, name: String, asker: Caller) {
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<Outcome> {
     if app.blobs.trouble().is_some() {
-        app.follow_stores().await;
+        // A store that still cannot be taken is the destination's refusal below.
+        app.follow_stores().await.ok();
     }
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {
@@ -2385,6 +2385,11 @@ async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize
     }
     (removed, unremoved)
 }
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../tests/fake_s3/mod.rs"]
+mod fake_s3;
 
 #[cfg(test)]
 mod tests {
@@ -3377,5 +3382,82 @@ mod tests {
             Some("The blob folder did not take a copy: no room.")
         );
         assert_eq!(refused_by(&json!({ "copied": 1 }), "bucket"), None);
+    }
+    #[cfg(feature = "test-hooks")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_destination_is_never_none_while_the_store_changes_from_a_folder_to_an_object_store()
+     {
+        use axum::body::Body;
+        use axum::http::{Method, Request, header};
+        use tower::ServiceExt;
+
+        let (dir, folder) = (
+            tempfile::TempDir::new().unwrap(),
+            tempfile::TempDir::new().unwrap(),
+        );
+        let s3 = fake_s3::FakeS3::start().await;
+        let (database, blobs, socket) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("blobs"),
+            dir.path().join("s.sock"),
+        );
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
+            ("MARFA_BACKUP_INTERVAL_SECONDS", "0"),
+        ];
+        let settings =
+            crate::settings::Settings::read(crate::settings::Environment::from_pairs(&pairs))
+                .unwrap();
+        let app = App::start(settings).await.unwrap();
+        let router = crate::http::control(app.clone());
+        let patch = |body: Value| {
+            let router = router.clone();
+            async move {
+                let request = Request::builder()
+                    .method(Method::PATCH)
+                    .uri("/config")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap();
+                router.oneshot(request).await.unwrap().status()
+            }
+        };
+        let mut to_bucket = serde_json::Map::new();
+        for (name, value) in s3.settings("bucket", "switching") {
+            if let Some(key) = name.strip_prefix("MARFA_")
+                && key != "ALLOW_PRIVATE_ADDRESSES"
+            {
+                to_bucket.insert(key.to_lowercase(), json!(value));
+            }
+        }
+        to_bucket.insert("backup_path".to_string(), json!(""));
+        let to_bucket = Value::Object(to_bucket);
+        let to_folder = json!({ "object_store_bucket": "", "backup_path": folder.path() });
+
+        assert!(patch(to_folder.clone()).await.is_success());
+        assert!(Destination::of(&app).is_some());
+        let stop = Arc::new(AtomicBool::new(false));
+        let reading = {
+            let (app, stop) = (app.clone(), stop.clone());
+            tokio::task::spawn_blocking(move || {
+                let mut none = 0_u32;
+                while !stop.load(Ordering::Relaxed) {
+                    if Destination::of(&app).is_none() {
+                        none += 1;
+                    }
+                }
+                none
+            })
+        };
+        for _ in 0..200 {
+            assert!(patch(to_bucket.clone()).await.is_success());
+            assert!(patch(to_folder.clone()).await.is_success());
+        }
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(reading.await.unwrap(), 0);
     }
 }

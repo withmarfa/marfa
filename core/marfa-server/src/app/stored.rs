@@ -106,31 +106,57 @@ pub fn write_rows(tx: &Transaction<'_>, rows: &Rows) -> Result<()> {
 pub struct Staged {
     generation: u64,
     rows: Vec<(String, String)>,
+    /// Whether the write named another store beside the disk than the settings it followed.
+    moved: bool,
+}
+
+fn wanted_by(app: &App, rows: &[(String, String)]) -> super::blobs::Wanted {
+    super::blobs::Wanted::of(&app.settings.candidate(rows))
 }
 
 /// Takes the table as this transaction holds it, in its place in the order of
 /// the commits. Taken inside the write transaction, where writes are serial.
-pub fn stage(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
+/// `before` is the table as the transaction found it, before the write changed it.
+pub fn stage(tx: &Transaction<'_>, app: &App, before: &[(String, String)]) -> Result<Staged> {
+    let rows = rows(tx)?;
     Ok(Staged {
         generation: app.settings.next_generation(),
+        moved: wanted_by(app, before) != wanted_by(app, &rows),
+        rows,
+    })
+}
+
+/// As `stage`, for a write that does not know what it changed: it counts as a change of store.
+pub fn stage_unknown(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
+    Ok(Staged {
+        generation: app.settings.next_generation(),
+        moved: true,
         rows: rows(tx)?,
     })
 }
 
 impl Staged {
-    /// Backup requests read the attached store, so a destination change must finish before the reply.
+    /// Backup requests read the attached store, so a write that names another store waits until
+    /// the store in use follows the settings, and is answered after. A write that names none never
+    /// waits for a change of store under way, nor starts one; it tries a store that failed again
+    /// in the background.
     pub async fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
         super::housekeeping::wake(app);
-        let wanted = super::blobs::Wanted::of(&app.settings.live());
-        if app.blobs.follows(&wanted) {
+        if self.moved {
+            if app.follow_stores().await.is_err() {
+                let app = app.clone();
+                tokio::spawn(async move {
+                    app.db.writes_released().await;
+                    app.follow_stores().await.ok();
+                });
+            }
             return;
         }
-        if app.blobs.names(&wanted) {
+        let wanted = super::blobs::Wanted::of(&app.settings.live());
+        if !app.blobs.follows(&wanted) {
             let app = app.clone();
-            tokio::spawn(async move { app.follow_stores().await });
-        } else {
-            app.follow_stores().await;
+            tokio::spawn(async move { app.follow_stores_if_idle().await.ok() });
         }
     }
 }
@@ -167,7 +193,7 @@ async fn reload(app: &Arc<App>) {
     let numbering = app.clone();
     let staged = app
         .db
-        .write(Write::own(), move |tx| stage(tx, &numbering))
+        .write(Write::own(), move |tx| stage_unknown(tx, &numbering))
         .await;
     match staged {
         Ok(staged) => staged.publish(app).await,
@@ -188,8 +214,9 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
         let staged = doing
             .db
             .write(write, move |tx| {
+                let before = rows(tx)?;
                 write_rows(tx, &changes)?;
-                stage(tx, &writing).map(Some)
+                stage(tx, &writing, &before).map(Some)
             })
             .await?;
         Ok(((), staged))

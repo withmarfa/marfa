@@ -267,15 +267,26 @@ impl App {
     }
 
     /// Takes the store beside the disk that the live settings name, or tries again to take one
-    /// that could not be used.
-    pub async fn follow_stores(&self) {
+    /// that could not be used. It waits for a change of store under way.
+    pub async fn follow_stores(&self) -> Result<(), refusal::Refusal> {
         self.blobs
             .follow(
                 &self.db,
                 || blobs::Wanted::of(&self.settings.live()),
                 || self.clock.stamp(),
             )
-            .await;
+            .await
+    }
+
+    /// As `follow_stores`, except that it leaves a change of store under way to the one making it.
+    pub async fn follow_stores_if_idle(&self) -> Result<(), refusal::Refusal> {
+        self.blobs
+            .follow_if_idle(
+                &self.db,
+                || blobs::Wanted::of(&self.settings.live()),
+                || self.clock.stamp(),
+            )
+            .await
     }
 
     /// Raised once, when the stop begins; a stream reads it to end with `server_stopping`.

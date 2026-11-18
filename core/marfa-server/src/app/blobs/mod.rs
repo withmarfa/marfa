@@ -109,6 +109,12 @@ pub struct Link {
     pub ttl_seconds: u64,
 }
 
+/// The store backups are kept in.
+pub enum Kept {
+    Bucket { s3: Arc<S3>, prefix: String },
+    Folder(Arc<Folder>),
+}
+
 /// What the destination settings ask the store beside the disk to be.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Wanted {
@@ -427,41 +433,99 @@ impl Blobs {
 
     /// Whether the store in use is what `wanted` names, and could be used.
     pub fn follows(&self, wanted: &Wanted) -> bool {
-        self.names(wanted) && self.attached.load().trouble.is_none()
-    }
-
-    /// A failed attachment still identifies the settings that requested it.
-    pub fn names(&self, wanted: &Wanted) -> bool {
-        self.attached.load().wanted == *wanted
+        let attached = self.attached.load();
+        attached.wanted == *wanted && attached.trouble.is_none()
     }
 
     /// Takes the store `wanted` names in place of the one in use, or tries again to take one that
-    /// could not be used. Work that began with the old store keeps it until it ends.
+    /// could not be used, after any change of store already under way. `wanted` is read again
+    /// after each attach, and a store the settings no longer name is let go, so the store in use
+    /// ends as the last committed settings name it. Work that began with the old store keeps it
+    /// until it ends. Fails only when the store taken could not be recorded, and the store in use
+    /// is then troubled, never the old one.
     pub async fn follow(
         &self,
         db: &Db,
-        wanted: impl FnOnce() -> Wanted,
-        at: impl FnOnce() -> String,
-    ) {
+        wanted: impl Fn() -> Wanted,
+        at: impl Fn() -> String,
+    ) -> std::result::Result<(), Refusal> {
         let _one = self.following.lock().await;
-        // Read once the lock is held, so the last change of the settings is the one followed.
-        let wanted = wanted();
-        if self.follows(&wanted) {
-            return;
+        self.settle(db, wanted, at).await
+    }
+
+    /// As `follow`, except that it leaves a change of store under way to the one making it.
+    pub async fn follow_if_idle(
+        &self,
+        db: &Db,
+        wanted: impl Fn() -> Wanted,
+        at: impl Fn() -> String,
+    ) -> std::result::Result<(), Refusal> {
+        let Ok(_one) = self.following.try_lock() else {
+            return Ok(());
+        };
+        self.settle(db, wanted, at).await
+    }
+
+    async fn settle(
+        &self,
+        db: &Db,
+        wanted: impl Fn() -> Wanted,
+        at: impl Fn() -> String,
+    ) -> std::result::Result<(), Refusal> {
+        loop {
+            let named = wanted();
+            if self.follows(&named) {
+                return Ok(());
+            }
+            let next = attach(db, named.clone(), &self.instance, &self.kept).await;
+            if wanted() != named {
+                if let Some(folder) = &next.folder {
+                    folder.let_go();
+                }
+                continue;
+            }
+            return self.take(db, next, at()).await;
         }
-        let next = attach(db, wanted, &self.instance, &self.kept).await;
-        if let Err(refused) = record(db, &self.disk, &next, at()).await {
-            tracing::error!(%refused, "The stores in use could not be recorded; the old ones stay");
-            return;
-        }
+    }
+
+    /// Records `next` and puts it in use. One that cannot be recorded is not used: a store the
+    /// settings name that the server cannot record copies in is attached as trouble, in place of
+    /// the old one, which they no longer name.
+    async fn take(&self, db: &Db, next: Attached, at: String) -> std::result::Result<(), Refusal> {
+        let recorded = record(db, &self.disk, &next, at).await;
+        let (next, outcome) = match recorded {
+            Ok(()) => (next, Ok(())),
+            Err(refused) => {
+                tracing::error!(%refused, "The stores in use could not be recorded");
+                if let Some(folder) = &next.folder {
+                    folder.let_go();
+                }
+                let used = if next.wanted == Wanted::Disk {
+                    next
+                } else {
+                    Attached::troubled(
+                        next.wanted,
+                        Failure::start(format!(
+                            "The stores in use could not be recorded: {}",
+                            refused.message
+                        )),
+                    )
+                };
+                (used, Err(refused))
+            }
+        };
         match &next.trouble {
             Some(trouble) => tracing::error!("{trouble}"),
-            None => tracing::info!("The store beside the disk follows the settings"),
+            None if outcome.is_ok() => {
+                tracing::info!("The store beside the disk follows the settings");
+            }
+            None => {}
         }
         let old = self.attached.swap(Arc::new(next));
         if let Some(folder) = &old.folder {
             folder.let_go();
         }
+        outcome
     }
 
     /// Why the store the settings name is not in use, in the owner's words.
@@ -484,10 +548,15 @@ impl Blobs {
         self.attached.load().folder.clone()
     }
 
-    /// The object store's prefix, where one is in use.
-    pub fn bucket_prefix(&self) -> Option<String> {
-        match &self.attached.load().wanted {
-            Wanted::Bucket(settings) if self.s3().is_some() => Some(settings.prefix.clone()),
+    /// Where backups go, read from one attachment so that a change of store is seen whole.
+    pub fn kept(&self) -> Option<Kept> {
+        let attached = self.attached.load();
+        match (&attached.s3, &attached.folder, &attached.wanted) {
+            (Some(s3), _, Wanted::Bucket(settings)) => Some(Kept::Bucket {
+                s3: s3.clone(),
+                prefix: settings.prefix.clone(),
+            }),
+            (None, Some(folder), _) => Some(Kept::Folder(folder.clone())),
             _ => None,
         }
     }

@@ -46,32 +46,49 @@ describe("a destination set through /config", () => {
         "backup-destination-bucket",
         SETTINGS,
       );
-      const folder = tempFolder("marfa-backup-destination-");
       const local = await bootFreshServer(
         "backup-destination-folder",
         SETTINGS,
       );
       try {
-        for (const [server, write] of [
-          [store, objectStore()],
-          [local, { backup_path: folder }],
+        for (const [server, destination, unset] of [
+          [store, objectStore, { object_store_bucket: "" }],
+          [
+            local,
+            () => ({ backup_path: tempFolder("marfa-backup-destination-") }),
+            { backup_path: "" },
+          ],
         ] as const) {
-          const set = await clientsFor(server).operator.patchConfig(write);
-          expect(set.status, JSON.stringify(set.error)).toBe(200);
+          const { operator } = clientsFor(server);
           const owner = ownerOf(server);
 
+          // Each door follows a write of its own, sent as the very next request,
+          // from an instance with nowhere to put backups.
+          const first = await operator.patchConfig(destination());
+          expect(first.status, JSON.stringify(first.error)).toBe(200);
           const listed = await owner.listBackups();
           expect(listed.status, JSON.stringify(listed.error)).toBe(200);
           expect(listed.data.data).toEqual([]);
 
+          const cleared = await operator.patchConfig(unset);
+          expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+          const second = await operator.patchConfig(destination());
+          expect(second.status, JSON.stringify(second.error)).toBe(200);
           const taken = await owner.runBackup();
           expect(taken.status, JSON.stringify(taken.error)).toBe(200);
 
+          const clearedAgain = await operator.patchConfig(unset);
+          expect(clearedAgain.status, JSON.stringify(clearedAgain.error)).toBe(
+            200,
+          );
+          const third = await operator.patchConfig(destination());
+          expect(third.status, JSON.stringify(third.error)).toBe(200);
           const absent = await owner.restoreBackup(
             randomUUID(),
             "20260101T000000.000Z.json",
           );
-          expect(absent.error?.error.code).not.toBe("no_backup_destination");
+          expect(absent.status, JSON.stringify(absent.error)).toBe(404);
+          expect(absent.error?.error.code).toBe("backup_not_found");
         }
       } finally {
         await Promise.all([store.stop(), local.stop()]);

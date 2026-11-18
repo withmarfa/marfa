@@ -648,7 +648,8 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
             .write(&caller, "config.update", move |unit| {
                 unit.caller.require(Permission::ConfigManage)?;
                 let tx = unit.tx();
-                let before = rows_of(stored::rows(tx)?);
+                let held = stored::rows(tx)?;
+                let before = rows_of(held.clone());
                 let plan = Plan::of(&request, before);
                 if plan.private_addresses_change(&writing) {
                     unit.caller
@@ -679,7 +680,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                     instance::set_name(tx, name.as_deref())?;
                 }
                 unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
-                let staged = stored::stage(tx, &writing)?;
+                let staged = stored::stage(tx, &writing, &held)?;
                 let name = instance::stored_name(tx)?;
                 let mut answer = document(&writing, &plan.after, name);
                 if moved.sign_in_moves {
@@ -723,7 +724,8 @@ pub async fn adopt_sign_in_address(
         working
             .write(&Caller::Server, "config.update", move |unit| {
                 let tx = unit.tx();
-                let before = rows_of(stored::rows(tx)?);
+                let held = stored::rows(tx)?;
+                let before = rows_of(held.clone());
                 if before.get(key) == Some(&row) {
                     return Ok((Adopted::AlreadyStored, None));
                 }
@@ -738,7 +740,7 @@ pub async fn adopt_sign_in_address(
                     session::end_every(tx, &unit.at, &unit.caller)?;
                 }
                 unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
-                Ok((Adopted::Stored, Some(stored::stage(tx, &writing)?)))
+                Ok((Adopted::Stored, Some(stored::stage(tx, &writing, &held)?)))
             })
             .await
     })
