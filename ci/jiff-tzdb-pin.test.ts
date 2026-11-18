@@ -21,7 +21,7 @@ interface LockedPackage {
 
 /** The `jiff-tzdb` version the one `jiff` 1.x of a lockfile depends on. */
 function tzdbOfJiff(lock: string): string {
-  const { package: packages } = parseToml(lock) as {
+  const { package: packages } = parseToml(lock) as unknown as {
     package: LockedPackage[];
   };
   const jiffs = packages.filter(
