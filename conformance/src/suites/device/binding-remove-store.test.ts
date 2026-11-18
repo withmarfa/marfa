@@ -364,7 +364,10 @@ describe("removing a store", () => {
     const second = queue.ok ? queue.value[1].id : "";
     await device.forget();
     // The witness: the list as a whole is not read, though one write reads.
-    edit(device.store, `UPDATE queue SET payload = x'ff' WHERE id = '${second}'`);
+    edit(
+      device.store,
+      `UPDATE queue SET payload = x'ff' WHERE id = '${second}'`,
+    );
     const looked = await device.readUnsent();
     expect(looked.ok, "the queue read as a whole").toBe(false);
 
