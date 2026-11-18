@@ -320,6 +320,8 @@ describe("what the approval pages offer", () => {
       "schema.write",
       "items.purge",
       "backups.manage",
+      "config.manage",
+      "connectors.manage",
     ];
     const others = ["keys.mint", "webhooks.manage", "audit.read"];
     for (const [page, html] of await bothPages(

@@ -114,7 +114,7 @@ const POWERS: [(&str, PowerWords); 14] = [
         PowerWords {
             title: "See, take, adopt and restore backups",
             note: Some(
-                "Restoring adds the items, types and settings a backup holds, whatever else this app can reach.",
+                "Restoring adds the items, types and settings from any backup or archive this app chooses, including browser origins, rate limits and retention periods, whatever else it can reach.",
             ),
         },
     ),

@@ -1849,9 +1849,9 @@ Where a request names no permission, the server MUST NOT show the switch titled 
 
 ### `keys-and-oauth/approval-powers-marked`
 
-Where a request names `instance.maintain`, `schema.write`, `items.purge` or `backups.manage`, the server MUST mark each on the consent screen and the device approval page as unable to be undone, among the Choose access controls and in the words of the Full access choice.
+Where a request names `instance.maintain`, `schema.write`, `items.purge`, `backups.manage`, `config.manage` or `connectors.manage`, the server MUST mark each on the consent screen and the device approval page as unable to be undone, among the Choose access controls and in the words of the Full access choice.
 
-**Reason:** These delete data or definitions with no way back, and a person who chooses Full access hands them over without opening the controls. A restore is one of them: it removes for good the tombstone of each link and natural key an archived item takes, which archives do not carry, and it stores the archive's settings, so a short `trash_retention_days` it brings makes the next `trash-purge` job delete for good trashed items the instance would have kept.
+**Reason:** These delete data or definitions with no way back, and a person who chooses Full access hands them over without opening the controls. A restore is one of them: it removes for good the tombstone of each link and natural key an archived item takes and every tombstone of a type it registers, which archives do not carry, and it stores each archived setting the instance does not already store, so a short `trash_retention_days` it brings makes the next `trash-purge` job delete for good trashed items the instance would have kept. `config.manage` can set that same retention directly, and `connectors.manage` clears what a connector has saved.
 
 **Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`, `› says under Full access that a power can't be undone only where the request names one, on both pages`.
 

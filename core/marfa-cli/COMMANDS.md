@@ -165,7 +165,7 @@ marfa login [OPTIONS]
 | `--print-token` | Print the token set instead of keeping it in the keychain, which this leaves unread and unchanged. The server must come from --url, MARFA_API_URL or a profile. |
 | `--client-id <ID>` | The client id an earlier sign-in registered, where no keychain remembers it; without one the binary registers again. |
 | `--name <NAME>` | The name this sign-in registers under, which is sent to the server and shown to its owner among their sign-ins. Defaults to `marfa on` and this machine's host name without its domain. Giving it registers the binary again. |
-| `--fresh-sign-in` | Ask the owner to sign in again in the browser before approving, so the sign-in counts as recent for five minutes: restoring over the data and changing the sign-in address ask for one. |
+| `--fresh-sign-in` | Ask the owner to sign in again in the browser before approving, so the sign-in counts as recent for five minutes: restoring an archive or a backup, moving the sign-in address and changing `allow_private_addresses` ask for one. |
 
 ## logout
 

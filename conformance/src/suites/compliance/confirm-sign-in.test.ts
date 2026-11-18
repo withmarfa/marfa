@@ -15,9 +15,8 @@ import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js"
  * owner's browser session with a new one, created now, when the password or a
  * passkey shows the owner is there. A session's age is the server's clock
  * moved forward, or set back for the case of a session dated in the future.
- * Each case that needs a
- * sign-in from an address of its own takes the next one, so the per-address
- * sign-in limit never holds another case back.
+ * Each case that needs a sign-in from an address of its own takes the next
+ * one, so the per-address sign-in limit never holds another case back.
  */
 let server: FreshServer;
 let origin: string;
