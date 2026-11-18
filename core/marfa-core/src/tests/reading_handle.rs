@@ -866,10 +866,49 @@ fn a_clean_store_stays_unchanged_and_a_new_log_stays_empty_after_a_read() {
         assert_eq!(left.len(), 0, "a reader wrote into the log");
     }
 
-    let writable = store::open(&path).unwrap();
-    writable
-        .execute_batch("CREATE TABLE witness (x); INSERT INTO witness VALUES (1)")
+    // The witness: the same read through a writable open changes the file.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute("DELETE FROM meta WHERE key = ?1", [store::META_STORE_ID])
         .unwrap();
-    drop(writable);
-    assert!(std::fs::read(&path).unwrap() != before);
+    drop(conn);
+    assert!(!log.exists(), "the store is not checkpointed and clean");
+    let copy_into = |name: &str| {
+        let folder = dir.path().join(name);
+        std::fs::create_dir(&folder).unwrap();
+        let copy = folder.join("core.sqlite");
+        std::fs::copy(&path, &copy).unwrap();
+        copy
+    };
+    let (writable, read_only) = (copy_into("writable"), copy_into("read-only"));
+    let before = std::fs::read(&writable).unwrap();
+    assert!(before == std::fs::read(&read_only).unwrap());
+    let rows = |conn: &rusqlite::Connection| -> i64 {
+        conn.query_row(
+            "SELECT count(*) FROM meta WHERE key LIKE 'row-%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+
+    let conn = store::open(&writable).unwrap();
+    assert_eq!(rows(&conn), 50);
+    assert!(
+        store::meta_get(&conn, store::META_STORE_ID)
+            .unwrap()
+            .is_some()
+    );
+    drop(conn);
+    assert!(
+        std::fs::read(&writable).unwrap() != before,
+        "a writable open of a store with no id left it unchanged"
+    );
+
+    let reader = Core::open_reader(&read_only).unwrap();
+    assert_eq!(rows(&reader.conn().unwrap()), 50);
+    drop(reader);
+    assert!(
+        std::fs::read(&read_only).unwrap() == before,
+        "a reader of a store with no id changed it"
+    );
 }
