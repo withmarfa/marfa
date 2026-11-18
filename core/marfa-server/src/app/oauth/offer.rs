@@ -17,10 +17,11 @@ use crate::app::catalog::Catalog;
 pub const CHOOSE_TYPES: &str = "choose-types";
 pub const FULL_ACCESS: &str = "full";
 
-const CANNOT_BE_UNDONE: [Permission; 3] = [
+const CANNOT_BE_UNDONE: [Permission; 4] = [
     Permission::InstanceMaintain,
     Permission::SchemaWrite,
     Permission::ItemsPurge,
+    Permission::BackupsManage,
 ];
 
 #[derive(Clone, Copy, Debug)]

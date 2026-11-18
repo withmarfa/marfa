@@ -21,8 +21,7 @@ import { waitFor } from "../../utils/wait.js";
 /**
  * While `allow_private_addresses` is off, the heartbeat, the error webhook
  * and the object store reach only public addresses, as webhooks do, and only
- * the private local process or an app whose owner just signed in turns it
- * on. Every receiver here, and the run's
+ * the private local process turns it on. Every receiver here, and the run's
  * object store, listens on loopback; a receiver named `localhost` is a name
  * that leads there, which only a lookup can judge.
  */
@@ -52,7 +51,7 @@ function byName(url: string): string {
 
 describe("where the server may send", () => {
   it(
-    "refuses a key holding config.manage the switch turned on, which an app whose owner signed in just now turns on, and lets it turn the switch off",
+    "refuses a key holding config.manage the switch, which an app whose owner signed in just now changes",
     async () => {
       const server = await bootFreshServer("switch-authority", PUBLIC_ONLY);
       try {
@@ -76,25 +75,19 @@ describe("where the server may send", () => {
         expect(turned[SWITCH]).toBe(true);
         const same = await operator.patchConfig({ [SWITCH]: true });
         expect(same.status, JSON.stringify(same.error)).toBe(200);
-        // The key turns the switch off, which asks for no sign-in, but not
-        // while a private destination is stored.
+        // A private destination stored while the switch is on does not turn
+        // the key's refusal into a judgment of the settings.
         await setFrom(operator, {
           object_store_endpoint: "http://127.0.0.1:9",
         });
-        const held = await operator.patchConfig({ [SWITCH]: false });
-        expect(held.status).toBe(400);
-        expect(JSON.stringify(held.error)).toContain("object_store_endpoint");
+        const off = await operator.patchConfig({ [SWITCH]: false });
+        expect(off.status).toBe(403);
+        expect(off.error?.error.code).toBe("app_sign_in_required");
         expect(
           ((await operator.getConfig()).data as Record<string, unknown>)[
             SWITCH
           ],
         ).toBe(true);
-        await setFrom(operator, { object_store_endpoint: null });
-        const off = await operator.patchConfig({ [SWITCH]: false });
-        expect(off.status, JSON.stringify(off.error)).toBe(200);
-        expect(
-          (await operator.getConfig()).data as Record<string, unknown>,
-        ).not.toHaveProperty(SWITCH, true);
       } finally {
         await server.stop();
       }

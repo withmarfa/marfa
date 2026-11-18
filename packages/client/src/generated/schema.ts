@@ -5206,7 +5206,7 @@ export interface components {
             };
         };
         /**
-         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` lists and empties the trash and purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`, which holds every stored setting; `audit.read` reads the audit log; `grants.manage` lists, narrows and revokes other apps' access; `instance.read` reads health, what needs attention, metrics, housekeeping, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, cancels bulk jobs, updates the server and confirms the clock; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; `blobs.manage` manages every blob; `backups.manage` lists, takes, adopts and restores backups, and restores archives; and `sign_ins.manage` lists, renames and ends sign-ins, manages the owner's passkeys and changes the owner's password.
+         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` lists and empties the trash and purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`, which holds the stored settings; secret settings are never read back; `audit.read` reads the audit log; `grants.manage` lists, narrows and revokes other apps' access; `instance.read` reads health, what needs attention, metrics, housekeeping, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, cancels bulk jobs and confirms the clock; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; `blobs.manage` manages every blob; `backups.manage` lists, takes and adopts backups; and `sign_ins.manage` lists, renames and ends sign-ins and manages the owner's passkeys.
          * @enum {string}
          */
         Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "backups.manage" | "sign_ins.manage" | "keys.manage";
@@ -6481,7 +6481,7 @@ export interface components {
              */
             object_store_access_key_id?: string;
             /**
-             * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Turning it on needs a sign-in from the last five minutes. Absent: `false`.
+             * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
              * @default false
              */
             allow_private_addresses: boolean;
@@ -34983,7 +34983,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Turning it on needs a sign-in from the last five minutes. Absent: `false`.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
                      * @default false
                      */
                     allow_private_addresses?: boolean;
@@ -35210,7 +35210,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
-             *     - `app_sign_in_required`: the change moves the sign-in address or turns `allow_private_addresses` on, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
+             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {
@@ -35470,7 +35470,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string | null;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Turning it on needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
                      * @default false
                      */
                     allow_private_addresses?: boolean | null;
@@ -35697,7 +35697,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
-             *     - `app_sign_in_required`: the change moves the sign-in address or turns `allow_private_addresses` on, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
+             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {

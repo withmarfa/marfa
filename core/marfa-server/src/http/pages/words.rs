@@ -113,14 +113,16 @@ const POWERS: [(&str, PowerWords); 14] = [
         "backups.manage",
         PowerWords {
             title: "See, take, adopt and restore backups",
-            note: None,
+            note: Some(
+                "Restoring adds the items, types and settings a backup holds, whatever else this app can reach.",
+            ),
         },
     ),
     (
         "sign_ins.manage",
         PowerWords {
             title: "See, rename and end sign-ins and passkeys",
-            note: Some("Includes changing the owner's password and ending this app's own access."),
+            note: Some("Includes changing your password and ending this app's own access."),
         },
     ),
 ];

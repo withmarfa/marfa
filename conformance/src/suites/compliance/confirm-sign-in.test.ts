@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import { TEST_OWNER } from "../../utils/target.js";
@@ -13,7 +14,8 @@ import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js"
  * Confirming a stale sign-in in place: `POST /auth/confirm` replaces the
  * owner's browser session with a new one, created now, when the password or a
  * passkey shows the owner is there. A session's age is the server's clock
- * moved forward, and the clock only goes forward. Each case that needs a
+ * moved forward, or set back for the case of a session dated in the future.
+ * Each case that needs a
  * sign-in from an address of its own takes the next one, so the per-address
  * sign-in limit never holds another case back.
  */
@@ -185,6 +187,41 @@ describe("confirming with the password", () => {
     // The old session ended in the same step.
     expect((await get("/owner/passkeys", stale)).status).toBe(401);
     expect((await get("/owner/passkeys", renewed!)).status).toBe(200);
+  });
+
+  it("refuses a session dated later than the clock until the owner confirms, and then lets the change run", async () => {
+    const jump = async (ms: number): Promise<void> => {
+      const moved = await controlRequest(
+        server.controlSocket,
+        "/_control/test/clock",
+        { method: "POST", body: { jump_ms: ms } },
+      );
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    };
+    const session = await signIn();
+    // The witness: the session is recent before the clock goes back.
+    expect(await wasRecent(await removeAbsent(session))).toBe(true);
+    await jump(-2 * MINUTE);
+    try {
+      const refused = await removeAbsent(session);
+      expect(refused.status).toBe(403);
+      const refusal = (await refused.json()) as {
+        error: { code: string; details?: { needs?: string } };
+      };
+      expect(refusal.error.code).toBe("forbidden");
+      expect(refusal.error.details?.needs).toBe("recent_sign_in");
+
+      const confirmed = await confirm(
+        { password: TEST_OWNER.password },
+        session,
+      );
+      expect(confirmed.status).toBe(200);
+      const renewed = sessionCookie(confirmed);
+      expect(renewed).toBeTruthy();
+      expect(await wasRecent(await removeAbsent(renewed!))).toBe(true);
+    } finally {
+      await jump(2 * MINUTE);
+    }
   });
 
   it("dates the new session from the confirmation, so it goes stale five minutes after it", async () => {

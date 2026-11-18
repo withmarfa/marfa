@@ -214,7 +214,7 @@ The server MUST carry in the `instance.ndjson.gz` of an archive one `type_icon` 
 
 When `POST /restore` reads a `type_icon` line, the server MUST set that icon for the type only if the instance has no owner icon for it, count each icon set in `type_icons_added` and each icon left in `type_icons_skipped`, and replace no owner icon the instance already has.
 
-**Reason:** a restore adds what the instance lacks and replaces nothing, and an icon the owner chose here since the export is newer than the archive's.
+**Reason:** a restore keeps each icon the instance already holds and sets one only where there is none, and an icon the owner chose here since the export is newer than the archive's.
 
 **Tests:** `compliance/type-icons.test.ts › carries the owner's icons in an archive and adds back those the instance lacks, replacing none`.
 
@@ -246,7 +246,7 @@ The server MUST carry in the `instance.ndjson.gz` of an archive one `source` lin
 
 When `POST /restore` reads a `source` line, the server MUST set that name and mark on the source only if the instance has neither set on it, count each source set in `sources_added` and each line left in `sources_skipped`, and replace no name or mark the instance already has.
 
-**Reason:** a restore adds what the instance lacks and replaces nothing, and a name set here since the export is newer than the archive's.
+**Reason:** a restore keeps each name and mark the instance already holds and sets them only where there are none, and a name set here since the export is newer than the archive's.
 
 **Tests:** `compliance/source-names.test.ts › carries a named source in an archive and adds it back where the instance names none, replacing none`.
 
@@ -340,7 +340,7 @@ If an archive leaves out no line because it did not read, then the server MUST N
 
 When `POST /restore` reads an `enforcement` line, the server MUST store each of its settings (`strict_mode`, `source_allowlist`, `source_filter`) that the instance does not store, keep each that it does, and name each stored setting in `enforcement_added` and each kept one in `enforcement_skipped`.
 
-**Reason:** a restore adds what the instance lacks and replaces nothing (`archive/restore-settings`). An empty enforcement block holds no setting, so each archived one is added to it. Enforcement settings the instance stores that do not read keep every archived one out, since what they hold is not known.
+**Reason:** a restore keeps each enforcement setting the instance stores and stores only the rest (`archive/restore-settings`). An empty enforcement block holds no setting, so each archived one is added to it. Enforcement settings the instance stores that do not read keep every archived one out, since what they hold is not known.
 
 **Tests:** `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`.
 
@@ -348,7 +348,7 @@ When `POST /restore` reads an `enforcement` line, the server MUST store each of 
 
 When `POST /restore` reads a `setting` line, the server MUST store that setting only where the instance has none stored, and replace no setting the instance has.
 
-**Reason:** a restore adds what the instance lacks and replaces nothing, and a setting chosen here since the export is newer than the archive's.
+**Reason:** a restore keeps each setting row the instance holds and stores only those it lacks, and a setting chosen here since the export is newer than the archive's.
 
 **Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`.
 

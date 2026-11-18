@@ -315,7 +315,12 @@ describe("what the approval pages offer", () => {
   });
 
   it("marks the permissions that delete for good, and no other, on both pages", async () => {
-    const marked = ["instance.maintain", "schema.write", "items.purge"];
+    const marked = [
+      "instance.maintain",
+      "schema.write",
+      "items.purge",
+      "backups.manage",
+    ];
     const others = ["keys.mint", "webhooks.manage", "audit.read"];
     for (const [page, html] of await bothPages(
       `core.note:read ${[...marked, ...others].join(" ")}`,
