@@ -107,6 +107,7 @@ export async function runJob<T = Record<string, number>>(
 ): Promise<{
   result: T;
   outcome: string;
+  error: string | null;
   started_at: string;
   finished_at: string;
 }> {
@@ -123,6 +124,7 @@ export async function runJob<T = Record<string, number>>(
     return {
       result: res.data.result as T,
       outcome: res.data.outcome,
+      error: res.data.error ?? null,
       started_at: res.data.started_at,
       finished_at: res.data.finished_at,
     };

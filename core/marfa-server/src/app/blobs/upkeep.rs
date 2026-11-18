@@ -409,8 +409,31 @@ fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
     )
 }
 
-/// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
+/// Keep a failed settle visible even when file copying succeeds.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
+    let unsettled = match app.settle_stores(super::Retry::Settle).await {
+        Ok(()) => None,
+        Err(refused) => {
+            tracing::warn!(%refused, "The stores in use could not be brought to the settings");
+            Some(format!(
+                "The stores in use are not known to be the ones the settings name. {}",
+                refused.message
+            ))
+        }
+    };
+    let mut report = copy_missing(&app, &run).await?;
+    if let Some(unsettled) = unsettled {
+        report.failure = Some(match report.failure.take() {
+            Some(refused) => format!("{unsettled} {refused}"),
+            None => unsettled,
+        });
+        report.again = false;
+    }
+    Ok(report)
+}
+
+/// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
+async fn copy_missing(app: &Arc<App>, run: &Run) -> Result<Report> {
     let tuning = &app.settings.start.tuning;
     let (batch, batch_bytes) = (
         tuning.blob_replicate_batch,
@@ -443,7 +466,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             });
             continue;
         }
-        match replicate_one(&app, &target, &pair.blob, &mut unreachable, &mut shared).await? {
+        match replicate_one(app, &target, &pair.blob, &mut unreachable, &mut shared).await? {
             Replicated::Copied => {
                 copied += 1;
                 bytes = bytes.saturating_add(size);

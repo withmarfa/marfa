@@ -266,18 +266,6 @@ impl App {
         Ok(app)
     }
 
-    /// Takes the store beside the disk that the live settings name, or tries again to take one
-    /// that could not be used.
-    pub async fn follow_stores(&self) {
-        self.blobs
-            .follow(
-                &self.db,
-                || blobs::Wanted::of(&self.settings.live()),
-                || self.clock.stamp(),
-            )
-            .await;
-    }
-
     /// Raised once, when the stop begins; a stream reads it to end with `server_stopping`.
     pub fn stopping(&self) -> watch::Receiver<bool> {
         self.stop.subscribe()

@@ -56,6 +56,11 @@ macro_rules! point_list {
         HOLD_BLOB_WRITE = Hold "blob-write" None;
         HOLD_BLOB_DELETE = Hold "blob-delete" None;
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
+        HOLD_STORES_RECORD = Hold "stores-record" None;
+        HOLD_STORES_SWAP = Hold "stores-swap" None;
+        FAIL_STORES_RECORD = Fail "stores-record" Nth;
+        FAIL_STORES_RECORD_LOST = Fail "stores-record-lost" Nth;
+        FAIL_SETTINGS_RELOAD = Fail "settings-reload" Nth;
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
         FAIL_EXPORT_READ = Fail "export-read" Nth;
         FAIL_TABLE_ROWS_PAGE = Fail "table-rows-page" Write;

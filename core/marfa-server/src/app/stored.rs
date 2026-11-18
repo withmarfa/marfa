@@ -6,6 +6,7 @@ use std::sync::Arc;
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::access::Levers;
+use super::faults::FAIL_SETTINGS_RELOAD;
 use super::refusal::{Refusal, Result};
 use super::{App, provenance};
 use crate::db::Write;
@@ -123,11 +124,7 @@ impl Staged {
     pub fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
         super::housekeeping::wake(app);
-        let wanted = super::blobs::Wanted::of(&app.settings.live());
-        if !app.blobs.follows(&wanted) {
-            let app = app.clone();
-            tokio::spawn(async move { app.follow_stores().await });
-        }
+        app.ask_stores_to_follow();
     }
 }
 
@@ -158,18 +155,30 @@ where
     .map_err(|_| Refusal::internal("a settings change did not finish"))?
 }
 
-/// A write of its own: it waits for any write still running and follows it in the commit order.
-async fn reload(app: &Arc<App>) {
-    let numbering = app.clone();
+/// The writer orders this reload after any settings write still running.
+pub(crate) async fn reload(app: &Arc<App>) -> bool {
+    let (numbering, faults) = (app.clone(), app.faults.clone());
     let staged = app
         .db
-        .write(Write::own(), move |tx| stage(tx, &numbering))
+        .write(Write::own(), move |tx| {
+            if faults.fail(FAIL_SETTINGS_RELOAD, None) {
+                return Err(crate::db::io_refusal());
+            }
+            stage(tx, &numbering)
+        })
         .await;
     match staged {
-        Ok(staged) => staged.publish(app),
-        Err(_) => tracing::error!(
-            "The settings could not be read again after a commit of unknown outcome"
-        ),
+        Ok(staged) => {
+            staged.publish(app);
+            true
+        }
+        Err(_) => {
+            app.blobs.doubt_settings();
+            tracing::error!(
+                "The settings could not be read again after a commit of unknown outcome"
+            );
+            false
+        }
     }
 }
 

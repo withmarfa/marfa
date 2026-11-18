@@ -20,6 +20,7 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -32,13 +33,14 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
-    FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS,
-    HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie,
+    FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST,
+    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
+    HOLD_STORES_SWAP, Lie,
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{housekeeping, provenance, stored};
-use crate::db::{Db, Write};
+use crate::db::{Db, Write, io_refusal};
 use crate::failure::Failure;
 use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
@@ -147,6 +149,30 @@ struct Attached {
 }
 
 impl Attached {
+    /// Lets another server take the backup folder this attachment opened.
+    fn let_go(&self) {
+        if let Some(folder) = &self.folder {
+            folder.let_go();
+        }
+    }
+
+    /// What the stores record names attached beside the disk: each store's id, kind and locator.
+    fn recorded(&self) -> Vec<(String, &'static str, String)> {
+        let folder = self.folder.iter().map(|folder| {
+            let files = folder.files();
+            (
+                files.id().to_string(),
+                "folder",
+                files.root().display().to_string(),
+            )
+        });
+        let s3 = self
+            .s3
+            .iter()
+            .map(|s3| (s3.id().to_string(), "s3", s3.locator().to_string()));
+        folder.chain(s3).collect()
+    }
+
     fn troubled(wanted: Wanted, failure: Failure) -> Attached {
         let place = match wanted {
             Wanted::Folder(_) => "backup folder",
@@ -170,6 +196,12 @@ pub struct Blobs {
     attached: ArcSwap<Attached>,
     /// One change of store at a time.
     following: tokio::sync::Mutex<()>,
+    /// A follow is asked for and has not yet read the settings.
+    asked: AtomicBool,
+    /// The stores record may not name the store in use. Changed only under `following`.
+    record_doubted: AtomicBool,
+    /// Reloads of the settings that failed since the last one that published.
+    settings_doubted: AtomicU64,
     instance: String,
     /// The folders a backup folder must be outside of, each with what it is.
     kept: Vec<(&'static str, PathBuf)>,
@@ -327,41 +359,33 @@ async fn attach(
     }
 }
 
-/// Records the disk and `attached` as the stores in use, and every other store as detached.
-async fn record(
-    db: &Db,
-    disk: &Disk,
-    attached: &Attached,
-    at: String,
-) -> std::result::Result<(), Refusal> {
-    let rows: Vec<(String, &'static str, String)> = std::iter::once((
+type StoreRows = Vec<(String, &'static str, String)>;
+
+fn store_rows(disk: &Disk, attached: &Attached) -> StoreRows {
+    std::iter::once((
         disk.id().to_string(),
         "disk",
         disk.root().display().to_string(),
     ))
-    .chain(attached.folder.iter().map(|folder| {
-        let files = folder.files();
-        (
-            files.id().to_string(),
-            "folder",
-            files.root().display().to_string(),
-        )
-    }))
-    .chain(
-        attached
-            .s3
-            .iter()
-            .map(|s3| (s3.id().to_string(), "s3", s3.locator().to_string())),
-    )
-    .collect();
-    db.write(Write::own(), move |tx| {
-        for (id, kind, locator) in &rows {
-            rows::attach(tx, id, kind, locator, &at)?;
-        }
-        let kept: Vec<&str> = rows.iter().map(|(id, _, _)| id.as_str()).collect();
-        rows::detach_others(tx, &kept, &at)
-    })
-    .await
+    .chain(attached.recorded())
+    .collect()
+}
+
+/// Records `rows` as the stores in use, and every other store as detached.
+fn write_stores(tx: &rusqlite::Transaction<'_>, rows: &StoreRows, at: &str) -> Result<()> {
+    for (id, kind, locator) in rows {
+        rows::attach(tx, id, kind, locator, at)?;
+    }
+    let kept: Vec<&str> = rows.iter().map(|(id, _, _)| id.as_str()).collect();
+    rows::detach_others(tx, &kept, at)
+}
+
+/// What a record of the stores in use did.
+enum Recorded {
+    /// Recorded while the settings were at this generation.
+    At(u64),
+    /// The committed settings name another store, so nothing was written.
+    Superseded,
 }
 
 impl Blobs {
@@ -412,11 +436,17 @@ impl Blobs {
                 .await
                 .map_err(started)??,
         );
-        record(db, &disk, &attached, at).await.map_err(started)?;
+        let rows = store_rows(&disk, &attached);
+        db.write(Write::own(), move |tx| write_stores(tx, &rows, &at))
+            .await
+            .map_err(started)?;
         Ok(Blobs {
             disk,
             attached: ArcSwap::from_pointee(attached),
             following: tokio::sync::Mutex::new(()),
+            asked: AtomicBool::new(false),
+            record_doubted: AtomicBool::new(false),
+            settings_doubted: AtomicU64::new(0),
             instance: instance.to_string(),
             kept,
             gate: Arc::new(Gate::default()),
@@ -425,39 +455,25 @@ impl Blobs {
         })
     }
 
-    /// Whether the store in use is what `wanted` names, and could be used.
-    pub fn follows(&self, wanted: &Wanted) -> bool {
-        let attached = self.attached.load();
-        attached.wanted == *wanted && attached.trouble.is_none()
+    /// Whether no record failure or failed settings reload remains unresolved.
+    pub fn settled(&self) -> bool {
+        !self.record_doubted.load(Ordering::SeqCst)
+            && self.settings_doubted.load(Ordering::SeqCst) == 0
     }
 
-    /// Takes the store `wanted` names in place of the one in use, or tries again to take one that
-    /// could not be used. Work that began with the old store keeps it until it ends.
-    pub async fn follow(
-        &self,
-        db: &Db,
-        wanted: impl FnOnce() -> Wanted,
-        at: impl FnOnce() -> String,
-    ) {
-        let _one = self.following.lock().await;
-        // Read once the lock is held, so the last change of the settings is the one followed.
-        let wanted = wanted();
-        if self.follows(&wanted) {
-            return;
-        }
-        let next = attach(db, wanted, &self.instance, &self.kept).await;
-        if let Err(refused) = record(db, &self.disk, &next, at()).await {
-            tracing::error!(%refused, "The stores in use could not be recorded; the old ones stay");
-            return;
-        }
-        match &next.trouble {
-            Some(trouble) => tracing::error!("{trouble}"),
-            None => tracing::info!("The store beside the disk follows the settings"),
-        }
-        let old = self.attached.swap(Arc::new(next));
-        if let Some(folder) = &old.folder {
-            folder.let_go();
-        }
+    /// Marks the live settings as not known, after a change whose reload did not publish.
+    pub fn doubt_settings(&self) {
+        self.settings_doubted.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Held while the store in use changes, or while its record is replaced.
+    pub(crate) async fn changing(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.following.lock().await
+    }
+
+    /// The caller must hold `changing`.
+    pub(crate) fn doubt_record(&self) {
+        self.record_doubted.store(true, Ordering::SeqCst);
     }
 
     /// Why the store the settings name is not in use, in the owner's words.
@@ -508,6 +524,24 @@ impl Blobs {
         let forgotten = rows::forget_store(tx, old, at)?;
         rows::attach(tx, id, "folder", locator, at)?;
         Ok(forgotten)
+    }
+
+    pub fn check_adoptable(
+        tx: &rusqlite::Transaction<'_>,
+        app: &App,
+        root: &Path,
+        old: &str,
+    ) -> Result<()> {
+        let named = Wanted::of(&app.settings.candidate(&stored::rows(tx)?));
+        let recorded = rows::attached_folder(tx)?;
+        if named == Wanted::Folder(root.to_path_buf()) && recorded.as_deref() == Some(old) {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::Conflict,
+            "The backup folder changed while it was being adopted, so nothing was adopted. Try \
+             again.",
+        ))
     }
 
     /// The store backups name their files in: the object store or the backup folder.
@@ -1011,7 +1045,220 @@ impl Intake {
     }
 }
 
+/// Whether a follow tries again to take a store the settings name that could not be used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Retry {
+    Trouble,
+    /// Only brings the store in use and its record to the committed settings.
+    Settle,
+}
+
 impl App {
+    /// A queued follow covers requests made before it reads the settings.
+    pub fn ask_stores_to_follow(self: &Arc<App>) {
+        if !self.blobs.asked.swap(true, Ordering::SeqCst) {
+            let app = self.clone();
+            tokio::spawn(async move {
+                let _ = app.follow_stores(Retry::Trouble).await;
+            });
+        }
+    }
+
+    /// Reads the live settings again if a reload failed, then follows the committed settings.
+    /// Fails while a reload has not published since the last one that failed.
+    pub async fn settle_stores(self: &Arc<App>, retry: Retry) -> Result<()> {
+        let doubted = self.blobs.settings_doubted.load(Ordering::SeqCst);
+        if doubted > 0 && stored::reload(self).await {
+            let _ = self.blobs.settings_doubted.compare_exchange(
+                doubted,
+                0,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+        }
+        self.follow_stores(retry).await?;
+        if self.blobs.settings_doubted.load(Ordering::SeqCst) > 0 {
+            return Err(Refusal::new(
+                Code::BlobStoreUnavailable,
+                "The settings could not be read again after a change of them whose outcome is \
+                 not known.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The store the committed settings name beside the disk.
+    async fn named_store(self: &Arc<App>) -> Result<Wanted> {
+        let rows = self.db.read(stored::rows).await?;
+        Ok(Wanted::of(&self.settings.candidate(&rows)))
+    }
+
+    /// Records `attached` as the stores in use, unless the committed settings name another.
+    async fn record_stores(self: &Arc<App>, attached: &Attached) -> Result<Recorded> {
+        self.faults.hold(HOLD_STORES_RECORD, None).await;
+        let (app, wanted) = (self.clone(), attached.wanted.clone());
+        let (rows, at) = (store_rows(&self.blobs.disk, attached), self.clock.stamp());
+        let recorded = self
+            .db
+            .write(Write::own(), move |tx| {
+                let named = Wanted::of(&app.settings.candidate(&stored::rows(tx)?));
+                if named != wanted {
+                    return Ok(Recorded::Superseded);
+                }
+                let generation = app.settings.generation();
+                write_stores(tx, &rows, &at)?;
+                if app.faults.fail(FAIL_STORES_RECORD, None) {
+                    return Err(io_refusal());
+                }
+                Ok(Recorded::At(generation))
+            })
+            .await?;
+        if matches!(recorded, Recorded::At(_)) && self.faults.fail(FAIL_STORES_RECORD_LOST, None) {
+            return Err(Refusal {
+                commit_failed: true,
+                ..io_refusal()
+            });
+        }
+        Ok(recorded)
+    }
+
+    /// An adopt may have recorded a new ID without finishing its claim on the folder.
+    pub(crate) async fn retake_folder(&self, folder: &Arc<Folder>) -> Result<()> {
+        let deadline = self.blobs.check();
+        let late = || {
+            Refusal::new(
+                Code::BlobStoreUnavailable,
+                format!(
+                    "The backup folder {} did not answer in time, so the store it holds is not \
+                     known. Check that its disk is mounted and answering, then try again.",
+                    folder.root().display()
+                ),
+            )
+        };
+        if folder.claim_unended() {
+            return Err(late());
+        }
+        let looked = folder.clone();
+        let reachable = tokio::time::timeout(
+            deadline,
+            tokio::task::spawn_blocking(move || looked.reachable()),
+        )
+        .await
+        .map_err(|_| late())?;
+        if joined(reachable)? {
+            return Ok(());
+        }
+        let files = folder.files();
+        let locator = files.root().display().to_string();
+        let recorded = self
+            .db
+            .read(move |tx| rows::folder_at(tx, &locator))
+            .await?;
+        let Some(id) = recorded.filter(|id| id != files.id()) else {
+            return Ok(());
+        };
+        match folder.claim_within(id, deadline).await {
+            None => Err(late()),
+            Some(Ok(())) => Ok(()),
+            Some(Err(error)) => {
+                tracing::warn!(%error, "The backup folder could not take the store the record names");
+                Ok(())
+            }
+        }
+    }
+
+    /// Its own task keeps cancellation from separating the record and swap.
+    async fn follow(self: &Arc<App>, retry: Retry) -> Result<()> {
+        let blobs = &self.blobs;
+        let _one = blobs.following.lock().await;
+        blobs.asked.store(false, Ordering::SeqCst);
+        let mut tried: Option<Wanted> = None;
+        let mut kept: Option<Arc<Attached>> = None;
+        loop {
+            let wanted = match self.named_store().await {
+                Ok(wanted) => wanted,
+                Err(refused) => {
+                    if let Some(next) = kept.take() {
+                        next.let_go();
+                    }
+                    blobs.doubt_record();
+                    tracing::error!(%refused, "The settings could not be read to follow them");
+                    return Err(unavailable());
+                }
+            };
+            if let Some(stale) = kept.take_if(|next| next.wanted != wanted) {
+                stale.let_go();
+            }
+            let current = blobs.attached.load_full();
+            let next = match kept.take() {
+                Some(next) => next,
+                None if current.wanted == wanted
+                    && (current.trouble.is_none()
+                        || retry == Retry::Settle
+                        || tried.as_ref() == Some(&wanted)) =>
+                {
+                    if !blobs.record_doubted.load(Ordering::SeqCst) {
+                        return Ok(());
+                    }
+                    if let Some(folder) = &current.folder
+                        && let Err(refused) = self.retake_folder(folder).await
+                    {
+                        tracing::error!(%refused, "The backup folder in use could not be checked against its record");
+                        return Err(unavailable());
+                    }
+                    match self.record_stores(&current).await {
+                        Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),
+                        Ok(Recorded::Superseded) => {}
+                        Err(refused) => {
+                            tracing::error!(%refused, "The stores in use could not be recorded");
+                            return Err(unavailable());
+                        }
+                    }
+                    continue;
+                }
+                None => {
+                    tried = Some(wanted.clone());
+                    Arc::new(attach(&self.db, wanted, &blobs.instance, &blobs.kept).await)
+                }
+            };
+            let generation = match self.record_stores(&next).await {
+                Ok(Recorded::At(generation)) => generation,
+                Ok(Recorded::Superseded) => {
+                    next.let_go();
+                    continue;
+                }
+                Err(refused) => {
+                    next.let_go();
+                    blobs.doubt_record();
+                    tracing::error!(%refused, "The stores in use could not be recorded; the old ones stay");
+                    return Err(unavailable());
+                }
+            };
+            self.faults.hold(HOLD_STORES_SWAP, None).await;
+            let swapped = self
+                .settings
+                .unless_staged(generation, || blobs.attached.swap(next.clone()));
+            let Some(old) = swapped else {
+                // A change staged after the record may name another store; it is read again.
+                blobs.doubt_record();
+                kept = Some(next);
+                continue;
+            };
+            blobs.record_doubted.store(false, Ordering::SeqCst);
+            match &next.trouble {
+                Some(trouble) => tracing::error!("{trouble}"),
+                None => tracing::info!("The store beside the disk follows the settings"),
+            }
+            old.let_go();
+        }
+    }
+
+    /// Follows the committed settings on a task of its own, and waits for it.
+    pub async fn follow_stores(self: &Arc<App>, retry: Retry) -> Result<()> {
+        let app = self.clone();
+        joined(tokio::spawn(async move { app.follow(retry).await }).await)?
+    }
+
     /// Whether the caller may upload, on the types registered now.
     pub async fn check_upload(&self, caller: &Caller) -> Result<()> {
         let cache = self.catalog_handle();

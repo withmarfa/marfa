@@ -29,9 +29,11 @@ use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
-use super::blobs::{Blob, Hash, folder_shortfall};
+use super::blobs::{Blob, Hash, Retry, folder_shortfall};
 use super::clock::Stamp;
-use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE};
+use super::faults::{
+    HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
+};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
@@ -1279,6 +1281,17 @@ impl App {
     /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
     pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         caller.require(Permission::BackupsManage)?;
+        let (app, caller) = (self.clone(), caller.clone());
+        tokio::spawn(super::provenance::carried(async move {
+            app.adopting(&caller).await
+        }))
+        .await
+        .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
+    }
+
+    /// The follow lock prevents another follow from recording the old folder ID.
+    async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
+        let _changing = self.blobs.changing().await;
         let destination = self.destination()?;
         let Destination::Folder(folder) = &destination else {
             return Err(Refusal::new(
@@ -1289,11 +1302,35 @@ impl App {
         let Ok(_running) = self.backups.running.try_lock() else {
             return Err(running(self.backups.restoring.load(Ordering::Acquire)));
         };
-        let looked = folder.clone();
-        let found = blocking(move || looked.adoptable())
-            .await
-            .map_err(|error| destination.unreachable("looking at the folder to adopt", &error))?;
         let root = folder.root().display().to_string();
+        let unanswered = |what: &str| {
+            Refusal::new(
+                Code::BlobStoreUnavailable,
+                format!(
+                    "The backup folder {root} {what}. Check that its disk is mounted and \
+                     answering, then try again."
+                ),
+            )
+        };
+        if folder.claim_unended() {
+            return Err(unanswered(
+                "has not answered an earlier adopt, so nothing was adopted",
+            ));
+        }
+        let looked = folder.clone();
+        let found = tokio::time::timeout(self.blobs.check(), blocking(move || looked.adoptable()))
+            .await
+            .map_err(|_| unanswered("did not answer in time, so nothing was adopted"))?
+            .map_err(|error| {
+                tracing::warn!(%error, "The backup folder could not be looked at to adopt it");
+                Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {root} failed while it was looked at, so nothing was \
+                         adopted: {error}"
+                    ),
+                )
+            })?;
         let old = folder.files();
         match found {
             Adoptable::Unmarked => {}
@@ -1329,13 +1366,16 @@ impl App {
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
         let (forgotten, new_id) = (old_id.clone(), id.clone());
-        let standing = caller.clone();
-        let (copies, backups) = self
+        let (standing, checking, named) =
+            (caller.clone(), self.clone(), folder.root().to_path_buf());
+        self.faults.hold(HOLD_STORES_RECORD, None).await;
+        let written = self
             .db
             .write(Write::own(), move |tx| {
                 standing
                     .current(tx, &at)?
                     .require(Permission::BackupsManage)?;
+                super::blobs::Blobs::check_adoptable(tx, &checking, &named, &forgotten)?;
                 let backups = forget_backups(tx, &forgotten)?;
                 let copies = super::blobs::Blobs::replace_folder_store(
                     tx, &forgotten, &new_id, &locator, &at,
@@ -1343,22 +1383,48 @@ impl App {
                 housekeeping::bring_forward(tx, REPLICATION, &at)?;
                 Ok((copies, backups))
             })
-            .await?;
-        let (claimed, new_id) = (folder.clone(), id.clone());
-        blocking(move || claimed.claim(&new_id))
-            .await
-            .map_err(|error| {
-                Refusal::new(
+            .await;
+        let (copies, backups) = match written {
+            Ok(counted) => counted,
+            Err(refusal) => {
+                if refusal.commit_failed
+                    && let Err(refused) = self.retake_folder(folder).await
+                {
+                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
+                    self.blobs.doubt_record();
+                }
+                return Err(refusal);
+            }
+        };
+        self.faults.hold(HOLD_STORES_SWAP, None).await;
+        let forgot = format!(
+            "The old store's {} and {} were forgotten.",
+            counted(backups, "backup", "backups"),
+            counted(copies, "file copy", "file copies"),
+        );
+        match folder.claim_within(id.clone(), self.blobs.check()).await {
+            Some(Ok(())) => {}
+            Some(Err(error)) => {
+                return Err(Refusal::new(
                     Code::BlobStoreUnavailable,
                     format!(
                         "The backup folder {root} could not take the new store's marker: {error}. \
-                         The old store's {} and {} were forgotten. Make the folder writable, \
-                         then run `marfa backups folder adopt` again.",
-                        counted(backups, "backup", "backups"),
-                        counted(copies, "file copy", "file copies"),
+                         {forgot} Make the folder writable, then run `marfa backups folder adopt` \
+                         again."
                     ),
-                )
-            })?;
+                ));
+            }
+            None => {
+                if let Err(refused) = self.retake_folder(folder).await {
+                    tracing::error!(%refused, "An adopt whose claim did not answer left the backup folder unchecked");
+                    self.blobs.doubt_record();
+                }
+                return Err(unanswered(&format!(
+                    "did not answer in time when it was given the new store's marker. {forgot} \
+                     Backups wait until it answers"
+                )));
+            }
+        }
         tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
         Ok(json!({
             "store_id": id,
@@ -1729,8 +1795,14 @@ async fn refuse_if_gone(app: &App, store: String, name: String, asker: Caller) {
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<Outcome> {
-    if app.blobs.trouble().is_some() {
-        app.follow_stores().await;
+    if app.blobs.trouble().is_some() || !app.blobs.settled() {
+        app.settle_stores(Retry::Trouble).await?;
+        if !app.blobs.settled() {
+            return Err(Refusal::new(
+                Code::BlobStoreUnavailable,
+                "The stores in use are not known to be the ones the settings name; try again.",
+            ));
+        }
     }
     let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {

@@ -86,6 +86,30 @@ If `stores/missing-folder-refused` or `stores/missing-folder-unknown-bucket` ref
 
 **Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`, `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`.
 
+### `stores/attached-follows-settings`
+
+When a run of `blob-replicate` ends with the outcome `succeeded`, the server MUST list as attached in `GET /blobs/stores`, beside the disk, only the store that the last write to `/config` to change `backup_path` or an `object_store_` setting names, and none where that store cannot be used.
+
+**Reason:** an attach that ends after a later write has changed the settings would otherwise leave the server keeping copies and backups in a store the owner no longer names.
+
+**Tests:** `compliance/store-follows-settings.test.ts › lists only the folder the last write to /config names once blob-replicate runs, when the attach an earlier write started ends after it`.
+
+### `stores/attached-follows-settings-failed`
+
+If a run of `blob-replicate` cannot bring what `GET /blobs/stores` lists as attached to what `stores/attached-follows-settings` requires, then the server MUST end that run with the outcome `failed` and an `error`.
+
+**Reason:** a run that succeeded while the server still keeps copies and backups in a store the owner no longer names would tell the owner that the change took effect.
+
+**Tests:** `compliance/store-follows-settings.test.ts › ends blob-replicate as failed while the record of the folder the last write to /config names cannot be written, and lists that folder once it can`.
+
+### `stores/attached-follows-settings-unread`
+
+If a run of `blob-replicate` cannot read the settings again after a write to `/config` whose outcome the server could not confirm, then the server MUST end that run with the outcome `failed` and an `error`.
+
+**Reason:** until the server reads its settings again, it does not know which settings it acts on, so a run that succeeded would tell the owner that the change took effect.
+
+**Tests:** `compliance/store-follows-settings.test.ts › ends blob-replicate as failed while the settings cannot be read again after a write to /config of unknown outcome, and as succeeded once they can`.
+
 ### `stores/detached-listed`
 
 When the configuration no longer names a store, the server MUST go on listing it with `detached_at` set to the time it was found detached.
