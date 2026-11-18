@@ -923,9 +923,10 @@ impl Http {
 
     /// Only an attributed credential refusal leaves the original `401` as
     /// the answer. Local credential failures have no server verdict.
-    fn renewed(&self, sent: &str) -> Result<Option<String>, CoreError> {
-        match self.renewal(sent) {
+    fn renewed(&self, sent: &str, before: Before<'_>) -> Result<Option<String>, CoreError> {
+        match self.renewal(sent, before) {
             Ok(fresh) => Ok(fresh),
+            Err(CoreError::Canceled) => Err(CoreError::Canceled),
             Err(CoreError::Unauthorized { .. }) => Ok(None),
             // `not_answerable` is only the copy's word on a count, which a renewal never is.
             Err(error) if error.kind() == CoreErrorKind::NotAnswerable => {
@@ -937,7 +938,7 @@ impl Http {
         }
     }
 
-    fn renewal(&self, sent: &str) -> Result<Option<String>, CoreError> {
+    fn renewal(&self, sent: &str, before: Before<'_>) -> Result<Option<String>, CoreError> {
         let Some(renew) = self.renew.get() else {
             return Ok(None);
         };
@@ -951,6 +952,11 @@ impl Http {
         let current = self.authorization();
         if current != sent {
             return Ok(Some(current));
+        }
+        // A call that waited here may have been stopped while another
+        // renewal ran.
+        if let Some(before) = before {
+            before(Stage::Renewal)?;
         }
         let renewed = {
             let _lifted = EndsBy::lifted();
@@ -995,7 +1001,7 @@ impl Http {
             if let Some(before) = before {
                 before(Stage::Renewal)?;
             }
-            if let Some(fresh) = self.renewed(&sent)? {
+            if let Some(fresh) = self.renewed(&sent, before)? {
                 self.refuse_if_let_go()?;
                 if let Some(before) = before {
                     before(Stage::Attempt)?;
@@ -2030,7 +2036,7 @@ impl Http {
                     && header(&response, CONTRACT_HEADER).as_deref()
                         == Some(CONTRACT_VERSION.to_string().as_str())
                 {
-                    self.renewed(sent)?;
+                    self.renewed(sent, None)?;
                 }
                 response
             }

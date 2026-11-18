@@ -1005,7 +1005,12 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
 
-/// The instance may change during credential renewal.
+/// The instance may change during credential renewal. The root is read on the
+/// calling thread, so a stop raised meanwhile ends the call `Canceled` once
+/// the read returns, within the transport's own timeout, and drops its answer:
+/// a thread left behind would hold the copy's writer lock after the core was
+/// dropped. The stop is read again once the instance is confirmed, which can
+/// wait on the store, so no request follows a stop raised meanwhile.
 pub(crate) fn confirm_each_attempt<'a>(
     core: &'a Core,
     http: &'a Http,
@@ -1014,7 +1019,15 @@ pub(crate) fn confirm_each_attempt<'a>(
     move |stage| {
         refuse_if_stopped(stop)?;
         match stage {
-            Stage::Attempt => refuse_another_instance_until(core, http, stop),
+            Stage::Attempt => {
+                let Some(generation) = held_generation(core)? else {
+                    return Ok(());
+                };
+                let served = http.served();
+                refuse_if_stopped(stop)?;
+                confirm_served(core, &served?, generation)?;
+                refuse_if_stopped(stop)
+            }
             Stage::Renewal => Ok(()),
         }
     }
@@ -1027,14 +1040,23 @@ pub(crate) fn refuse_another_instance_until(
     http: &Http,
     stop: &AtomicBool,
 ) -> Result<()> {
-    let generation = {
-        let conn = core.conn()?;
-        if store::meta_get(&conn, store::META_INSTANCE_ID)?.is_none() {
-            return Ok(());
-        }
-        reach::generation(&conn)?
+    let Some(generation) = held_generation(core)? else {
+        return Ok(());
     };
     let served = ask_unless_stopped(stop, http, Http::served)?;
+    confirm_served(core, &served, generation)
+}
+
+/// The generation of a copy that names its instance.
+fn held_generation(core: &Core) -> Result<Option<u64>> {
+    let conn = core.conn()?;
+    if store::meta_get(&conn, store::META_INSTANCE_ID)?.is_none() {
+        return Ok(None);
+    }
+    reach::generation(&conn).map(Some)
+}
+
+fn confirm_served(core: &Core, served: &crate::http::Served, generation: u64) -> Result<()> {
     same_instance(core, &served.instance_id, generation)?;
     match core.handle() {
         Handle::Writer => store::note_request_limit(&*core.conn()?, served.max_request_bytes),

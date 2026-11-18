@@ -795,3 +795,140 @@ fn a_reading_handle_and_the_writer_at_a_moved_origin_both_send_at_once() {
     assert_eq!(server.seen("/types").len(), 8);
     assert_eq!(origin(&writer), server.url());
 }
+
+#[test]
+fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = Scripted::start();
+    answers(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    let started = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&started);
+    core.renew_credential_with(Box::new(move |_| {
+        if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            return Err(CoreError::Network("the renewal failed".into()));
+        }
+        Ok("fresh".into())
+    }));
+    let paths = [format!("/items/{ITEM}"), format!("/items/{OTHER_ITEM}")];
+    for path in &paths {
+        renewed_once(&server, path, scripted::refusal(404, "not_found"));
+    }
+    let stop = AtomicBool::new(false);
+    let http = core.http().unwrap();
+    let confirm = crate::catch_up::confirm_each_attempt(&core, http, &stop);
+    let ended = std::thread::scope(|scope| {
+        let lookups =
+            [ITEM, OTHER_ITEM].map(|id| scope.spawn(|| http.item_checked(id, Some(&confirm))));
+        for path in &paths {
+            server.wait_for(path, 1, std::time::Duration::from_secs(2));
+        }
+        while started.load(Ordering::SeqCst) == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        stop.store(true, Ordering::SeqCst);
+        lookups.map(|lookup| lookup.join().unwrap().unwrap_err())
+    });
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "a lookup renewed the credential after the stop"
+    );
+    assert!(
+        ended
+            .iter()
+            .any(|error| matches!(error, CoreError::Canceled)),
+        "{ended:?}"
+    );
+    assert!(
+        ended
+            .iter()
+            .any(|error| matches!(error, CoreError::RenewalFailed(_))),
+        "the witness did not fail a renewal: {ended:?}"
+    );
+}
+
+#[test]
+fn a_stop_raised_while_the_instance_check_waits_for_the_store_sends_no_item_request() {
+    for retried in [false, true] {
+        let server = Scripted::start();
+        answers(&server);
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+        renew(&core);
+        let path = format!("/items/{ITEM}");
+        if retried {
+            renewed_once(&server, &path, scripted::refusal(404, "not_found"));
+        }
+        let roots = if retried { 2 } else { 1 };
+        server.on("/", slowly(vec![scripted::root(scripted::INSTANCE); roots]));
+        let stop = AtomicBool::new(false);
+        let error = std::thread::scope(|scope| {
+            let looking =
+                scope.spawn(|| with_resolver(&core, &stop, |resolver| resolver.resolve(ITEM)));
+            if retried {
+                server.wait_for(&path, 1, std::time::Duration::from_secs(2));
+            }
+            server.wait_for("/", roots, std::time::Duration::from_secs(2));
+            let held = core.conn().unwrap();
+            std::thread::sleep(SLOW + std::time::Duration::from_millis(200));
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(held);
+            looking.join().unwrap().unwrap_err()
+        });
+        assert!(matches!(error, CoreError::Canceled), "{retried}: {error:?}");
+        assert_eq!(
+            server.seen(&path).len(),
+            usize::from(retried),
+            "{retried}: an item request was sent after the stop"
+        );
+    }
+}
+
+#[test]
+fn a_core_dropped_after_a_stopped_root_read_leaves_the_copy_to_open_as_the_writer() {
+    let server = Scripted::start();
+    answers(&server);
+    let released = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/",
+        vec![
+            scripted::root(scripted::INSTANCE),
+            scripted::Answer::WaitFor {
+                ready: Arc::clone(&released),
+                answer: Box::new(scripted::root(scripted::INSTANCE)),
+            },
+        ],
+    );
+    let (dir, writer, reader) = moved(&server, scripted::INSTANCE);
+    drop(reader);
+    let stop = AtomicBool::new(false);
+    let error = std::thread::scope(|scope| {
+        let looking =
+            scope.spawn(|| with_resolver(&writer, &stop, |resolver| resolver.resolve(ITEM)));
+        server.wait_for("/", 2, std::time::Duration::from_secs(2));
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let late = Arc::clone(&released);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            late.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        looking.join().unwrap().unwrap_err()
+    });
+    assert!(matches!(error, CoreError::Canceled), "{error:?}");
+    assert!(server.seen(&format!("/items/{ITEM}")).is_empty());
+    drop(writer);
+    let reopened = Core::open(
+        dir.path().join("core.sqlite"),
+        Some(Server {
+            url: server.url(),
+            key: "k".into(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(reopened.handle(), Handle::Writer);
+}
