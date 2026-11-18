@@ -1,9 +1,5 @@
-use std::future::{Future, poll_fn};
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::task::Poll;
 use std::time::Duration;
 
 use futures_util::FutureExt;
@@ -18,7 +14,7 @@ use super::schedule::{self, Finish, Wanted};
 use super::{Active, Ended, Job, Report, Run};
 use crate::db::Write;
 use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
-use crate::telemetry::{Fault, Finished};
+use crate::telemetry::{Fault, Finished, caught};
 
 /// How long after a pass that failed the next one waits.
 const RETRY: Duration = Duration::from_secs(1);
@@ -215,22 +211,6 @@ async fn while_restoring(app: &Arc<App>) {
         let left = u64::try_from(next.saturating_sub(app.clock.now_ms())).unwrap_or(0);
         tokio::time::sleep(Duration::from_millis(left)).await;
     }
-}
-
-/// Polls `future` so that a panic in it is caught on the thread the panic hook
-/// noted it on, and the task goes on.
-async fn caught<F: Future>(future: F) -> std::result::Result<F::Output, Arc<Fault>> {
-    let mut future = pin!(future);
-    poll_fn(
-        |context| match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(context))) {
-            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
-            Ok(Poll::Pending) => Poll::Pending,
-            Err(_) => Poll::Ready(Err(Arc::new(Fault::panicked(
-                "a housekeeping run panicked",
-            )))),
-        },
-    )
-    .await
 }
 
 struct Failed {

@@ -9,7 +9,7 @@ use serde_json::json;
 use super::rows::Held;
 use super::s3::S3;
 use super::store::{self, Answer, Failed, Store};
-use super::{App, Hash, folder_shortfall, rows, shortfall};
+use super::{App, Hash, Wanted, folder_shortfall, rows, shortfall};
 use crate::app::access::Caller;
 use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie, Volume};
@@ -687,9 +687,15 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Read from `tx`, since the live settings lag a committed change. Unless `surveyed`, a file
-/// with a copy where backups go stays.
+/// Read from `tx`, since the live settings lag a committed change. While the store they name is
+/// not the usable one in use, or the record of the stores or the settings are in doubt, its copies
+/// and what backups name there are out of sight, so nothing goes. Unless `surveyed`, a file with a
+/// copy where backups go stays.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
+    let named = Wanted::of(&app.settings.candidate(&stored::rows(tx)?));
+    if !app.blobs.settled() || !app.blobs.follows(&named) {
+        return Ok(Vec::new());
+    }
     let mut found = past_grace(tx, app)?;
     if let Some(store) = app.blobs.backup_store_id()
         && !found.is_empty()
@@ -734,6 +740,11 @@ fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
 
 /// Purges only what an earlier run reported at least the grace ago and nothing names now.
 pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
+    if (app.blobs.trouble().is_some() || !app.blobs.settled())
+        && let Err(refused) = app.settle_stores(super::Retry::Trouble).await
+    {
+        tracing::warn!(%refused, "The stores in use could not be brought to the settings");
+    }
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;

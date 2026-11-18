@@ -56,11 +56,33 @@ impl ObjectStoreSettings {
         format!("s3://{}/{}", self.bucket, self.prefix)
     }
 
-    /// The store `settings` name, where they name a bucket.
-    pub fn of(settings: &Snapshot) -> Option<ObjectStoreSettings> {
-        let bucket = settings.get(OBJECT_STORE_BUCKET)?;
+    /// The store `settings` name, where they name a bucket. Where a bucket is named or its row
+    /// does not read, the answer is every store setting that does not read, and no store is taken.
+    pub fn of(settings: &Snapshot) -> Result<Option<ObjectStoreSettings>, Vec<&'static str>> {
+        let unreadable = settings.unreadable();
+        let bucket = settings.get(OBJECT_STORE_BUCKET);
+        if bucket.is_some() || unreadable.contains(&OBJECT_STORE_BUCKET.entry.key) {
+            let keys: Vec<&'static str> = [
+                OBJECT_STORE_BUCKET.entry.key,
+                OBJECT_STORE_REGION.entry.key,
+                OBJECT_STORE_ENDPOINT.entry.key,
+                OBJECT_STORE_PATH_STYLE.entry.key,
+                OBJECT_STORE_PREFIX.entry.key,
+                OBJECT_STORE_ACCESS_KEY_ID.entry.key,
+                OBJECT_STORE_SECRET_ACCESS_KEY.entry.key,
+            ]
+            .into_iter()
+            .filter(|key| unreadable.contains(key))
+            .collect();
+            if !keys.is_empty() {
+                return Err(keys);
+            }
+        }
+        let Some(bucket) = bucket else {
+            return Ok(None);
+        };
         let endpoint = settings.get(OBJECT_STORE_ENDPOINT);
-        Some(ObjectStoreSettings {
+        Ok(Some(ObjectStoreSettings {
             bucket,
             region: settings
                 .get(OBJECT_STORE_REGION)
@@ -73,7 +95,7 @@ impl ObjectStoreSettings {
                 .get(OBJECT_STORE_PREFIX)
                 .unwrap_or_else(|| "marfa".to_string()),
             private_allowed: settings.get(ALLOW_PRIVATE_ADDRESSES),
-        })
+        }))
     }
 }
 
@@ -246,7 +268,8 @@ impl S3 {
         };
         let connect_timeout = Duration::from_secs(5);
         let mut builder = AmazonS3Builder::new()
-            .with_bucket_name(&settings.bucket)
+            // The client signs the path as written, and SigV4 signs a colon escaped.
+            .with_bucket_name(settings.bucket.replace(':', "%3A"))
             .with_region(&settings.region)
             .with_retry(retry)
             // Every call is bounded where it is made, credentials included, so a large transfer

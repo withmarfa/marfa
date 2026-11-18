@@ -55,6 +55,8 @@ struct Held {
     mode: Option<Mode>,
     refused: Vec<String>,
     requests: Vec<(Method, String)>,
+    /// Every request's path, as it was written on the wire.
+    paths_as_sent: Vec<String>,
     /// The next deletion waits for this, and lands even if its request is given up.
     late_delete: Option<Arc<Notify>>,
     /// The next marker read says so on the sender and waits for the receiver.
@@ -295,6 +297,7 @@ fn deletion_answer(named: &[(String, String)]) -> Response {
 
 async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Response {
     let path = request.uri().path();
+    held.lock().unwrap().paths_as_sent.push(path.to_string());
     let key = percent_decoded(path, false).unwrap_or_else(|| path.to_string());
     let pause = key
         .ends_with("/.marfa-store")
@@ -631,6 +634,11 @@ impl FakeS3 {
             .iter()
             .filter(|(sent, at)| sent == method && at == key)
             .count()
+    }
+
+    /// Every path requested so far, before any decoding.
+    pub fn paths_as_sent(&self) -> Vec<String> {
+        self.held.lock().unwrap().paths_as_sent.clone()
     }
 
     pub fn remove_object(&self, key: &str) {

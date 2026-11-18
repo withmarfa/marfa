@@ -22,6 +22,10 @@ pub enum Rule {
     Text {
         max: usize,
     },
+    /// A region name that can be part of a host name, or nothing.
+    Region,
+    /// A bucket name of ASCII letters, digits, dots, colons, hyphens and underscores, or nothing.
+    Bucket,
     /// An absolute http or https URL with no user name or password, or nothing.
     Endpoint,
     /// An absolute http or https URL, kept as written, or nothing.
@@ -102,6 +106,55 @@ fn prefix(text: &str) -> Result<String, String> {
     }
 }
 
+const REGION_LONGEST: usize = 63;
+const BUCKET_LONGEST: usize = 255;
+
+const REGION_RULE: &str = "must be a region name of 1 to 63 ASCII letters, digits, hyphens and \
+     underscores that can be part of a host name";
+const BUCKET_RULE: &str = "must be a bucket name of 1 to 255 ASCII letters, digits, dots, colons, \
+     hyphens and underscores, other than `.` and `..`";
+
+fn name_of(
+    text: &str,
+    longest: usize,
+    allowed: fn(u8) -> bool,
+    rule: &str,
+) -> Result<String, String> {
+    if !text.is_empty() && text.len() <= longest && text.bytes().all(allowed) {
+        Ok(text.to_string())
+    } else {
+        Err(rule.to_string())
+    }
+}
+
+/// With no endpoint, the store's address is built from the region.
+fn region(text: &str) -> Result<String, String> {
+    let name = name_of(
+        text,
+        REGION_LONGEST,
+        |byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_',
+        REGION_RULE,
+    )?;
+    match url::Url::parse(&format!("https://s3.{name}.amazonaws.com/")) {
+        Ok(_) => Ok(name),
+        Err(_) => Err(REGION_RULE.to_string()),
+    }
+}
+
+/// The bucket is a segment of each request's path, so it cannot be a dot segment.
+fn bucket(text: &str) -> Result<String, String> {
+    let name = name_of(
+        text,
+        BUCKET_LONGEST,
+        |byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'),
+        BUCKET_RULE,
+    )?;
+    if matches!(name.as_str(), "." | "..") {
+        return Err(BUCKET_RULE.to_string());
+    }
+    Ok(name)
+}
+
 fn folder(text: &str) -> Result<String, String> {
     let path = std::path::Path::new(text);
     let usable = path.is_absolute()
@@ -170,6 +223,8 @@ impl Entry {
                 }
                 Some(kept.to_string())
             }
+            Rule::Region => Some(region(text.trim())?),
+            Rule::Bucket => Some(bucket(text.trim())?),
             Rule::Endpoint => Some(url(text.trim(), true)?),
             Rule::Url => Some(url(
                 if self.is_secret() { text } else { text.trim() },
@@ -218,6 +273,15 @@ impl Entry {
             Rule::Address => "an address such as https://marfa.example, or nothing".to_string(),
             Rule::Addresses => "a list of addresses such as https://marfa.example".to_string(),
             Rule::Text { max } => format!("text of 1 to {max} characters, or nothing"),
+            Rule::Region => {
+                "a region name such as us-east-1 or auto, of letters, digits, `-` and `_`, or nothing"
+                    .to_string()
+            }
+            Rule::Bucket => {
+                "a bucket name of letters, digits, `.`, `:`, `-` and `_`, other than `.` and \
+                 `..`, or nothing"
+                    .to_string()
+            }
             Rule::Endpoint => {
                 "an http or https URL with no user name or password, or nothing".to_string()
             }
@@ -246,7 +310,13 @@ impl Entry {
                 value.to_string()
             }
             (
-                Rule::Text { .. } | Rule::Endpoint | Rule::Url | Rule::Prefix | Rule::Folder,
+                Rule::Text { .. }
+                | Rule::Region
+                | Rule::Bucket
+                | Rule::Endpoint
+                | Rule::Url
+                | Rule::Prefix
+                | Rule::Folder,
                 Json::String(text),
             ) if !self.is_secret() => text.clone(),
             _ => return Err(wrong_type()),
@@ -538,8 +608,8 @@ registry! {
     BLOB_CLEANUP_GRACE_SECONDS: u64 = "blob_cleanup_grace_seconds", UP_TO_A_YEAR_OR_NONE, "86400", "How long a blob nothing references stands in the orphan report before a later run purges it, in seconds.";
     BACKUP_INTERVAL_SECONDS: u64 = "backup_interval_seconds", UP_TO_A_YEAR_OR_NONE, "3600", "How often the `backup` job puts a backup in the backup folder or the object store when anything it holds has changed, in seconds. 0 turns scheduled backups off.";
     BACKUP_PATH: Option<String> = "backup_path", Rule::Folder, "", "A folder the server backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder, best on another disk. The server makes only the folders inside it. It cannot be set together with object_store_bucket.", Machine;
-    OBJECT_STORE_BUCKET: Option<String> = "object_store_bucket", Rule::Text { max: 255 }, "", "The bucket of an object store the server keeps a second copy of each file in and backs itself up to. Leave it empty to keep files on the disk alone.", Machine;
-    OBJECT_STORE_REGION: Option<String> = "object_store_region", Rule::Text { max: 100 }, "us-east-1", "The region of the object store.", Machine;
+    OBJECT_STORE_BUCKET: Option<String> = "object_store_bucket", Rule::Bucket, "", "The bucket of an object store the server keeps a second copy of each file in and backs itself up to. Leave it empty to keep files on the disk alone.", Machine;
+    OBJECT_STORE_REGION: Option<String> = "object_store_region", Rule::Region, "us-east-1", "The region of the object store, a name of letters, digits, hyphens and underscores such as `us-east-1` or `auto`.", Machine;
     OBJECT_STORE_ENDPOINT: Option<String> = "object_store_endpoint", Rule::Endpoint, "", "Where the object store is, for a store other than Amazon S3. Leave it empty for Amazon S3.", Machine;
     OBJECT_STORE_PATH_STYLE: bool = "object_store_path_style", Rule::Boolean, "true", "Whether the object store at object_store_endpoint is addressed by path rather than by host. Amazon S3, with no endpoint set, is always addressed by path.", Machine;
     OBJECT_STORE_PREFIX: Option<String> = "object_store_prefix", Rule::Prefix, "marfa", "The folder in the bucket the server keeps files and backups under.", Machine;
@@ -912,6 +982,103 @@ mod tests {
         );
     }
 
+    /// `a<c>b` for each printable ASCII character `allowed` does not take.
+    fn with_each_other_character(allowed: fn(char) -> bool) -> Vec<String> {
+        (' '..='~')
+            .filter(|c| !allowed(*c))
+            .map(|c| format!("a{c}b"))
+            .collect()
+    }
+
+    #[test]
+    fn a_region_is_a_plain_name() {
+        let region = OBJECT_STORE_REGION.entry;
+        for plain in [
+            "auto",
+            "us-east-1",
+            "eu-west-2",
+            "us-gov-west-1",
+            "US",
+            "nyc3",
+            "my_region",
+            "-a",
+            "a-",
+            "_",
+        ] {
+            assert_eq!(region.row_text(plain), Ok(plain.to_string()), "{plain}");
+        }
+        assert_eq!(region.row_text("  eu-west-1 "), Ok("eu-west-1".into()));
+        assert_eq!(region.row_text("   "), Ok(String::new()));
+        assert_eq!(region.row_text(""), Ok(String::new()));
+        let others = with_each_other_character(|c| c.is_ascii_alphanumeric() || "-_".contains(c));
+        assert!(!others.is_empty());
+        for odd in others {
+            assert!(region.row_text(&odd).is_err(), "{odd}");
+        }
+        for odd in ["r\u{e9}gion", "a\u{ff1a}b", &"a".repeat(64)] {
+            assert!(region.row_text(odd).is_err(), "{odd}");
+        }
+        assert!(region.row_text(&"a".repeat(63)).is_ok());
+    }
+
+    #[test]
+    fn a_region_is_taken_exactly_when_it_makes_a_valid_store_address() {
+        let region = OBJECT_STORE_REGION.entry;
+        let alphabet = b"aenstx01-_";
+        let mut names = vec![String::new()];
+        let (mut taken, mut refused) = (0, 0);
+        for _ in 0..5 {
+            names = names
+                .iter()
+                .flat_map(|name| {
+                    alphabet
+                        .iter()
+                        .map(move |letter| format!("{name}{}", *letter as char))
+                })
+                .collect();
+            for name in &names {
+                let valid = url::Url::parse(&format!("https://s3.{name}.amazonaws.com/")).is_ok();
+                assert_eq!(region.row_text(name).is_ok(), valid, "{name}");
+                if valid {
+                    taken += 1;
+                } else {
+                    refused += 1;
+                }
+            }
+        }
+        assert!(taken > 0 && refused > 0, "{taken} taken, {refused} refused");
+    }
+
+    #[test]
+    fn a_bucket_is_a_valid_bucket_name() {
+        let bucket = OBJECT_STORE_BUCKET.entry;
+        for valid in [
+            "marfa",
+            "my-bucket",
+            "my.bucket.name",
+            "My_Old_Bucket",
+            "tenant:bucket",
+            "a",
+            "0123",
+            "...",
+            ".a",
+            &"b".repeat(255),
+        ] {
+            assert_eq!(bucket.row_text(valid), Ok(valid.to_string()), "{valid}");
+        }
+        assert_eq!(bucket.row_text("  bucket "), Ok("bucket".into()));
+        assert_eq!(bucket.row_text("   "), Ok(String::new()));
+        assert_eq!(bucket.row_text(""), Ok(String::new()));
+        let others = with_each_other_character(|c| c.is_ascii_alphanumeric() || "-_.:".contains(c));
+        assert!(!others.is_empty());
+        for odd in others {
+            assert!(bucket.row_text(&odd).is_err(), "{odd:?}");
+        }
+        for odd in [".", "..", "b\u{fc}cket", "a\tb", &"b".repeat(256)] {
+            assert!(bucket.row_text(odd).is_err(), "{odd:?}");
+        }
+    }
+
     #[test]
     fn a_json_value_is_read_by_the_kind_its_rule_names() {
         let read = |entry: &Entry, value: Json| entry.row_text_of_json(&value);
@@ -990,6 +1157,12 @@ mod tests {
             }
             Rule::Text { max } if schema["maxLength"] != max => {
                 problems.push(format!("{key}: maxLength against {max}"));
+            }
+            Rule::Region if schema["maxLength"] != REGION_LONGEST => {
+                problems.push(format!("{key}: maxLength against {REGION_LONGEST}"));
+            }
+            Rule::Bucket if schema["maxLength"] != BUCKET_LONGEST => {
+                problems.push(format!("{key}: maxLength against {BUCKET_LONGEST}"));
             }
             Rule::Addresses if schema["items"]["type"] != "string" => {
                 problems.push(format!("{key}: items are not text"));

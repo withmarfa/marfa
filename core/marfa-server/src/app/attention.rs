@@ -248,7 +248,7 @@ fn secrets_to_set(settings: &crate::settings::Snapshot) -> Vec<Concern> {
                 "{key} is a secret, and this server cannot read the value stored for it: the \
                  instance was restored from a backup or an archive, which never holds a secret, \
                  or the settings key beside the database was lost or replaced. Until it is set \
-                 again through `PATCH /config`, the server works as if it were not set."
+                 again through `PATCH /config`, the server cannot use it."
             ),
         })
         .collect()

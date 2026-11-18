@@ -6453,10 +6453,10 @@ export interface components {
             sign_in_address?: string;
             /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
             backup_path?: string;
-            /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
+            /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. */
             object_store_bucket?: string;
             /**
-             * @description The region of the object store. Absent: `us-east-1`.
+             * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`.
              * @default us-east-1
              */
             object_store_region: string;
@@ -34955,10 +34955,10 @@ export interface operations {
                     skip_sign_in_address_check?: boolean;
                     /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
                     backup_path?: string;
-                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. */
+                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. */
                     object_store_bucket?: string;
                     /**
-                     * @description The region of the object store. Absent: `us-east-1`.
+                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`.
                      * @default us-east-1
                      */
                     object_store_region?: string;
@@ -35442,10 +35442,10 @@ export interface operations {
                     skip_sign_in_address_check?: boolean;
                     /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. `null` removes it, so the server's default applies. */
                     backup_path?: string | null;
-                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies. */
+                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. `null` removes it, so the server's default applies. */
                     object_store_bucket?: string | null;
                     /**
-                     * @description The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies.
+                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`. `null` removes it, so the server's default applies.
                      * @default us-east-1
                      */
                     object_store_region?: string | null;

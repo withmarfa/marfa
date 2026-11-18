@@ -9078,12 +9078,12 @@
           "object_store_bucket": {
             "type": "string",
             "maxLength": 255,
-            "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store."
+            "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store."
           },
           "object_store_region": {
             "type": "string",
-            "maxLength": 100,
-            "description": "The region of the object store. Absent: `us-east-1`.",
+            "maxLength": 63,
+            "description": "The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`.",
             "default": "us-east-1"
           },
           "object_store_endpoint": {
@@ -59879,12 +59879,12 @@
                   "object_store_bucket": {
                     "type": "string",
                     "maxLength": 255,
-                    "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store."
+                    "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store."
                   },
                   "object_store_region": {
                     "type": "string",
-                    "maxLength": 100,
-                    "description": "The region of the object store. Absent: `us-east-1`.",
+                    "maxLength": 63,
+                    "description": "The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`.",
                     "default": "us-east-1"
                   },
                   "object_store_endpoint": {
@@ -60687,15 +60687,15 @@
                       "null"
                     ],
                     "maxLength": 255,
-                    "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups. Absent: no object store. `null` removes it, so the server's default applies."
+                    "description": "The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. `null` removes it, so the server's default applies."
                   },
                   "object_store_region": {
                     "type": [
                       "string",
                       "null"
                     ],
-                    "maxLength": 100,
-                    "description": "The region of the object store. Absent: `us-east-1`. `null` removes it, so the server's default applies.",
+                    "maxLength": 63,
+                    "description": "The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`. `null` removes it, so the server's default applies.",
                     "default": "us-east-1"
                   },
                   "object_store_endpoint": {

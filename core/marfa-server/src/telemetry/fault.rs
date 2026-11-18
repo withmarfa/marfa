@@ -1,9 +1,12 @@
 //! A database failure is never described by the driver's text, which can quote bound values.
 
 use std::cell::RefCell;
-use std::panic::PanicHookInfo;
-use std::sync::Once;
+use std::future::{Future, poll_fn};
+use std::panic::{AssertUnwindSafe, PanicHookInfo, catch_unwind};
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Once};
+use std::task::Poll;
 
 use backtrace::Backtrace;
 use marfa_telemetry::exception::Frame;
@@ -321,6 +324,20 @@ fn on_panic(info: &PanicHookInfo<'_>) {
             stack,
         });
     });
+}
+
+/// Polls `future` so that a panic in it is caught on the thread the panic hook
+/// noted it on, and the task goes on.
+pub async fn caught<F: Future>(future: F) -> Result<F::Output, Arc<Fault>> {
+    let mut future = pin!(future);
+    poll_fn(
+        |context| match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(context))) {
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(_) => Poll::Ready(Err(Arc::new(Fault::panicked("a server task panicked")))),
+        },
+    )
+    .await
 }
 
 /// Replaces the default hook, whose raw stderr message would bypass the rules above.

@@ -1502,12 +1502,7 @@ impl App {
         let mut health = serde_json::Map::new();
         // While a follow is still running, the store in use is reported until it ends.
         let named = self.named_destination().ok();
-        let kind = named.as_ref().and_then(|wanted| match wanted {
-            Wanted::Bucket(_) => Some("bucket"),
-            Wanted::Folder(_) => Some("folder"),
-            Wanted::Disk => None,
-        });
-        if let Some(kind) = kind {
+        if let Some(kind) = named.as_ref().and_then(Wanted::destination_kind) {
             health.insert("destination".into(), kind.into());
         }
         let attachment = named

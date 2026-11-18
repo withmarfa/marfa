@@ -44,6 +44,7 @@ use crate::db::{Db, Write, io_refusal};
 use crate::failure::Failure;
 use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
+use crate::telemetry::caught;
 use disk::{Disk, Place, Staged};
 pub use disk::{MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
@@ -123,16 +124,33 @@ pub enum Wanted {
     Disk,
     Bucket(ObjectStoreSettings),
     Folder(PathBuf),
+    /// A stored setting naming the store that does not read: none is taken until it is set again.
+    Unreadable(Vec<&'static str>),
 }
 
 impl Wanted {
     pub fn of(settings: &Settings) -> Wanted {
-        if let Some(bucket) = ObjectStoreSettings::of(settings) {
-            return Wanted::Bucket(bucket);
+        match ObjectStoreSettings::of(settings) {
+            Ok(Some(bucket)) => return Wanted::Bucket(bucket),
+            Ok(None) => {}
+            Err(keys) => return Wanted::Unreadable(keys),
+        }
+        if settings.unreadable().contains(&BACKUP_PATH.entry.key) {
+            return Wanted::Unreadable(vec![BACKUP_PATH.entry.key]);
         }
         match settings.get(BACKUP_PATH) {
             Some(folder) => Wanted::Folder(PathBuf::from(folder)),
             None => Wanted::Disk,
+        }
+    }
+
+    /// The kind of backup destination this names, where it names one.
+    pub(crate) fn destination_kind(&self) -> Option<&'static str> {
+        match self {
+            Wanted::Disk => None,
+            Wanted::Folder(_) => Some("folder"),
+            Wanted::Unreadable(keys) if keys.contains(&BACKUP_PATH.entry.key) => Some("folder"),
+            Wanted::Bucket(_) | Wanted::Unreadable(_) => Some("bucket"),
         }
     }
 }
@@ -202,8 +220,9 @@ impl Attached {
     }
 
     fn troubled(wanted: Wanted, failure: Failure) -> Attached {
-        let place = match wanted {
+        let place = match &wanted {
             Wanted::Folder(_) => "backup folder",
+            Wanted::Unreadable(keys) if keys.contains(&BACKUP_PATH.entry.key) => "backup folder",
             _ => "object store",
         };
         let message = failure.message.trim_end_matches('.').to_string();
@@ -212,16 +231,28 @@ impl Attached {
             s3: None,
             folder: None,
             trouble: Some(format!(
-                "{message}. Until the {place} can be used, files are kept on this server's disk \
-                 alone and no backup is taken."
+                "{message}. Until the {place} can be used, no file is copied there, no backup is \
+                 taken and no file is purged."
             )),
         }
+    }
+
+    fn with_folder_away(mut self) -> Attached {
+        if let Some(trouble) = &mut self.trouble {
+            trouble.push_str(
+                " The blob folder is missing or holds no store marker too, so the files it holds \
+                 cannot be read and no file can be stored until it is mounted or restored.",
+            );
+        }
+        self
     }
 }
 
 pub struct Blobs {
     disk: Arc<Disk>,
     attached: ArcSwap<Attached>,
+    /// Whether the start took the blob folder, which it leaves alone while it may be unmounted.
+    folder_opened: bool,
     /// One change of store at a time.
     following: tokio::sync::Mutex<()>,
     /// A follow is asked for and has not yet read the settings.
@@ -250,7 +281,7 @@ fn folder_missing(root: &Path, why: &str) -> Failure {
     ))
 }
 
-/// With `unfilled`, only a store the server recorded may refill the folder.
+/// With `unfilled`, only a store the server kept copies in may refill the folder.
 async fn object_store(
     db: &Db,
     settings: &ObjectStoreSettings,
@@ -268,11 +299,11 @@ async fn object_store(
         Marker::Id(id) => {
             if let Some(root) = unfilled {
                 let named = id.clone();
-                let recorded = db
-                    .read(move |tx| rows::recorded_object_store(tx, &named))
+                let kept_copies = db
+                    .read(move |tx| rows::object_store_kept_copies(tx, &named))
                     .await
                     .map_err(started)?;
-                if !recorded {
+                if !kept_copies {
                     return Err(folder_missing(root, unknown));
                 }
             }
@@ -330,8 +361,37 @@ async fn object_store(
 /// How long a backup folder is given to be looked at and taken.
 const FOLDER_DEADLINE: Duration = Duration::from_secs(30);
 
-/// Takes the store `wanted` names; one that cannot be used is attached as trouble, never refused.
+fn does_not_read(keys: &[&str]) -> Failure {
+    Failure::start(format!(
+        "The stored {} {}",
+        keys.join(", "),
+        if keys.len() == 1 {
+            "setting does not read"
+        } else {
+            "settings do not read"
+        }
+    ))
+}
+
+fn client_failed() -> Failure {
+    Failure::start("The store's client failed while the store was being opened")
+}
+
+/// Takes the store `wanted` names. One that cannot be used, for any reason, is attached as
+/// trouble and never refused, so no store setting can keep the server from starting.
 async fn attach(
+    db: &Db,
+    wanted: Wanted,
+    instance: &str,
+    kept: &[(&'static str, PathBuf)],
+) -> Attached {
+    match caught(taking(db, wanted.clone(), instance, kept)).await {
+        Ok(attached) => attached,
+        Err(_) => Attached::troubled(wanted, client_failed()),
+    }
+}
+
+async fn taking(
     db: &Db,
     wanted: Wanted,
     instance: &str,
@@ -344,6 +404,10 @@ async fn attach(
             folder: None,
             trouble: None,
         },
+        Wanted::Unreadable(keys) => {
+            let failure = does_not_read(keys);
+            Attached::troubled(wanted, failure)
+        }
         Wanted::Bucket(settings) => match object_store(db, settings, None).await {
             Ok(s3) => Attached {
                 s3: Some(Arc::new(s3)),
@@ -387,6 +451,29 @@ async fn attach(
     }
 }
 
+/// What a start takes where the blob folder is empty and the record names copies there. Only a
+/// store the server kept copies in may refill it, and anything else refuses the start, but for
+/// store settings the owner can only correct through a running server: those are reported.
+async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<Attached, Failure> {
+    let failure = match &wanted {
+        Wanted::Bucket(settings) => match caught(object_store(db, settings, Some(root))).await {
+            Ok(Ok(s3)) => {
+                return Ok(Attached {
+                    s3: Some(Arc::new(s3)),
+                    wanted,
+                    folder: None,
+                    trouble: None,
+                });
+            }
+            Ok(Err(refused)) => return Err(refused),
+            Err(_) => client_failed(),
+        },
+        Wanted::Unreadable(keys) => does_not_read(keys),
+        Wanted::Disk | Wanted::Folder(_) => return Err(folder_missing(root, "")),
+    };
+    Ok(Attached::troubled(wanted, failure).with_folder_away())
+}
+
 type StoreRows = Vec<(String, &'static str, String)>;
 
 fn store_rows(disk: &Disk, attached: &Attached) -> StoreRows {
@@ -419,7 +506,9 @@ enum Recorded {
 impl Blobs {
     /// The folder is changed only once nothing refuses the start; `held` is its lock if taken.
     /// A store beside the disk that cannot be used is reported, not refused, unless the blob
-    /// folder is empty and that store must refill it.
+    /// folder is empty and a store whose settings read must refill it. An empty folder the record
+    /// names copies in that no store refills is left as it is, since the disk may yet be mounted
+    /// there, and the recorded store stays in use.
     pub async fn open(
         db: &Db,
         (root, held): (&Path, Option<File>),
@@ -437,33 +526,35 @@ impl Blobs {
         let found = tokio::task::spawn_blocking(move || Disk::probe(&folder, Place::Blobs))
             .await
             .map_err(started)??;
-        let unfilled = if found == disk::Found::Marked {
-            false
+        let recorded = if found == disk::Found::Marked {
+            None
         } else {
             let locator = root.display().to_string();
-            db.read(move |tx| rows::copies_at_folder(tx, &locator))
+            db.read(move |tx| rows::disk_with_copies_at(tx, &locator))
                 .await
                 .map_err(started)?
         };
-        let attached = match (&wanted, unfilled) {
-            (Wanted::Bucket(settings), true) => Attached {
-                s3: Some(Arc::new(object_store(db, settings, Some(root)).await?)),
-                wanted,
-                folder: None,
-                trouble: None,
-            },
-            (_, true) => return Err(folder_missing(root, "")),
-            (_, false) => attach(db, wanted, instance, &kept).await,
+        let (attached, away) = match recorded {
+            Some(id) => {
+                let attached = refilling(db, wanted, root).await?;
+                let away = attached.trouble.is_some().then_some(id);
+                (attached, away)
+            }
+            None => (attach(db, wanted, instance, &kept).await, None),
         };
         if let Some(trouble) = &attached.trouble {
             tracing::error!("{trouble}");
         }
-        let folder = root.to_path_buf();
-        let disk = Arc::new(
-            tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
-                .await
-                .map_err(started)??,
-        );
+        let folder_opened = away.is_none();
+        let disk = Arc::new(match away {
+            Some(id) => Disk::unmounted(id, root.to_path_buf()),
+            None => {
+                let folder = root.to_path_buf();
+                tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
+                    .await
+                    .map_err(started)??
+            }
+        });
         let rows = store_rows(&disk, &attached);
         db.write(Write::own(), move |tx| write_stores(tx, &rows, &at))
             .await
@@ -471,6 +562,7 @@ impl Blobs {
         Ok(Blobs {
             disk,
             attached: ArcSwap::from_pointee(attached),
+            folder_opened,
             following: tokio::sync::Mutex::new(()),
             asked: AtomicBool::new(false),
             record_doubted: AtomicBool::new(false),
@@ -481,6 +573,16 @@ impl Blobs {
             faults,
             signer,
         })
+    }
+
+    /// Whether the start took the blob folder as the disk store.
+    pub fn folder_opened(&self) -> bool {
+        self.folder_opened
+    }
+
+    /// Whether the store in use is the usable one `wanted` names.
+    pub fn follows(&self, wanted: &Wanted) -> bool {
+        self.attached.load().is(wanted)
     }
 
     /// Whether no record failure or failed settings reload remains unresolved.
@@ -516,6 +618,20 @@ impl Blobs {
             return Err(unsettled());
         }
         Ok(attached)
+    }
+
+    /// Takes the store `wanted` names, saying so where the blob folder is away as well.
+    async fn attach_beside_disk(&self, db: &Db, wanted: Wanted) -> Attached {
+        let next = attach(db, wanted, &self.instance, &self.kept).await;
+        if next.trouble.is_none() {
+            return next;
+        }
+        let disk = self.disk.clone();
+        let looked = tokio::task::spawn_blocking(move || disk.reachable());
+        match tokio::time::timeout(self.check(), looked).await {
+            Ok(Ok(true)) => next,
+            _ => next.with_folder_away(),
+        }
     }
 
     /// Why the store the settings name is not in use, in the owner's words.
@@ -1272,7 +1388,7 @@ impl App {
                 }
                 None => {
                     tried = Some(wanted.clone());
-                    Arc::new(attach(&self.db, wanted, &blobs.instance, &blobs.kept).await)
+                    Arc::new(blobs.attach_beside_disk(&self.db, wanted).await)
                 }
             };
             let generation = match self.record_stores(&next).await {
@@ -1865,5 +1981,89 @@ impl App {
             tracing::warn!(?failure, "A dropped copy's bytes wait for a later run");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::migrate::MIGRATIONS;
+    use crate::db::{Lock, Options};
+    use crate::settings::DatabasePath;
+    use crate::settings::sealed::Secret;
+
+    use super::*;
+
+    fn database() -> Db {
+        let options = Options {
+            path: DatabasePath::Memory,
+            write_wait: Duration::from_secs(5),
+            readers: 1,
+            migrations: MIGRATIONS,
+            reserve: 0,
+        };
+        let lock = Lock::take(&options.path)
+            .map_err(|failure| failure.message)
+            .unwrap();
+        Db::open(&options, lock, Arc::default())
+            .map_err(|failure| failure.message)
+            .unwrap()
+    }
+
+    /// A name the region rule refuses, for settings no write could make.
+    fn refused_region() -> String {
+        let alphabet = b"aenstx01-_";
+        let mut names = vec![String::new()];
+        for _ in 0..5 {
+            names = names
+                .iter()
+                .flat_map(|name| {
+                    alphabet
+                        .iter()
+                        .map(move |letter| format!("{name}{}", *letter as char))
+                })
+                .collect();
+            if let Some(name) = names
+                .iter()
+                .find(|name| url::Url::parse(&format!("https://s3.{name}.amazonaws.com/")).is_err())
+            {
+                return name.clone();
+            }
+        }
+        panic!("the rule refused no name");
+    }
+
+    fn signed_settings(region: String) -> ObjectStoreSettings {
+        ObjectStoreSettings {
+            bucket: "marfa".to_string(),
+            region,
+            endpoint: None,
+            access_key_id: Some("key".to_string()),
+            secret_access_key: Some(Secret::new("secret".to_string())),
+            path_style: true,
+            prefix: "marfa".to_string(),
+            private_allowed: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_store_client_that_fails_while_attaching_is_reported_trouble() {
+        let db = database();
+        let wanted = Wanted::Bucket(signed_settings(refused_region()));
+        let attached = attach(&db, wanted.clone(), "instance", &[]).await;
+        assert!(attached.s3.is_none());
+        assert_eq!(attached.wanted, wanted);
+        let trouble = attached.trouble.unwrap();
+        assert!(trouble.contains("object store"), "{trouble}");
+    }
+
+    #[tokio::test]
+    async fn a_store_client_that_fails_while_refilling_the_folder_is_reported_trouble() {
+        let db = database();
+        let wanted = Wanted::Bucket(signed_settings(refused_region()));
+        let attached = refilling(&db, wanted, Path::new("/blobs")).await;
+        let attached = attached.map_err(|failure| failure.message).unwrap();
+        assert!(attached.s3.is_none());
+        let trouble = attached.trouble.unwrap();
+        assert!(trouble.contains("blob folder"), "{trouble}");
     }
 }
