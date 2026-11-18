@@ -2,12 +2,12 @@
 //! parts manifests name under `backup-parts/<instance id>/`, and a copy of each file under
 //! `files/<instance id>/`, a disk store of its own.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
 use futures_util::StreamExt;
@@ -49,18 +49,24 @@ pub struct Folder {
     instance: String,
     /// Replaced only when the owner adopts a folder whose files area lost its marker.
     files: RwLock<Arc<Disk>>,
-    /// Set from a claim's start until its blocking work ends, which can outlast a deadline.
-    claiming: Arc<AtomicBool>,
     /// A temporary file staged before this is a leftover of a process that ended.
     started: SystemTime,
 }
 
-/// Clears `claiming` when the claim's blocking work ends or never runs.
-struct Claiming(Arc<AtomicBool>);
+/// Files areas whose claim has started and whose blocking work has not ended, which can outlast
+/// a deadline. Kept by area, since a folder opened again after a switch away is another `Folder`.
+static CLAIMING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+fn claiming() -> std::sync::MutexGuard<'static, BTreeSet<PathBuf>> {
+    CLAIMING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Ends an area's claim when its blocking work ends or never runs.
+struct Claiming(PathBuf);
 
 impl Drop for Claiming {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        claiming().remove(&self.0);
     }
 }
 
@@ -176,7 +182,6 @@ impl Folder {
             root: root.to_path_buf(),
             instance: instance.to_string(),
             files: RwLock::new(Arc::new(files)),
-            claiming: Arc::new(AtomicBool::new(false)),
             #[allow(
                 clippy::disallowed_methods,
                 reason = "compared with files' modification times, which are the host's time"
@@ -226,21 +231,22 @@ impl Folder {
 
     /// Whether a claim has started whose blocking work has not ended.
     pub fn claim_unended(&self) -> bool {
-        self.claiming.load(Ordering::SeqCst)
+        claiming().contains(&self.area())
     }
 
     /// Takes the files area as the store `id` within `deadline`, or answers `None` where the
     /// folder did not answer in time or an earlier claim has not ended. A claim given up on runs
-    /// to its end, and no other starts on this folder until it has.
+    /// to its end, and no other starts on this files area until it has.
     pub async fn claim_within(
         self: &Arc<Self>,
         id: String,
         deadline: Duration,
     ) -> Option<io::Result<()>> {
-        if self.claiming.swap(true, Ordering::SeqCst) {
+        let area = self.area();
+        if !claiming().insert(area.clone()) {
             return None;
         }
-        let (folder, claiming) = (self.clone(), Claiming(self.claiming.clone()));
+        let (folder, claiming) = (self.clone(), Claiming(area));
         let claimed = tokio::task::spawn_blocking(move || {
             let _claiming = claiming;
             folder.claim(&id)
@@ -785,5 +791,74 @@ mod tests {
         }
         assert!(outside(&dir.path().join("elsewhere"), &[("data directory", &data)]).is_ok());
         assert!(outside(&dir.path().join("data2"), &[("data directory", &data)]).is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_claim_given_up_on_keeps_any_folder_at_its_area_from_claiming_until_it_ends() {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let dir = TempDir::new().unwrap();
+        let area = dir.path().join(FILES).join("instance");
+        fs::create_dir_all(&area).unwrap();
+        let marker = area.join(disk::MARKER);
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&marker)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let at_area = || {
+            Arc::new(Folder {
+                root: dir.path().to_path_buf(),
+                instance: "instance".into(),
+                files: RwLock::new(Arc::new(Disk::unmounted("old".into(), area.clone()))),
+                started: SystemTime::now(),
+            })
+        };
+        // A folder opened again at the same root, as a switch away and back opens one.
+        let (given_up, again) = (at_area(), at_area());
+
+        let late = given_up
+            .claim_within("late".into(), Duration::from_millis(50))
+            .await;
+        assert!(late.is_none(), "the claim did not wait on the marker");
+        let held = again.claim_unended();
+        let refused = again
+            .claim_within("other".into(), Duration::from_millis(50))
+            .await;
+
+        // Ends the stall before any assertion, so a failing run does not hang: the given-up claim
+        // reads an empty marker, then writes its own.
+        let mut writer = None;
+        for _ in 0..500 {
+            // Opening a FIFO's write end without blocking fails until a reader holds it.
+            writer = OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&marker)
+                .ok();
+            if writer.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let _ = fs::remove_file(&marker);
+        drop(writer);
+        for _ in 0..500 {
+            if !given_up.claim_unended() && !again.claim_unended() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert!(
+            held,
+            "a folder at the same area could claim while the first claim ran"
+        );
+        assert!(refused.is_none());
+        assert!(!given_up.claim_unended());
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "late");
+        assert_eq!(given_up.files().id(), "late");
+        assert_eq!(again.files().id(), "old");
     }
 }
