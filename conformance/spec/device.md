@@ -394,9 +394,9 @@ While no hydration has started and not completed, and its copy holds a slice and
 
 ### `device/one-writer`
 
-While another process holds the writer role for a store, a device MUST NOT take the writer role for the store.
+While another process holds the writer role for a store, a device MUST NOT take the writer role for the store, whether it opens the store by the same path or through a symbolic link to it.
 
-**Reason:** two writers of one store would each queue into it without seeing the other's items, and one could remove the store from under the other.
+**Reason:** two writers of one store would each queue into it without seeing the other's items, and one could remove the store from under the other. A symbolic link to a store names the same store.
 
 **Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
 

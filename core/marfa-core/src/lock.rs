@@ -41,7 +41,7 @@ impl WriterLock {
                 _with: None,
             });
         };
-        let path = lock_path(store);
+        let path = lock_path(&linked(store)?);
         crate::owner_only(&path)?;
         Self::claim_opened(
             &path.display().to_string(),
@@ -198,6 +198,37 @@ pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
     name.push(".writer-lock");
     std::path::PathBuf::from(name)
 }
+
+/// The file a symbolic link at `store`'s own name leads to, followed as
+/// SQLite follows it, so the store opened through a link has the lock of the
+/// file it reaches. A link in a folder above already reaches one lock.
+fn linked(store: &Path) -> Result<std::path::PathBuf, CoreError> {
+    let unreadable = |path: &Path, error: std::io::Error| {
+        CoreError::Store(format!("{} cannot be read: {error}", path.display()))
+    };
+    let mut path = store.to_path_buf();
+    for _ in 0..LINKS {
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = std::fs::read_link(&path).map_err(|error| unreadable(&path, error))?;
+                path = match path.parent() {
+                    Some(dir) => dir.join(target),
+                    None => target,
+                };
+            }
+            Ok(_) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+            Err(error) => return Err(unreadable(&path, error)),
+        }
+    }
+    Err(CoreError::Store(format!(
+        "{} leads through more than {LINKS} symbolic links",
+        store.display()
+    )))
+}
+
+/// SQLite's own limit on the links it follows to a store.
+const LINKS: usize = 100;
 
 /// Whether the name `claim` opened is established as gone or as reaching
 /// another file. SQLite reports a name as moved when its own `stat` fails for
@@ -619,6 +650,73 @@ mod tests {
         drop(second);
         let third = WriterLock::claim(Some(&store)).unwrap();
         assert_eq!(third.handle(), Handle::Writer);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_store_reached_through_a_symbolic_link_has_one_writer() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("core.sqlite");
+        let alias = dir.path().join("alias.sqlite");
+        let chained = dir.path().join("chained.sqlite");
+        symlink(&store, &alias).unwrap();
+        symlink("alias.sqlite", &chained).unwrap();
+        // Before the store is made, as after.
+        for _ in 0..2 {
+            let through = WriterLock::claim(Some(&chained)).unwrap();
+            assert_eq!(through.handle(), Handle::Writer);
+            for name in [&store, &alias] {
+                let other = WriterLock::claim(Some(name)).unwrap();
+                assert_eq!(other.handle(), Handle::Reader, "{}", name.display());
+            }
+            drop(through);
+            let first = WriterLock::claim(Some(&store)).unwrap();
+            assert_eq!(first.handle(), Handle::Writer);
+            let linked = WriterLock::claim(Some(&alias)).unwrap();
+            assert_eq!(linked.handle(), Handle::Reader);
+            drop((first, linked));
+            std::fs::write(&store, b"").unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writer_probe() {
+        let Ok(store) = std::env::var("MARFA_LOCK_PROBE") else {
+            return;
+        };
+        let lock = WriterLock::claim(Some(Path::new(&store))).unwrap();
+        println!("handle {:?}", lock.handle());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn another_process_opening_a_store_through_a_symbolic_link_is_a_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("core.sqlite");
+        let alias = dir.path().join("alias.sqlite");
+        std::os::unix::fs::symlink(&store, &alias).unwrap();
+        let probe = |path: &Path| {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "lock::tests::writer_probe", "--nocapture"])
+                .env("MARFA_LOCK_PROBE", path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        };
+        // The witness: with no writer here, the other process takes the role.
+        assert!(probe(&alias).contains("handle Writer"));
+        let _writer = WriterLock::claim(Some(&store)).unwrap();
+        for path in [&store, &alias] {
+            let seen = probe(path);
+            assert!(seen.contains("handle Reader"), "{}: {seen}", path.display());
+        }
     }
 
     #[test]
