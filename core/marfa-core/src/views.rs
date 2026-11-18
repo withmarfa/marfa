@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
@@ -12,6 +11,8 @@ use crate::model::{Completeness, Item, ItemState, Rows, SearchHit, Shown, SliceT
 use crate::store::Unreadable;
 use crate::{Core, CoreError, Result, search, store};
 use marfa_rules::catalog::Catalog;
+use marfa_rules::recurrence::{DAY, Zone, civil_from_days, days_from_civil, week_start};
+use marfa_rules::time;
 
 pub const VIEW_TYPE: &str = "system.view";
 
@@ -161,10 +162,9 @@ impl Core {
     /// A missing zone uses the device's current local zone. An explicit IANA
     /// name lets an app keep the same buckets while presenting another zone.
     pub fn view_groups(&self, id: &str, time_zone: Option<&str>) -> Result<Rows<ViewGroup>> {
-        let zone = time_zone
+        let named = time_zone
             .map(|name| {
-                name.parse::<chrono_tz::Tz>()
-                    .map_err(|_| invalid(&format!("unknown time zone {name:?}")))
+                Zone::named(name).ok_or_else(|| invalid(&format!("unknown time zone {name:?}")))
             })
             .transpose()?;
         store::read_marked(&mut *self.conn()?, |conn, completeness| {
@@ -225,6 +225,7 @@ impl Core {
                 "SELECT {key_sql}, {readable}, items.id FROM items {join} WHERE {}",
                 scope.clauses.join(" AND ")
             );
+            let zone = bucket.map(|_| named.clone().unwrap_or_else(device_zone));
             let mut statement = conn.prepare(&sql)?;
             let params = scope
                 .values
@@ -245,7 +246,7 @@ impl Core {
                     CoreError::Store(format!("cannot read view group: {error}"))
                 })?;
                 if let Some(bucket) = bucket {
-                    key = date_bucket(&key, bucket, zone);
+                    key = date_bucket(&key, bucket, zone.as_ref().unwrap_or(&Zone::UTC));
                 }
                 let entry = groups
                     .entry(group_identity(&key))
@@ -513,35 +514,50 @@ fn compare_keys(a: &Value, b: &Value) -> std::cmp::Ordering {
     })
 }
 
-fn date_bucket(value: &Value, bucket: &str, zone: Option<chrono_tz::Tz>) -> Value {
-    let Some(text) = value.as_str() else {
+fn device_zone() -> Zone {
+    jiff::tz::reset_system_time_zone_cache();
+    jiff::tz::TimeZone::try_system()
+        .ok()
+        .map(Zone::from_time_zone)
+        .or_else(|| {
+            iana_time_zone::get_timezone()
+                .ok()
+                .and_then(|name| Zone::named(&name))
+        })
+        .unwrap_or(Zone::UTC)
+}
+
+fn day_of_text(text: &str, zone: &Zone) -> Option<i64> {
+    if text.len() == 10 {
+        return time::epoch_ms(text).map(|ms| ms.div_euclid(DAY * 1000));
+    }
+    let normalized = time::rfc3339(text, "view date").ok()?;
+    time::epoch_ms(&normalized).map(|ms| zone.day_of(ms))
+}
+
+fn date_bucket(value: &Value, bucket: &str, zone: &Zone) -> Value {
+    let Some(day) = value.as_str().and_then(|text| day_of_text(text, zone)) else {
         return Value::Null;
     };
-    let date = if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
-        date
-    } else {
-        let Ok(normalized) = marfa_rules::time::rfc3339(text, "view date") else {
-            return Value::Null;
-        };
-        let Ok(instant) = chrono::DateTime::parse_from_rfc3339(&normalized) else {
-            return Value::Null;
-        };
-        match zone {
-            Some(zone) => instant.with_timezone(&zone).date_naive(),
-            None => instant.with_timezone(&chrono::Local).date_naive(),
+    let (year, month, day_of_month) = civil_from_days(match bucket {
+        "week" => week_start(day, 0),
+        "month" => {
+            let (year, month, _) = civil_from_days(day);
+            days_from_civil(year, month, 1)
         }
+        "year" => days_from_civil(civil_from_days(day).0, 1, 1),
+        _ => day,
+    });
+    let year = if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else {
+        format!("{year:+05}")
     };
-    let date = match bucket {
-        "week" => date.checked_sub_signed(chrono::TimeDelta::days(i64::from(
-            date.weekday().num_days_from_monday(),
-        ))),
-        "month" => date.with_day(1),
-        "year" => date.with_month(1).and_then(|d| d.with_day(1)),
-        _ => Some(date),
-    };
-    date.map(|date| Value::String(date.format("%Y-%m-%d").to_string()))
-        .unwrap_or(Value::Null)
+    Value::String(format!("{year}-{month:02}-{day_of_month:02}"))
 }
+
+#[cfg(test)]
+mod compare;
 
 #[cfg(test)]
 mod tests {
@@ -804,6 +820,81 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("time zone")
+        );
+    }
+
+    fn groups(core: &Core, bucket: &str, zone: &str) -> Vec<(Value, u64)> {
+        view(
+            core,
+            json!({"group":{"by":"properties.date","bucket":bucket}}),
+        );
+        core.view_groups("view", Some(zone))
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|g| (g.key, g.count))
+            .collect()
+    }
+
+    #[test]
+    fn a_bucket_key_past_9999_or_before_0000_keeps_its_sign_and_four_digits() {
+        let core = copy();
+        put(&core, "a", json!({"date":"9999-12-31T23:00:00Z"}), &[]);
+        assert_eq!(
+            groups(&core, "day", "Asia/Kolkata"),
+            [(json!("+10000-01-01"), 1)]
+        );
+        assert_eq!(
+            groups(&core, "year", "Asia/Kolkata"),
+            [(json!("+10000-01-01"), 1)]
+        );
+        assert_eq!(groups(&core, "month", "UTC"), [(json!("9999-12-01"), 1)]);
+        put(&core, "b", json!({"date":"0000-01-01T00:00:00Z"}), &[]);
+        assert_eq!(
+            groups(&core, "week", "America/New_York"),
+            [(json!("-0001-12-27"), 1), (json!("9999-12-27"), 1)]
+        );
+        assert_eq!(
+            groups(&core, "day", "America/New_York"),
+            [(json!("-0001-12-31"), 1), (json!("9999-12-31"), 1)]
+        );
+    }
+
+    #[test]
+    fn a_view_without_a_zone_buckets_in_the_devices_zone() {
+        let core = copy();
+        put(&core, "a", json!({"date":"2026-07-01T20:00:00Z"}), &[]);
+        view(
+            &core,
+            json!({"group":{"by":"properties.date","bucket":"day"}}),
+        );
+        // SAFETY: One process for each test, so nothing else reads the environment.
+        unsafe { std::env::set_var("TZ", "Pacific/Auckland") };
+        let rows = core.view_groups("view", None).unwrap().rows;
+        assert_eq!(rows[0].key, json!("2026-07-02"));
+        // SAFETY: One process for each test, so nothing else reads the environment.
+        unsafe { std::env::set_var("TZ", "America/Los_Angeles") };
+        let rows = core.view_groups("view", None).unwrap().rows;
+        assert_eq!(rows[0].key, json!("2026-07-01"));
+    }
+
+    #[test]
+    fn a_date_alone_reads_only_as_year_month_day_with_four_digits() {
+        let core = copy();
+        for (id, date) in [
+            ("a", "2026-01-05"),
+            ("b", "2026-1-5"),
+            ("c", "+2026-01-05"),
+            ("d", " 2026-01-05"),
+            ("e", "226-01-05"),
+            ("f", "-0001-01-05"),
+            ("g", "2026-02-30"),
+        ] {
+            put(&core, id, json!({"date":date}), &[]);
+        }
+        assert_eq!(
+            groups(&core, "day", "Pacific/Auckland"),
+            [(json!("2026-01-05"), 1), (Value::Null, 6)]
         );
     }
 

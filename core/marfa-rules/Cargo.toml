@@ -14,7 +14,7 @@ base64.workspace = true
 globset = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
-chrono-tz = "0.10"
+jiff = { version = "1.0.1", default-features = false, features = ["std", "tz-system", "tz-fat", "perf-inline", "tzdb-bundle-always"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -24,4 +24,5 @@ url = "2"
 ryu = "1"
 
 [dev-dependencies]
+chrono-tz = "0.10"
 uuid.workspace = true

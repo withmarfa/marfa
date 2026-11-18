@@ -7,8 +7,13 @@ mod schedule;
 mod walk;
 
 #[cfg(test)]
+mod compare;
+#[cfg(test)]
+mod old_zone;
+#[cfg(test)]
 mod tests;
 
+pub use calendar::{DAY, Zone, civil_from_days, days_from_civil, week_start};
 pub use issues::{Issue, event_issues, is_event_time_zone, task_issues};
 pub use schedule::{Input, Occurrence, Schedule, compile, span};
 pub use walk::{Meter, Stop};
