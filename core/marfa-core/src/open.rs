@@ -415,8 +415,8 @@ impl Core {
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
         let damage_seen = damage::seen();
-        let http = match server {
-            Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
+        let mut http = match server {
+            Some(server) => Some(http::Http::new(&server.url, &server.key)?),
             None => None,
         };
         let relocation = (|| -> Result<_> {
@@ -462,16 +462,19 @@ impl Core {
             }));
         }
         if let Some((expected_origin, expected_instance)) = relocation {
-            let http = http.as_ref().expect("relocation has a server");
-            let db = Arc::clone(&conn);
+            let http = http.as_mut().expect("relocation has a server");
+            let db = Arc::downgrade(&conn);
             let origin = http.origin();
             let recorded_origin = expected_origin.clone();
             let recorded_instance = expected_instance.clone();
-            let claim = Arc::clone(&lock);
+            let claim = Arc::downgrade(&lock);
             http.relocating(
                 expected_origin,
                 expected_instance,
                 Box::new(move |stopped| {
+                    let (Some(db), Some(claim)) = (db.upgrade(), claim.upgrade()) else {
+                        return Err(CoreError::Canceled);
+                    };
                     keep_relocated_origin(
                         &db,
                         &claim,
@@ -481,11 +484,12 @@ impl Core {
                         stopped,
                     )
                 }),
+                Arc::new((Arc::clone(&conn), Arc::clone(&lock))),
             );
         }
         Ok(Core {
             conn,
-            http,
+            http: http.map(Arc::new),
             cache,
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,

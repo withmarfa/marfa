@@ -405,6 +405,40 @@ fn relocation_http_clone_keeps_writer_ownership_until_confirmation_ends() {
 }
 
 #[test]
+fn relocation_stopped_root_read_or_drain_write_leaves_the_copy_to_open_as_the_writer() {
+    for waits_on in ["/", "/items"] {
+        let server = Scripted::start();
+        doors(&server);
+        let released = Arc::new(AtomicBool::new(false));
+        let waiting = |answer| {
+            vec![Answer::WaitFor {
+                ready: released.clone(),
+                answer: Box::new(answer),
+            }]
+        };
+        match waits_on {
+            "/" => server.on("/", waiting(scripted::root(scripted::INSTANCE))),
+            _ => server.on("/items", waiting(scripted::json(201, "{}"))),
+        }
+        let (dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
+        current_copy(&core);
+        let stop = AtomicBool::new(false);
+        let ended = std::thread::scope(|scope| {
+            let draining = scope.spawn(|| core.drain_until(&stop));
+            server.wait_for(waits_on, 1, Duration::from_secs(2));
+            stop.store(true, Ordering::SeqCst);
+            draining.join().unwrap()
+        });
+        assert!(matches!(ended, Err(CoreError::Canceled)), "{waits_on}");
+        drop(core);
+        let reopened = Core::open(dir.path().join("copy.sqlite"), None).unwrap();
+        assert_eq!(reopened.handle(), crate::Handle::Writer, "{waits_on}");
+        assert_eq!(server.seen(waits_on).len(), 1, "{waits_on}");
+        released.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
 fn relocation_reader_sends_once_the_identity_agrees_and_leaves_the_origin_to_the_writer() {
     let server = Scripted::start();
     doors(&server);
