@@ -4352,15 +4352,15 @@ When a device refuses a store `store_damaged`, a device MUST NOT advise deleting
 
 ### `device/store-damaged-set-aside-flag`
 
-If a device refuses a store `store_damaged` because a set-aside of the store is unfinished, then a device MUST give `setAsideStopped` as true in the refusal.
+If a device refuses a store `store_damaged` while a file stands at `<store>.carrying`, whether a set-aside left it or not, then a device MUST give `setAsideStopped` as true in the refusal.
 
-**Reason:** only a set-aside finishes it, and a removal or replacement is refused until then (`device/remove-store-set-aside-stopped`, `device/replace-set-aside-stopped`). An app tells that refusal from other damage by this field, never by the refusal's text.
+**Reason:** a removal or replacement is refused while a file stands at that name (`device/remove-store-set-aside-stopped`, `device/replace-set-aside-stopped`), so an app that sees the flag offers neither. Where a set-aside left the file, asking for a set-aside finishes it. Where it did not, a set-aside refuses and names the file (`device/set-aside-not-made`): the person moves the file elsewhere first, after which a removal, a replacement and a set-aside go ahead. An app tells that refusal from other damage by this field, never by the refusal's text.
 
 **Tests:** `device/binding-remove-store.test.ts › refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
 
 ### `device/store-damaged-flag-unset`
 
-If a device refuses a store `store_damaged` and no set-aside of the store is unfinished, then a device MUST give `setAsideStopped` as false in the refusal.
+If a device refuses a store `store_damaged` and no file stands at `<store>.carrying`, then a device MUST give `setAsideStopped` as false in the refusal.
 
 **Reason:** a store SQLite cannot read may be removed, where its queue is unreadable (`device/remove-store-all`), or set aside.
 
@@ -4530,15 +4530,15 @@ When a device is asked to set aside a store whose set-aside stopped part way, a 
 
 ### `device/remove-store-all`
 
-When a device is asked to remove a store agreeing to lose every write it holds, and the store holds no unsent write that the device can read, a device MUST remove the store.
+When a device is asked to remove a store agreeing to lose every write it holds, and the device cannot read the complete list of the store's unsent writes or reads it and finds it empty, a device MUST remove the store.
 
-**Reason:** the writes of a store SQLite cannot read may not be listable, so a person who agrees to lose them all has no list to agree to. A queue that reads and holds none loses nothing.
+**Reason:** the writes of a store SQLite cannot read may not be listable, so a person who agrees to lose them all has no list to agree to. A queue with one row that does not read lists nothing, even where other rows read, so it is removed with the rest. A queue that reads whole and holds none loses nothing.
 
-**Tests:** `device/binding-remove-store.test.ts › removes a store whose unsent writes it cannot read when every write is agreed lost`, `› removes a store whose unsent writes it can read and finds none when every write is agreed lost`.
+**Tests:** `device/binding-remove-store.test.ts › removes a store whose unsent writes it cannot read when every write is agreed lost`, `› removes a store whose unsent writes it can read and finds none when every write is agreed lost`, `› removes a store whose queue holds a readable write and a row that does not read when every write is agreed lost`.
 
 ### `device/remove-store-all-readable`
 
-If a device is asked to remove a store agreeing to lose every write it holds, and the store's unsent writes can be read when the device takes the store's writer lock and number at least one, then a device MUST refuse `unsent_differs`, counting them in `unsent`.
+If a device is asked to remove a store agreeing to lose every write it holds, and the complete list of the store's unsent writes can be read when the device takes the store's writer lock and holds at least one write, then a device MUST refuse `unsent_differs`, counting them in `unsent`.
 
 **Reason:** nothing binds that agreement to what the person was shown. A queue that could not be read when an app looked can read by the time the removal runs, and a store swapped between the two can hold a write nobody listed. The app reads the writes (`device/wrong-schema-lists`) and removes with their confirmation (`device/remove-store`).
 

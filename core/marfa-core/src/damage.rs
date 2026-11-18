@@ -140,8 +140,15 @@ fn emptied_refusal(path: &Path) -> CoreError {
         path: path.display().to_string(),
         reason: "its file is empty while its write-ahead log holds committed writes, which SQLite deletes as it opens such a file".into(),
         unsent: None,
-        set_aside_stopped: false,
+        set_aside_stopped: stopped(path),
     }
+}
+
+/// The flag every `StoreDamaged` carries. True while anything stands at the
+/// set-aside's name, because a removal or replacement is refused there,
+/// whether a set-aside left it or not.
+pub(crate) fn stopped(path: &Path) -> bool {
+    carrying(path).symlink_metadata().is_ok()
 }
 
 pub(crate) fn refusal(path: &Path, reason: String) -> CoreError {
@@ -151,7 +158,7 @@ pub(crate) fn refusal(path: &Path, reason: String) -> CoreError {
         unsent: store::open_refused(path)
             .ok()
             .and_then(|conn| store::untaken_count(&conn)),
-        set_aside_stopped: false,
+        set_aside_stopped: stopped(path),
     }
 }
 
@@ -201,7 +208,7 @@ pub(crate) fn refuse_unfinished(path: &Path) -> Result<(), CoreError> {
         path: path.display().to_string(),
         reason,
         unsent,
-        set_aside_stopped: true,
+        set_aside_stopped: stopped(path),
     })
 }
 

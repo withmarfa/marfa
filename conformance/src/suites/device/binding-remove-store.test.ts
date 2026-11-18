@@ -346,6 +346,33 @@ describe("removing a store", () => {
     expect(held(device.store)).toEqual({});
   });
 
+  it("removes a store whose queue holds a readable write and a row that does not read when every write is agreed lost", async () => {
+    const started = await startBindingHarness("remove-all-partly", {
+      server: false,
+    });
+    harness = started;
+    const { device } = started;
+    for (const title of ["first", "second"]) {
+      const created = await device.createItem({
+        type: "core.note",
+        properties: { title, body: title },
+      });
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+    }
+    const queue = await device.queue();
+    expect(queue.ok && queue.value.length).toBe(2);
+    const second = queue.ok ? queue.value[1].id : "";
+    await device.forget();
+    // The witness: the list as a whole is not read, though one write reads.
+    edit(device.store, `UPDATE queue SET payload = x'ff' WHERE id = '${second}'`);
+    const looked = await device.readUnsent();
+    expect(looked.ok, "the queue read as a whole").toBe(false);
+
+    const removed = await device.removeStoreLosingAll();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(held(device.store)).toEqual({});
+  });
+
   it("refuses to remove, agreeing to lose every write, a store whose unsent writes can be read when the removal begins, and keeps them", async () => {
     const { device, shown } = await storeWithOneUnsent("remove-all-readable");
     edit(

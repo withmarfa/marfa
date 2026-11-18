@@ -159,7 +159,8 @@ pub enum CoreError {
         /// Writes in its queue the server has not taken, as `WrongSchema`
         /// counts them; `None` where the queue cannot be read whole.
         unsent: Option<u64>,
-        /// True while set-aside recovery blocks removal or replacement.
+        /// True while a file stands at the set-aside's name, which blocks
+        /// removal and replacement whether a set-aside left it or not.
         set_aside_stopped: bool,
     },
     /// A removal of a store was refused, leaving it as it was, because the
