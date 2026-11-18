@@ -344,7 +344,7 @@ impl Folder {
         // The same edit keeps its key, so one whose answer was lost is
         // answered from the server's record.
         let key = format!("{}-settings-{}", self.folder, state::hash(body.as_bytes()));
-        if let Err(error) = self.core.refuse_removing(Some(&self.folder)) {
+        if let Err(error) = self.core.refuse_removing(&self.folder) {
             return Ok(SettingsFileReport {
                 flagged: Some(format!("not sent yet: {error}")),
                 ..Default::default()

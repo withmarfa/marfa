@@ -49,9 +49,8 @@ impl Core {
         self.removing.hold(ids, by)
     }
 
-    /// Refuses a write sent at once to `item`, or to a new item where `item`
-    /// is `None`, while a trash or a purge holds it.
-    pub(crate) fn refuse_removing(&self, item: Option<&str>) -> Result<()> {
+    /// Refuses a write sent at once to `item` while a trash or a purge holds it.
+    pub(crate) fn refuse_removing(&self, item: &str) -> Result<()> {
         self.removing.refuse(item)
     }
 

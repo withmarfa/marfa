@@ -89,12 +89,10 @@ impl Removals {
         })
     }
 
-    /// Refuses a write sent at once rather than queued to `item`, or to a
-    /// new item where `item` is `None`.
-    pub(crate) fn refuse(&self, item: Option<&str>) -> Result<(), CoreError> {
-        let id = item.unwrap_or(EVERY_ITEM);
-        match self.holder(id) {
-            Some(by) => Err(being_removed(id, by)),
+    /// Refuses a write sent at once rather than queued to `item`.
+    pub(crate) fn refuse(&self, item: &str) -> Result<(), CoreError> {
+        match self.holder(item) {
+            Some(by) => Err(being_removed(item, by)),
             None => Ok(()),
         }
     }

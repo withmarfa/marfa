@@ -752,7 +752,7 @@ fn a_write_to_an_item_a_purge_has_out_is_refused_until_it_returns() {
     .unwrap();
     assert_eq!(queue_len(&core), 1, "only the write to z was queued");
     assert_eq!(server.seen("/items/a/purge").len(), 1);
-    core.refuse_removing(Some("a")).unwrap();
+    core.refuse_removing("a").unwrap();
 }
 
 #[test]
@@ -1099,22 +1099,35 @@ fn a_view_or_folder_the_trash_holds_is_neither_changed_nor_deleted() {
 }
 
 #[test]
-fn a_cut_preview_holds_a_new_view_or_folder() {
+fn a_cut_preview_leaves_a_new_view_or_folder_alone() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
     let core = copy(Some(&server), dir.path(), &["a"]);
-    let mut preview = previewed(&core, &server, &["a"], &[]);
-    preview.items[0].truncated = true;
-    log_holds(&server, &[("a", 2)]);
-    let settings: serde_json::Map<String, Value> =
-        serde_json::from_value(json!({"title": "new"})).unwrap();
-    while_held(&core, &server, &preview, || {
-        refused_as_being_removed(core.create_view(&settings, None));
-        refused_as_being_removed(core.create_folder(&settings, None));
-    })
-    .unwrap();
-    assert!(server.seen("/views").is_empty());
-    assert!(server.seen("/folders").is_empty());
+    let settings = json!({"title": "new", "query": {"types": [NOTE]}});
+    let answer = |id: &str, kind: &str| {
+        json!({"item": {
+            "id": id, "type": kind, "properties": settings, "state": "active",
+            "tier": "library", "version": 1, "schema_version": 0, "source": "test",
+            "occurred_at": AT, "created_at": AT, "updated_at": AT
+        }, "metadata": {"item_id": id, "tags": []}, "listed": true})
+        .to_string()
+    };
+    for (door, id, kind) in [
+        ("/views", "new-view", "system.view"),
+        ("/folders", "new-folder", crate::FOLDER_TYPE),
+    ] {
+        server.on(door, vec![scripted::json(201, &answer(id, kind))]);
+        server.on(
+            &format!("/items/{id}"),
+            vec![certified(scripted::json(200, &answer(id, kind)))],
+        );
+    }
+    let settings = settings.as_object().unwrap();
+    let _held = hold(&core, &[store::EVERY_ITEM]);
+    refused_as_being_removed(core.change_view("a", settings, 1, None));
+    assert_eq!(core.create_view(settings, None).unwrap().id, "new-view");
+    assert_eq!(core.create_folder(settings, None).unwrap().id, "new-folder");
+    assert!(server.seen("/views/a").is_empty());
 }
 
 #[test]
