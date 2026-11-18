@@ -75,9 +75,11 @@ struct Refused {
     placements: Withheld,
 }
 
-/// How a pull ranks items: the older edge, then its id; an item with no
-/// placement after every one with, one already there first.
-pub(super) type Rank = (bool, bool, String, String);
+/// How a pull ranks items: the earlier edge, then its id; an item with no
+/// placement after every one with, one already there first. A time is its
+/// instant; one that does not read ranks after every one that does, by its
+/// text.
+pub(super) type Rank = (bool, bool, bool, i64, String, String);
 
 impl Folder {
     /// The item's placement in this folder. The server holds one per item;
@@ -647,16 +649,32 @@ fn goes_on(error: &CoreError) -> bool {
 }
 
 pub(super) fn rank_of(edge: &Edge) -> Rank {
-    (false, false, edge.created_at.clone(), edge.id.clone())
+    let (unread, instant, text) = made(&edge.created_at);
+    (false, false, unread, instant, text, edge.id.clone())
 }
 
 pub(super) fn unplaced_rank(settled: bool) -> Rank {
-    (true, !settled, String::new(), String::new())
+    (
+        true,
+        !settled,
+        false,
+        i64::MIN,
+        String::new(),
+        String::new(),
+    )
 }
 
 /// Who gets a contested name: an unplaced item ranks by when it was made.
 pub(super) fn unplaced_claim(settled: bool, item: &Item) -> Rank {
-    (true, !settled, item.created_at.clone(), item.id.clone())
+    let (unread, instant, text) = made(&item.created_at);
+    (true, !settled, unread, instant, text, item.id.clone())
+}
+
+fn made(created_at: &str) -> (bool, i64, String) {
+    match marfa_rules::time::epoch_ms(created_at) {
+        Some(instant) => (false, instant, String::new()),
+        None => (true, 0, created_at.to_owned()),
+    }
 }
 
 pub(crate) fn is_duplicate(answer: &str) -> bool {
@@ -849,6 +867,71 @@ mod tests {
         edge.version = version;
         edge.updated_at = format!("2026-01-0{version}T00:00:00Z");
         edge
+    }
+
+    fn made_at(id: &str, created_at: &str) -> Item {
+        let mut wire = store::testing::note(id, "Plan", "", "2026-01-01T00:00:00.000Z");
+        wire.created_at = created_at.into();
+        Item::from_wire(wire, Vec::new()).unwrap()
+    }
+
+    fn first_to_claim(items: &[Item]) -> &str {
+        items
+            .iter()
+            .min_by_key(|item| unplaced_claim(true, item))
+            .map(|item| item.id.as_str())
+            .unwrap()
+    }
+
+    #[test]
+    fn an_item_made_earlier_in_another_zone_keeps_the_plain_name() {
+        let earlier = "2026-01-01T10:00:00+05:00";
+        let later = "2026-01-01T06:00:00.000Z";
+        assert!(earlier > later);
+        assert_eq!(
+            first_to_claim(&[made_at("a-later", later), made_at("b-earlier", earlier)]),
+            "b-earlier"
+        );
+        let edge = |id: &str, created_at: &str| {
+            rank_of(&Edge {
+                id: id.into(),
+                from_id: "note".into(),
+                to_id: "folder".into(),
+                edge_type: PLACEMENT_EDGE.into(),
+                properties: Map::new(),
+                version: 1,
+                created_at: created_at.into(),
+                updated_at: created_at.into(),
+            })
+        };
+        assert!(edge("b-earlier", earlier) < edge("a-later", later));
+    }
+
+    #[test]
+    fn one_instant_written_two_ways_is_decided_by_id() {
+        let zulu = "2026-01-01T05:00:00.000Z";
+        let offset = "2026-01-01T06:00:00+01:00";
+        assert_eq!(
+            first_to_claim(&[made_at("a", offset), made_at("b", zulu)]),
+            "a"
+        );
+        assert_eq!(
+            first_to_claim(&[made_at("b", offset), made_at("a", zulu)]),
+            "a"
+        );
+    }
+
+    #[test]
+    fn a_made_time_that_does_not_read_ranks_after_every_one_that_does() {
+        for unreadable in ["", "0000", "not a time"] {
+            assert_eq!(
+                first_to_claim(&[
+                    made_at("a", unreadable),
+                    made_at("b", "9999-12-31T23:59:59.999Z"),
+                ]),
+                "b"
+            );
+        }
     }
 
     fn placed_json(version: i64, path: &str) -> Value {
