@@ -407,9 +407,6 @@ fn name_states(core: &Core) -> Vec<String> {
         .unwrap()
 }
 
-/// Settles a link whose item answers slowly, raising the stop while the
-/// request is in flight when `stopping`; answers what settling answered and
-/// how many renewals ran.
 fn settled_through_a_slow_read(
     first: scripted::Answer,
     then: Option<scripted::Answer>,

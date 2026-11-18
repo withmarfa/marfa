@@ -1487,15 +1487,14 @@ describe("the working copy belongs to one server", () => {
         copyItemEvent("11", "item.created", wireItem({ id: "followed" })),
       ]),
     );
-    // Holding the writer lock makes the second process open as a reader. The
-    // follow tells the event only once it holds the lock and has applied it.
+    // Only the writer can apply the event and report its cursor.
     const writer = device.holdFollow(20);
     try {
       await vi.waitFor(
         () =>
           expect(
             writer.stdout,
-            `the writer never took the event: ${writer.stderr}`,
+            `the writer never applied the event: ${writer.stderr}`,
           ).toContain('"cursor":"11"'),
         { timeout: 10_000, interval: 25 },
       );

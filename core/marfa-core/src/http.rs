@@ -214,8 +214,6 @@ pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
-/// Where in a request a caller's check runs: before an attempt is sent, and
-/// before a credential renewal begins.
 #[derive(Clone, Copy)]
 pub(crate) enum Stage {
     Attempt,
@@ -2484,10 +2482,7 @@ fn published_limit<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<u
         .and_then(|limit| usize::try_from(limit).ok()))
 }
 
-/// Only for an answer naming the server's contract; `Http::refused` decides.
-/// The root's `404` says nothing about an item a request names, which a
-/// reader of that request's own `404` would take as absent. The server's
-/// answer stays as it sent it.
+/// A missing root cannot establish that an item is absent.
 fn unconfirmed(error: CoreError) -> CoreError {
     match error {
         CoreError::NotFound {
@@ -2504,6 +2499,7 @@ fn unconfirmed(error: CoreError) -> CoreError {
     }
 }
 
+/// Only for an answer that names the server's contract.
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message, details, read) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (

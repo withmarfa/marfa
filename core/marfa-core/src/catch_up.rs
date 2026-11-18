@@ -1005,8 +1005,7 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
 
-/// The instance may change while a credential is being renewed, so each
-/// attempt confirms it; a renewal only checks the stop.
+/// The instance may change during credential renewal.
 pub(crate) fn confirm_each_attempt<'a>(
     core: &'a Core,
     http: &'a Http,
