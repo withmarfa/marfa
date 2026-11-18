@@ -406,20 +406,20 @@ fn relocation_http_clone_keeps_writer_ownership_until_confirmation_ends() {
 
 #[test]
 fn relocation_stopped_root_read_or_drain_write_leaves_the_copy_to_open_as_the_writer() {
-    for waits_on in ["/", "/items"] {
+    for (waits_on, answer) in [
+        ("/", scripted::root(scripted::INSTANCE)),
+        ("/items", scripted::json(201, "{}")),
+    ] {
         let server = Scripted::start();
         doors(&server);
         let released = Arc::new(AtomicBool::new(false));
-        let waiting = |answer| {
+        server.on(
+            waits_on,
             vec![Answer::WaitFor {
                 ready: released.clone(),
                 answer: Box::new(answer),
-            }]
-        };
-        match waits_on {
-            "/" => server.on("/", waiting(scripted::root(scripted::INSTANCE))),
-            _ => server.on("/items", waiting(scripted::json(201, "{}"))),
-        }
+            }],
+        );
         let (dir, core) = moving_copy(&server.url(), Some(scripted::INSTANCE));
         current_copy(&core);
         let stop = AtomicBool::new(false);

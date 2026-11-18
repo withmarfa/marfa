@@ -166,10 +166,8 @@ pub struct Http {
     /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
-    /// What the relocation's `keep` writes through, the copy's writer lock
-    /// among it. `keep` reaches it only while a transport holds it, so a
-    /// confirmation under way keeps the writer role, and a transport made to
-    /// be let go, which holds none, frees it once the copy is closed.
+    /// Keeps what `keep` writes through, the writer lock among it, alive.
+    /// `to_let_go` drops it, so a transport left running frees the lock.
     keeps: Option<Arc<dyn std::any::Any + Send + Sync>>,
     reach: Option<String>,
     /// The instance a write names (`X-Marfa-Instance-Id`), so another
