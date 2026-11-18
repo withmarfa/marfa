@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::drain::DrainReport;
 use crate::error::CoreError;
-use crate::http::{EndsBy, Http};
+use crate::http::{EndsBy, Http, Stage};
 use crate::lock::Handle;
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
@@ -1005,15 +1005,19 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
 
-/// The instance may change while a credential is being renewed.
+/// The instance may change while a credential is being renewed, so each
+/// attempt confirms it; a renewal only checks the stop.
 pub(crate) fn confirm_each_attempt<'a>(
     core: &'a Core,
     http: &'a Http,
     stop: &'a AtomicBool,
-) -> impl Fn() -> Result<()> + 'a {
-    move || {
+) -> impl Fn(Stage) -> Result<()> + 'a {
+    move |stage| {
         refuse_if_stopped(stop)?;
-        refuse_another_instance_until(core, http, stop)
+        match stage {
+            Stage::Attempt => refuse_another_instance_until(core, http, stop),
+            Stage::Renewal => Ok(()),
+        }
     }
 }
 
@@ -1031,64 +1035,11 @@ pub(crate) fn refuse_another_instance_until(
         }
         reach::generation(&conn)?
     };
-    let served = ask_unless_stopped(stop, http, Http::served).map_err(unconfirmed)?;
+    let served = ask_unless_stopped(stop, http, Http::served)?;
     same_instance(core, &served.instance_id, generation)?;
     match core.handle() {
         Handle::Writer => store::note_request_limit(&*core.conn()?, served.max_request_bytes),
         Handle::Reader => Ok(()),
-    }
-}
-
-/// Only the item's own `404` establishes its absence.
-fn unconfirmed(error: CoreError) -> CoreError {
-    match error {
-        CoreError::NotFound { code, message, .. } => CoreError::Server {
-            status: 404,
-            code,
-            message,
-            details: None,
-        },
-        other => other,
-    }
-}
-
-enum Ask {
-    Confirm(mpsc::SyncSender<Result<()>>),
-    Answered,
-}
-
-/// Confirmation uses the caller's store, so it runs on the calling thread.
-pub(crate) fn ask_confirmed_unless_stopped<T: Send + 'static>(
-    stop: &AtomicBool,
-    http: &Http,
-    confirm: &dyn Fn() -> Result<()>,
-    read: impl FnOnce(&Http, &dyn Fn() -> Result<()>) -> Result<T> + Send + 'static,
-) -> Result<T> {
-    refuse_if_stopped(stop)?;
-    let (asks, waiting) = mpsc::channel::<Ask>();
-    let answered = asks.clone();
-    let pending = Pending::start(http, move |http| {
-        let before = || {
-            let (verdict, hears) = mpsc::sync_channel(1);
-            asks.send(Ask::Confirm(verdict))
-                .map_err(|_| CoreError::Canceled)?;
-            hears.recv().map_err(|_| CoreError::Canceled)?
-        };
-        let answer = read(http, &before);
-        let _ = answered.send(Ask::Answered);
-        answer
-    });
-    loop {
-        refuse_if_stopped(stop)?;
-        match waiting.recv_timeout(PACE.stop_poll) {
-            Ok(Ask::Confirm(verdict)) => {
-                let _ = verdict.send(confirm());
-            }
-            Ok(Ask::Answered) | Err(RecvTimeoutError::Disconnected) => {
-                return pending.answer(stop);
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-        }
     }
 }
 

@@ -1480,15 +1480,23 @@ describe("the working copy belongs to one server", () => {
     scriptHydration(server, { head: "10" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const elsewhere = await startHarness("origin-moved-reader-peer");
-    // Holding the writer lock makes the second process open as a reader.
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyHeldLog([
+        copyItemEvent("11", "item.created", wireItem({ id: "followed" })),
+      ]),
+    );
+    // Holding the writer lock makes the second process open as a reader. The
+    // follow tells the event only once it holds the lock and has applied it.
     const writer = device.holdFollow(20);
     try {
       await vi.waitFor(
         () =>
           expect(
-            server.requests.some((request) => request.pathname === "/events"),
-            `the writer never began to follow: ${writer.stderr}`,
-          ).toBe(true),
+            writer.stdout,
+            `the writer never took the event: ${writer.stderr}`,
+          ).toContain('"cursor":"11"'),
         { timeout: 10_000, interval: 25 },
       );
       elsewhere.server.answer(

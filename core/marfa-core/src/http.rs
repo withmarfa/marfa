@@ -214,7 +214,15 @@ pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
-pub(crate) type Before<'a> = Option<&'a dyn Fn() -> Result<(), CoreError>>;
+/// Where in a request a caller's check runs: before an attempt is sent, and
+/// before a credential renewal begins.
+#[derive(Clone, Copy)]
+pub(crate) enum Stage {
+    Attempt,
+    Renewal,
+}
+
+pub(crate) type Before<'a> = Option<&'a dyn Fn(Stage) -> Result<(), CoreError>>;
 
 /// An environment proxy cannot reach this machine's loopback addresses.
 pub fn direct_when_local(
@@ -976,7 +984,7 @@ impl Http {
         self.confirm_origin()?;
         self.refuse_if_let_go()?;
         if let Some(before) = before {
-            before()?;
+            before(Stage::Attempt)?;
         }
         let sent = self.authorization();
         let response = run(&sent)?;
@@ -985,13 +993,17 @@ impl Http {
             && header(&response, CONTRACT_HEADER).as_deref()
                 == Some(CONTRACT_VERSION.to_string().as_str())
             && !asks_new_sign_in(&response)
-            && let Some(fresh) = self.renewed(&sent)?
         {
-            self.refuse_if_let_go()?;
             if let Some(before) = before {
-                before()?;
+                before(Stage::Renewal)?;
             }
-            return run(&fresh);
+            if let Some(fresh) = self.renewed(&sent)? {
+                self.refuse_if_let_go()?;
+                if let Some(before) = before {
+                    before(Stage::Attempt)?;
+                }
+                return run(&fresh);
+            }
         }
         Ok(response)
     }
@@ -1379,7 +1391,7 @@ impl Http {
             .map_err(|error| self.unreached(error))?;
         if !(200..300).contains(&status) {
             return Err(if named {
-                refusal(status, &body, retry_after)
+                unconfirmed(refusal(status, &body, retry_after))
             } else {
                 CoreError::Unnamed {
                     origin: self.origin(),
@@ -2473,6 +2485,25 @@ fn published_limit<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<u
 }
 
 /// Only for an answer naming the server's contract; `Http::refused` decides.
+/// The root's `404` says nothing about an item a request names, which a
+/// reader of that request's own `404` would take as absent. The server's
+/// answer stays as it sent it.
+fn unconfirmed(error: CoreError) -> CoreError {
+    match error {
+        CoreError::NotFound {
+            code,
+            message,
+            server,
+        } => CoreError::Server {
+            status: 404,
+            code,
+            message,
+            details: server.and_then(|answer| answer.details).map(Box::new),
+        },
+        other => other,
+    }
+}
+
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message, details, read) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (

@@ -374,44 +374,175 @@ fn settling_bodies_keeps_stream_incomplete_for_a_copy_that_is_not_expired() {
     assert!(!expired(&core));
 }
 
-#[test]
-fn a_stop_during_the_final_link_read_ends_canceled_without_waiting_or_renewing() {
-    let server = Scripted::start();
-    answers(&server);
-    let dir = tempfile::tempdir().unwrap();
-    let core = copy_in_keyed(&server, dir.path(), "k");
+const SLOW: std::time::Duration = std::time::Duration::from_millis(400);
+
+fn slowly(answers: Vec<scripted::Answer>) -> Vec<scripted::Answer> {
+    answers
+        .into_iter()
+        .map(|answer| scripted::Answer::Slow {
+            after: SLOW,
+            answer: Box::new(answer),
+        })
+        .collect()
+}
+
+fn renewals_counted(core: &Core) -> Arc<std::sync::atomic::AtomicUsize> {
     let renewals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = Arc::clone(&renewals);
     core.renew_credential_with(Box::new(move |_| {
         counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok("fresh".into())
     }));
+    renewals
+}
+
+fn name_states(core: &Core) -> Vec<String> {
+    core.conn()
+        .unwrap()
+        .prepare("SELECT state FROM body_names")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// Settles a link whose item answers slowly, raising the stop while the
+/// request is in flight when `stopping`; answers what settling answered and
+/// how many renewals ran.
+fn settled_through_a_slow_read(
+    first: scripted::Answer,
+    then: Option<scripted::Answer>,
+    stopping: bool,
+) -> (Result<(), CoreError>, usize, Vec<String>, bool) {
+    let server = Scripted::start();
+    answers(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    let renewals = renewals_counted(&core);
     let path = format!("/items/{ITEM}");
     server.on(
         &path,
-        vec![scripted::Answer::Slow {
-            after: std::time::Duration::from_millis(600),
-            answer: Box::new(scripted::refusal(401, "unauthorized")),
-        }],
+        slowly([Some(first), then].into_iter().flatten().collect()),
     );
     with_waiting_link(&core);
     let stop = AtomicBool::new(false);
-    let started = std::time::Instant::now();
-    let error = std::thread::scope(|scope| {
+    let settled = std::thread::scope(|scope| {
         let settling = scope.spawn(|| core.settle_bodies(&stop));
+        if stopping {
+            server.wait_for(&path, 1, std::time::Duration::from_secs(2));
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        settling.join().unwrap()
+    });
+    (
+        settled,
+        renewals.load(std::sync::atomic::Ordering::SeqCst),
+        name_states(&core),
+        crate::body::rule::waiting(&core.conn().unwrap()).unwrap(),
+    )
+}
+
+#[test]
+fn a_stop_during_a_link_read_ends_canceled_renewing_nothing_and_recording_nothing() {
+    let renewed = || scripted::refusal(401, "unauthorized");
+    let absent = || scripted::refusal(404, "not_found");
+
+    let (settled, renewals, states, _) =
+        settled_through_a_slow_read(renewed(), Some(absent()), false);
+    settled.unwrap();
+    assert_eq!(renewals, 1, "the witness did not renew");
+    assert!(states.iter().any(|state| state == "missing"), "{states:?}");
+
+    let (settled, renewals, states, owed) =
+        settled_through_a_slow_read(renewed(), Some(absent()), true);
+    assert!(matches!(settled, Err(CoreError::Canceled)), "{settled:?}");
+    assert_eq!(renewals, 0, "a stopped lookup renewed the credential");
+    assert!(states.iter().all(|state| state != "missing"), "{states:?}");
+    assert!(owed, "the stop lost the recheck");
+
+    let (settled, renewals, states, owed) = settled_through_a_slow_read(absent(), None, true);
+    assert!(matches!(settled, Err(CoreError::Canceled)), "{settled:?}");
+    assert_eq!(renewals, 0);
+    assert!(
+        states.iter().all(|state| state != "missing"),
+        "a late answer was recorded: {states:?}"
+    );
+    assert!(owed, "the stop lost the recheck");
+}
+
+#[test]
+fn a_core_dropped_after_a_stopped_link_lookup_leaves_the_copy_to_open_as_the_writer() {
+    let server = Scripted::start();
+    answers(&server);
+    let path = format!("/items/{ITEM}");
+    server.on(&path, slowly(vec![scripted::refusal(404, "not_found")]));
+    let (dir, writer, reader) = moved(&server, scripted::INSTANCE);
+    drop(reader);
+    let stop = AtomicBool::new(false);
+    let error = std::thread::scope(|scope| {
+        let looking =
+            scope.spawn(|| with_resolver(&writer, &stop, |resolver| resolver.resolve(ITEM)));
         server.wait_for(&path, 1, std::time::Duration::from_secs(2));
         stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        settling.join().unwrap().unwrap_err()
+        looking.join().unwrap().unwrap_err()
     });
     assert!(matches!(error, CoreError::Canceled), "{error:?}");
+    drop(writer);
+    let reopened = Core::open(
+        dir.path().join("core.sqlite"),
+        Some(Server {
+            url: server.url(),
+            key: "k".into(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(reopened.handle(), Handle::Writer);
+}
+
+#[test]
+fn a_root_refused_as_not_found_at_a_moved_origin_leaves_the_lookup_unanswered() {
+    let server = Scripted::start();
+    answers(&server);
+    let (_dir, writer, reader) = moved(&server, scripted::INSTANCE);
+    server.on("/", vec![scripted::refusal(404, "not_found")]);
+    for core in [&*writer, &reader] {
+        let resolved = with_resolver(core, &crate::NEVER_STOPPED, |resolver| {
+            resolver.resolve(ITEM)
+        });
+        assert!(
+            !matches!(resolved, Ok(Resolved::Unmatched)),
+            "the failed identity read concluded the item is missing: {resolved:?}"
+        );
+    }
     assert!(
-        started.elapsed() < std::time::Duration::from_millis(550),
-        "the stop waited for the reply: {:?}",
-        started.elapsed()
+        server.seen(&format!("/items/{ITEM}")).is_empty(),
+        "an id was sent before the instance was known"
     );
-    std::thread::sleep(std::time::Duration::from_millis(900));
-    assert_eq!(renewals.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert_eq!(server.seen(&path).len(), 1, "the late 401 was retried");
+}
+
+#[test]
+fn a_root_refused_as_not_found_keeps_the_details_the_server_sent() {
+    let server = Scripted::start();
+    answers(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    server.on(
+        "/",
+        vec![scripted::json(
+            404,
+            r#"{"error":{"code":"not_found","message":"no route","details":{"route":"/"}}}"#,
+        )],
+    );
+    let error = core.http().unwrap().instance_id().unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Server { status: 404, .. }),
+        "{error:?}"
+    );
+    let answer = error.answer().unwrap();
+    assert_eq!(answer.status, 404);
+    assert_eq!(answer.code.as_deref(), Some("not_found"));
+    assert_eq!(answer.details, Some(serde_json::json!({ "route": "/" })));
 }
 
 #[test]
