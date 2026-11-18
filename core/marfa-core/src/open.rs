@@ -373,14 +373,18 @@ impl Core {
     /// learns the writer saved.
     pub fn open_reader(path: impl AsRef<Path>) -> Result<Core> {
         let path = path.as_ref();
+        let conn = store::open_to_read(path)?;
+        let removing = Arc::default();
+        store::Removals::serve(&removing, &conn)?;
         Ok(Core {
-            conn: Arc::new(Mutex::new(store::open_to_read(path)?)),
+            conn: Arc::new(Mutex::new(conn)),
             http: None,
             cache: Some(blob::Cache::beside(path)),
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock: Arc::new(lock::WriterLock::reader()),
             streaming: Mutex::default(),
             draining: Mutex::new(()),
+            removing,
             watch: watch::Watch::new(),
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
@@ -442,6 +446,8 @@ impl Core {
             Ok(relocation)
         })()
         .inspect_err(|_| damage::keep_log_if_met(&conn, damage_seen))?;
+        let removing = Arc::default();
+        store::Removals::serve(&removing, &conn)?;
         let conn = Arc::new(Mutex::new(conn));
         let renewals = Arc::new(Mutex::new(Vec::new()));
         if let Some(http) = &http {
@@ -498,6 +504,7 @@ impl Core {
             lock,
             streaming: Mutex::default(),
             draining: Mutex::new(()),
+            removing,
             watch: watch::Watch::new(),
             renewals,
             reclaim_held_until: Mutex::default(),

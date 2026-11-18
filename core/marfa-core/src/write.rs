@@ -12,7 +12,7 @@ use crate::edge_writes::refuse_self_loop;
 use crate::fault;
 use crate::{
     Completeness, Core, CoreError, Draft, Edit, FOLDER_TYPE, Item, ItemState, QueuedWrite, Result,
-    Seen, TagsWrite, Tier, WriteKind, body, catch_up, edge_rules, model, store,
+    Seen, TagsWrite, Tier, WriteKind, body, catch_up, edge_rules, store,
 };
 
 /// The names a write carries held to the server's bounds before anything is
@@ -149,6 +149,15 @@ pub(crate) fn queue_create(
         (Some(source), Some(source_id)) => store::item_under_key(tx, source, source_id)?,
         _ => None,
     };
+    // The create lands on that row, under an ID the queue does not name.
+    // Where the key's source is not known, it may be any row under the key.
+    if let Some(held) = &target {
+        store::refuse_removing(tx, &held.id)?;
+    } else if let (None, Some(source_id)) = (&key_source, &draft.source_id) {
+        for row in store::rows_under_key(tx, source_id, None, None)? {
+            store::refuse_removing(tx, &row)?;
+        }
+    }
     let unresolved = target
         .as_ref()
         .map(|held| store::unanswered_keyed_create(tx, held))
@@ -221,6 +230,15 @@ pub(crate) fn queue_create(
     let chosen = chosen.filter(|_| draft.source_id.is_some());
     let draft = &draft;
     let shown_tier = draft.tier.or(keyed_tier);
+    // An id minted here cannot be held by name, and with no natural key the
+    // create cannot land on a held item, so a cut trash's hold on every item
+    // does not refuse it.
+    let fresh = draft.id.is_none() && draft.source_id.is_none();
+    let enqueue = if fresh {
+        store::enqueue_fresh
+    } else {
+        store::enqueue
+    };
     let id = draft
         .id
         .clone()
@@ -292,7 +310,7 @@ pub(crate) fn queue_create(
     if !declared {
         store::pin(tx, &id)?;
     }
-    let queued = store::enqueue(
+    let queued = enqueue(
         tx,
         &store::NewWrite {
             kind: WriteKind::CreateItem,
@@ -316,7 +334,7 @@ pub(crate) fn queue_create(
     // Queued in the same transaction, so a create never drops its tags.
     for tag in &draft.tags {
         let body = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
-        store::enqueue(
+        enqueue(
             tx,
             &store::NewWrite {
                 kind: WriteKind::AddTag,
@@ -672,10 +690,12 @@ impl Core {
     /// and its pin out of the copy once the server accepts it (the device
     /// chapter's section "Purging"). Never queued. Sent at `version`, the
     /// version the caller was shown, or else the version the copy holds;
-    /// refused, before anything is sent, `NotFound` with `not_held` for a row
-    /// the copy does not hold where no version is named, `Validation` with
-    /// `invalid_transition` for one the copy shows outside the bin, and
-    /// `Invalid` while a write to it waits; then `NoServer` for a copy with no
+    /// refused, before anything is sent, `Validation` with `item_being_removed`
+    /// while a trash or another purge holds the row, `NotFound` with
+    /// `not_held` for a row the copy does not hold where no version is named,
+    /// `Validation` with `invalid_transition` for one the copy shows outside
+    /// the bin, and `Invalid` while a write to it waits, including a create
+    /// under its natural key; then `NoServer` for a copy with no
     /// server. The root confirms the copy's instance first, which expires the
     /// copy where another answers. Otherwise it is refused with what the server
     /// or the network answered, the copy and the queue as they were:
@@ -684,54 +704,40 @@ impl Core {
     /// which its `item.purged` event then shows.
     pub fn purge_item(&self, id: &str, version: Option<i64>) -> Result<()> {
         self.lock.refuse_unless_writer()?;
-        let (held, waiting) = {
+        let (version, _held) = {
             let conn = self.conn()?;
             store::refuse_unless_usable(&conn)?;
-            (
-                store::items_by_ids(&conn, &[id.to_string()])?.pop(),
-                store::waiting_writes_for_item(&conn, id)?,
-            )
-        };
-        if let Some(held) = &held
-            && held.state != ItemState::Trashed
-        {
-            return Err(CoreError::Validation {
-                server: None,
-                code: "invalid_transition".into(),
-                message: format!(
-                    "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
-                    held.state.as_str()
-                ),
-                details: None,
-            });
-        }
-        if !waiting.is_empty() {
-            let queue = store::queued_writes(&*self.conn()?)?;
-            let mut blockers = model::Blockers::new(&queue);
-            let exits = waiting
-                .iter()
-                .map(|write| match blockers.of(write) {
-                    Some(blocker) => format!(
-                        "{} ({}) waits on {} ({}): {}",
-                        write.id,
-                        write.kind,
-                        blocker.id,
-                        blocker.kind,
-                        blocker.exits()
+            let held = self.hold_removing(&conn, vec![id.to_string()], store::Removing::Purge)?;
+            let item = store::items_by_ids(&conn, &[id.to_string()])?.pop();
+            if let Some(item) = &item
+                && item.state != ItemState::Trashed
+            {
+                return Err(CoreError::Validation {
+                    server: None,
+                    code: "invalid_transition".into(),
+                    message: format!(
+                        "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
+                        item.state.as_str()
                     ),
-                    None => format!("{} ({}): {}", write.id, write.kind, write.exits()),
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(CoreError::Invalid(format!(
-                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {exits}",
-                waiting.len()
-            )));
-        }
-        let Some(version) = version.or(held.as_ref().map(|held| held.version)) else {
-            return Err(CoreError::not_held(format!(
-                "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
-            )));
+                    details: None,
+                });
+            }
+            let mut waiting = store::waiting_writes_for_item(&conn, id)?;
+            waiting.extend(store::waiting_writes_reaching_item(&conn, id)?);
+            if !waiting.is_empty() {
+                drop(conn);
+                return Err(CoreError::Invalid(format!(
+                    "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {}",
+                    waiting.len(),
+                    self.exits_of(&waiting)?
+                )));
+            }
+            let Some(version) = version.or(item.as_ref().map(|item| item.version)) else {
+                return Err(CoreError::not_held(format!(
+                    "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
+                )));
+            };
+            (version, held)
         };
         let http = self.http()?;
         catch_up::refuse_another_instance(self, http)?;

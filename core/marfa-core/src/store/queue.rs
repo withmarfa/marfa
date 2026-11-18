@@ -65,6 +65,19 @@ fn refuse_too_deep(payload: &str) -> Result<(), CoreError> {
 /// The idempotency key is minted here, not at send: a key minted per send
 /// would let a retry of a write whose answer was lost write it twice.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
+    if let Some(item) = write.item_id {
+        super::removing::refuse_removing(conn, item)?;
+    }
+    insert(conn, write)
+}
+
+/// Queues a write to an item whose id this device just minted, which no
+/// removal out can hold by name.
+pub fn enqueue_fresh(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
+    insert(conn, write)
+}
+
+fn insert(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
     refuse_too_deep(write.payload)?;
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
@@ -448,6 +461,75 @@ pub(super) fn waiting_writes_for_edge(
         "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
         [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
+}
+
+/// Waiting writes queued under another item that reach row `id`: a create
+/// under its natural key, or a move of an edge to start from it. A create
+/// that names no source counts, since it goes under its credential's source,
+/// which may be the row's.
+pub fn waiting_writes_reaching_item(
+    conn: &Connection,
+    id: &str,
+) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE item_id != ?1 AND (verdict IS NULL OR verdict IN (?4, ?5))
+           AND ((kind = ?2 AND EXISTS (SELECT 1 FROM items
+                   WHERE items.id = ?1 AND items.source_id IS NOT NULL
+                     AND json_extract(queue.payload, '$.source_id') = items.source_id
+                     AND coalesce(json_extract(queue.payload, '$.source') = items.source, 1)))
+             OR (kind = ?3 AND json_extract(queue.payload, '$.from_id') = ?1))",
+        params![
+            id,
+            WriteKind::CreateItem.as_str(),
+            WriteKind::UpdateEdge.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str()
+        ],
+    )
+}
+
+/// The rows other than its own item that `write` reaches, on the rule
+/// `waiting_writes_reaching_item` counts by.
+pub(crate) fn rows_reached_by(
+    conn: &Connection,
+    write: &QueuedWrite,
+) -> Result<Vec<String>, CoreError> {
+    match write.kind {
+        WriteKind::CreateItem => {
+            let Some(source_id) = write.body.get("source_id").and_then(Value::as_str) else {
+                return Ok(Vec::new());
+            };
+            let source = write.body.get("source").and_then(Value::as_str);
+            rows_under_key(conn, source_id, source, write.item_id.as_deref())
+        }
+        WriteKind::UpdateEdge => Ok(write
+            .body
+            .get("from_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .into_iter()
+            .collect()),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// The rows other than `except` that a create naming `source_id` lands on:
+/// under `source`, or under any source where it is not known.
+pub(crate) fn rows_under_key(
+    conn: &Connection,
+    source_id: &str,
+    source: Option<&str>,
+    except: Option<&str>,
+) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT id FROM items
+          WHERE source_id = ?1 AND id IS NOT ?2 AND coalesce(source = ?3, 1)",
+    )?;
+    let rows = statement
+        .query_map(params![source_id, except, source], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
 }
 
 pub(crate) fn read_writes(

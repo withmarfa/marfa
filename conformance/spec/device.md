@@ -394,9 +394,9 @@ While no hydration has started and not completed, and its copy holds a slice and
 
 ### `device/one-writer`
 
-While another process holds the writer role for a store, a device MUST NOT take the writer role for the store.
+While another process holds the writer role for a store, a device MUST NOT take the writer role for the store, whether it opens the store by the same path or through a symbolic link to it.
 
-**Reason:** two writers of one store would each queue into it without seeing the other's items, and one could remove the store from under the other.
+**Reason:** two writers of one store would each queue into it without seeing the other's items, and one could remove the store from under the other. A symbolic link to a store names the same store.
 
 **Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`.
 
@@ -6452,11 +6452,27 @@ If the item the copy shows is not in the bin, then a device MUST refuse to purge
 
 ### `device/purge-waiting-write`
 
-If a write to an item has no answer yet, or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing, and name in the refusal only the commands that take each waiting write out of its wait, naming for a write held behind another the write that holds it, followed to the write that actually blocks, and that write's commands.
+If a write to an item, a move of an edge to start from the item included, has no answer yet, or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing, and name in the refusal only the commands that take each waiting write out of its wait, naming for a write held behind another the write that holds it, followed to the write that actually blocks, and that write's commands.
 
 **Reason:** the write would reach an item that is gone, and a write that carried a person's content would be lost to a purge they may not have meant it for. A write with no answer waits for a drain, a write blocked for a reason a release clears waits for a release, and a dead write or one blocked for a reason a withdraw takes waits for a release or a withdraw. A write held behind another waits for that write, so the refusal names the write it waits on, and a drain only where a drain can move that write. A discard takes only a refused write, so the refusal never names it.
 
 **Tests:** `device/purge.test.ts › refuses an item a write to which still waits, sending nothing`, `› refuses an item a blocked write names, sending nothing`, `› refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn`, `› names, for a write held behind another, the write that holds it and that write's commands`.
+
+### `device/purge-waiting-create`
+
+If a create that names an item's `source_id`, under the item's `source` or naming no `source`, has no answer yet or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing.
+
+**Reason:** the server applies a create that names a held item's natural key to that item (`queue-and-verdicts/landed-accepted-moves`), so the create is a write to the item the purge would destroy. A create naming no `source` takes its key's, which the copy cannot rule out.
+
+**Tests:** waiting on #3238.
+
+### `device/purge-holds-item`
+
+While a purge is out, if a caller writes to its item, a create that names the item's natural key, a move of an edge to start from the item and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
+
+**Reason:** the purge checks for waiting writes before it is sent (`device/purge-waiting-write`), and a write made between that check and the call's return would reach a row that is gone. A purge is out from that check until the call returns.
+
+**Tests:** waiting on #3238.
 
 ### `device/purge-other-instance`
 
@@ -6539,6 +6555,118 @@ If a purge is sent and no answer comes, then a device MUST keep the item and ref
 **Reason:** the server may have purged the item and the answer been lost. The outcome is unknown, so the copy keeps what it was last told, and the `item.purged` event takes the item out where the server did purge it.
 
 **Tests:** `device/purge.test.ts › keeps the item when a purge that was sent is never answered`.
+
+### `device/trash-waiting-write`
+
+If a write to an item that a several-item trash names, or lists as taken with it, a move of an edge to start from the item included, has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing and leaving the queue as it was.
+
+**Reason:** the write would reach rows that are in the bin, and a write that carried a person's content would be lost. The refusal names the commands that take each waiting write out of its wait, as a purge's does.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-waiting-create`
+
+If a create that names the `source_id` of an item a several-item trash names or lists as taken, under that item's `source` or naming no `source`, has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing and leaving the queue as it was.
+
+**Reason:** the server applies a create that names a held item's natural key to that item (`queue-and-verdicts/landed-accepted-moves`), so the create is a write to a row the trash would put in the bin. A create naming no `source` takes its key's, which the copy cannot rule out.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-waiting-write-cut`
+
+If the preview's `takes` for any item was cut at its limit and a write to any item has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing.
+
+**Reason:** the items a cut `takes` leaves out cannot be checked, so no waiting write can be ruled out.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-preview-bounds`
+
+If a caller previews or trashes no item, or more than 20 distinct items, then a device MUST refuse it `validation` with the code `validation_error`, sending nothing.
+
+**Reason:** the server refuses more than 20 ids, and an id named twice is one item.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-unsent-kept`
+
+If a preview or a several-item trash cannot be sent, then a device MUST refuse it `network` and leave the copy's items and its queue as they were.
+
+**Reason:** a trash is never queued, because its digest binds it to the server's state when the preview was read.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-other-instance`
+
+Where the copy names the instance it was hydrated from, if another instance answers at the copy's origin when a preview or a several-item trash is asked for, then a device MUST expire the copy and send nothing further.
+
+**Reason:** a trash sent to another instance would change the wrong data, and the copy would no longer match its server.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-accepted-copy`
+
+When the server accepts a several-item trash, a device MUST NOT return the call until the copy has taken the server's events through the last one its log holds, 5 seconds have passed since the acceptance, or the copy cannot read the log or take its events.
+
+**Reason:** the acceptance carries no versions and names only the items asked for, while the `item.trashed` events carry every item the trash took, listed or not, and the copy takes them through the one cursor that moves events, so none is applied twice or skipped. The wait is bounded so that a slow or unreadable log never holds the call open, and `device/trash-accepted-settled` says how it ended.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-accepted-settled`
+
+When the server accepts a several-item trash, a device MUST answer `settled`, true only where the copy took the server's events through the last one its log holds before the call returned, and, where `settled` is false, `behind`, saying why.
+
+**Reason:** the trash happened on the server either way, so an error would read as a trash that did not happen. Where the copy is behind, the follow or the next catch-up takes the events.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-holds-items`
+
+While a several-item trash is out, if a caller writes to an item the trash names or lists as taken, a create that names the item's natural key, a move of an edge to start from the item and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
+
+**Reason:** the trash checks for waiting writes before it is sent, and a write made between that check and the call's return would reach a row in the bin. A trash is out from that check until the call returns.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-holds-items-cut`
+
+While a several-item trash whose preview cut `takes` is out, if a caller writes to an item that exists, a change to a view or a folder included, or queues a create that names an ID or a natural key, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
+
+**Reason:** the items a cut `takes` leaves out cannot be known, so no write to an item that exists can be ruled out, and a create that names an ID or a natural key can be one of them. A create that names neither is not: the device mints its ID, so it is a new item, and an edge from it to a held item is allowed, as an edge to a held item always is. A new view or folder is likewise new.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-held-again`
+
+While a several-item trash or a purge is out, if a caller trashes several items or purges an item and any of them is one it holds, then a device MUST refuse it `validation` with the code `item_being_removed`, sending nothing.
+
+**Reason:** the second request would race the first for the same rows, and only one answer can settle them.
+
+**Tests:** waiting on #3238.
+
+### `device/removal-holds-release`
+
+While a several-item trash or a purge is out, if a caller releases a write to an item it holds, a create that names that item's natural key or a move of an edge to start from that item, then a device MUST refuse the release `validation` with the code `item_being_removed`, leaving the write as it was.
+
+**Reason:** a released write is sent again, so a release between the removal's check for waiting writes and the call's return would reach a row in the bin or one that is gone.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-refused-kept`
+
+If the server refuses a several-item trash, including `trash_plan_changed` for a digest that no longer matches, then a device MUST leave the copy's items and its queue as they were and refuse it with the server's own error.
+
+**Reason:** a copy that looked as though it had trashed would disagree with the server for good.
+
+**Tests:** waiting on #3238.
+
+### `device/trash-unanswered`
+
+If a several-item trash is sent and no answer comes, then a device MUST leave the copy as it was and refuse the trash `network`.
+
+**Reason:** the server may have trashed the items and the answer been lost, so the `item.trashed` events settle the copy.
+
+**Tests:** waiting on #3238.
 
 ## The bin
 

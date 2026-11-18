@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn an_edit_records_what_it_read_only_on_the_version_held() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     let mut row = store::testing::note("row", "title", "held", "2026-01-01T00:00:00Z");
     row.version = 5;
     store::upsert_item(

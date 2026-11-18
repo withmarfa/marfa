@@ -220,6 +220,74 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     );
 }
 
+#[test]
+#[ignore = "needs a running server"]
+fn several_items_are_previewed_and_trashed_together_against_a_live_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    let marker = nonce();
+    let ids: Vec<String> = ["One", "Two", "Three"]
+        .iter()
+        .map(|title| seed(&["note", title, &format!("{marker} {title}")]))
+        .collect();
+    let child = seed(&["note", "Child", &format!("{marker} child")]);
+    let live = server();
+    post(
+        &format!("{}/edges", live.url),
+        &[("Authorization", &format!("Bearer {}", live.key))],
+        "application/json",
+        &serde_json::json!({ "edge_type": "parent-of", "from_id": ids[0], "to_id": child })
+            .to_string(),
+    );
+    let core = Core::open(&path, Some(server())).unwrap();
+    core.hydrate(&["core.note".into()], SliceTier::Library)
+        .unwrap();
+
+    let preview = core.preview_trash(&ids[..2]).unwrap();
+    assert_eq!(preview.items.len(), 2);
+    assert_eq!(preview.count, 3);
+    assert!(preview.items[0].takes.iter().any(|taken| taken.id == child));
+    assert!(!preview.digest.is_empty());
+
+    let mut stale = preview.clone();
+    stale.digest = "0".repeat(preview.digest.len());
+    assert!(
+        matches!(
+            core.trash_items(&stale),
+            Err(CoreError::Server { status: 409, .. })
+        ),
+        "a digest that does not match is refused with the server's code"
+    );
+    assert!(
+        core.get(&ids[0]).unwrap().is_some(),
+        "a refusal changes nothing"
+    );
+
+    let report = core.trash_items(&preview).unwrap();
+    assert!(report.settled, "{report:?}");
+    assert!(core.queue().unwrap().is_empty());
+    let with_bin = core
+        .list(
+            &ListFilters {
+                all_states: true,
+                ..Default::default()
+            },
+            Sort::default(),
+        )
+        .unwrap()
+        .rows;
+    for id in ids[..2].iter().chain([&child]) {
+        let row = with_bin.iter().find(|item| &item.id == id).unwrap();
+        assert_eq!(row.state, ItemState::Trashed, "{id} is in the bin at once");
+    }
+    let kept = with_bin.iter().find(|item| item.id == ids[2]).unwrap();
+    assert_eq!(kept.state, ItemState::Active, "an item not named stays");
+
+    let caught = core.catch_up().unwrap();
+    assert_eq!(caught.skipped, 0, "{caught:?}");
+    assert!(core.preview_trash(&[]).is_err());
+}
+
 fn post(url: &str, headers: &[(&str, &str)], content_type: &str, body: &str) -> ureq::Body {
     let mut request = ureq::post(url).header("Content-Type", content_type);
     for (name, value) in headers {

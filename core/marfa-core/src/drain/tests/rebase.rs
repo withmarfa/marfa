@@ -19,7 +19,7 @@ const SUBJECTS: [(WriteKind, WriteKind, &str, Option<&str>); 2] = [
 
 #[test]
 fn only_an_answer_about_the_row_itself_rebases_an_edit_of_it() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     for (created, edited, subject, edge) in SUBJECTS {
         let create = store::enqueue(&conn, &write(created, "mine", edge, None, &[])).unwrap();
         let depends_on = [create.id.clone()];
@@ -50,7 +50,7 @@ fn at(version: i64) -> AnsweredAt<'static> {
 
 #[test]
 fn an_item_edit_moves_only_onto_a_later_answer_that_holds_what_it_read() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     let queue = |base| {
         store::enqueue(
             &conn,
@@ -125,7 +125,7 @@ fn an_edit_holds_where_the_answer_keeps_every_property_it_changed_as_read() {
             true,
         ),
     ] {
-        let conn = store::open_in_memory().unwrap();
+        let conn = store::testing::conn();
         let body = json!({ "version": 3, "properties": sent }).to_string();
         let edit = store::enqueue(
             &conn,
@@ -183,7 +183,7 @@ fn a_first_answer_not_retained_settles_by_the_status_it_carried() {
         );
     }
 
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     for (payload, expected) in [
         (
             json!({ "id": "mine", "type": "core.note" }),
@@ -321,7 +321,7 @@ fn failed_verdicts_restore_unsent_followers_base_without_reading_or_rewriting_se
 
 #[test]
 fn an_edit_made_against_one_that_did_not_land_goes_back_onto_its_base() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     let queue = |base: i64, properties: serde_json::Value| {
         let body = json!({ "version": base, "properties": properties }).to_string();
         store::enqueue(
@@ -370,7 +370,7 @@ fn an_edit_made_against_one_that_did_not_land_goes_back_onto_its_base() {
 
 #[test]
 fn a_move_drops_what_the_edit_carries_unchanged() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     let body =
         json!({ "version": 3, "properties": { "title": "held", "body": "second" } }).to_string();
     let edit = store::enqueue(
@@ -398,7 +398,7 @@ fn a_move_drops_what_the_edit_carries_unchanged() {
 
 #[test]
 fn a_whole_edit_moves_as_the_answer_with_its_changes_laid_over() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     let body = json!({
         "version": 3,
         "properties_mode": "replace",
@@ -433,7 +433,7 @@ fn a_whole_edit_moves_as_the_answer_with_its_changes_laid_over() {
 
 #[test]
 fn only_the_waiting_unsent_edits_queued_after_it_are_behind_it() {
-    let conn = store::open_in_memory().unwrap();
+    let conn = store::testing::conn();
     let queue = |item: &str| {
         store::enqueue(
             &conn,

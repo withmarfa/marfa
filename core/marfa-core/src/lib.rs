@@ -98,6 +98,9 @@ mod test_folders;
 mod tests;
 #[cfg(test)]
 mod tier_tests;
+mod trash;
+#[cfg(test)]
+mod trash_tests;
 #[cfg(test)]
 mod trashed_at_tests;
 mod types;
@@ -175,6 +178,7 @@ pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use slice::SliceQuery;
 pub use store::CEILING;
+pub use trash::{TrashPreview, TrashPreviewItem, TrashReport, TrashTaken};
 pub use views::{VIEW_TYPE, ViewGroup, ViewRow};
 pub use watch::{Listening, WatchListener};
 #[cfg(debug_assertions)]
@@ -289,6 +293,9 @@ pub struct Core {
     /// Two drains at once would each send every unanswered write, so a
     /// second waits for the one under way.
     draining: Mutex<()>,
+    /// What each trash or purge out at the server holds, read by the
+    /// connection's writes to the queue.
+    removing: Arc<store::Removals>,
     /// The one source this store's listeners share (`watch`).
     watch: Arc<watch::Watch>,
     /// Each renewal not yet written down, as the digests of the header it

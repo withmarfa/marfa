@@ -9,8 +9,9 @@ use super::dead::{
 use super::laying::{put_back, record_refusal, replaces_properties};
 use super::marks::removal_accepted;
 use super::meta::{META_INSTANCE_ID, meta_delete, meta_get, meta_keys, meta_set, meta_under};
-use super::queue::{queued_write, queued_writes, read_writes};
+use super::queue::{queued_write, queued_writes, read_writes, rows_reached_by};
 use super::reach::{edge_write_ends, let_go_of_ends};
+use super::removing::refuse_removing;
 use super::rows::WAITING;
 use super::time::{now_iso, now_millis};
 use super::write_state::{chosen_tier_key, cleared_time_key, unsent};
@@ -368,10 +369,21 @@ pub(super) const SELF_CLEARING: [&str; 2] = [
     crate::model::AWAITING_DEPENDENCY,
 ];
 
-/// The released row keeps its key unless the server holds an answer under it
-/// that refused the write (`fresh_key_on_release`); a spent key is kept so a
-/// late answer under it is not taken for an answer to the new attempt. A row
-/// write releases every write of its batch, to go again as it went.
+/// A released write goes to the server, so it is refused as a new one is.
+fn refuse_released_while_removing(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    let Some(write) = queued_write(conn, id)? else {
+        return Ok(());
+    };
+    if let Some(item) = &write.item_id {
+        refuse_removing(conn, item)?;
+    }
+    for row in rows_reached_by(conn, &write)? {
+        refuse_removing(conn, &row)?;
+    }
+    Ok(())
+}
+
+/// A spent key is retained so a late answer cannot settle a new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, reason, kind, sent)) = conn
         .query_row(
@@ -416,6 +428,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(false);
     }
     let batch = crate::row_writes::batch_of(conn, id)?;
+    for write in &batch {
+        refuse_released_while_removing(conn, write)?;
+    }
     if hold_for_instance(conn, &batch)? {
         return Ok(false);
     }

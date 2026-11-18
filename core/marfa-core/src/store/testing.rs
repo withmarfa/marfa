@@ -6,8 +6,11 @@ use crate::wire::{WireEdge, WireItem};
 use marfa_rules::catalog::Indexing;
 use marfa_rules::wire::{WireDisplayHints, WireType};
 
+/// A store no trash or purge holds anything in.
 pub fn conn() -> Connection {
-    open_in_memory().unwrap()
+    let conn = open_in_memory().unwrap();
+    Removals::serve(&std::sync::Arc::default(), &conn).unwrap();
+    conn
 }
 
 /// The queue another build made, whose `CHECK` also admits `kind`.

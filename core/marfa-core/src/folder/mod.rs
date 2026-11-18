@@ -5371,6 +5371,39 @@ mod tests {
     }
 
     #[test]
+    fn a_settings_edit_to_a_folder_a_trash_holds_waits_until_the_trash_is_answered() {
+        let (_dir, folder, server, _passes) = watched_notes(&["a.md"]);
+        let path = folder.root.join(STATE_DIR).join(SETTINGS_FILE);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{text}defaults:\n  tier: library\n")).unwrap();
+        let door = format!("/folders/{}", folder.folder);
+        let held = {
+            let conn = folder.core.conn().unwrap();
+            folder
+                .core
+                .hold_removing(
+                    &conn,
+                    vec![folder.folder.clone()],
+                    crate::store::Removing::Trash,
+                )
+                .unwrap()
+        };
+        let report = folder.send_settings_edit().unwrap();
+        assert!(
+            report.flagged.as_deref().is_some_and(
+                |flag| flag.contains("not sent yet") && flag.contains("being moved to the bin")
+            ),
+            "{report:?}"
+        );
+        assert!(server.seen(&door).is_empty());
+
+        // The witness: once the trash is answered, the same edit is sent.
+        drop(held);
+        folder.send_settings_edit().unwrap();
+        assert_eq!(server.seen(&door).len(), 1);
+    }
+
+    #[test]
     fn a_watch_pass_pulls_again_while_an_edge_end_is_unheld() {
         let (dir, folder, server, mut passes) = watched_notes(&["a.md"]);
         let gone = "01a00000-0000-7000-8000-0000000000e9";
