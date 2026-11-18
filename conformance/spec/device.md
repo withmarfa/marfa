@@ -6458,11 +6458,19 @@ If a write to an item has no answer yet, or is blocked or dead, then a device MU
 
 **Tests:** `device/purge.test.ts › refuses an item a write to which still waits, sending nothing`, `› refuses an item a blocked write names, sending nothing`, `› refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn`, `› names, for a write held behind another, the write that holds it and that write's commands`.
 
+### `device/purge-waiting-create`
+
+If a create that names an item's `source_id`, under the item's `source` or naming no `source`, has no answer yet or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing.
+
+**Reason:** the server applies a create that names a held item's natural key to that item (`queue-and-verdicts/landed-accepted-moves`), so the create is a write to the item the purge would destroy. A create naming no `source` takes its key's, which the copy cannot rule out.
+
+**Tests:** waiting on #3238.
+
 ### `device/purge-holds-item`
 
-While a purge is out, if a caller writes to its item, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing nothing.
+While a purge is out, if a caller writes to its item, a create that names the item's natural key and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
 
-**Reason:** the purge checks for waiting writes before it is sent (`device/purge-waiting-write`), and a write queued between that check and the call's return would reach a row that is gone. A purge is out from that check until the call returns.
+**Reason:** the purge checks for waiting writes before it is sent (`device/purge-waiting-write`), and a write made between that check and the call's return would reach a row that is gone. A purge is out from that check until the call returns.
 
 **Tests:** waiting on #3238.
 
@@ -6556,6 +6564,14 @@ If a write to an item that a several-item trash names, or lists as taken with it
 
 **Tests:** waiting on #3238.
 
+### `device/trash-waiting-create`
+
+If a create that names the `source_id` of an item a several-item trash names or lists as taken, under that item's `source` or naming no `source`, has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing and leaving the queue as it was.
+
+**Reason:** the server applies a create that names a held item's natural key to that item (`queue-and-verdicts/landed-accepted-moves`), so the create is a write to a row the trash would put in the bin. A create naming no `source` takes its key's, which the copy cannot rule out.
+
+**Tests:** waiting on #3238.
+
 ### `device/trash-waiting-write-cut`
 
 If the preview's `takes` for any item was cut at its limit and a write to any item has no answer yet or is blocked or dead, then a device MUST refuse the trash `invalid`, sending nothing.
@@ -6590,15 +6606,15 @@ Where the copy names the instance it was hydrated from, if another instance answ
 
 ### `device/trash-accepted-copy`
 
-When the server accepts a several-item trash, a device MUST take the server's events through the last one its log holds before the call returns.
+When the server accepts a several-item trash, a device MUST NOT return the call until the copy has taken the server's events through the last one its log holds, 5 seconds have passed since the acceptance, or the copy cannot read the log or take its events.
 
-**Reason:** the acceptance carries no versions and names only the items asked for, while the `item.trashed` events carry every item the trash took, listed or not. The copy takes them through the one cursor that moves events, so none is applied twice or skipped, and a restore read meanwhile stays.
+**Reason:** the acceptance carries no versions and names only the items asked for, while the `item.trashed` events carry every item the trash took, listed or not, and the copy takes them through the one cursor that moves events, so none is applied twice or skipped. The wait is bounded so that a slow or unreadable log never holds the call open, and `device/trash-accepted-settled` says how it ended.
 
 **Tests:** waiting on #3238.
 
 ### `device/trash-accepted-settled`
 
-When the server accepts a several-item trash, a device MUST answer whether the copy took the server's events through it and, where it did not, why.
+When the server accepts a several-item trash, a device MUST answer `settled`, true only where the copy took the server's events through the last one its log holds before the call returned, and, where `settled` is false, `behind`, saying why.
 
 **Reason:** the trash happened on the server either way, so an error would read as a trash that did not happen. Where the copy is behind, the follow or the next catch-up takes the events.
 
@@ -6606,15 +6622,15 @@ When the server accepts a several-item trash, a device MUST answer whether the c
 
 ### `device/trash-holds-items`
 
-While a several-item trash is out, if a caller writes to an item the trash names or lists as taken, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing nothing.
+While a several-item trash is out, if a caller writes to an item the trash names or lists as taken, a create that names the item's natural key and a change to the item as a view or a folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
 
-**Reason:** the trash checks for waiting writes before it is sent, and a write queued between that check and the call's return would reach a row in the bin. A trash is out from that check until the call returns.
+**Reason:** the trash checks for waiting writes before it is sent, and a write made between that check and the call's return would reach a row in the bin. A trash is out from that check until the call returns.
 
 **Tests:** waiting on #3238.
 
 ### `device/trash-holds-items-cut`
 
-While a several-item trash whose preview cut `takes` is out, if a caller writes to any item, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing nothing.
+While a several-item trash whose preview cut `takes` is out, if a caller writes to any item, a create, a new view or a new folder included, then a device MUST refuse the write `validation` with the code `item_being_removed`, queueing and sending nothing.
 
 **Reason:** the items a cut `takes` leaves out cannot be known, so no write to an item can be ruled out.
 
@@ -6625,6 +6641,14 @@ While a several-item trash whose preview cut `takes` is out, if a caller writes 
 While a several-item trash or a purge is out, if a caller trashes several items or purges an item and any of them is one it holds, then a device MUST refuse it `validation` with the code `item_being_removed`, sending nothing.
 
 **Reason:** the second request would race the first for the same rows, and only one answer can settle them.
+
+**Tests:** waiting on #3238.
+
+### `device/removal-holds-release`
+
+While a several-item trash or a purge is out, if a caller releases a write to an item it holds, or a create that names that item's natural key, then a device MUST refuse the release `validation` with the code `item_being_removed`, leaving the write as it was.
+
+**Reason:** a released write is sent again, so a release between the removal's check for waiting writes and the call's return would reach a row in the bin or one that is gone.
 
 **Tests:** waiting on #3238.
 
