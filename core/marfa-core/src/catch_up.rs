@@ -1005,6 +1005,20 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
 
+/// What a request that names an item confirms before each attempt it sends, a
+/// retry after a credential renewal included: that the server is still the
+/// instance the copy was built from, and that `stop` is not raised.
+pub(crate) fn confirm_each_attempt<'a>(
+    core: &'a Core,
+    http: &'a Http,
+    stop: &'a AtomicBool,
+) -> impl Fn() -> Result<()> + 'a {
+    move || {
+        refuse_if_stopped(stop)?;
+        refuse_another_instance_until(core, http, stop)
+    }
+}
+
 /// Ended with `Canceled` as soon as `stop` is raised, even while the root is
 /// still being asked.
 pub(crate) fn refuse_another_instance_until(

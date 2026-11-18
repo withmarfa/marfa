@@ -846,7 +846,7 @@ fn advance(
     if let Some(cursor) = cursor {
         params.push(("cursor", cursor.as_str()));
     }
-    let page = match http.table_rows(item, table, &params) {
+    let page = match http.table_rows(item, table, &params, None) {
         Err(error) if cursor.is_some() && is_refused_cursor(&error) => {
             return write(&|tx| owe_table(tx, item, table));
         }
@@ -1005,7 +1005,7 @@ fn read_named(
             if let Some(cursor) = &cursor {
                 params.push(("cursor", cursor.as_str()));
             }
-            let page = match http.table_rows(item, table, &params) {
+            let page = match http.table_rows(item, table, &params, None) {
                 Err(error) if is_gone(&error) => return Ok(false),
                 other => other?,
             };
@@ -1819,8 +1819,11 @@ pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> R
         }
     }
     let http = core.http()?;
-    crate::catch_up::refuse_another_instance(core, http)?;
-    Ok(marked(http.table_rows(item, table, &params)?, false))
+    let confirm = crate::catch_up::confirm_each_attempt(core, http, &crate::NEVER_STOPPED);
+    Ok(marked(
+        http.table_rows(item, table, &params, Some(&confirm))?,
+        false,
+    ))
 }
 
 pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Value> {
@@ -1850,8 +1853,11 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
         }
     }
     let http = core.http()?;
-    crate::catch_up::refuse_another_instance(core, http)?;
-    Ok(marked(http.table_row(item, table, row)?, false))
+    let confirm = crate::catch_up::confirm_each_attempt(core, http, &crate::NEVER_STOPPED);
+    Ok(marked(
+        http.table_row(item, table, row, Some(&confirm))?,
+        false,
+    ))
 }
 
 pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>) -> Result<Value> {
@@ -1870,8 +1876,11 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
         .into_iter()
         .collect();
     let http = core.http()?;
-    crate::catch_up::refuse_another_instance(core, http)?;
-    Ok(marked(http.table_totals(item, table, &params)?, false))
+    let confirm = crate::catch_up::confirm_each_attempt(core, http, &crate::NEVER_STOPPED);
+    Ok(marked(
+        http.table_totals(item, table, &params, Some(&confirm))?,
+        false,
+    ))
 }
 
 #[cfg(test)]

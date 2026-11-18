@@ -417,6 +417,18 @@ impl CoreError {
         }
     }
 
+    /// Whether the copy itself ended the call, not one item or one file: it
+    /// expired, changed under the call, or the call was stopped. No later item
+    /// of the same pass is worth asking.
+    pub fn is_copy_wide(&self) -> bool {
+        matches!(
+            self,
+            CoreError::CopyExpired { .. }
+                | CoreError::StreamIncomplete { .. }
+                | CoreError::Canceled
+        )
+    }
+
     /// Whether asking again can clear it. A 404 or a 405 cannot: it may come
     /// from a server that is not Marfa's.
     pub fn is_environmental(&self) -> bool {

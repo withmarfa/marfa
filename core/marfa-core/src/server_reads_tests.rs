@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::body::resolve::{Resolved, Resolver};
 use crate::body::rule::Placements;
@@ -78,7 +79,7 @@ fn read_a_table(core: &Core, door: usize) -> crate::Result<()> {
         2 => core.table_totals(ITEM, "lines", None).map(|_| ()),
         _ => {
             let catalog = crate::catalog::load(&core.conn().unwrap()).unwrap();
-            let mut resolver = Resolver::new(core, &catalog, &Placements);
+            let mut resolver = Resolver::new(core, &catalog, &Placements, &crate::NEVER_STOPPED);
             resolver.resolve(ITEM).map(|resolved| {
                 assert!(matches!(resolved, Resolved::Unmatched), "{resolved:?}");
             })
@@ -140,29 +141,212 @@ fn a_reading_handle_reads_a_table_or_link_for_its_instance_and_refuses_another_w
     }
 }
 
+const OTHER_ITEM: &str = "01a1011a-4902-76cf-a4a9-88e99c038c8e";
+
+fn with_resolver<T>(core: &Core, stop: &AtomicBool, ask: impl FnOnce(&mut Resolver<'_>) -> T) -> T {
+    let catalog = crate::catalog::load(&core.conn().unwrap()).unwrap();
+    let mut resolver = Resolver::new(core, &catalog, &Placements, stop);
+    ask(&mut resolver)
+}
+
 #[test]
-fn a_link_lookup_confirms_the_instance_once_for_every_id_it_asks() {
+fn a_link_lookup_confirms_the_instance_before_each_id_it_asks() {
     let server = Scripted::start();
     answers(&server);
     let dir = tempfile::tempdir().unwrap();
     let core = copy_in_keyed(&server, dir.path(), "k");
-    let other = "01a1011a-4902-76cf-a4a9-88e99c038c8e";
     server.on(
-        &format!("/items/{other}"),
+        &format!("/items/{OTHER_ITEM}"),
         vec![scripted::refusal(404, "x")],
     );
-    let catalog = crate::catalog::load(&core.conn().unwrap()).unwrap();
-    let mut resolver = Resolver::new(&core, &catalog, &Placements);
-    let roots = server.seen("/").len();
-    assert!(matches!(
-        resolver.resolve(ITEM).unwrap(),
-        Resolved::Unmatched
-    ));
-    assert!(matches!(
-        resolver.resolve(other).unwrap(),
-        Resolved::Unmatched
-    ));
-    assert_eq!(server.seen("/").len(), roots + 1);
+    with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+        assert!(matches!(
+            resolver.resolve(ITEM).unwrap(),
+            Resolved::Unmatched
+        ));
+        assert_eq!(server.seen("/").len(), 1);
+        assert!(matches!(
+            resolver.resolve(OTHER_ITEM).unwrap(),
+            Resolved::Unmatched
+        ));
+        assert_eq!(server.seen("/").len(), 2);
+    });
+}
+
+#[test]
+fn an_instance_replaced_between_two_link_lookups_is_sent_no_second_id() {
+    let server = Scripted::start();
+    answers(&server);
+    server.on(
+        "/",
+        vec![scripted::root(scripted::INSTANCE), scripted::root(OTHER)],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    server.on(
+        &format!("/items/{OTHER_ITEM}"),
+        vec![scripted::refusal(404, "x")],
+    );
+    with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+        assert!(matches!(
+            resolver.resolve(ITEM).unwrap(),
+            Resolved::Unmatched
+        ));
+        let refusal = resolver.resolve(OTHER_ITEM).unwrap_err();
+        assert_eq!(refusal.code(), "copy_expired", "{refusal:?}");
+    });
+    assert_eq!(server.seen(&format!("/items/{ITEM}")).len(), 1);
+    assert!(
+        server.seen(&format!("/items/{OTHER_ITEM}")).is_empty(),
+        "an id reached the instance that replaced the one asked first"
+    );
+    assert!(expired(&core));
+}
+
+fn renewed_once(server: &Scripted, path: &str, then: scripted::Answer) {
+    server.on(path, vec![scripted::refusal(401, "unauthorized"), then]);
+}
+
+fn renew(core: &Core) {
+    core.renew_credential_with(Box::new(|_| Ok("fresh".into())));
+}
+
+#[test]
+fn a_table_or_link_read_retried_after_a_renewal_confirms_the_instance_again() {
+    for (door, name) in DOORS.iter().enumerate() {
+        let path = match door {
+            0 => format!("/items/{ITEM}/tables/lines/rows"),
+            1 => format!("/items/{ITEM}/tables/lines/rows/r1"),
+            2 => format!("/items/{ITEM}/tables/lines/totals"),
+            _ => format!("/items/{ITEM}"),
+        };
+        let answer = match door {
+            0 => scripted::json(200, r#"{"data":[],"next_cursor":null}"#),
+            1 => scripted::json(200, r#"{"id":"r1"}"#),
+            2 => scripted::json(200, r#"{"row_count":0,"totals":{}}"#),
+            _ => scripted::refusal(404, "not_found"),
+        };
+
+        let server = Scripted::start();
+        answers(&server);
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+        renew(&core);
+        renewed_once(&server, &path, answer.clone());
+        read_a_table(&core, door).unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        assert_eq!(
+            server.seen(&path).len(),
+            2,
+            "{name}: the witness did not retry"
+        );
+        assert_eq!(
+            server.seen("/").len(),
+            2,
+            "{name}: the retry was not confirmed"
+        );
+
+        let server = Scripted::start();
+        answers(&server);
+        server.on(
+            "/",
+            vec![scripted::root(scripted::INSTANCE), scripted::root(OTHER)],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+        renew(&core);
+        renewed_once(&server, &path, answer);
+        let refusal = read_a_table(&core, door).unwrap_err();
+        assert_eq!(refusal.code(), "copy_expired", "{name}: {refusal:?}");
+        assert_eq!(
+            server.seen(&path).len(),
+            1,
+            "{name}: the retry reached the instance that replaced the first"
+        );
+        assert!(expired(&core), "{name}");
+    }
+}
+
+#[test]
+fn a_stopped_link_lookup_ends_canceled_and_sends_nothing() {
+    let server = Scripted::start();
+    answers(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+
+    with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+        resolver.resolve(ITEM).unwrap();
+    });
+    let (roots, items) = (
+        server.seen("/").len(),
+        server.seen(&format!("/items/{ITEM}")).len(),
+    );
+    assert_eq!((roots, items), (1, 1), "the witness sent nothing");
+
+    let stopped = AtomicBool::new(true);
+    let error = with_resolver(&core, &stopped, |resolver| {
+        resolver.resolve(OTHER_ITEM).unwrap_err()
+    });
+    assert!(matches!(error, CoreError::Canceled), "{error:?}");
+    assert_eq!(server.seen("/").len(), roots);
+    assert!(server.seen(&format!("/items/{OTHER_ITEM}")).is_empty());
+}
+
+fn with_waiting_link(core: &Core) {
+    core.create_item(&crate::model::Draft {
+        r#type: "core.note".into(),
+        properties: serde_json::json!({ "title": "Host", "body": format!("[[{ITEM}]]") })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ..Default::default()
+    })
+    .unwrap();
+}
+
+#[test]
+fn settling_bodies_ends_canceled_when_stopped_and_sends_nothing() {
+    let server = Scripted::start();
+    answers(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    with_waiting_link(&core);
+
+    let stopped = AtomicBool::new(true);
+    let error = core.settle_bodies(&stopped).unwrap_err();
+    assert!(matches!(error, CoreError::Canceled), "{error:?}");
+    assert!(server.seen("/").is_empty());
+    assert!(server.seen(&format!("/items/{ITEM}")).is_empty());
+
+    core.settle_bodies(&crate::NEVER_STOPPED).unwrap();
+    assert_eq!(
+        server.seen(&format!("/items/{ITEM}")).len(),
+        1,
+        "the witness asked nothing"
+    );
+}
+
+#[test]
+fn settling_bodies_reports_a_copy_another_operation_expired_while_the_root_was_read() {
+    let server = Scripted::start();
+    answers(&server);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    with_waiting_link(&core);
+    server.on(
+        "/",
+        vec![scripted::Answer::Slow {
+            after: std::time::Duration::from_millis(300),
+            answer: Box::new(scripted::root(scripted::INSTANCE)),
+        }],
+    );
+    let error = std::thread::scope(|scope| {
+        let settling = scope.spawn(|| core.settle_bodies(&crate::NEVER_STOPPED));
+        server.wait_for("/", 1, std::time::Duration::from_secs(2));
+        crate::reach::advance_generation(&core.conn().unwrap()).unwrap();
+        settling.join().unwrap().unwrap_err()
+    });
+    assert_eq!(error.code(), "copy_expired", "{error:?}");
+    assert!(server.seen(&format!("/items/{ITEM}")).is_empty());
 }
 
 #[test]

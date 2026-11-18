@@ -3,6 +3,7 @@
 //! the server answers.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::atomic::AtomicBool;
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};
@@ -216,13 +217,19 @@ pub(crate) struct Resolver<'a> {
     /// Why the server refused a title lookup as a whole this pass, where it
     /// did: the refusal named no one name, so the names it carried wait.
     refused_call: Option<String>,
-    instance_confirmed: bool,
+    /// Raised by the operation the pass runs for: no lookup starts after it.
+    stop: &'a AtomicBool,
     /// Whether a title lookup call was answered with its results this pass.
     answered: bool,
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(core: &'a Core, catalog: &'a Catalog, paths: &'a dyn Paths) -> Resolver<'a> {
+    pub fn new(
+        core: &'a Core,
+        catalog: &'a Catalog,
+        paths: &'a dyn Paths,
+        stop: &'a AtomicBool,
+    ) -> Resolver<'a> {
         Resolver {
             core,
             catalog,
@@ -233,7 +240,7 @@ impl<'a> Resolver<'a> {
             looked: HashMap::new(),
             offered: true,
             refused_call: None,
-            instance_confirmed: false,
+            stop,
             answered: false,
         }
     }
@@ -282,22 +289,14 @@ impl<'a> Resolver<'a> {
             return Ok(Resolved::Waiting);
         }
         let http = self.core.http()?;
-        if !self.instance_confirmed {
-            match crate::catch_up::refuse_another_instance(self.core, http) {
-                Ok(()) => self.instance_confirmed = true,
-                Err(
-                    error @ (crate::error::CoreError::CopyExpired { .. }
-                    | crate::error::CoreError::StreamIncomplete { .. }),
-                ) => return Err(error),
-                Err(error) => return Ok(self.failed(error)),
-            }
-        }
-        Ok(match http.item(id) {
+        let confirm = crate::catch_up::confirm_each_attempt(self.core, http, self.stop);
+        Ok(match http.item_checked(id, Some(&confirm)) {
             Ok(Some(row)) => Resolved::Found {
                 id: row.item.id,
                 r#type: Some(row.item.r#type),
             },
             Ok(None) => Resolved::Unmatched,
+            Err(error) if error.is_copy_wide() => return Err(error),
             Err(error) => self.failed(error),
         })
     }
@@ -848,7 +847,12 @@ mod tests {
     }
 
     fn resolver<'a>(core: &'a Core, catalog: &'a Catalog) -> Resolver<'a> {
-        Resolver::new(core, catalog, &crate::body::rule::Placements)
+        Resolver::new(
+            core,
+            catalog,
+            &crate::body::rule::Placements,
+            &crate::NEVER_STOPPED,
+        )
     }
 
     fn catalog_of(core: &Core) -> Catalog {

@@ -214,6 +214,10 @@ pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
+/// What a caller confirms before each attempt of a request, such as that the
+/// server is still the instance the copy was built from.
+pub(crate) type Before<'a> = Option<&'a dyn Fn() -> Result<(), CoreError>>;
+
 /// An environment proxy cannot reach this machine's loopback addresses.
 pub fn direct_when_local(
     builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
@@ -963,8 +967,22 @@ impl Http {
         &self,
         run: impl Fn(&str) -> Result<Response, CoreError>,
     ) -> Result<Response, CoreError> {
+        self.authorized_checked(None, run)
+    }
+
+    /// `authorized`, with `before` run ahead of each attempt, a retry after a
+    /// renewal included, so a request is sent only on the answer of a check
+    /// made for that attempt.
+    fn authorized_checked(
+        &self,
+        before: Before<'_>,
+        run: impl Fn(&str) -> Result<Response, CoreError>,
+    ) -> Result<Response, CoreError> {
         self.confirm_origin()?;
         self.refuse_if_let_go()?;
+        if let Some(before) = before {
+            before()?;
+        }
         let sent = self.authorization();
         let response = run(&sent)?;
         if response.status().as_u16() == 401
@@ -975,6 +993,9 @@ impl Http {
             && let Some(fresh) = self.renewed(&sent)?
         {
             self.refuse_if_let_go()?;
+            if let Some(before) = before {
+                before()?;
+            }
             return run(&fresh);
         }
         Ok(response)
@@ -1058,8 +1079,9 @@ impl Http {
         id: &str,
         table: &str,
         params: &[(&str, &str)],
+        before: Before<'_>,
     ) -> Result<serde_json::Value, CoreError> {
-        self.get_json(&["items", id, "tables", table, "rows"], params)
+        self.get_json_checked(&["items", id, "tables", table, "rows"], params, before)
     }
 
     pub(crate) fn table_row(
@@ -1067,8 +1089,9 @@ impl Http {
         id: &str,
         table: &str,
         row: &str,
+        before: Before<'_>,
     ) -> Result<serde_json::Value, CoreError> {
-        self.get_json(&["items", id, "tables", table, "rows", row], &[])
+        self.get_json_checked(&["items", id, "tables", table, "rows", row], &[], before)
     }
 
     pub(crate) fn table_totals(
@@ -1076,8 +1099,9 @@ impl Http {
         id: &str,
         table: &str,
         params: &[(&str, &str)],
+        before: Before<'_>,
     ) -> Result<serde_json::Value, CoreError> {
-        self.get_json(&["items", id, "tables", table, "totals"], params)
+        self.get_json_checked(&["items", id, "tables", table, "totals"], params, before)
     }
 
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
@@ -1445,12 +1469,33 @@ impl Http {
         Ok(self.item_answered(id)?.row())
     }
 
+    /// `item`, with `before` run ahead of each attempt.
+    pub(crate) fn item_checked(
+        &self,
+        id: &str,
+        before: Before<'_>,
+    ) -> Result<Option<WireItemWithMetadata>, CoreError> {
+        Ok(self.item_answered_checked(id, before)?.row())
+    }
+
     /// `item`, keeping the server's `404` where the row is gone.
     pub(crate) fn item_answered(
         &self,
         id: &str,
     ) -> Result<ByIdRead<WireItemWithMetadata>, CoreError> {
-        match self.get_json::<WireItemWithMetadata>(&["items", id], &[("include", "metadata")]) {
+        self.item_answered_checked(id, None)
+    }
+
+    fn item_answered_checked(
+        &self,
+        id: &str,
+        before: Before<'_>,
+    ) -> Result<ByIdRead<WireItemWithMetadata>, CoreError> {
+        match self.get_json_checked::<WireItemWithMetadata>(
+            &["items", id],
+            &[("include", "metadata")],
+            before,
+        ) {
             Ok(item) => Ok(ByIdRead::Row(item)),
             Err(absent @ CoreError::NotFound { .. }) => {
                 Ok(ByIdRead::Absent(absent.answer().map(Box::new)))
@@ -2147,7 +2192,16 @@ impl Http {
         segments: &[&str],
         params: &[(&str, &str)],
     ) -> Result<T, CoreError> {
-        self.read_json(segments, params, None)
+        self.get_json_checked(segments, params, None)
+    }
+
+    fn get_json_checked<T: DeserializeOwned>(
+        &self,
+        segments: &[&str],
+        params: &[(&str, &str)],
+        before: Before<'_>,
+    ) -> Result<T, CoreError> {
+        self.read_json_within(segments, params, None, None, before)
     }
 
     /// The time a page of `ITEM_PAGE_LIMIT` rows may take to arrive: this
@@ -2163,7 +2217,7 @@ impl Http {
 
     /// `get_json` for a page of the item listing, given `page_budget`.
     fn get_page_json<T: DeserializeOwned>(&self, params: &[(&str, &str)]) -> Result<T, CoreError> {
-        self.read_json_within(&["items"], params, None, self.page_budget())
+        self.read_json_within(&["items"], params, None, self.page_budget(), None)
     }
 
     /// A read, sent as a `GET`, or as a `POST` of `body` for a read whose
@@ -2175,7 +2229,7 @@ impl Http {
         params: &[(&str, &str)],
         body: Option<&str>,
     ) -> Result<T, CoreError> {
-        self.read_json_within(segments, params, body, None)
+        self.read_json_within(segments, params, body, None, None)
     }
 
     /// `read_json`, with `budget` in place of the connection's body budget.
@@ -2185,6 +2239,7 @@ impl Http {
         params: &[(&str, &str)],
         body: Option<&str>,
         budget: Option<Duration>,
+        before: Before<'_>,
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
         let conditional = self.reach.as_deref().filter(|_| !segments.is_empty());
@@ -2199,7 +2254,7 @@ impl Http {
                     && value.split(',').any(|part| part.trim() == "metadata")),
             "a listing under a reach asks for include=metadata: {params:?}"
         );
-        let response = self.authorized(|authorization| {
+        let response = self.authorized_checked(before, |authorization| {
             let global = global_budget(None).map_err(|error| self.unreached(error))?;
             let sent = match body {
                 None => {

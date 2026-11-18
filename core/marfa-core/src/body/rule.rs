@@ -1163,7 +1163,7 @@ pub(crate) fn waiting(conn: &Connection) -> Result<bool> {
 /// it answered naming nothing or more than one item where the copy now holds
 /// a different number of items it names. A name the body no longer carries
 /// stops waiting. A failure leaves the names to the next pass, which a
-/// drain does not wait for.
+/// drain does not wait for; a stop, or the copy's expiry, ends the pass.
 pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
     let rows: Vec<Row> = {
         let conn = core.conn()?;
@@ -1184,7 +1184,7 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
         rows.collect::<rusqlite::Result<_>>()?
     };
     let catalog = crate::catalog::load(&*core.conn()?)?;
-    let mut resolver = Resolver::new(core, &catalog, &Placements);
+    let mut resolver = Resolver::new(core, &catalog, &Placements, stop);
     let mut by_item: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     for row in rows {
         by_item.entry(row.item_id.clone()).or_default().push(row);
@@ -1202,7 +1202,7 @@ pub(crate) fn settle(core: &Core, stop: &AtomicBool) -> Result<()> {
         for row in rows {
             if stop.load(Ordering::Relaxed) {
                 rows_changed(&*core.conn()?)?;
-                return Ok(());
+                return Err(CoreError::Canceled);
             }
             let carried = match row.kind {
                 Kind::Link => links.contains(&row.text),

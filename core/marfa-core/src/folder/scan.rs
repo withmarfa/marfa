@@ -1145,7 +1145,7 @@ impl Folder {
         let (shown, report) = (&mut scan.shown, &mut scan.report);
         // Every file is bound now, so a link or a line naming one that
         // arrived in the same scan resolves.
-        let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
+        let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles, &crate::NEVER_STOPPED);
         let now = state::copy_moment(&*self.core.conn()?)?;
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
@@ -1171,6 +1171,11 @@ impl Folder {
                 &mut queued,
                 None,
             );
+            if let Err(error) = &judged
+                && error.is_copy_wide()
+            {
+                return judged.map(|_| ());
+            }
             let rejudged = judged.is_ok();
             let outcome = judged.unwrap_or_else(|error| lines::Outcome {
                 links: pending.had_links.clone(),
@@ -2249,7 +2254,7 @@ impl Folder {
         let mut paths = Vec::new();
         if scan.settings.outside_query == OutsideQuery::Hold {
             for at in self.new_files(scan, claims, waiting) {
-                match self.is_outside(&scan.files[at], scan) {
+                match self.is_outside(&scan.files[at], scan)? {
                     Some(false) => {}
                     Some(true) => {
                         paths.push(scan.files[at].key.clone());
@@ -2271,31 +2276,32 @@ impl Folder {
     /// Whether the query would not hold the item a new file becomes, or
     /// `None` where that cannot be told. What the copy would refuse to make
     /// is not judged here: it is flagged where it is made.
-    fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Option<bool> {
+    fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Result<Option<bool>> {
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
             let draft = file_item_draft(file, file_type, settings, catalog);
             let edges = default_edges_of(settings, None);
-            return self.judge_outside(settings, catalog, &draft, ItemState::Active, &edges);
+            return Ok(self.judge_outside(settings, catalog, &draft, ItemState::Active, &edges));
         }
         if scan.embedded.contains(&file.key) && bytes_type(&file.path, catalog).is_some() {
-            return Some(false);
+            return Ok(Some(false));
         }
         let document = file.document();
         let Ok(made) = new_document(&file.key, &document, (settings, catalog, edge_types)) else {
-            return Some(false);
+            return Ok(Some(false));
         };
         if admission_hold(catalog, &file.key, &made.draft).is_some() {
-            return Some(false);
+            return Ok(Some(false));
         }
         let state = made.read.lines.state.unwrap_or(ItemState::Active);
         let mut edges = default_edges_of(settings, Some((&document.front, edge_types)));
-        let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
-        edges.extend(
-            self.own_edges(&document.front, edge_types, catalog, &mut resolver)
-                .ok()?,
-        );
-        self.judge_outside(settings, catalog, &made.draft, state, &edges)
+        let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles, &crate::NEVER_STOPPED);
+        match self.own_edges(&document.front, edge_types, catalog, &mut resolver) {
+            Ok(own) => edges.extend(own),
+            Err(error) if error.is_copy_wide() => return Err(error),
+            Err(_) => return Ok(None),
+        }
+        Ok(self.judge_outside(settings, catalog, &made.draft, state, &edges))
     }
 
     /// `None` where the dry run failed: a file is never sent on an answer
