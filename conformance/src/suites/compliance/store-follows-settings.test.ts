@@ -75,13 +75,50 @@ it("lists only the folder the last write to /config names once blob-replicate ru
   } finally {
     await server!.clearFault("hold:stores-record");
   }
-  await runJob(operator, "blob-replicate", "either");
+  await runJob(operator, "blob-replicate");
   const settled = await stores();
   expect(settled.attached).toEqual([filesOf(first)]);
   expect(settled.recorded).not.toContain(filesOf(passed));
 
   // The witness that the passed folder can be attached: named alone, it is.
   await name(passed);
-  await runJob(operator, "blob-replicate", "either");
+  await runJob(operator, "blob-replicate");
   expect((await stores()).attached).toEqual([filesOf(passed)]);
+});
+
+/** Returns once the fault has fired. */
+async function firedOnce(fault: string): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const armed = (await server!.faults()).find((one) => one.name === fault);
+    if ((armed?.fired ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`${fault} did not fire`);
+}
+
+it("ends blob-replicate as failed while the record of the folder the last write to /config names cannot be written, and lists that folder once it can", async () => {
+  const { operator } = clientsFor(server!);
+  const first = folder("first");
+  const named = folder("named");
+  await name(first);
+  await runJob(operator, "blob-replicate");
+  expect((await stores()).attached).toEqual([filesOf(first)]);
+
+  try {
+    // The fault acts once each time it is set: first on the follow the write starts, then on
+    // the run's own follow.
+    await server!.setFault("fail:stores-record");
+    await name(named);
+    await firedOnce("fail:stores-record");
+    await server!.setFault("fail:stores-record");
+    const failed = await runJob(operator, "blob-replicate", "failed");
+    expect(failed.error).toEqual(expect.any(String));
+    expect((await stores()).attached).toEqual([filesOf(first)]);
+  } finally {
+    await server!.clearFault("fail:stores-record");
+  }
+
+  // The witness that the run fails only while the record cannot be written.
+  await runJob(operator, "blob-replicate");
+  expect((await stores()).attached).toEqual([filesOf(named)]);
 });
