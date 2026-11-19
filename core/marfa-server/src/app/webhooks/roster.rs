@@ -27,10 +27,26 @@ const WAITS: [Duration; 3] = [
     Duration::from_secs(40),
 ];
 
-#[derive(Debug, Default)]
+/// How long a send waits for the list to follow the last commit; a list that cannot be read
+/// in that time is used as it last stood.
+const CATCH_UP: Duration = Duration::from_secs(2);
+
+#[derive(Debug)]
 pub struct Roster {
     listeners: ArcSwap<Vec<Listener>>,
+    /// The commit count the list was read after.
+    read_after: watch::Sender<u64>,
     queue: OnceLock<mpsc::Sender<Value>>,
+}
+
+impl Default for Roster {
+    fn default() -> Roster {
+        Roster {
+            listeners: ArcSwap::default(),
+            read_after: watch::Sender::new(0),
+            queue: OnceLock::new(),
+        }
+    }
 }
 
 /// Follows the committed subscriptions, and sends what `tell` queues.
@@ -58,14 +74,17 @@ async fn follow(app: Arc<App>) {
     let mut commits = app.db.commits();
     let mut stopping = app.stopping();
     loop {
-        commits.borrow_and_update();
+        let count = *commits.borrow_and_update();
         let at = app.clock.stamp();
         let read = app
             .db
             .read(move |tx| Ok(attention_listeners(tx, store::active(tx)?, &at)))
             .await;
         match read {
-            Ok(listeners) => app.webhooks.roster.listeners.store(Arc::new(listeners)),
+            Ok(listeners) => {
+                app.webhooks.roster.listeners.store(Arc::new(listeners));
+                app.webhooks.roster.read_after.send_replace(count);
+            }
             Err(refused) => {
                 tracing::warn!(error = %refused, "The webhooks for attention could not be read");
             }
@@ -91,6 +110,10 @@ async fn send_queued(app: Arc<App>, mut waiting: mpsc::Receiver<Value>) {
             },
             () = stopped(&mut stopping) => return,
         };
+        let committed = *app.db.commits().borrow();
+        let mut read_after = app.webhooks.roster.read_after.subscribe();
+        let caught_up = read_after.wait_for(|count| *count >= committed);
+        let _ = tokio::time::timeout(CATCH_UP, caught_up).await;
         let mut sending = JoinSet::new();
         for listener in app.webhooks.roster.listeners.load().iter() {
             sending.spawn(deliver(app.clone(), listener.clone(), attention.clone()));
@@ -103,7 +126,9 @@ async fn send_queued(app: Arc<App>, mut waiting: mpsc::Receiver<Value>) {
                 undelivered += 1;
             }
         }
+        let reference = attention["reference"].as_str().unwrap_or_default();
         tracing::info!(
+            reference,
             delivered,
             undelivered,
             "An attention entry was sent from memory"

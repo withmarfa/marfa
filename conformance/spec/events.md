@@ -1325,7 +1325,7 @@ The server MUST carry `event_type`, the event's name, in a delivery's body and i
 
 ### `events/delivery-event-id`
 
-Except in a delivery sent from memory (`events/attention-memory-body`), the server MUST carry `event_id` in a delivery's body, as the id of the event in the log written as a canonical decimal string, equal to the `id:` the stream gave it.
+Where a delivery carries an event from the log, which every delivery but one sent from memory does (`events/attention-memory-body`), the server MUST carry `event_id` in its body, as the id of the event in the log written as a canonical decimal string, equal to the `id:` the stream gave it.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`.
 
