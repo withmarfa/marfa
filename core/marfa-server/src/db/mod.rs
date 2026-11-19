@@ -124,6 +124,10 @@ impl Db {
         })
     }
 
+    pub fn faults(&self) -> &Arc<Faults> {
+        &self.faults
+    }
+
     /// From now on every write keeps what `clock` keeps in its own transaction.
     pub fn keep_clock(&self, clock: Arc<Clock>) {
         let _ = self.clock.set(clock);

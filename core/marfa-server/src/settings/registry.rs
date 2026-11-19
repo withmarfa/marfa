@@ -611,7 +611,7 @@ registry! {
     OBJECT_STORE_BUCKET: Option<String> = "object_store_bucket", Rule::Bucket, "", "The bucket of an object store the server keeps a second copy of each file in and backs itself up to. Leave it empty to keep files on the disk alone.", Machine;
     OBJECT_STORE_REGION: Option<String> = "object_store_region", Rule::Region, "us-east-1", "The region of the object store, a name of letters, digits, hyphens and underscores such as `us-east-1` or `auto`.", Machine;
     OBJECT_STORE_ENDPOINT: Option<String> = "object_store_endpoint", Rule::Endpoint, "", "Where the object store is, for a store other than Amazon S3. Leave it empty for Amazon S3.", Machine;
-    OBJECT_STORE_PATH_STYLE: bool = "object_store_path_style", Rule::Boolean, "true", "Whether the object store at object_store_endpoint is addressed by path rather than by host. Amazon S3, with no endpoint set, is always addressed by path.", Machine;
+    OBJECT_STORE_PATH_STYLE: bool = "object_store_path_style", Rule::Boolean, "true", "Whether the object store at object_store_endpoint is addressed by path rather than by host, where the bucket goes before the endpoint's host. Amazon S3, with no endpoint set, is always addressed by path.", Machine;
     OBJECT_STORE_PREFIX: Option<String> = "object_store_prefix", Rule::Prefix, "marfa", "The folder in the bucket the server keeps files and backups under.", Machine;
     OBJECT_STORE_ACCESS_KEY_ID: Option<String> = "object_store_access_key_id", Rule::Text { max: 256 }, "", "The key the object store is reached with.", Machine;
     OBJECT_STORE_SECRET_ACCESS_KEY: Option<Secret> = "object_store_secret_access_key", Rule::Text { max: 4096 }, "", "The secret the object store is reached with.", MachineSecret;

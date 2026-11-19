@@ -6466,7 +6466,7 @@ export interface components {
              */
             object_store_endpoint?: string;
             /**
-             * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`.
+             * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Absent: `true`.
              * @default true
              */
             object_store_path_style: boolean;
@@ -34968,7 +34968,7 @@ export interface operations {
                      */
                     object_store_endpoint?: string;
                     /**
-                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`.
+                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Absent: `true`.
                      * @default true
                      */
                     object_store_path_style?: boolean;
@@ -35455,7 +35455,7 @@ export interface operations {
                      */
                     object_store_endpoint?: string | null;
                     /**
-                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. Absent: `true`. `null` removes it, so the server's default applies.
+                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Absent: `true`. `null` removes it, so the server's default applies.
                      * @default true
                      */
                     object_store_path_style?: boolean | null;

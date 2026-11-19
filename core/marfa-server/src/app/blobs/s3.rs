@@ -4,6 +4,7 @@
 
 use std::future::Future;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -23,6 +24,7 @@ use uuid::Uuid;
 
 use super::hash::Hash;
 use super::store::Answer;
+use crate::app::faults::Faults;
 use crate::app::outbound::store::PublicOnly;
 use crate::settings::Snapshot;
 use crate::settings::registry::{
@@ -54,6 +56,14 @@ impl std::fmt::Debug for ObjectStoreSettings {
 impl ObjectStoreSettings {
     pub fn locator(&self) -> String {
         format!("s3://{}/{}", self.bucket, self.prefix)
+    }
+
+    /// Why the store cannot be reached by virtual host, where it is addressed so.
+    pub fn unaddressable(&self) -> Option<Unaddressable> {
+        match (&self.endpoint, self.path_style) {
+            (Some(endpoint), false) => virtual_host(&self.bucket, endpoint).err(),
+            _ => None,
+        }
     }
 
     /// The store `settings` name, where they name a bucket. Where a bucket is named or its row
@@ -259,8 +269,85 @@ fn attributes(mime_type: &str, hash: &Hash, store_id: &str) -> Attributes {
     attributes
 }
 
+/// Why the settings cannot put the bucket before the store's host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unaddressable {
+    /// The bucket is not lowercase labels of a host name.
+    Bucket,
+    /// The endpoint's host is an IP address.
+    Address,
+    /// The bucket and the endpoint's host are longer together than a host name may be.
+    Long,
+}
+
+impl Unaddressable {
+    /// The setting at fault.
+    pub fn key(self) -> &'static str {
+        match self {
+            Unaddressable::Bucket => OBJECT_STORE_BUCKET.entry.key,
+            Unaddressable::Address | Unaddressable::Long => OBJECT_STORE_ENDPOINT.entry.key,
+        }
+    }
+
+    /// Why, naming the settings and none of their values.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Unaddressable::Bucket => {
+                "object_store_path_style is false, so the bucket goes before the host of \
+                 object_store_endpoint, and object_store_bucket must then be labels of 1 to 63 \
+                 lowercase letters, digits and hyphens, joined by dots, none starting or ending \
+                 with a hyphen; set object_store_path_style to true to keep this bucket"
+            }
+            Unaddressable::Address => {
+                "object_store_path_style is false, so the bucket goes before the host of \
+                 object_store_endpoint, which must then be a name, not an IP address; set \
+                 object_store_path_style to true to reach the store at an address"
+            }
+            Unaddressable::Long => {
+                "object_store_path_style is false, so the bucket goes before the host of \
+                 object_store_endpoint, and the two together are longer than the 253 characters \
+                 a host name may be"
+            }
+        }
+    }
+}
+
+const LABEL_LONGEST: usize = 63;
+const HOST_LONGEST: usize = 253;
+
+fn is_label(label: &str) -> bool {
+    (1..=LABEL_LONGEST).contains(&label.len())
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+}
+
+/// The endpoint with the bucket before its host. Given a custom endpoint and virtual-host
+/// requests, the client takes the endpoint as one that already names the bucket.
+pub fn virtual_host(bucket: &str, endpoint: &str) -> Result<String, Unaddressable> {
+    if !bucket.split('.').all(is_label) {
+        return Err(Unaddressable::Bucket);
+    }
+    let mut url = url::Url::parse(endpoint).map_err(|_| Unaddressable::Address)?;
+    let Some(url::Host::Domain(host)) = url.host() else {
+        return Err(Unaddressable::Address);
+    };
+    let named = format!("{bucket}.{host}");
+    if named.trim_end_matches('.').len() > HOST_LONGEST {
+        return Err(Unaddressable::Long);
+    }
+    url.set_host(Some(&named))
+        .map_err(|_| Unaddressable::Bucket)?;
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
 impl S3 {
-    fn client(settings: &ObjectStoreSettings) -> io::Result<AmazonS3> {
+    fn builder(
+        settings: &ObjectStoreSettings,
+        faults: &Arc<Faults>,
+    ) -> io::Result<AmazonS3Builder> {
         let retry = RetryConfig {
             backoff: BackoffConfig::default(),
             max_retries: 2,
@@ -280,11 +367,19 @@ impl S3 {
                     .with_connect_timeout(connect_timeout),
             );
         if !settings.private_allowed {
-            builder = builder.with_http_connector(PublicOnly { connect_timeout });
+            builder = builder.with_http_connector(PublicOnly {
+                connect_timeout,
+                faults: faults.clone(),
+            });
         }
         if let Some(endpoint) = &settings.endpoint {
             builder = builder
-                .with_endpoint(endpoint)
+                .with_endpoint(if settings.path_style {
+                    endpoint.clone()
+                } else {
+                    virtual_host(&settings.bucket, endpoint)
+                        .map_err(|why| io::Error::other(why.reason()))?
+                })
                 .with_allow_http(endpoint.starts_with("http://"))
                 .with_virtual_hosted_style_request(!settings.path_style);
         }
@@ -294,16 +389,20 @@ impl S3 {
         if let Some(secret) = &settings.secret_access_key {
             builder = builder.with_secret_access_key(secret.expose());
         }
-        builder.build().map_err(failed)
+        Ok(builder)
+    }
+
+    fn client(settings: &ObjectStoreSettings, faults: &Arc<Faults>) -> io::Result<AmazonS3> {
+        S3::builder(settings, faults)?.build().map_err(failed)
     }
 
     /// The configured store, before its marker says which store it is.
-    pub fn new(settings: &ObjectStoreSettings, id: String) -> io::Result<S3> {
+    pub fn new(settings: &ObjectStoreSettings, id: String, faults: &Arc<Faults>) -> io::Result<S3> {
         Ok(S3 {
             id,
             locator: settings.locator(),
             prefix: settings.prefix.clone(),
-            client: S3::client(settings)?,
+            client: S3::client(settings, faults)?,
         })
     }
 
@@ -649,12 +748,264 @@ impl S3 {
 mod tests {
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::Arc;
+    use std::sync::Mutex;
 
+    use async_trait::async_trait;
     use object_store::CredentialProvider;
     use object_store::aws::AwsCredential;
+    use object_store::client::{
+        HttpClient, HttpConnector, HttpRequest, HttpResponse, HttpResponseBody, HttpService,
+    };
 
     use super::*;
+
+    /// Answers every request `404`, as a store with no marker does, and keeps the address each
+    /// was sent to.
+    #[derive(Clone, Debug, Default)]
+    struct Recorded(Arc<Mutex<Vec<String>>>);
+
+    impl HttpConnector for Recorded {
+        fn connect(&self, _options: &ClientOptions) -> object_store::Result<HttpClient> {
+            Ok(HttpClient::new(self.clone()))
+        }
+    }
+
+    #[async_trait]
+    impl HttpService for Recorded {
+        async fn call(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+            self.0.lock().unwrap().push(request.uri().to_string());
+            Ok(http::Response::builder()
+                .status(http::StatusCode::NOT_FOUND)
+                .body(HttpResponseBody::from(String::new()))
+                .unwrap())
+        }
+    }
+
+    fn settings(endpoint: &str, path_style: bool) -> ObjectStoreSettings {
+        ObjectStoreSettings {
+            bucket: "marfa".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint: Some(endpoint.to_string()),
+            access_key_id: Some("test-key".to_string()),
+            secret_access_key: Some(Secret::new("test-secret".to_string())),
+            path_style,
+            prefix: "files".to_string(),
+            private_allowed: false,
+        }
+    }
+
+    /// The address the marker is asked for at.
+    async fn marker_address(settings: &ObjectStoreSettings) -> String {
+        let recorded = Recorded::default();
+        let client = S3::builder(settings, &Arc::default())
+            .unwrap()
+            .with_http_connector(recorded.clone())
+            .build()
+            .unwrap();
+        let s3 = S3 {
+            id: Uuid::now_v7().to_string(),
+            locator: settings.locator(),
+            prefix: settings.prefix.clone(),
+            client,
+        };
+        assert!(matches!(s3.marker().await, Marker::None));
+        let sent = recorded.0.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        sent[0].clone()
+    }
+
+    #[tokio::test]
+    async fn a_store_addressed_by_path_names_the_bucket_in_the_path() {
+        let sent = marker_address(&settings("https://store.invalid:9000", true)).await;
+        assert_eq!(
+            sent,
+            "https://store.invalid:9000/marfa/files/blobs/.marfa-store"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_addressed_by_virtual_host_names_the_bucket_in_the_host() {
+        let sent = marker_address(&settings("https://store.invalid:9000", false)).await;
+        assert_eq!(
+            sent,
+            "https://marfa.store.invalid:9000/files/blobs/.marfa-store"
+        );
+        let sent = marker_address(&settings("http://store.invalid/s3", false)).await;
+        assert_eq!(
+            sent,
+            "http://marfa.store.invalid/s3/files/blobs/.marfa-store"
+        );
+    }
+
+    #[test]
+    fn a_store_addressed_by_virtual_host_at_an_address_is_refused() {
+        for endpoint in ["http://203.0.113.7:9000", "http://[2001:db8::7]:9000"] {
+            let refused =
+                S3::new(&settings(endpoint, false), String::new(), &Arc::default()).unwrap_err();
+            assert!(!refused.to_string().contains("203.0.113.7"), "{refused}");
+            assert!(!refused.to_string().contains("2001:db8"), "{refused}");
+            assert_eq!(
+                settings(endpoint, false).unaddressable(),
+                Some(Unaddressable::Address)
+            );
+        }
+        assert!(
+            S3::new(
+                &settings("http://203.0.113.7:9000", true),
+                String::new(),
+                &Arc::default()
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            settings("http://203.0.113.7:9000", true).unaddressable(),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_bucket_that_can_be_part_of_a_host_goes_before_it() {
+        let host = "https://store.example";
+        for bucket in [
+            "marfa",
+            "my-bucket",
+            "my.bucket",
+            "a",
+            "0x",
+            &"b".repeat(63),
+        ] {
+            assert_eq!(
+                virtual_host(bucket, host),
+                Ok(format!("https://{bucket}.store.example")),
+                "{bucket}"
+            );
+        }
+        for bucket in [
+            "tenant:bucket",
+            "My_Bucket",
+            "Marfa",
+            "-marfa",
+            "marfa-",
+            "my..bucket",
+            ".marfa",
+            "marfa.",
+            "my.-bucket",
+            &"b".repeat(64),
+        ] {
+            assert_eq!(
+                virtual_host(bucket, host),
+                Err(Unaddressable::Bucket),
+                "{bucket}"
+            );
+        }
+        let host = ["a", "b", "c"].map(|letter| letter.repeat(63)).join(".");
+        let endpoint = format!("https://{host}.{}", "e".repeat(59));
+        assert_eq!(
+            virtual_host("d", &endpoint).map(|url| url.len()),
+            Ok(8 + 253)
+        );
+        assert_eq!(virtual_host("dd", &endpoint), Err(Unaddressable::Long));
+    }
+
+    #[test]
+    fn the_endpoint_is_taken_as_the_bare_service_host() {
+        assert_eq!(
+            virtual_host("s3", "https://s3.store.example"),
+            Ok("https://s3.s3.store.example".to_string())
+        );
+        assert_eq!(
+            virtual_host("marfa", "https://marfa.store.example"),
+            Ok("https://marfa.marfa.store.example".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_link_the_store_signs_follows_its_address() {
+        let path = S3::new(
+            &settings("https://store.invalid:9000", true),
+            String::new(),
+            &Arc::default(),
+        )
+        .unwrap();
+        let link = url::Url::parse(
+            &path
+                .link("ab/cd", Duration::from_secs(60), Duration::from_secs(5))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(link.host_str(), Some("store.invalid"));
+        assert!(link.path().starts_with("/marfa/files/"), "{link}");
+
+        let host = S3::new(
+            &settings("https://store.invalid:9000", false),
+            String::new(),
+            &Arc::default(),
+        )
+        .unwrap();
+        let link = url::Url::parse(
+            &host
+                .link("ab/cd", Duration::from_secs(60), Duration::from_secs(5))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(link.host_str(), Some("marfa.store.invalid"));
+        assert!(link.path().starts_with("/files/"), "{link}");
+    }
+
+    /// The `Host` of each request a loopback listener is sent, answered `404`.
+    async fn hosts_asked() -> (u16, Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = vec![0u8; 8192];
+                let read = socket.read(&mut request).await.unwrap_or(0);
+                let text = String::from_utf8_lossy(&request[..read]).to_string();
+                let host = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("host: ").or(line.strip_prefix("Host: ")))
+                    .unwrap_or_default()
+                    .to_string();
+                seen.lock().unwrap().push(host);
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        (port, asked)
+    }
+
+    #[tokio::test]
+    async fn a_bucket_host_is_reached_only_where_its_addresses_are_public() {
+        let (port, asked) = hosts_asked().await;
+        let faults = Arc::new(Faults::default());
+        let guarded = settings(&format!("http://store.test:{port}"), false);
+        faults
+            .set("resolve:marfa.store.test", Some("127.0.0.1"))
+            .unwrap();
+        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
+        let marker = s3.marker().await;
+        assert!(
+            matches!(marker, Marker::Silent(_) | Marker::Refused(_)),
+            "{marker:?}"
+        );
+        assert!(asked.lock().unwrap().is_empty());
+
+        faults
+            .set("resolve:marfa.store.test", Some("93.184.216.34>127.0.0.1"))
+            .unwrap();
+        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
+        assert!(matches!(s3.marker().await, Marker::None));
+        assert_eq!(*asked.lock().unwrap(), [format!("marfa.store.test:{port}")]);
+    }
 
     /// Credentials that never arrive, as from an instance metadata endpoint that stopped
     /// answering.

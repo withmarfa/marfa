@@ -56,7 +56,7 @@ pub use rows::{
     CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,
 };
 pub use s3::ObjectStoreSettings;
-use s3::{Marker, S3};
+use s3::{Marker, S3, Unaddressable};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
 
@@ -126,12 +126,19 @@ pub enum Wanted {
     Folder(PathBuf),
     /// A stored setting naming the store that does not read: none is taken until it is set again.
     Unreadable(Vec<&'static str>),
+    /// A store addressed by virtual host whose settings cannot make its host: none is taken.
+    Unaddressable(Unaddressable),
 }
 
 impl Wanted {
     pub fn of(settings: &Settings) -> Wanted {
         match ObjectStoreSettings::of(settings) {
-            Ok(Some(bucket)) => return Wanted::Bucket(bucket),
+            Ok(Some(bucket)) => {
+                return match bucket.unaddressable() {
+                    Some(why) => Wanted::Unaddressable(why),
+                    None => Wanted::Bucket(bucket),
+                };
+            }
             Ok(None) => {}
             Err(keys) => return Wanted::Unreadable(keys),
         }
@@ -150,7 +157,7 @@ impl Wanted {
             Wanted::Disk => None,
             Wanted::Folder(_) => Some("folder"),
             Wanted::Unreadable(keys) if keys.contains(&BACKUP_PATH.entry.key) => Some("folder"),
-            Wanted::Bucket(_) | Wanted::Unreadable(_) => Some("bucket"),
+            Wanted::Bucket(_) | Wanted::Unreadable(_) | Wanted::Unaddressable(_) => Some("bucket"),
         }
     }
 }
@@ -279,7 +286,7 @@ async fn object_store(
 ) -> std::result::Result<S3, Failure> {
     let refused =
         |what: String| Failure::start(format!("The object store {} {what}", settings.locator()));
-    let bucket = S3::new(settings, String::new()).map_err(started)?;
+    let bucket = S3::new(settings, String::new(), db.faults()).map_err(started)?;
     let marker = match tokio::time::timeout(CHECK_DEADLINE, bucket.marker()).await {
         Ok(marker) => marker,
         Err(_) => Marker::Silent(io::Error::new(io::ErrorKind::TimedOut, "no answer in time")),
@@ -297,13 +304,13 @@ async fn object_store(
                     return Err(folder_missing(root, unknown));
                 }
             }
-            S3::new(settings, id).map_err(started)
+            S3::new(settings, id, db.faults()).map_err(started)
         }
         Marker::None => {
             if let Some(root) = unfilled {
                 return Err(folder_missing(root, unknown));
             }
-            let s3 = S3::new(settings, Uuid::now_v7().to_string()).map_err(started)?;
+            let s3 = S3::new(settings, Uuid::now_v7().to_string(), db.faults()).map_err(started)?;
             match tokio::time::timeout(CHECK_DEADLINE, s3.mark()).await {
                 Ok(Ok(())) => Ok(s3),
                 Ok(Err(error)) => Err(refused(format!(
@@ -330,7 +337,7 @@ async fn object_store(
             match recorded {
                 Some(id) => {
                     tracing::warn!(%error, "The object store did not answer; its copies wait");
-                    S3::new(settings, id).map_err(started)
+                    S3::new(settings, id, db.faults()).map_err(started)
                 }
                 None => Err(refused(format!(
                     "did not answer: {}",
@@ -360,6 +367,13 @@ fn does_not_read(keys: &[&str]) -> Failure {
         } else {
             "settings do not read"
         }
+    ))
+}
+
+fn unaddressable(why: Unaddressable) -> Failure {
+    Failure::start(format!(
+        "The stored object store settings cannot be used: {}",
+        why.reason()
     ))
 }
 
@@ -396,6 +410,10 @@ async fn taking(
         },
         Wanted::Unreadable(keys) => {
             let failure = does_not_read(keys);
+            Attached::troubled(wanted, failure)
+        }
+        Wanted::Unaddressable(why) => {
+            let failure = unaddressable(*why);
             Attached::troubled(wanted, failure)
         }
         Wanted::Bucket(settings) => match object_store(db, settings, None).await {
@@ -441,7 +459,8 @@ async fn taking(
     }
 }
 
-/// An unreadable store setting does not refuse the start: only a running server can correct it.
+/// A store setting that does not read or cannot make the store's host does not refuse the start:
+/// only a running server can correct it.
 async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<Attached, Failure> {
     let failure = match &wanted {
         Wanted::Bucket(settings) => match caught(object_store(db, settings, Some(root))).await {
@@ -457,6 +476,7 @@ async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<
             Err(_) => client_failed(),
         },
         Wanted::Unreadable(keys) => does_not_read(keys),
+        Wanted::Unaddressable(why) => unaddressable(*why),
         Wanted::Disk | Wanted::Folder(_) => return Err(folder_missing(root, "")),
     };
     Ok(Attached::troubled(wanted, failure))

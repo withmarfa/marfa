@@ -4,11 +4,13 @@ use std::path::{Component, Path, PathBuf};
 
 use super::registry::{
     ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, ERROR_WEBHOOK_URL,
-    HEARTBEAT_ENABLED, HEARTBEAT_URL, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT, Snapshot,
-    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    HEARTBEAT_ENABLED, HEARTBEAT_URL, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT,
+    OBJECT_STORE_PATH_STYLE, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS,
+    VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::start::Fixed;
 use crate::app::addresses::Address;
+use crate::app::blobs::s3::virtual_host;
 use crate::app::outbound::address::names_private_literal;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -83,6 +85,16 @@ pub const TOGETHER: &[Together] = &[
             "object_store_endpoint",
         ],
         judge: destinations_are_public,
+    },
+    Together {
+        name: "virtual_host_is_a_host",
+        description: "While object_store_path_style is false and object_store_endpoint is set, the bucket goes before the endpoint's host, so object_store_bucket must be labels of 1 to 63 lowercase letters, digits and hyphens joined by dots, none starting or ending with a hyphen, and the endpoint's host must be a name, 253 characters at most with the bucket before it.",
+        keys: &[
+            "object_store_bucket",
+            "object_store_endpoint",
+            "object_store_path_style",
+        ],
+        judge: virtual_host_is_a_host,
     },
     Together {
         name: "sign_in_is_an_address",
@@ -251,6 +263,36 @@ fn one_backup_destination(judged: &Judged) -> Vec<Breach> {
     vec![Breach {
         path,
         message: format!("cannot be set while {other} is; backups go to one place"),
+    }]
+}
+
+/// Names the setting at fault where the write sets it, else one the write sets.
+fn virtual_host_is_a_host(judged: &Judged) -> Vec<Breach> {
+    let after = judged.after;
+    let (Some(bucket), Some(endpoint)) = (
+        after.get(OBJECT_STORE_BUCKET),
+        after.get(OBJECT_STORE_ENDPOINT),
+    ) else {
+        return Vec::new();
+    };
+    if after.get(OBJECT_STORE_PATH_STYLE) {
+        return Vec::new();
+    }
+    let Err(why) = virtual_host(&bucket, &endpoint) else {
+        return Vec::new();
+    };
+    let path = [
+        why.key(),
+        OBJECT_STORE_PATH_STYLE.entry.key,
+        OBJECT_STORE_BUCKET.entry.key,
+        OBJECT_STORE_ENDPOINT.entry.key,
+    ]
+    .into_iter()
+    .find(|key| judged.names(key))
+    .unwrap_or(why.key());
+    vec![Breach {
+        path,
+        message: why.reason().to_string(),
     }]
 }
 

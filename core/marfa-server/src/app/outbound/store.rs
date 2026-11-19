@@ -13,19 +13,23 @@ use object_store::client::{
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 
 use super::address::is_public;
+use crate::app::faults::Faults;
 
 #[derive(Debug)]
 pub struct PublicOnly {
     pub connect_timeout: Duration,
+    pub faults: Arc<Faults>,
 }
 
 impl HttpConnector for PublicOnly {
     fn connect(&self, _options: &ClientOptions) -> object_store::Result<HttpClient> {
-        let client = client(self.connect_timeout, Arc::new(PublicNames)).map_err(|error| {
-            object_store::Error::Generic {
-                store: "S3",
-                source: Box::new(error),
-            }
+        let client = client(
+            self.connect_timeout,
+            Arc::new(PublicNames(self.faults.clone())),
+        )
+        .map_err(|error| object_store::Error::Generic {
+            store: "S3",
+            source: Box::new(error),
         })?;
         Ok(HttpClient::new(RequestsJudged(client)))
     }
@@ -83,23 +87,38 @@ impl HttpService for RequestsJudged {
     }
 }
 
-/// Any answer that is not public refuses the whole name, as for a webhook.
+/// Any answer that is not public refuses the whole name, as for a webhook. A lookup the resolver
+/// fault scripts is judged by the addresses it names to be judged.
 #[derive(Debug)]
-struct PublicNames;
+struct PublicNames(Arc<Faults>);
 
 impl Resolve for PublicNames {
     fn resolve(&self, name: Name) -> Resolving {
         let host = name.as_str().to_string();
+        let scripted = self.0.resolve(&host);
         Box::pin(async move {
-            let found: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
-                (host.as_str(), 0).to_socket_addrs().map(Iterator::collect)
-            })
-            .await
-            .map_err(io::Error::other)??;
-            if found.is_empty() || found.iter().any(|at| !is_public(at.ip())) {
+            let (judged, reached): (Vec<IpAddr>, Vec<SocketAddr>) = match scripted {
+                Some(scripted) => (
+                    scripted.judged,
+                    scripted
+                        .reached
+                        .into_iter()
+                        .map(|ip| SocketAddr::new(ip, 0))
+                        .collect(),
+                ),
+                None => {
+                    let found: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
+                        (host.as_str(), 0).to_socket_addrs().map(Iterator::collect)
+                    })
+                    .await
+                    .map_err(io::Error::other)??;
+                    (found.iter().map(SocketAddr::ip).collect(), found)
+                }
+            };
+            if reached.is_empty() || judged.is_empty() || judged.iter().any(|ip| !is_public(*ip)) {
                 return Err(not_public().into());
             }
-            Ok(Box::new(found.into_iter()) as Addrs)
+            Ok(Box::new(reached.into_iter()) as Addrs)
         })
     }
 }
@@ -225,8 +244,13 @@ mod tests {
     async fn a_request_to_a_loopback_host_is_refused_before_any_connection() {
         let (at, connections) = counted_listener().await;
         let port = at.port();
-        let service =
-            RequestsJudged(client(Duration::from_secs(2), Arc::new(PublicNames)).unwrap());
+        let service = RequestsJudged(
+            client(
+                Duration::from_secs(2),
+                Arc::new(PublicNames(Arc::default())),
+            )
+            .unwrap(),
+        );
         // The witness: the listener does take a connection when nothing refuses it.
         let _ = service
             .0
