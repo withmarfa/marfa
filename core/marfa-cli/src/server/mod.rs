@@ -38,7 +38,7 @@ const IMAGE: &str = "ghcr.io/withmarfa/marfa-server";
 const CLOUDFLARE_HEADER: &str = "CF-Connecting-IP";
 const ROOT_DIR: &str = "/var/lib/marfa-server";
 const AGENT_HINT: &str =
-    "To give an AI agent access to this server, run `marfa docs build/ai-agents`.";
+    "To give an AI agent access to this server, run `marfa docs connect-your-agent`.";
 const OPTIONS_HINT: &str = "Options, all optional: --dir <folder> to install somewhere else, --port <port> for the port on this machine, --name <name> to run more than one, --docker to run the server in Docker, --external-settings when a secrets manager writes marfa.env. `marfa server install --help` lists them all.";
 
 #[derive(Debug, Subcommand)]

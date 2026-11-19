@@ -4734,7 +4734,7 @@ Read Marfa's public docs: search them, list their pages, or print one.
 
 Reads the docs site at https://docs.marfa.so, or at the address in MARFA_DOCS_URL. It needs no server, store or key, and sends no credential.
 
-A page is its path on the site. `files`, `/files`, `files.md` and `https://docs.marfa.so/files` name the same page. `search`, `topics` and `help` are commands, so a page with one of those names takes a leading slash, such as `/search`.
+A page is its path on the site. `build/files`, `/build/files`, `build/files.md` and `https://docs.marfa.so/build/files` name the same page. `search`, `topics` and `help` are commands, so a page with one of those names takes a leading slash, such as `/search`.
 
 `--url` and `--key` name a Marfa server, so this command refuses them.
 
@@ -4756,7 +4756,7 @@ Examples:
 ```text
 marfa docs search "restore an archive" --limit 5
 marfa docs topics
-marfa docs files
+marfa docs build/files
 marfa docs cli --section "Use another keychain file"
 ```
 

@@ -31,7 +31,7 @@ One running Marfa server and its data is an **instance**, and it belongs to one 
 - **Native clients** embed the Rust core in [`core/`](./core). It sends their requests, and it can keep a local working copy of the data a client needs and a queue of its writes, so the client keeps working offline. The [Swift SDK](https://github.com/withmarfa/marfa-swift) and the `marfa` CLI are built on it. The Node binding in [`core/bindings/node`](./core/bindings/node) is what the contract's device fixtures drive; it is not published to npm. Most CLI commands, such as the ones scripts and AI agents run, go straight to the API; `marfa device` keeps a working copy, and `marfa folders` keeps a folder on your computer in step with the instance, one Markdown file for each note.
 - **Online clients** send each request straight to the API, usually through the TypeScript SDK, [`@withmarfa/client`](./packages/client). The [connectors](https://github.com/withmarfa/marfa-connectors) for Todoist, RSS and GitHub are built this way.
 
-The instance is the source of truth. Clients never talk to each other, only to the instance, and the instance decides what happens when two of them change the same thing. [How Marfa works](https://docs.marfa.so/how-marfa-works) explains each part.
+The instance is the source of truth. Clients never talk to each other, only to the instance, and the instance decides what happens when two of them change the same thing. [How Marfa works](https://docs.marfa.so/build/how-marfa-works) explains each part.
 
 ## Run your own instance
 
@@ -39,7 +39,7 @@ The instance is the source of truth. Clients never talk to each other, only to t
 
 The Railway template creates the server and a volume for its data, and generates the server's secrets. Railway bills the service and its storage to your workspace. [Create a personal Marfa instance on Railway](./deploy/railway.md) has the steps, including claiming the instance.
 
-To run Marfa on a computer you own or in a container of your own, follow [Deploy](https://docs.marfa.so/run/deploy).
+To run Marfa on a computer you own, follow [Install on a Mac or Linux machine](https://docs.marfa.so/run/install). To run it in a container of your own, follow [Run Marfa on Railway or a server](https://docs.marfa.so/run/run-on-a-server).
 
 ## Try it locally
 
