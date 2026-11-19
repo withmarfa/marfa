@@ -796,8 +796,8 @@ fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError>
     };
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
         .map_err(|error| on_volume(error, place))?;
-    // With WAL, `NORMAL` leaves the last commits unsynced.
-    conn.execute_batch("PRAGMA synchronous = FULL;")?;
+    // `NORMAL` leaves commits unsynced; Apple's `fsync` lets a checkpoint land out of order.
+    conn.execute_batch("PRAGMA synchronous = FULL; PRAGMA checkpoint_fullfsync = ON;")?;
     tune(conn)?;
     match step {
         Step::None => {}

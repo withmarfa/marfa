@@ -30,6 +30,11 @@ fn commits_durably(conn: &Connection) {
         FULL,
         "a commit does not sync the log, so a system stop can drop a write reported as queued"
     );
+    assert_eq!(
+        pragma(conn, "checkpoint_fullfsync"),
+        1,
+        "a checkpoint does not flush the drive's cache, so a power cut can leave the store part copied"
+    );
 }
 
 #[test]
