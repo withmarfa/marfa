@@ -147,13 +147,14 @@ fn check_types(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()>
     Ok(())
 }
 
-/// `every_type` lets a query list `*`, which a folder's query holds and a view's does not.
-pub(crate) fn check_query(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()> {
+/// A folder's query may list `*` and name `beneath` by the path of a file in
+/// the folder, which a view's may not.
+pub(crate) fn check_query(value: &Value, catalog: &Catalog, folder: bool) -> Result<()> {
     let Some(query) = value.as_object() else {
         return Err(at("query", "query must be an object."));
     };
     if let Some(types) = query.get("types") {
-        check_types(types, catalog, every_type)?;
+        check_types(types, catalog, folder)?;
     }
     if let Some(tier) = query.get("tier")
         && !tier.as_str().is_some_and(|tier| TIERS.contains(&tier))
@@ -185,12 +186,20 @@ pub(crate) fn check_query(value: &Value, catalog: &Catalog, every_type: bool) ->
         };
         filter::parse(text).map_err(|error| at("query.filter", error.message))?;
     }
-    if let Some(beneath) = query.get("beneath")
-        && !beneath
-            .as_str()
-            .is_some_and(|id| validation::id("query.beneath", id).is_ok())
-    {
-        return Err(at("query.beneath", "query.beneath must be an item ID."));
+    if let Some(beneath) = query.get("beneath") {
+        let named = beneath.as_str().filter(|named| !named.is_empty());
+        match named {
+            // The rules judge a path with the rest of a folder's settings.
+            Some(_) if folder => {}
+            Some(id) if validation::id("query.beneath", id).is_ok() => {}
+            _ if folder => {
+                return Err(at(
+                    "query.beneath",
+                    "query.beneath must be an item ID or the path of a file inside the folder.",
+                ));
+            }
+            _ => return Err(at("query.beneath", "query.beneath must be an item ID.")),
+        }
     }
     Ok(())
 }

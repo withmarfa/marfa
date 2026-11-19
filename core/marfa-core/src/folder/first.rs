@@ -89,6 +89,7 @@ impl Folder {
     pub fn plan_first_sync(&self) -> Result<Option<FirstSync>> {
         self.refuse_if_gone()?;
         self.resume()?;
+        self.check_beneath_file()?;
         // Of the server's side as far as it can be had: the copy held stands
         // where the server is out of reach.
         match self.catch_up() {

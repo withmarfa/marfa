@@ -357,6 +357,9 @@ fn judged(settings: &Map<String, Value>, catalog: &Catalog, complete: bool) -> R
             filter: query
                 .and_then(|query| query.get("filter"))
                 .and_then(Value::as_str),
+            beneath: query
+                .and_then(|query| query.get("beneath"))
+                .and_then(Value::as_str),
             default_type: defaults
                 .and_then(|defaults| defaults.get("type"))
                 .and_then(Value::as_str)

@@ -13,6 +13,11 @@ pub const FOLDER_TYPE: &str = "system.folder";
 
 const DOCUMENT_TYPE: &str = "core.note";
 
+/// The root a copy narrows beneath while the file a folder narrows beneath
+/// has no item yet: an id no item has, so the copy holds nothing from the
+/// server.
+pub(crate) const NO_ITEM: &str = "00000000-0000-7000-8000-000000000000";
+
 /// An unknown setting is refused rather than ignored: a misspelt list or
 /// threshold would leave the folder taking what the person meant it not to.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -251,6 +256,7 @@ impl Settings {
                 tier: self.query.tier.map(SliceTier::as_str),
                 state: self.query.state.as_deref(),
                 filter: self.query.filter.as_deref(),
+                beneath: self.query.beneath.as_deref(),
                 default_type: self.defaults.r#type.as_deref(),
                 default_tier: self.defaults.tier.map(Tier::as_str),
                 tags: &self.defaults.tags,
@@ -351,19 +357,40 @@ impl Settings {
         Ok(())
     }
 
-    /// The query past its types and tier.
+    /// The path of the file the query narrows beneath, while that file has
+    /// no item to name: the folder holds nothing from the server until its
+    /// first sync has sent the file and the path has become the item's id.
+    pub(crate) fn pending_beneath(&self) -> Option<&str> {
+        match marfa_rules::folder::Beneath::of(self.query.beneath.as_deref()?) {
+            marfa_rules::folder::Beneath::File(path) => Some(path),
+            marfa_rules::folder::Beneath::Item(_) => None,
+        }
+    }
+
+    /// The query past its types and tier, as a file is judged by it. A path
+    /// that names no item yet narrows nothing here, so a new file is judged
+    /// as the rest of the query judges it.
     pub(crate) fn slice_query(&self) -> crate::slice::SliceQuery {
         crate::slice::SliceQuery {
             states: self.query.state.clone(),
             filter: self.query.filter.clone(),
-            beneath: self.query.beneath.clone(),
+            beneath: self
+                .query
+                .beneath
+                .clone()
+                .filter(|_| self.pending_beneath().is_none()),
         }
     }
 
     /// What a copy of the folder holds past its types and tier
     /// (`folder-setup/copy-holds-query`), `None` where that is all of them.
+    /// Beneath a path with no item yet, a copy holds no item from the server.
     pub(crate) fn copy_query(&self) -> Result<Option<crate::slice::SliceQuery>> {
-        self.slice_query().for_copy()
+        let mut query = self.slice_query();
+        if self.pending_beneath().is_some() {
+            query.beneath = Some(NO_ITEM.into());
+        }
+        query.for_copy()
     }
 
     /// Refuses where the copy's slice does not take every item the query
@@ -377,6 +404,11 @@ impl Settings {
         let unanswerable = |why: String| {
             CoreError::Invalid(format!("this copy cannot answer the folder's query: {why}"))
         };
+        if let Some(path) = self.pending_beneath() {
+            return Err(unanswerable(format!(
+                "the folder narrows beneath the file {path}, which has no item until the folder's first sync sends it"
+            )));
+        }
         let Some((types, tier)) = crate::store::slice(conn)?.filter(|(types, _)| !types.is_empty())
         else {
             return Err(unanswerable(
@@ -547,6 +579,27 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(unknown.contains("unknown variant `unknown`"), "{unknown}");
+    }
+
+    #[test]
+    fn a_path_to_narrow_beneath_holds_nothing_until_it_names_an_item() {
+        let item = "01a00000-0000-7000-8000-000000000001";
+        let file = read(json!({ "query": { "beneath": "Projects/p.md" } })).unwrap();
+        assert_eq!(file.pending_beneath(), Some("Projects/p.md"));
+        assert_eq!(file.slice_query().beneath, None);
+        let copy = file.copy_query().unwrap().unwrap();
+        assert_eq!(copy.beneath.as_deref(), Some(NO_ITEM));
+        let named = read(json!({ "query": { "beneath": item } })).unwrap();
+        assert_eq!(named.pending_beneath(), None);
+        assert_eq!(named.slice_query().beneath.as_deref(), Some(item));
+        assert_eq!(
+            named.copy_query().unwrap().unwrap().beneath.as_deref(),
+            Some(item)
+        );
+        let refused = read(json!({ "query": { "beneath": "../p.md" } }))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("query.beneath"), "{refused}");
     }
 
     #[test]

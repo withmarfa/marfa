@@ -1,4 +1,5 @@
 mod answered;
+mod beneath;
 mod default_edges;
 pub mod document;
 pub mod edge_types;
@@ -26,6 +27,7 @@ mod scan;
 mod scoped;
 mod selective;
 mod unmatched;
+pub use beneath::BeneathReport;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
 pub use pull::{PullReport, copy_changed};

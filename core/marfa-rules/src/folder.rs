@@ -58,6 +58,8 @@ pub struct Settings<'a> {
     pub tier: Option<&'a str>,
     pub state: Option<&'a [String]>,
     pub filter: Option<&'a str>,
+    /// An item's id, or the path of a file inside the folder (`Beneath`).
+    pub beneath: Option<&'a str>,
     pub default_type: Option<&'a str>,
     /// `library` or `feed`.
     pub default_tier: Option<&'a str>,
@@ -70,6 +72,60 @@ pub struct Settings<'a> {
     pub removal: Threshold,
     pub addition: Threshold,
     pub full_pass_interval_seconds: Option<f64>,
+}
+
+/// What a folder's `query.beneath` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Beneath<'a> {
+    /// An item, which the folder holds with everything under it.
+    Item(&'a str),
+    /// A file inside the folder, whose item the folder holds with everything
+    /// under it once the file has been sent. Until then the folder holds
+    /// nothing from the server.
+    File(&'a str),
+}
+
+impl<'a> Beneath<'a> {
+    pub fn of(named: &'a str) -> Beneath<'a> {
+        match validation::id("query.beneath", named) {
+            Ok(()) => Beneath::Item(named),
+            Err(_) => Beneath::File(named),
+        }
+    }
+}
+
+/// Why `path` is no file inside a folder that a folder can send, if it is
+/// not. Whether the folder's own lists and types take the file is for the
+/// device, which has the file.
+pub fn check_beneath_file(path: &str) -> Result<(), String> {
+    let refuse = |why: &str| {
+        Err(format!(
+            "query.beneath is an item ID or the path of a file inside the folder, such as Projects/Alpha.md, and {path:?} is not: {why}."
+        ))
+    };
+    if path.contains(|c: char| c.is_control()) {
+        return refuse("a path holds no control character");
+    }
+    if depth_inside_folder(path).is_none() || path.starts_with('/') {
+        return refuse(
+            "write a path relative to the folder's root, with \"/\" between names and no \"..\" name",
+        );
+    }
+    let names: Vec<&str> = path.split('/').collect();
+    if names.iter().any(|name| name.is_empty() || *name == ".") {
+        return refuse("a path holds no empty or \".\" name");
+    }
+    if names.iter().any(|name| name.len() > 255) {
+        return refuse("a name in a path is at most 255 bytes");
+    }
+    if crate::names::same(names[0], ".marfa") {
+        return refuse("the folder's own state in .marfa is no file of the folder");
+    }
+    let file = names[names.len() - 1];
+    match file.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => Ok(()),
+        _ => refuse("a file's name ends in its extension"),
+    }
 }
 
 pub fn is_system(type_id: &str) -> bool {
@@ -215,6 +271,10 @@ pub fn check_settled(catalog: Option<&Catalog>, settings: &Settings) -> Result<(
     if let Some(filter) = settings.filter {
         check_filter(filter)?;
     }
+    if let Some(Beneath::File(path)) = settings.beneath.map(Beneath::of) {
+        check_beneath_file(path)
+            .map_err(|message| Violation::new("query.beneath", Code::ValidationError, message))?;
+    }
     validation::tags(settings.tags)
         .map_err(|error| Violation::new("defaults.tags", error.code, error.message))?;
     if let Some(properties) = settings.properties {
@@ -298,6 +358,59 @@ mod tests {
                 ..Settings::default()
             },
         )
+    }
+
+    #[test]
+    fn beneath_names_an_item_or_a_file_inside_the_folder() {
+        let id = "01a00000-0000-7000-8000-000000000001";
+        assert_eq!(Beneath::of(id), Beneath::Item(id));
+        assert_eq!(
+            Beneath::of("Projects/Alpha.md"),
+            Beneath::File("Projects/Alpha.md")
+        );
+        for good in ["Alpha.md", "Projects/Alpha.md", "a b/c.d/Écrit.markdown"] {
+            assert!(check_beneath_file(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "",
+            "/Projects/Alpha.md",
+            "../Alpha.md",
+            "Projects/../Alpha.md",
+            "Projects//Alpha.md",
+            "./Alpha.md",
+            "Projects/",
+            "Projects",
+            ".marfa/folder.yaml",
+            ".MARFA/folder.yaml",
+            "C:/Alpha.md",
+            "Projects\\Alpha.md",
+            "Alpha\u{0}.md",
+            "01a00000-0000-4000-8000-000000000001",
+        ] {
+            let refused = check_beneath_file(bad).unwrap_err();
+            assert!(refused.contains("query.beneath"), "{bad}: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_path_in_beneath_is_judged_with_the_settings() {
+        let refused = check(
+            Some(&catalog()),
+            &Settings {
+                beneath: Some("../x.md"),
+                ..Settings::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(refused.path, "query.beneath");
+        let item = "01a00000-0000-7000-8000-000000000001";
+        for held in [item, "Projects/Alpha.md"] {
+            let settings = Settings {
+                beneath: Some(held),
+                ..Settings::default()
+            };
+            assert!(check(Some(&catalog()), &settings).is_ok(), "{held}");
+        }
     }
 
     #[test]
