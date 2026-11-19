@@ -152,7 +152,10 @@ stays because that thing is what it checks.
   emptied blob folder while the stored object store settings cannot make the
   store's host" writes `object_store_path_style` as `false` beside an endpoint
   at an IP address and empties the blob folder while the server is stopped,
-  because `/config` refuses that combination.
+  because `/config` refuses that combination. "attaches no object store over
+  a stored endpoint whose host holds an empty label or ends in more than one
+  dot" writes `object_store_bucket`, `object_store_endpoint` and
+  `object_store_path_style` rows before each start, for the same reason.
 - `compliance/restore-says.test.ts`, "refuses an export while the enforcement
   settings do not read, and a backup holds the items and names them", writes the `settings`
   table's `enforcement` row to a value that does not read before a restart.

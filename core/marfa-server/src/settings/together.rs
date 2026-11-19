@@ -88,7 +88,7 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "virtual_host_is_a_host",
-        description: "While object_store_path_style is false and object_store_endpoint is set, the bucket goes before the endpoint's host, so object_store_bucket must be labels of 1 to 63 lowercase letters, digits and hyphens joined by dots, none starting or ending with a hyphen, and the endpoint's host must be a name, 253 characters at most with the bucket before it.",
+        description: "When object_store_path_style is false and object_store_endpoint is set, the bucket goes before the endpoint's host name. Each label must have 1 to 63 characters. Bucket labels may contain only lowercase ASCII letters, digits and hyphens, with no leading or trailing hyphen. The full name may end in one dot and must fit in 253 characters excluding that dot.",
         keys: &[
             "object_store_bucket",
             "object_store_endpoint",

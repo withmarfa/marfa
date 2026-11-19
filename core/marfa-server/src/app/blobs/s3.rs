@@ -276,6 +276,8 @@ pub enum Unaddressable {
     Bucket,
     /// The endpoint's host is an IP address.
     Address,
+    /// The endpoint's host has an empty label or one longer than a label may be.
+    Host,
     /// The bucket and the endpoint's host are longer together than a host name may be.
     Long,
 }
@@ -285,7 +287,9 @@ impl Unaddressable {
     pub fn key(self) -> &'static str {
         match self {
             Unaddressable::Bucket => OBJECT_STORE_BUCKET.entry.key,
-            Unaddressable::Address | Unaddressable::Long => OBJECT_STORE_ENDPOINT.entry.key,
+            Unaddressable::Address | Unaddressable::Host | Unaddressable::Long => {
+                OBJECT_STORE_ENDPOINT.entry.key
+            }
         }
     }
 
@@ -303,10 +307,15 @@ impl Unaddressable {
                  object_store_endpoint, which must then be a name, not an IP address; set \
                  object_store_path_style to true to reach the store at an address"
             }
+            Unaddressable::Host => {
+                "object_store_path_style is false, so the bucket goes before the host of \
+                 object_store_endpoint, which must then be labels of 1 to 63 characters joined \
+                 by dots, with at most one dot at its end"
+            }
             Unaddressable::Long => {
                 "object_store_path_style is false, so the bucket goes before the host of \
-                 object_store_endpoint, and the two together are longer than the 253 characters \
-                 a host name may be"
+                 object_store_endpoint, and the two together, without a dot at the end, are \
+                 longer than the 253 characters a host name may be"
             }
         }
     }
@@ -335,7 +344,15 @@ pub fn virtual_host(bucket: &str, endpoint: &str) -> Result<String, Unaddressabl
         return Err(Unaddressable::Address);
     };
     let named = format!("{bucket}.{host}");
-    if named.trim_end_matches('.').len() > HOST_LONGEST {
+    // One dot at the end names the root, which a resolver does not count.
+    let counted = named.strip_suffix('.').unwrap_or(&named);
+    if !counted
+        .split('.')
+        .all(|label| (1..=LABEL_LONGEST).contains(&label.len()))
+    {
+        return Err(Unaddressable::Host);
+    }
+    if counted.len() > HOST_LONGEST {
         return Err(Unaddressable::Long);
     }
     url.set_host(Some(&named))
@@ -905,6 +922,49 @@ mod tests {
             Ok(8 + 253)
         );
         assert_eq!(virtual_host("dd", &endpoint), Err(Unaddressable::Long));
+    }
+
+    #[test]
+    fn a_host_is_counted_as_a_resolver_counts_it() {
+        let host = ["a", "b", "c"].map(|letter| letter.repeat(63)).join(".");
+        let at_limit = format!("{host}.{}", "e".repeat(59));
+        assert_eq!(
+            virtual_host("d", &format!("https://{at_limit}.")).map(|url| url.len()),
+            Ok(8 + 253 + 1),
+            "one dot at the end names the root"
+        );
+        assert_eq!(
+            virtual_host("dd", &format!("https://{at_limit}.")),
+            Err(Unaddressable::Long)
+        );
+        let short = format!("{host}.{}", "e".repeat(50));
+        for dots in ["..", "...", "........"] {
+            assert_eq!(
+                virtual_host("d", &format!("https://{short}{dots}")),
+                Err(Unaddressable::Host),
+                "{dots}"
+            );
+        }
+        for endpoint in [
+            "https://s3..store.example",
+            "https://.store.example",
+            "https://store..example.",
+            &format!("https://{}.example", "s".repeat(64)),
+        ] {
+            assert_eq!(
+                virtual_host("marfa", endpoint),
+                Err(Unaddressable::Host),
+                "{endpoint}"
+            );
+        }
+        assert_eq!(
+            virtual_host("marfa", &format!("https://{}.example", "s".repeat(63))),
+            Ok(format!("https://marfa.{}.example", "s".repeat(63)))
+        );
+        assert_eq!(
+            virtual_host("marfa", "https://store.example."),
+            Ok("https://marfa.store.example.".to_string())
+        );
     }
 
     #[test]
