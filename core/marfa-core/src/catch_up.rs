@@ -6521,7 +6521,14 @@ mod tests {
             frames.extend(skipped_events(17, to));
             frames
         };
-        let mut again = vec![stream_cursor("30")];
+        let mut again = vec![
+            stream_cursor("30"),
+            event(
+                "16",
+                "item.created",
+                &item_payload("item.created", "n16", NOTE, 1),
+            ),
+        ];
         again.extend(skipped_events(17, 30));
         again.push(stream_live(Some("30")));
         let server = skipped_server(vec![first(30), again]);
@@ -6556,9 +6563,11 @@ mod tests {
         let report = core.catch_up().unwrap();
         assert_eq!((report.applied, report.skipped), (0, 14));
         assert_eq!(stored_cursor(&core).as_deref(), Some("30"));
+        // From the event before the anchor, which the copy takes again only
+        // to compare.
         assert_eq!(
             server.seen("/events")[1].last_event_id.as_deref(),
-            Some("16")
+            Some("15")
         );
     }
     fn table_event(id: u64, item: &str, deleted: bool) -> String {

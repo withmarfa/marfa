@@ -865,6 +865,7 @@ fn a_refill_whose_server_was_restored_clears_rather_than_keep_later_versions() {
         )],
     );
     server.on("/items/bulk-get", vec![pinned_row()]);
+    lost_on(&server);
     server.on(
         "/events",
         vec![
@@ -884,8 +885,58 @@ fn a_refill_whose_server_was_restored_clears_rather_than_keep_later_versions() {
     );
     assert_eq!(
         ids(&listed(&core).unwrap().1),
-        ["changed", "kept", "pinned"]
+        ["changed", "gone", "kept", "pinned"]
     );
+    assert_eq!(kept_blocked(&core), held_lost());
+}
+
+/// The server answers it holds neither `gone` nor either edge the copy held.
+fn lost_on(server: &Scripted) {
+    for path in ["/items/gone", "/edges/stays", "/edges/dropped"] {
+        server.on(
+            path,
+            vec![scripted::certified(scripted::refusal(404, "not_found"))],
+        );
+    }
+}
+
+/// Every queued write, as its kind and subject, each blocked `server_restored`.
+fn kept_blocked(core: &Core) -> Vec<(String, String)> {
+    let queue = core.queue().unwrap();
+    for write in &queue {
+        assert_eq!(
+            (write.verdict, write.reason.as_deref()),
+            (Some(crate::Verdict::Blocked), Some("server_restored")),
+            "{write:?}"
+        );
+    }
+    let mut kept: Vec<_> = queue
+        .iter()
+        .map(|write| {
+            (
+                format!("{:?}", write.kind),
+                write.subject_id().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    kept.sort();
+    kept
+}
+
+/// What `aged_out` held that the restored server lacks: `gone` and both
+/// edges. `kept` at a later version carries the same fields as the version
+/// the server holds, so no edit puts anything back.
+fn held_lost() -> Vec<(String, String)> {
+    let mut lost: Vec<(String, String)> = [
+        ("CreateEdge", "dropped"),
+        ("CreateEdge", "stays"),
+        ("CreateItem", "gone"),
+    ]
+    .into_iter()
+    .map(|(kind, id)| (kind.to_string(), id.to_string()))
+    .collect();
+    lost.sort();
+    lost
 }
 
 #[test]
@@ -1194,6 +1245,7 @@ fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versio
         )],
     );
     server.on("/items/bulk-get", vec![pinned_row()]);
+    lost_on(&server);
     server.on("/events", vec![head("2"), replay(vec![], "2")]);
     let report = hydrate(&core).unwrap();
 
@@ -1208,8 +1260,9 @@ fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versio
     );
     assert_eq!(
         ids(&listed(&core).unwrap().1),
-        ["changed", "kept", "pinned"]
+        ["changed", "gone", "kept", "pinned"]
     );
+    assert_eq!(kept_blocked(&core), held_lost());
 }
 
 #[test]

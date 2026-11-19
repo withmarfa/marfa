@@ -126,6 +126,15 @@ CREATE TABLE IF NOT EXISTS answer_receipts (
 CREATE INDEX IF NOT EXISTS answer_receipts_subject ON answer_receipts (subject, id);
 CREATE INDEX IF NOT EXISTS answer_receipts_unseen ON answer_receipts (seen, answered_at);
 
+-- The last event the copy took and what it named, which a stream asked from
+-- the event before it carries again: a server restored to an earlier point
+-- holds another event at that id.
+CREATE TABLE IF NOT EXISTS event_anchor (
+  only INTEGER PRIMARY KEY CHECK (only = 1),
+  id INTEGER NOT NULL,
+  print TEXT NOT NULL
+);
+
 -- What the copy held, as the server last answered it, when the server was
 -- found restored to an earlier point: kept across an interrupted hydration
 -- until one has compared it with what the server holds now.

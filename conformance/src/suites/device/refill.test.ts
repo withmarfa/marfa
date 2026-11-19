@@ -152,6 +152,24 @@ async function ids(
   };
 }
 
+/**
+ * Every queued write as its kind and the item it names, sorted, once each is
+ * shown blocked `server_restored`.
+ */
+async function keptBlocked(h: Harness): Promise<Array<[string, string]>> {
+  const queued = await h.device.queue();
+  expect(queued.ok, JSON.stringify(queued)).toBe(true);
+  if (!queued.ok) throw new Error("unreachable: the assertion above threw");
+  for (const write of queued.value)
+    expect(
+      [write.verdict, write.reason],
+      `${write.kind} of ${String(write.item_id)} was not held for the person`,
+    ).toEqual(["blocked", "server_restored"]);
+  return queued.value
+    .map((write): [string, string] => [write.kind, write.item_id ?? ""])
+    .sort((left, right) => left.join(" ").localeCompare(right.join(" ")));
+}
+
 async function hydration(h: Harness): Promise<string | undefined> {
   const status = await h.device.status();
   expect(status.ok, JSON.stringify(status)).toBe(true);
@@ -376,6 +394,11 @@ describe("a copy whose cursor aged out", () => {
       { item: { id: "a", version: 2 } },
       { item: { id: "c" } },
     ];
+    h.server.copyAnswer(
+      "GET",
+      "/items/b",
+      refusal(404, "not_found", "no such item"),
+    );
     const again = await h.device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
     expect(again.ok && again.value.restarted).toBe("head_past_log");
@@ -383,12 +406,21 @@ describe("a copy whose cursor aged out", () => {
       again.ok && again.value.in_place,
       "a refill of a restored server filled over items it may never have held",
     ).toBe(false);
-    expect(await ids(h)).toEqual({ ids: ["a", "c"], completeness: "complete" });
     const restored = await h.device.get("a");
     expect(
       restored.ok && restored.value.version,
       "the copy kept a version the restored server never had",
     ).toBe(2);
+    // What the copy held and the restored server lacks waits to be put back:
+    // `a` as the copy held it, and `b`, which the server no longer holds.
+    expect(await keptBlocked(h)).toEqual([
+      ["create_item", "b"],
+      ["update_item", "a"],
+    ]);
+    expect(await ids(h)).toEqual({
+      ids: ["a", "b", "c"],
+      completeness: "complete",
+    });
   });
 
   it("ends the stale copy when its refill reads another instance", async () => {
@@ -657,6 +689,48 @@ describe("a stale copy before its refill reads a page", () => {
       restored.ok && restored.value.version,
       "the copy kept a version the restored server never had",
     ).toBe(2);
+    expect(await keptBlocked(h)).toEqual([["update_item", "a"]]);
+  });
+
+  it("keeps what the copy held through an interrupted fill of a server restored behind it", async () => {
+    const rows: Rows = {
+      "core.note": [{ item: { id: "a", version: 5 } }, { item: { id: "b" } }],
+    };
+    let dropping = false;
+    const { h, head } = await agedOut("refill-restored-interrupted", rows, {
+      pageSize: 1,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    head.now = "2";
+    rows["core.note"] = [
+      { item: { id: "a", version: 2 } },
+      { item: { id: "c" } },
+    ];
+    h.server.copyAnswer(
+      "GET",
+      "/items/b",
+      refusal(404, "not_found", "no such item"),
+    );
+    dropping = true;
+    expect(
+      (await h.device.hydrate(["core.note"], "library")).ok,
+      "the fill was not interrupted, so nothing below is about one that was",
+    ).toBe(false);
+    expect(
+      (await h.device.queue()).ok && (await keptBlocked(h)),
+      "an interrupted fill queued what it had not yet compared",
+    ).toEqual([]);
+
+    const again = await h.device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(await keptBlocked(h)).toEqual([
+      ["create_item", "b"],
+      ["update_item", "a"],
+    ]);
   });
 
   it("fills in place from a head level with the cursor the copy held", async () => {

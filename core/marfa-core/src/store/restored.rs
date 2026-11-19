@@ -3,7 +3,7 @@
 //! the event the copy last took, and the rows set aside until a hydration has
 //! compared them with what the server holds now.
 
-use super::meta::{meta_delete, meta_get, meta_set};
+use super::Cached;
 use super::queue::{untaken_create_for_edge, untaken_creates_for_item};
 use super::stamps::{beneath_edge, beneath_item};
 use super::time::now_millis;
@@ -15,9 +15,6 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// How long a receipt is kept after its answer, so a restore made later still
 /// finds a removal the person made.
 pub(crate) const RECEIPTS_KEPT_MILLIS: i64 = 30 * 24 * 60 * 60 * 1000;
-
-/// The id and print of the last event the copy took, as `"<id> <print>"`.
-const META_EVENT_ANCHOR: &str = "event_anchor";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Receipt {
@@ -244,18 +241,29 @@ pub(crate) fn event_print(kind: &str, payload: &EventPayload) -> String {
 
 /// Keeps `id` as the last event the copy took, with what it named.
 pub(crate) fn set_anchor(conn: &Connection, id: &str, print: &str) -> Result<(), CoreError> {
-    meta_set(conn, META_EVENT_ANCHOR, &format!("{id} {print}"))
+    let Some(id) = crate::reach::cursor(id).and_then(|id| i64::try_from(id).ok()) else {
+        return forget_anchor(conn);
+    };
+    conn.execute_cached(
+        "INSERT INTO event_anchor (only, id, print) VALUES (1, ?1, ?2)
+           ON CONFLICT (only) DO UPDATE SET id = excluded.id, print = excluded.print",
+        params![id, print],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn anchor(conn: &Connection) -> Result<Option<(u64, String)>, CoreError> {
-    Ok(meta_get(conn, META_EVENT_ANCHOR)?.and_then(|held| {
-        let (id, print) = held.split_once(' ')?;
-        Some((crate::reach::cursor(id)?, print.to_string()))
-    }))
+    let held: Option<(i64, String)> = conn
+        .query_row_cached("SELECT id, print FROM event_anchor", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()?;
+    Ok(held.and_then(|(id, print)| Some((u64::try_from(id).ok()?, print))))
 }
 
 pub(crate) fn forget_anchor(conn: &Connection) -> Result<(), CoreError> {
-    meta_delete(conn, META_EVENT_ANCHOR)
+    conn.execute_cached("DELETE FROM event_anchor", [])?;
+    Ok(())
 }
 
 /// Sets aside what the copy holds as the server last answered it, before the

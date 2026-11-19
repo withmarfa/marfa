@@ -316,7 +316,13 @@ fn a_listener_let_go_is_told_it_ended_once_and_nothing_after_while_the_rest_go_o
 fn the_store_is_let_go_before_the_last_listener_is_told_it_ended() {
     let server = Scripted::start();
     let core = copy(&server);
-    server.on("/events", vec![held_answer(vec![created("n1", "11")])]);
+    server.on(
+        "/events",
+        vec![
+            held_answer(vec![created("n1", "11")]),
+            held_answer(vec![created("n1", "11"), created("n2", "12")]),
+        ],
+    );
     let heard = listener();
     *heard.core.lock().unwrap() = Some(Arc::clone(&core));
     let listening = watch(&core, &heard);
@@ -328,10 +334,12 @@ fn the_store_is_let_go_before_the_last_listener_is_told_it_ended() {
         Some(1),
         "the watch still held the store when its last listener was told it ended"
     );
-    // The watch starts again for a listener that comes after.
+    // The watch starts again for a listener that comes after, and is told of
+    // the event after the one the copy took, which comes again first.
     let again = listener();
     let _next = watch(&core, &again);
     again.wait_for_kind("item.created", 1);
+    assert_eq!(again.ids(), ["n2"]);
 }
 
 #[test]
