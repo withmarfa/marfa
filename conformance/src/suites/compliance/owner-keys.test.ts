@@ -748,7 +748,6 @@ describe("claims granted through keys.manage", () => {
     const claiming = await mintBy(manageAndMint.token, "app-claims-granted", {
       type_permissions: { "core.note": "read" },
       sources: [elsewhere],
-      owner_key: true,
     });
     expect(claiming.sources).toEqual([elsewhere]);
     const target = await localKey("app-claims-target", {
