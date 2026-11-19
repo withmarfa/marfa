@@ -76,7 +76,7 @@ pub fn purge_definition() -> Definition {
                 "preview": { "type": "object" },
                 "confirm": { "type": "string" },
                 "expires_at": { "type": "string" },
-                "purged": { "type": ["integer", "string"] },
+                "purged": { "type": "integer" },
                 "failures": { "type": "array", "items": { "type": "object" } },
                 "next_cursor": { "type": ["string", "null"] },
                 "next": { "type": "string" },

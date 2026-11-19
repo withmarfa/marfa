@@ -100,7 +100,7 @@ While a credential holds `instance.read`, the server MUST add to the answer of `
 
 The server MUST NOT list at any MCP endpoint a tool that restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** a restore needs a recent sign-in, claiming and recovering a password start where the server runs, adding a passkey needs a browser, and an update or a clock confirmation changes the server itself; the owner does each from the command line or from an app after a recent sign-in. An export is a file, which a tool answer cannot carry.
+**Reason:** claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
 
