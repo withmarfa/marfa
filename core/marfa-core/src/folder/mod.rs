@@ -283,6 +283,10 @@ pub struct ScanReport {
     /// where the pass made no call or a call failed with no answer.
     #[serde(skip)]
     pub lookup_answered: bool,
+    /// Whether the pass read the whole folder and journaled each bound file
+    /// it found under no name in it.
+    #[serde(skip)]
+    pub swept: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -1588,6 +1588,7 @@ impl Folder {
             report.missing += 1;
         }
         if !incomplete && self.root_gone().is_none() {
+            report.swept = true;
             self.sweep_journal(settings, peers, scan.full, report)?;
         } else {
             self.note_kept_look_passed()?;
