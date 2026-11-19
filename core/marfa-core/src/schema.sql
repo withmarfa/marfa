@@ -109,9 +109,10 @@ CREATE TABLE IF NOT EXISTS read_backs (
 ) WITHOUT ROWID;
 
 -- What the server answered it holds after a write it took, so a server
--- restored to an earlier point is found by what it no longer holds. Kept
--- until the stream carries the subject at that version, and a removal for
--- 30 days after its answer, which a restored server may have undone.
+-- restored to an earlier point is found by what it no longer holds. A change
+-- is kept until the stream carries the subject at that version or later, and
+-- a removal, which a restored server may have undone, is kept whatever the
+-- stream carries. None is kept or read 30 days after its answer.
 CREATE TABLE IF NOT EXISTS answer_receipts (
   write_id TEXT PRIMARY KEY,
   subject TEXT NOT NULL CHECK (subject IN ('item', 'edge')),

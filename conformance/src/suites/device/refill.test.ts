@@ -376,7 +376,7 @@ describe("a copy whose cursor aged out", () => {
       },
     });
     rows["core.note"] = [
-      { item: { id: "a", version: 5 } },
+      { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
       { item: { id: "b" } },
     ];
     dropping = true;
@@ -665,7 +665,11 @@ describe("a refill's sweep", () => {
 
 describe("a stale copy before its refill reads a page", () => {
   it("clears rather than fill again where the server was restored before its refill began", async () => {
-    const rows: Rows = { "core.note": [{ item: { id: "a", version: 5 } }] };
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
+      ],
+    };
     const { h, head } = await agedOut("refill-restored-first", rows);
     const held = await h.device.get("a");
     expect(held.ok && held.value.version).toBe(5);
@@ -694,7 +698,10 @@ describe("a stale copy before its refill reads a page", () => {
 
   it("keeps what the copy held through an interrupted fill of a server restored behind it", async () => {
     const rows: Rows = {
-      "core.note": [{ item: { id: "a", version: 5 } }, { item: { id: "b" } }],
+      "core.note": [
+        { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
+        { item: { id: "b" } },
+      ],
     };
     let dropping = false;
     const { h, head } = await agedOut("refill-restored-interrupted", rows, {
@@ -1435,7 +1442,14 @@ describe("a fill asked to happen only in place", () => {
     head.now = "50";
     await refusedInPlace(h, "head_past_log");
 
-    // The witness: asked for any fill, the same hydration clears the copy.
+    // The witness: asked for any fill, the same hydration clears the copy,
+    // reading the server for the edge it held, which the restored server
+    // lacks.
+    h.server.copyAnswer(
+      "GET",
+      "/edges/a-b",
+      refusal(404, "not_found", "no such edge"),
+    );
     const replaced = await h.device.hydrate(["core.note"], "library");
     expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
     expect(replaced.ok && replaced.value.restarted).toBe("head_past_log");

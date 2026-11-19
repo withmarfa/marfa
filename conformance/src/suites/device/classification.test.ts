@@ -1255,9 +1255,9 @@ describe("the ceiling, and releasing what it stopped", () => {
       let head = "10";
       const rows = held();
       scriptHydration(restored.server, { head: () => head, items: rows });
-      expect(
-        (await restored.device.hydrate(["core.note"], "library")).ok,
-      ).toBe(true);
+      expect((await restored.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
       head = "2";
       rows["core.note"] = [];
       restored.server.copyAnswer(
@@ -1269,9 +1269,9 @@ describe("the ceiling, and releasing what it stopped", () => {
       expect(caught.ok ? "caught up" : caught.refusal.code).toBe(
         "copy_expired",
       );
-      expect(
-        (await restored.device.hydrate(["core.note"], "library")).ok,
-      ).toBe(true);
+      expect((await restored.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
       const row = (await queueOf(restored)).find(
         (row) => row.kind === "create_item" && row.item_id === HELD.id,
       );

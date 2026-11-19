@@ -38,10 +38,7 @@ function lastEventIds(h: Harness): string[] {
  * A copy hydrated at 10 that has taken event 11, which created `n1`. Each
  * later stream answers what `next` returns.
  */
-async function tookEleven(
-  label: string,
-  next: () => Answer,
-): Promise<Harness> {
+async function tookEleven(label: string, next: () => Answer): Promise<Harness> {
   harness = await startHarness(label);
   const h = harness;
   scriptHydration(h.server, { head: "10" });
@@ -97,6 +94,17 @@ describe("a log that holds another event where the copy's last one was", () => {
 });
 
 describe("a write the server answered and no longer holds", () => {
+  /** A read of the item at the version the server answered its create with. */
+  function held(id: string): Answer {
+    return {
+      kind: "json",
+      status: 200,
+      body: withMetadata(
+        wireItem({ id, version: 1, properties: { title: "kept" } }),
+      ),
+    };
+  }
+
   /**
    * A copy hydrated at 10 that created an item and drained it, with the
    * server answering a read of that item as `read` says.
@@ -113,7 +121,11 @@ describe("a write the server answered and no longer holds", () => {
         (request) => {
           const sent = JSON.parse(request.body) as { id: string };
           return answers.created(
-            wireItem({ id: sent.id, version: 1, properties: { title: "kept" } }),
+            wireItem({
+              id: sent.id,
+              version: 1,
+              properties: { title: "kept" },
+            }),
           );
         },
       ],
@@ -125,21 +137,17 @@ describe("a write the server answered and no longer holds", () => {
     });
     expect(created.ok, JSON.stringify(created)).toBe(true);
     const id = created.ok ? (created.value.item_id ?? "") : "";
+    // The drain reads the item back once it is accepted; every read after
+    // that is answered as `read` says.
+    h.server.copyAnswer("GET", `/items/${id}`, held(id), read(id));
     expect((await h.device.drain()).ok).toBe(true);
-    h.server.copyAnswer("GET", `/items/${id}`, read(id));
     return h;
   }
 
   it("ends the catch-up where the server no longer holds an item it accepted from this device", async () => {
     // The witness: a server that holds the item at the version it answered.
     {
-      const h = await drainedCreate("restored-receipt-held", (id) => ({
-        kind: "json",
-        status: 200,
-        body: withMetadata(
-          wireItem({ id, version: 1, properties: { title: "kept" } }),
-        ),
-      }));
+      const h = await drainedCreate("restored-receipt-held", held);
       const caught = await h.device.catchUp();
       expect(
         caught.ok ? "caught up" : caught.refusal.code,

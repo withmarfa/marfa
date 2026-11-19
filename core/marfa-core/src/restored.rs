@@ -1,7 +1,7 @@
 //! A server restored to an earlier point: told from the event the copy last
 //! took and the receipts of the writes the server took from it, and answered
 //! by the writes that put back what the copy held that the server has lost
-//! (`device/restored-anchor`, `device/restored-receipts` and
+//! (`device/expire-last-event-other`, `device/expire-write-lost` and
 //! `device/restored-kept`).
 
 use std::collections::{HashMap, HashSet};

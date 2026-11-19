@@ -135,8 +135,9 @@ async function world(
       await original.stop();
       restoredStates.push(image);
       await bootServer({ state: image });
-      const restored = parseEnvFile(readFileSync(join(image, "env"), "utf8"))
-        .MARFA_API_URL;
+      const restored = parseEnvFile(
+        readFileSync(join(image, "env"), "utf8"),
+      ).MARFA_API_URL;
       if (!restored) throw new Error("the restored boot wrote no address");
       upstream = restored;
     },
@@ -246,9 +247,9 @@ describe("a server restored behind work this device sent it", () => {
       ).toEqual([]);
       expect((await w.client().getItem(id)).status).toBe(404);
 
-      expect(
-        value(await w.device.release({ reason: "server_restored" })),
-      ).toBe(1);
+      expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
+        1,
+      );
       value(await w.device.drain());
       expect(await title(w.client(), id)).toBe("edited once kept");
       expect(
