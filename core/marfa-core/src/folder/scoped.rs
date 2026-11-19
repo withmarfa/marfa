@@ -131,6 +131,9 @@ pub(super) struct Inventory {
     pub(super) dirty: HashSet<String>,
     /// Files nothing sends and no embed names.
     pub(super) skipped: HashSet<String>,
+    /// Files another name links to, which a write through that name changes
+    /// with no event in the folder.
+    pub(super) linked: HashSet<String>,
     pub(super) directories: Vec<Flagged>,
     pub(super) secrets: Vec<String>,
 }
@@ -215,7 +218,7 @@ impl Folder {
                     settings: settings.clone(),
                     catalog: crate::store::catalog_version(&conn)?,
                 };
-            if !kept {
+            if !kept || !inventory.linked.is_empty() {
                 return Ok(None);
             }
             (
@@ -594,13 +597,13 @@ fn same_name(one: &str, other: &str) -> bool {
 }
 
 #[cfg(unix)]
-fn linked_elsewhere(metadata: &std::fs::Metadata) -> bool {
+pub(super) fn linked_elsewhere(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     metadata.nlink() > 1
 }
 
 #[cfg(not(unix))]
-fn linked_elsewhere(_: &std::fs::Metadata) -> bool {
+pub(super) fn linked_elsewhere(_: &std::fs::Metadata) -> bool {
     true
 }
 

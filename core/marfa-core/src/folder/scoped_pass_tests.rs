@@ -3,6 +3,7 @@
 
 use super::health::tests::aged;
 use super::tests::{FILES_CAPTURED, FILES_READ, ScannedDir, settle, watched_notes};
+use super::watched;
 use super::*;
 use crate::scripted::{Scripted, refusal};
 
@@ -448,4 +449,146 @@ fn a_rename_that_retitles_leaves_what_the_scan_read_true() {
         "the witness: the pass rewrote the title line"
     );
     only_what_the_files_hold(&folder, dir.path());
+}
+
+/// Watches every directory but the one it is told to refuse.
+struct Refusing(std::rc::Rc<std::cell::RefCell<Option<PathBuf>>>);
+
+impl watched::Directories for Refusing {
+    fn watch(&mut self, directory: &Path) -> notify::Result<()> {
+        match &*self.0.borrow() {
+            Some(refused) if refused == directory => Err(notify::Error::generic("no watches left")),
+            _ => Ok(()),
+        }
+    }
+
+    fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+        Ok(())
+    }
+}
+
+/// The folder's watch, refusing `sub` until the returned cell is cleared.
+fn listening_refusing_sub(
+    folder: &Folder,
+) -> (
+    watched::Listening<Refusing>,
+    std::rc::Rc<std::cell::RefCell<Option<PathBuf>>>,
+    usize,
+) {
+    let refused = std::rc::Rc::new(std::cell::RefCell::new(Some(folder.root.join("sub"))));
+    let (listening, failures) = watched::Listening::by_directory(
+        Refusing(refused.clone()),
+        &folder.root,
+        watched::Reach::new(None),
+    )
+    .unwrap();
+    (listening, refused, failures.len())
+}
+
+fn read_hash(folder: &Folder, name: &str) -> String {
+    state::bound_at(&folder.core.conn().unwrap(), name)
+        .unwrap()
+        .unwrap()
+        .content_hash
+}
+
+fn edit_then_pass(
+    (dir, folder): (&Path, &Folder),
+    passes: &mut watch::Passes,
+    listening: &mut watched::Listening<Refusing>,
+    name: &str,
+) -> usize {
+    edit(dir, name);
+    counted();
+    passes
+        .hearing_ready(folder, &[rewrite(dir, "n001.md")], |touched| {
+            listening.ready(touched);
+        })
+        .unwrap();
+    counted().0
+}
+
+#[test]
+fn a_quick_pass_walks_while_a_directory_is_unwatched_and_is_scoped_again_once_it_is_watched() {
+    let mut all = names(12);
+    all.push("sub/deep.md".into());
+    let (dir, folder, _server, mut passes) = watched(&all);
+    let (mut listening, refused, failed) = listening_refusing_sub(&folder);
+    assert_eq!(failed, 1, "the watch could not watch the directory");
+
+    // No event names the edit in `sub`, and events elsewhere drive each pass.
+    let mut seen = std::collections::HashSet::from([read_hash(&folder, "sub/deep.md")]);
+    for round in 1..=3 {
+        let captured = edit_then_pass(
+            (dir.path(), &folder),
+            &mut passes,
+            &mut listening,
+            "sub/deep.md",
+        );
+        assert!(
+            captured >= 12,
+            "pass {round} took the metadata of {captured} files"
+        );
+        let hash = read_hash(&folder, "sub/deep.md");
+        assert!(
+            seen.insert(hash),
+            "pass {round} took no note of the edit in the unwatched directory"
+        );
+    }
+
+    // Registration succeeds: the pass that retries it walks once more, since
+    // nothing named what changed before the watch took hold.
+    *refused.borrow_mut() = None;
+    let captured = edit_then_pass(
+        (dir.path(), &folder),
+        &mut passes,
+        &mut listening,
+        "sub/deep.md",
+    );
+    assert!(
+        captured >= 12,
+        "the pass that watched it took {captured} files"
+    );
+
+    // The witness: with every directory watched, a quick pass stays scoped.
+    let captured = edit_then_pass(
+        (dir.path(), &folder),
+        &mut passes,
+        &mut listening,
+        "n002.md",
+    );
+    assert!(captured < 6, "took the metadata of {captured} files");
+}
+
+#[test]
+fn a_write_through_a_link_outside_the_folder_is_found_by_a_quick_pass_an_event_elsewhere_drives() {
+    let (dir, folder, _server, mut passes) = watched(&names(12));
+    let outside = tempfile::tempdir().unwrap();
+    let link = outside.path().join("elsewhere.md");
+    std::fs::hard_link(dir.path().join("n002.md"), &link).unwrap();
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
+
+    // The link's directory is not watched: a write through it names no path.
+    let before = read_hash(&folder, "n002.md");
+    let mut text = std::fs::read_to_string(&link).unwrap();
+    text.push_str("written through the other name\n");
+    std::fs::write(&link, text).unwrap();
+    edit(dir.path(), "n001.md");
+    counted();
+    passes
+        .touching(&folder, &[&dir.path().join("n001.md")])
+        .unwrap();
+    assert_ne!(before, read_hash(&folder, "n002.md"), "the write was found");
+    assert!(counted().0 >= 12, "a walk found it");
+
+    // The witness: a file with no other name is looked at only by an event.
+    let (dir, folder, _server, mut passes) = watched(&names(12));
+    let before = read_hash(&folder, "n002.md");
+    edit(dir.path(), "n002.md");
+    edit(dir.path(), "n001.md");
+    passes
+        .touching(&folder, &[&dir.path().join("n001.md")])
+        .unwrap();
+    assert_eq!(before, read_hash(&folder, "n002.md"), "no event named it");
 }

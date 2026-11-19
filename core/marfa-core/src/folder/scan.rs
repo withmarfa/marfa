@@ -5,7 +5,7 @@ use crate::Seen;
 
 use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
-use super::scoped::{Guard, Inventory, Looked, Plan, Reading};
+use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
 use super::settings::OutsideQuery;
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
@@ -372,6 +372,18 @@ impl Folder {
                 inventory
             }
             None => Inventory {
+                linked: scan
+                    .paths
+                    .iter()
+                    .zip(&scan.keys)
+                    .filter(|(path, _)| {
+                        scan.walked
+                            .opened
+                            .get(*path)
+                            .is_some_and(|captured| linked_elsewhere(&captured.metadata.borrow()))
+                    })
+                    .map(|(_, key)| key.clone())
+                    .collect(),
                 guard: scan.guard.clone(),
                 dirty: scan
                     .keys

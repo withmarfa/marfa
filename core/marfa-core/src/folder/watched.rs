@@ -9,6 +9,7 @@ use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecursiveMode, Watcher, WatcherKind};
 
 use super::lists::Lists;
+use super::scoped::Touched;
 use super::{SETTINGS_FILE, STATE_DIR};
 
 /// The most directories `Reach` remembers of each kind, so a stream of new
@@ -204,20 +205,36 @@ impl<W: Watcher> Listening<W> {
         root: &Path,
         reach: Reach,
     ) -> Result<(Listening<W>, Vec<notify::Error>), notify::Error> {
-        let mut tree = None;
-        let mut failures = Vec::new();
         if W::kind() == WatcherKind::Inotify {
-            let mut held = Tree::new(root.to_path_buf());
-            failures = held.open(&mut watcher, &reach)?;
-            tree = Some(held);
-        } else {
-            watcher.watch(root, RecursiveMode::Recursive)?;
+            return Listening::by_directory(watcher, root, reach);
         }
+        watcher.watch(root, RecursiveMode::Recursive)?;
         Ok((
             Listening {
                 watcher,
                 reach,
-                tree,
+                tree: None,
+            },
+            Vec::new(),
+        ))
+    }
+}
+
+impl<W: Directories> Listening<W> {
+    /// Starts a watch that watches `root` and each directory below it a scan
+    /// enters, one by one.
+    pub(super) fn by_directory(
+        mut watcher: W,
+        root: &Path,
+        reach: Reach,
+    ) -> Result<(Listening<W>, Vec<notify::Error>), notify::Error> {
+        let mut tree = Tree::new(root.to_path_buf());
+        let failures = tree.open(&mut watcher, &reach)?;
+        Ok((
+            Listening {
+                watcher,
+                reach,
+                tree: Some(tree),
             },
             failures,
         ))
@@ -251,12 +268,34 @@ impl<W: Watcher> Listening<W> {
         let tree = self.tree.as_mut()?;
         tree.reopen(&mut self.watcher, &self.reach)
     }
+
+    /// Readies the watch for a pass. A directory that could not be watched is
+    /// tried again, and while one stands unwatched, or has only now been
+    /// watched, no event names what changed in it, so the pass walks. Returns
+    /// what `restore` does.
+    pub(super) fn ready(&mut self, touched: &mut Touched) -> Option<Vec<notify::Error>> {
+        let unwatched = self
+            .tree
+            .as_ref()
+            .is_some_and(|tree| !tree.unwatched.is_empty());
+        if let Some(tree) = &mut self.tree {
+            tree.retry(&mut self.watcher);
+        }
+        let restored = self.restore();
+        if unwatched || restored.is_some() {
+            touched.distrust();
+        }
+        restored
+    }
 }
 
 /// The directories watched one by one.
 struct Tree {
     root: PathBuf,
     held: BTreeSet<PathBuf>,
+    /// Directories a scan enters that the platform would not watch, until one
+    /// is watched or no longer wanted.
+    unwatched: BTreeSet<PathBuf>,
 }
 
 impl Tree {
@@ -264,6 +303,7 @@ impl Tree {
         Tree {
             root,
             held: BTreeSet::new(),
+            unwatched: BTreeSet::new(),
         }
     }
 
@@ -314,7 +354,16 @@ impl Tree {
             self.held.remove(&directory);
             let _ = watcher.unwatch(&directory);
         }
+        self.unwatched
+            .retain(|directory| wanted.contains(directory));
         self.add(watcher, wanted)
+    }
+
+    /// Tries again to watch the directories that could not be, without saying
+    /// again that they could not.
+    fn retry(&mut self, watcher: &mut impl Directories) {
+        let wanted = std::mem::take(&mut self.unwatched);
+        self.add(watcher, wanted);
     }
 
     /// The state directory. A scan never enters it, but an edit of the
@@ -337,11 +386,17 @@ impl Tree {
             }
             match watcher.watch(&directory) {
                 Ok(()) => {
+                    self.unwatched.remove(&directory);
                     self.held.insert(directory);
                 }
                 // It went between the walk and the watch.
-                Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {}
-                Err(error) => failures.push(error),
+                Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {
+                    self.unwatched.remove(&directory);
+                }
+                Err(error) => {
+                    self.unwatched.insert(directory);
+                    failures.push(error);
+                }
             }
         }
         failures
@@ -418,6 +473,8 @@ impl Tree {
             self.held.remove(&directory);
             let _ = watcher.unwatch(&directory);
         }
+        self.unwatched
+            .retain(|directory| !directory.starts_with(path));
     }
 }
 
@@ -1019,5 +1076,61 @@ mod tests {
         std::fs::write(root.join("node_modules/pkg/x.js"), "x").unwrap();
         std::fs::write(root.join("notes/z.md"), "z").unwrap();
         assert!(!hears(&root.join("node_modules/pkg/x.js")));
+    }
+
+    /// Refuses the directories named in `refused` until they are taken out.
+    struct Refusing {
+        refused: BTreeSet<PathBuf>,
+    }
+
+    impl Directories for Refusing {
+        fn watch(&mut self, directory: &Path) -> notify::Result<()> {
+            if !directory.is_dir() {
+                return Err(notify::Error::path_not_found());
+            }
+            if self.refused.contains(directory) {
+                return Err(notify::Error::generic("no watches left"));
+            }
+            Ok(())
+        }
+
+        fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_directory_that_cannot_be_watched_stays_unwatched_until_it_is_or_is_gone() {
+        let dir = folder_of(&["a/inner", "b", "c"]);
+        let root = dir.path();
+        let reach = reaching(&[]);
+        let mut watcher = Refusing {
+            refused: BTreeSet::from([root.join("a"), root.join("b"), root.join("c")]),
+        };
+        let mut tree = Tree::new(root.to_path_buf());
+        // The witness: nothing is unwatched while every directory is watched.
+        let mut other = Tree::new(root.to_path_buf());
+        let mut everything = Refusing {
+            refused: BTreeSet::new(),
+        };
+        assert!(other.open(&mut everything, &reach).unwrap().is_empty());
+        assert!(other.unwatched.is_empty());
+
+        let failures = tree.open(&mut watcher, &reach).unwrap();
+        assert_eq!(failures.len(), 3);
+        assert_eq!(tree.unwatched.len(), 3);
+        // Tried again, it fails without being told again, and stays unwatched.
+        tree.retry(&mut watcher);
+        assert_eq!(tree.unwatched.len(), 3);
+        // One is watched at last; one is removed; one is no longer entered.
+        watcher.refused.remove(&root.join("a"));
+        std::fs::remove_dir(root.join("b")).unwrap();
+        tree.retry(&mut watcher);
+        assert_eq!(tree.unwatched, BTreeSet::from([root.join("c")]));
+        assert!(tree.held.contains(&root.join("a")));
+        let mut reach = reach;
+        assert!(reach.replace(Some(Lists::new(&[], &lines(&["c/"])).unwrap())));
+        tree.sync(&mut watcher, &reach);
+        assert!(tree.unwatched.is_empty());
     }
 }

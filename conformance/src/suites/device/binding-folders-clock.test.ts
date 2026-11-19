@@ -637,14 +637,23 @@ describe("folder clock and scan boundaries", () => {
       readFileSync(join(dir, "one.md"), "utf8").replace("words", "edited"),
     );
     // The edit's notifications can reach the watch after those of the settings
-    // writes before it, so passes run until one has sent the edit.
-    await vi.waitFor(
-      async () => {
-        await nextPass(harness);
-        expect(patches(), "no pass sent the edit").toBe(sent + 1);
-      },
-      { timeout: 20_000, interval: 0 },
-    );
+    // writes before it, so passes run until one has sent the edit. Each pass
+    // moves the clock 5 s: the cap keeps them well short of the 600 s that a
+    // full pass is due, which would find the edit without any notification.
+    const fullScans = await device.hooks.reached("folder-full-scan");
+    const quickScans = await device.hooks.reached("folder-quick-scan");
+    for (let pass = 0; pass < 20 && patches() === sent; pass += 1) {
+      await nextPass(harness);
+      expect(
+        await device.hooks.reached("folder-full-scan"),
+        "a full pass ran before the edit was sent",
+      ).toBe(fullScans);
+    }
+    expect(patches(), "no quick pass sent the edit").toBe(sent + 1);
+    expect(
+      await device.hooks.reached("folder-quick-scan"),
+      "no quick pass ran",
+    ).toBeGreaterThan(quickScans);
     const edited = await device.hooks.reached("folder-render");
     expect(edited - rendered, "the edit was not rendered once").toBe(1);
     rendered = edited;

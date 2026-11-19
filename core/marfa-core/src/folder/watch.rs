@@ -472,11 +472,10 @@ impl Folder {
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
-            if let Some(unwatched) = listening.restore() {
-                touched.distrust();
-                if let Some(said) = unwatchable(&unwatched) {
-                    tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
-                }
+            if let Some(unwatched) = listening.ready(&mut touched)
+                && let Some(said) = unwatchable(&unwatched)
+            {
+                tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
             }
             let scope = touched.scope();
             let passed = self.pass(
@@ -836,10 +835,22 @@ impl Passes {
         folder: &Folder,
         events: &[notify::Event],
     ) -> Result<(), CoreError> {
+        self.hearing_ready(folder, events, |_| ())
+    }
+
+    /// Runs a quick pass as one that heard these events, after `ready` has
+    /// readied the watch for it as the watch does.
+    pub(super) fn hearing_ready(
+        &mut self,
+        folder: &Folder,
+        events: &[notify::Event],
+        ready: impl FnOnce(&mut Touched),
+    ) -> Result<(), CoreError> {
         let mut touched = self.touched.take().unwrap_or_default();
         for event in events {
             touched.hear(&folder.root, event);
         }
+        ready(&mut touched);
         self.touched = Some(touched);
         let ran = self.run(folder, false);
         if ran.is_ok()
