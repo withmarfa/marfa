@@ -457,8 +457,7 @@ impl Plan {
         allowed(&self.before) != allowed(&self.after)
     }
 
-    /// Judged on the rows, so correcting a row that does not read is a change too: until then
-    /// it names no destination.
+    /// Judged on the stored rows, so fixing a row that does not read counts as a change.
     fn destination_change(&self) -> bool {
         DESTINATION
             .iter()
@@ -638,8 +637,7 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
-/// Refuses as the write would, then looks at the backup folder and checks the new sign-in
-/// address, naming the one that passed. The folder is looked at only for a caller who may set it.
+/// Refuses as the write would, then checks the backup folder and the new sign-in address.
 async fn check_sign_in(
     app: &Arc<App>,
     caller: &Caller,
