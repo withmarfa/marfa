@@ -1855,7 +1855,7 @@ export interface paths {
         head?: never;
         /**
          * Narrow an app grant
-         * @description Narrows an app's standing access. Requires `grants.manage`. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.
+         * @description Narrows an app's standing access. Requires `grants.manage`. Tokens, refresh chains and keys the app made that reach beyond the new access end, with pending codes; the rest keep working. The app may need to reconnect.
          */
         patch: operations["narrowAppGrant"];
         trace?: never;
@@ -7034,12 +7034,15 @@ export interface components {
          * @example {
          *       "scopes": [
          *         "core.note:read"
-         *       ]
+         *       ],
+         *       "revoked_keys": 1
          *     }
          */
         NarrowedAppGrant: {
             /** @description The resulting scope set. */
             scopes: string[];
+            /** @description How many keys the app made, or those keys made, Marfa revoked because they reached beyond the resulting scope set. */
+            revoked_keys: number;
         };
         /** @description An error response. */
         GrantNotFoundRefusal: {
@@ -31524,7 +31527,8 @@ export interface operations {
                      * @example {
                      *       "scopes": [
                      *         "core.note:read"
-                     *       ]
+                     *       ],
+                     *       "revoked_keys": 1
                      *     }
                      */
                     "application/json": components["schemas"]["NarrowedAppGrant"];

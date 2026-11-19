@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::grant;
 use super::redirect::web_origins;
 use super::revoke::GRANT_REVOKED;
-use super::scope::{ScopeSet, first_uncovered};
+use super::scope::{ScopeSet, first_uncovered, grants_beyond};
 use super::store::{self, Client, Consent};
 use super::sweep::MS_PER_DAY;
 use crate::app::access::{Caller, Permission};
@@ -176,12 +176,18 @@ pub struct Narrowing {
     pub expected: ScopeSet,
 }
 
+#[derive(Debug)]
+pub struct Narrowed {
+    pub scopes: ScopeSet,
+    pub revoked_keys: usize,
+}
+
 pub async fn narrow(
     app: &Arc<App>,
     caller: &Caller,
     id: String,
     asked: Narrowing,
-) -> Result<ScopeSet> {
+) -> Result<Narrowed> {
     let cache = app.catalog_handle();
     app.write(caller, NARROWED, move |unit| {
         unit.caller.require(Permission::GrantsManage)?;
@@ -195,10 +201,16 @@ pub async fn narrow(
             ));
         }
         if same(&consent.scopes, &asked.scopes) {
-            return Ok(consent.scopes);
+            return Ok(Narrowed {
+                scopes: consent.scopes,
+                revoked_keys: 0,
+            });
         }
         end_chains_beyond(tx, &consent, &asked.scopes, unit.instant)?;
         store::end_outstanding_codes(tx, &consent.client_id, &consent.owner_id)?;
+        let revoked_keys = keys::end_beyond_of_app(unit, &consent.client_id, |held| {
+            grants_beyond(&asked.scopes, held)
+        })?;
         grant::narrow(unit, &cache, &consent, &asked.scopes)?;
         unit.audit(
             "oauth_grant",
@@ -206,9 +218,13 @@ pub async fn narrow(
             Some(json!({
                 "grant_item_id": consent.grant_id,
                 "scopes": asked.scopes.literals(),
+                "revoked_keys": revoked_keys,
             })),
         )?;
-        Ok(asked.scopes)
+        Ok(Narrowed {
+            scopes: asked.scopes,
+            revoked_keys,
+        })
     })
     .await
 }

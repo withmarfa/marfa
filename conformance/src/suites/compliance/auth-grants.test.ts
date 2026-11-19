@@ -420,7 +420,7 @@ describe("PATCH /grants/{id}", () => {
     const response = await narrow(grant.id, grant.scopes, scopes);
     expect(response.status).toBe(200);
     const result = await response.json();
-    expect(result).toEqual({ scopes });
+    expect(result).toEqual({ scopes, revoked_keys: 0 });
     await expectMatchesSchema("PATCH", "/grants/{id}", 200, result);
     expect(await itemsStatus(server, access)).toBe(401);
     expect((await narrow(grant.id, grant.scopes, scopes)).status).toBe(409);
@@ -445,8 +445,9 @@ describe("PATCH /grants/{id}", () => {
     expect(kept.silent).toBe(true);
   });
 
-  it("rolls back narrowed access and tokens when its audit cannot be written", async () => {
+  it("rolls back narrowed access, tokens and keys when its audit cannot be written", async () => {
     const { grant, access, clientId } = await approved();
+    const key = await mintedBy(access, "narrow-rolled-back");
     await server.setFault("fail:audit=auth.grant.narrowed");
     try {
       expect((await narrow(grant.id, grant.scopes, [])).status).toBe(500);
@@ -463,11 +464,13 @@ describe("PATCH /grants/{id}", () => {
       grant.scopes,
     );
     expect(await itemsStatus(server, access)).toBe(200);
+    expect(await itemsStatus(server, key.key)).toBe(200);
     expect(
       (await codeFor(server, origin, cookie, { clientId }, SCOPE)).silent,
     ).toBe(true);
     expect((await narrow(grant.id, grant.scopes, [])).status).toBe(200);
     expect(await itemsStatus(server, access)).toBe(401);
+    expect(await itemsStatus(server, key.key)).toBe(401);
   });
 
   it("preserves covered token chains and withdraws overbroad chains and pending codes", async () => {
@@ -513,6 +516,136 @@ describe("PATCH /grants/{id}", () => {
         })
       ).status,
     ).toBe(400);
+  });
+
+  /** An app approved for `scope`, its token and its grant as listed. */
+  const approvedFor = async (scope: string) => {
+    const app = await registerApp(server, scope);
+    const issued = await connect(server, origin, cookie, app, scope);
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    const grant = listed.data.find((row) => row.client_id === app.clientId)!;
+    return { clientId: app.clientId, access: issued.access_token!, grant };
+  };
+
+  const noteWrite = { type_permissions: { "core.note": "write" } };
+  const noteRead = { type_permissions: { "core.note": "read" } };
+
+  it("revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest", async () => {
+    const scope = "core.note:write keys.mint";
+    const { clientId, access, grant } = await approvedFor(scope);
+    const later = new Date(Date.now() + 3650 * DAY_MS).toISOString();
+    const wide = await mintedBy(access, "narrow-wide");
+    const read = await mintedBy(access, "narrow-read", noteRead);
+    const wideChild = await mintedBy(wide.key, "narrow-wide-child", noteWrite);
+    const readChild = await mintedBy(wide.key, "narrow-read-child", noteRead);
+    const wideExpiring = await mintedBy(access, "narrow-wide-expiring", {
+      ...noteWrite,
+      expires_at: later,
+    });
+    const readExpiring = await mintedBy(access, "narrow-read-expiring", {
+      ...noteRead,
+      expires_at: later,
+    });
+    const alreadyRevoked = await mintedBy(access, "narrow-revoked", noteWrite);
+    expect((await management.revokeKey(alreadyRevoked.id)).status).toBe(200);
+    const other = await approvedFor(scope);
+    const otherWide = await mintedBy(other.access, "narrow-other-app");
+    const owners = await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: { label: "narrow-owner", source: "narrow-owner", ...noteWrite },
+    });
+    expect(owners.status, JSON.stringify(owners.body)).toBe(201);
+    const ownersKey = (owners.body as { key: string }).key;
+    const ending = [wide, wideChild, wideExpiring];
+    const kept = [read, readChild, readExpiring, otherWide];
+    for (const key of [...ending, ...kept]) {
+      expect(await itemsStatus(server, key.key), key.id).toBe(200);
+    }
+    expect(await itemsStatus(server, ownersKey)).toBe(200);
+
+    const scopes = ["core.note:read", "keys.mint"];
+    expect((await narrow(grant.id, [], scopes)).status).toBe(409);
+    expect((await narrow(grant.id, grant.scopes, ["*:write"])).status).toBe(
+      403,
+    );
+    expect(await itemsStatus(server, wide.key)).toBe(200);
+    const response = await narrow(grant.id, grant.scopes, scopes);
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toEqual({ scopes, revoked_keys: ending.length });
+    await expectMatchesSchema("PATCH", "/grants/{id}", 200, result);
+
+    for (const key of ending) {
+      expect(await itemsStatus(server, key.key), key.id).toBe(401);
+    }
+    for (const key of kept) {
+      expect(await itemsStatus(server, key.key), key.id).toBe(200);
+    }
+    expect(await itemsStatus(server, ownersKey)).toBe(200);
+    expect(await itemsStatus(server, other.access)).toBe(200);
+    const audit = await management.listAudit({
+      action: "auth.grant.narrowed",
+      resource_id: clientId,
+      limit: 200,
+    });
+    expect(audit.status, JSON.stringify(audit.error)).toBe(200);
+    expect(
+      audit.data.data.map(
+        (entry) => (entry.details as { revoked_keys?: unknown }).revoked_keys,
+      ),
+    ).toEqual([ending.length]);
+    for (const key of ending) {
+      const revoked = await management.listAudit({
+        action: "key.revoke",
+        resource_id: key.id,
+        limit: 200,
+      });
+      expect(revoked.data.data, key.id).toHaveLength(1);
+    }
+  });
+
+  it("judges an app's keys by the access each reaches, as its tokens are judged", async () => {
+    const { access, grant } = await approvedFor("content:write keys.mint");
+    const note = await mintedBy(access, "narrow-judged-note", noteWrite);
+    const task = await mintedBy(access, "narrow-judged-task", {
+      type_permissions: { "core.task": "read" },
+    });
+    const minter = await mintedBy(access, "narrow-judged-minter", {
+      permissions: ["keys.mint"],
+    });
+    const current = async (key: string) =>
+      (
+        await new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: key,
+        }).getCurrentKey()
+      ).status;
+    expect(await itemsStatus(server, note.key)).toBe(200);
+    expect(await itemsStatus(server, task.key)).toBe(200);
+    expect(await current(minter.key)).toBe(200);
+    const response = await narrow(grant.id, grant.scopes, ["core.note:write"]);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      scopes: ["core.note:write"],
+      revoked_keys: 2,
+    });
+    expect(await itemsStatus(server, note.key)).toBe(200);
+    expect(await itemsStatus(server, task.key)).toBe(401);
+    expect(await current(minter.key)).toBe(401);
+  });
+
+  it("revokes no key when the narrowing names the scopes the grant holds", async () => {
+    const { access, grant } = await approvedFor("core.note:write keys.mint");
+    const key = await mintedBy(access, "narrow-unchanged");
+    const response = await narrow(grant.id, grant.scopes, grant.scopes);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      scopes: grant.scopes,
+      revoked_keys: 0,
+    });
+    expect(await itemsStatus(server, key.key)).toBe(200);
   });
 
   it("refuses a narrowing to a credential without grants.manage, and reports an unknown grant", async () => {

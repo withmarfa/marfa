@@ -126,8 +126,8 @@ impl Grants {
         self.permissions.contains(&permission)
     }
 
-    /// The holder may grant its own source and its claims.
-    pub fn first_beyond(&self, own: &str, wanted: &Grants) -> Option<Beyond> {
+    /// The first map entry or permission `wanted` holds beyond these, its sources aside.
+    pub fn first_scope_beyond(&self, wanted: &Grants) -> Option<String> {
         [
             Axis::Extension,
             Axis::Type,
@@ -144,14 +144,19 @@ impl Grants {
                 .find(|permission| !self.holds(**permission))
                 .map(|permission| permission.word().to_string())
         })
-        .map(Beyond::Scope)
-        .or_else(|| {
-            wanted
-                .sources
-                .iter()
-                .find(|source| !self.may_grant(own, source))
-                .map(|source| Beyond::Source(source.clone()))
-        })
+    }
+
+    /// The holder may grant its own source and its claims.
+    pub fn first_beyond(&self, own: &str, wanted: &Grants) -> Option<Beyond> {
+        self.first_scope_beyond(wanted)
+            .map(Beyond::Scope)
+            .or_else(|| {
+                wanted
+                    .sources
+                    .iter()
+                    .find(|source| !self.may_grant(own, source))
+                    .map(|source| Beyond::Source(source.clone()))
+            })
     }
 
     fn may_grant(&self, own: &str, source: &str) -> bool {

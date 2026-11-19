@@ -585,19 +585,24 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
 /// Compared as access resolves, with `wanted` judged whole first.
 pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     let ceiling = to_grants(held);
-    let whole = ceiling.first_beyond("", &to_grants(wanted)).is_none();
+    let whole = ceiling.first_scope_beyond(&to_grants(wanted)).is_none();
     wanted.literals().iter().find_map(|literal| {
         let covered = match Scope::parse(literal) {
             None | Some(Scope::OfflineAccess) => held.contains(literal),
             Some(_) => {
                 whole
                     || ceiling
-                        .first_beyond("", &to_grants(&[literal.as_str()].into_iter().collect()))
+                        .first_scope_beyond(&to_grants(&[literal.as_str()].into_iter().collect()))
                         .is_none()
             }
         };
         (!covered).then(|| literal.clone())
     })
+}
+
+/// Whether a key's access reaches past `held`, judged as `first_uncovered` judges a set whole.
+pub fn grants_beyond(held: &ScopeSet, key: &Grants) -> bool {
+    to_grants(held).first_scope_beyond(key).is_some()
 }
 
 pub fn covers(held: &ScopeSet, required: &str) -> bool {

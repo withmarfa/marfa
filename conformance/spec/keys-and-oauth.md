@@ -2311,19 +2311,19 @@ When the owner sends `PATCH /grants/{id}` with `scopes` and `expected_scopes`, t
 
 **Reason:** Removing an overriding entry can widen a wildcard, so the comparison is of effective access rather than literal membership.
 
-**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`, `› revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`.
 
 ### `keys-and-oauth/grant-narrow-stale`
 
 If `expected_scopes` at `PATCH /grants/{id}` differs from the live consent or projected grant's scopes when the update commits, then the server MUST refuse `409 conflict` without changing access.
 
-**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`, `› revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`.
 
 ### `keys-and-oauth/grant-narrow-commit`
 
-If the server cannot write the audit entry of a narrowing of a live grant by `PATCH /grants/{id}`, then the server MUST answer `500` and leave the grant's scopes, its tokens and its pending codes as they were.
+If the server cannot write the audit entry of a narrowing of a live grant by `PATCH /grants/{id}`, then the server MUST answer `500` and leave the grant's scopes, its tokens, its pending codes and the keys the app minted as they were.
 
-**Tests:** `compliance/auth-grants.test.ts › rolls back narrowed access and tokens when its audit cannot be written`.
+**Tests:** `compliance/auth-grants.test.ts › rolls back narrowed access, tokens and keys when its audit cannot be written`.
 
 ### `keys-and-oauth/grant-narrow-tokens`
 
@@ -2333,11 +2333,39 @@ When `PATCH /grants/{id}` reduces a grant, the server MUST end access tokens and
 
 **Tests:** `compliance/auth-grants.test.ts › preserves covered token chains and withdraws overbroad chains and pending codes`, `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
 
+### `keys-and-oauth/grant-narrow-keys`
+
+When `PATCH /grants/{id}` reduces a grant, the server MUST revoke in the same write every live key the app minted, and every live key those keys minted, whose permissions or type, link, metadata or profile access reach beyond what the resulting scopes grant.
+
+**Reason:** A key an app made holds no more than the app's access when it was made, so the owner who reduces that access takes it from the app's keys as from its tokens (`keys-and-oauth/grant-narrow-tokens`). A key is judged by what it reaches, as a token's scopes are.
+
+**Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`, `› judges an app's keys by the access each reaches, as its tokens are judged`.
+
+### `keys-and-oauth/grant-narrow-keeps-keys`
+
+When `PATCH /grants/{id}` reduces a grant, the server MUST leave working every key the app minted, and every key those keys minted, whose access the resulting scopes cover, whether or not the key that minted it was revoked.
+
+**Reason:** Such a key holds nothing the owner took away. A key minted by a key is judged by its own access, as `keys-and-oauth/grant-revoke-keys` takes a descendant by the app rather than by its maker.
+
+**Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`, `› judges an app's keys by the access each reaches, as its tokens are judged`, `› revokes no key when the narrowing names the scopes the grant holds`.
+
+### `keys-and-oauth/grant-narrow-keys-audit`
+
+When `PATCH /grants/{id}` reduces a grant, the server MUST record `revoked_keys`, the number of keys `keys-and-oauth/grant-narrow-keys` revoked, in the `details` of the narrowing's `auth.grant.narrowed` audit entry.
+
+**Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`.
+
+### `keys-and-oauth/grant-narrow-keys-revoked`
+
+When `PATCH /grants/{id}` revokes a key under `keys-and-oauth/grant-narrow-keys`, the server MUST record a `key.revoke` audit entry with `resource_id` naming the key.
+
+**Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`.
+
 ### `keys-and-oauth/grant-narrow-answer`
 
-When `PATCH /grants/{id}` succeeds, the server MUST answer `200` with the resulting `scopes`.
+When `PATCH /grants/{id}` succeeds, the server MUST answer `200` with the resulting `scopes` and `revoked_keys`, the number of keys `keys-and-oauth/grant-narrow-keys` revoked.
 
-**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`, `› revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`, `› revokes no key when the narrowing names the scopes the grant holds`.
 
 ### `keys-and-oauth/grant-narrow-missing`
 
@@ -2391,7 +2419,7 @@ When a grant is revoked at `DELETE /grants/{id}`, the server MUST end it: refuse
 
 When a grant is revoked without `revoke_keys`, the server MUST leave every key the app minted, and every key those keys minted, working.
 
-**Reason:** A key an app made is a key like any other once minted, and the caller of this operation has nobody to ask whether those keys should go too.
+**Reason:** Revoking a grant disconnects the app, and the caller of this operation has nobody to ask whether the keys it made should go too, so `revoke_keys` says so (`keys-and-oauth/grant-revoke-keys`).
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
 
