@@ -1488,8 +1488,9 @@ async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_no
     assert_eq!(instance.count(CLIENTS).await, 1);
 }
 
-const ROTATED: &str = "SELECT count(*) FROM oauth_rotated_refresh_tokens";
-const CHAINS: &str = "SELECT count(*) FROM oauth_refresh_tokens";
+const ROTATED: &str = "SELECT count(*) FROM oauth_refresh_tokens WHERE rotated_at IS NOT NULL";
+const CHAINS: &str = "SELECT count(DISTINCT chain_id) FROM oauth_refresh_tokens";
+const REPLAYED: &str = "SELECT count(*) FROM audit_log WHERE action = 'auth.refresh.replayed'";
 
 #[tokio::test]
 async fn the_expired_go_and_a_rotated_token_waits_for_its_chain() {
@@ -1567,8 +1568,7 @@ async fn replaying_a_rotated_token_past_its_own_expiry_ends_its_chain() {
 
     refused_as(&instance.refresh(&client, first).await, "invalid_grant");
     refused_as(&instance.refresh(&client, newest).await, "invalid_grant");
-    let replayed = "SELECT count(*) FROM audit_log WHERE action = 'auth.refresh.replayed'";
-    assert_eq!(instance.count(replayed).await, 1);
+    assert_eq!(instance.count(REPLAYED).await, 1);
     let renewed = instance.refresh(&witness, kept).await;
     assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
 }
@@ -1593,8 +1593,66 @@ async fn the_clean_up_removes_a_chain_once_it_ends() {
     assert_eq!(instance.count(ROTATED).await, 1);
     assert_eq!(instance.count(CHAINS).await, 1);
     refused_as(&instance.refresh(&client, live).await, "invalid_grant");
-    let replayed = "SELECT count(*) FROM audit_log WHERE action = 'auth.refresh.replayed'";
-    assert_eq!(instance.count(replayed).await, 2);
+    assert_eq!(instance.count(REPLAYED).await, 2);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(ROTATED).await, 0);
+    assert_eq!(instance.count(CHAINS).await, 0);
+}
+
+#[tokio::test]
+async fn a_token_of_a_chain_whose_newest_token_expired_changes_nothing_before_or_after_the_clean_up()
+ {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(OFFLINE_NOTES).await;
+    let finished = instance.tokens(&client, OFFLINE_NOTES).await;
+    let first = text_at(&finished, "refresh_token").to_string();
+    let renewed = instance.refresh(&client, &first).await;
+    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
+    let newest = text_at(&renewed.json(), "refresh_token").to_string();
+    let live = instance.tokens(&client, OFFLINE_NOTES).await;
+    let mut live = text_at(&live, "refresh_token").to_string();
+    instance.app.clock.advance(10 * DAY_MS).unwrap();
+    let kept = instance.refresh(&client, &live).await;
+    assert_eq!(kept.status, StatusCode::OK, "{}", kept.text);
+    live = text_at(&kept.json(), "refresh_token").to_string();
+    instance.app.clock.advance(21 * DAY_MS).unwrap();
+
+    for cleaned_first in [false, true] {
+        if cleaned_first {
+            cleaned(&instance.app).await;
+            assert_eq!(instance.count(CHAINS).await, 1);
+        }
+        for token in [&first, &newest] {
+            instance.revoke(&client, token).await;
+            refused_as(&instance.refresh(&client, token).await, "invalid_grant");
+        }
+        assert_eq!(instance.count(WITHDRAWN).await, 0);
+        assert_eq!(instance.count(REPLAYED).await, 0);
+        let kept = instance.refresh(&client, &live).await;
+        assert_eq!(kept.status, StatusCode::OK, "{}", kept.text);
+        live = text_at(&kept.json(), "refresh_token").to_string();
+    }
+
+    instance.revoke(&client, &live).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
+}
+
+#[tokio::test]
+async fn the_clean_up_removes_a_chain_longer_than_one_write_whole() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
+    let mut held = text_at(&issued, "refresh_token").to_string();
+    for _ in 0..250 {
+        let renewed = instance.refresh(&client, &held).await;
+        assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
+        held = text_at(&renewed.json(), "refresh_token").to_string();
+    }
+    assert_eq!(instance.count(ROTATED).await, 250);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(ROTATED).await, 250);
+
+    instance.revoke(&client, &held).await;
     cleaned(&instance.app).await;
     assert_eq!(instance.count(ROTATED).await, 0);
     assert_eq!(instance.count(CHAINS).await, 0);

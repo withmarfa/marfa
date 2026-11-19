@@ -2273,7 +2273,7 @@ When an app revokes its refresh token at `POST /oauth/revoke`, the server MUST e
 
 ### `keys-and-oauth/revoke-rotated-refresh-token`
 
-When an app revokes at `POST /oauth/revoke` a refresh token that an earlier refresh rotated, while that token's chain has not ended, the server MUST end the app's grant: its tokens, its newest refresh token, its entry in `GET /grants` and the person's consent.
+When an app revokes at `POST /oauth/revoke` a refresh token that an earlier refresh rotated, while that token's chain has not ended and the chain's newest refresh token has not expired, the server MUST end the app's grant: its tokens, its newest refresh token, its entry in `GET /grants` and the person's consent.
 
 **Reason:** An app signs out with the refresh token it last stored, which need not be the newest one its chain holds.
 
@@ -2286,6 +2286,14 @@ When an app revokes at `POST /oauth/revoke` a refresh token whose chain has alre
 **Reason:** A grant keeps its ID when the person approves the app again, so a token from an approval that ended must not reach the approval that followed it.
 
 **Tests:** `compliance/oauth-tokens.test.ts › of a refresh token from before the person revoked the grant and approved the app again leaves the new approval`, `› of a refresh token whose chain a replay ended leaves the grant and its other sign-ins`.
+
+### `keys-and-oauth/revoke-expired-chain`
+
+When an app revokes at `POST /oauth/revoke` a refresh token whose chain's newest refresh token has expired, the server MUST leave the app's grant, its other tokens and its entry in `GET /grants` as they stand, whether or not the `credential-cleanup` job has run since that expiry.
+
+**Reason:** A chain whose newest token expired can no longer be renewed, and the same grant can hold another chain the app still uses; the answer must not change when the clean-up removes the finished chain.
+
+**Tests:** `compliance/credential-cleanup.test.ts › leaves the grant and its other sign-in on a revocation naming a token of a chain whose newest refresh token expired, before and after a run`.
 
 ### `keys-and-oauth/revoke-unknown-token`
 

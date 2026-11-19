@@ -796,36 +796,33 @@ pub fn delete_access_token(tx: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// A chain's newest refresh token.
 #[derive(Clone, Debug)]
 pub struct RefreshToken {
-    pub chain_id: String,
+    pub id: String,
     pub digest: String,
     pub client_id: String,
     pub owner_id: String,
+    pub chain_id: String,
     pub authenticated_at: Stamp,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
     pub created_at: Stamp,
     pub expires_at: Stamp,
+    pub rotated_at: Option<Stamp>,
     pub ended_at: Option<Stamp>,
 }
 
-/// A chain holds one refresh token, which a refresh replaces.
-pub fn hold_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
+pub fn insert_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
     tx.execute(
-        "INSERT INTO oauth_refresh_tokens (chain_id, digest, client_id, owner_id, \
+        "INSERT INTO oauth_refresh_tokens (id, digest, client_id, owner_id, chain_id, \
          authenticated_at, scopes, audience, created_at, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT (chain_id) DO UPDATE SET digest = excluded.digest, \
-         authenticated_at = excluded.authenticated_at, scopes = excluded.scopes, \
-         audience = excluded.audience, created_at = excluded.created_at, \
-         expires_at = excluded.expires_at",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
-            token.chain_id,
+            token.id,
             token.digest,
             token.client_id,
             token.owner_id,
+            token.chain_id,
             token.authenticated_at,
             scopes_text(&token.scopes),
             token.audience,
@@ -836,51 +833,56 @@ pub fn hold_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
     Ok(())
 }
 
-/// The chain a presented refresh token belongs to, and whether a refresh already replaced it.
-pub struct Presented {
-    pub chain: RefreshToken,
-    pub rotated: bool,
+pub fn refresh_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<RefreshToken>> {
+    Ok(tx
+        .query_row(
+            "SELECT * FROM oauth_refresh_tokens WHERE digest = ?1",
+            [digest],
+            |row| {
+                Ok(RefreshToken {
+                    id: row.get("id")?,
+                    digest: row.get("digest")?,
+                    client_id: row.get("client_id")?,
+                    owner_id: row.get("owner_id")?,
+                    chain_id: row.get("chain_id")?,
+                    authenticated_at: row.get("authenticated_at")?,
+                    scopes: scopes_at(row, "scopes")?,
+                    audience: row.get("audience")?,
+                    created_at: row.get("created_at")?,
+                    expires_at: row.get("expires_at")?,
+                    rotated_at: row.get("rotated_at")?,
+                    ended_at: row.get("ended_at")?,
+                })
+            },
+        )
+        .optional()?)
 }
 
-pub fn refresh_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<Presented>> {
-    let chain = |query| tx.query_row(query, [digest], refresh_token_of).optional();
-    if let Some(chain) = chain("SELECT * FROM oauth_refresh_tokens WHERE digest = ?1")? {
-        return Ok(Some(Presented {
-            chain,
-            rotated: false,
-        }));
-    }
-    Ok(chain(
-        "SELECT t.* FROM oauth_rotated_refresh_tokens AS r \
-         JOIN oauth_refresh_tokens AS t ON t.chain_id = r.chain_id WHERE r.digest = ?1",
-    )?
-    .map(|chain| Presented {
-        chain,
-        rotated: true,
-    }))
-}
-
-fn refresh_token_of(row: &Row<'_>) -> rusqlite::Result<RefreshToken> {
-    Ok(RefreshToken {
-        chain_id: row.get("chain_id")?,
-        digest: row.get("digest")?,
-        client_id: row.get("client_id")?,
-        owner_id: row.get("owner_id")?,
-        authenticated_at: row.get("authenticated_at")?,
-        scopes: scopes_at(row, "scopes")?,
-        audience: row.get("audience")?,
-        created_at: row.get("created_at")?,
-        expires_at: row.get("expires_at")?,
-        ended_at: row.get("ended_at")?,
-    })
-}
-
-pub fn rotate_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
+pub fn rotate_refresh_token(tx: &Connection, id: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "INSERT INTO oauth_rotated_refresh_tokens (digest, chain_id) VALUES (?1, ?2)",
-        params![token.digest, token.chain_id],
+        "UPDATE oauth_refresh_tokens SET rotated_at = ?2 WHERE id = ?1",
+        params![id, now],
     )?;
     Ok(())
+}
+
+/// Whether the token's chain has not ended and its newest refresh token has not expired, as the
+/// clean-up also judges it.
+pub fn chain_lives(tx: &Connection, token: &RefreshToken, now: Stamp) -> Result<bool> {
+    let newest = match token.rotated_at {
+        None => Some((token.ended_at, token.expires_at)),
+        Some(_) => tx
+            .query_row(
+                "SELECT ended_at, expires_at FROM oauth_refresh_tokens \
+                 WHERE chain_id = ?1 AND rotated_at IS NULL",
+                [&token.chain_id],
+                |row| Ok((row.get("ended_at")?, row.get("expires_at")?)),
+            )
+            .optional()?,
+    };
+    let live =
+        |(ended_at, expires_at): (Option<Stamp>, Stamp)| ended_at.is_none() && expires_at > now;
+    Ok(newest.is_some_and(live))
 }
 
 pub fn end_chain(tx: &Connection, chain_id: &str, now: Stamp) -> Result<()> {
@@ -906,7 +908,7 @@ pub fn usable_tokens(
         "SELECT chain_id, scopes FROM oauth_access_tokens \
          WHERE client_id = ?1 AND owner_id = ?2 \
          UNION ALL SELECT chain_id, scopes FROM oauth_refresh_tokens \
-         WHERE client_id = ?1 AND owner_id = ?2 AND ended_at IS NULL",
+         WHERE client_id = ?1 AND owner_id = ?2 AND ended_at IS NULL AND rotated_at IS NULL",
     )?;
     Ok(query
         .query_map([client_id, owner_id], |row| {

@@ -306,60 +306,55 @@ async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
         .await
 }
 
-/// A chain that ended, or whose newest refresh token expired.
-fn finished_chain() -> String {
+/// A chain is finished by its newest refresh token, the one a refresh has not rotated.
+fn finished_chains() -> String {
     format!(
-        "(t.ended_at IS NOT NULL OR ({} AND t.expires_at <= ?1))",
-        readable("t.expires_at")
+        "SELECT chain_id FROM oauth_refresh_tokens WHERE rotated_at IS NULL \
+         AND (ended_at IS NOT NULL OR ({} AND expires_at <= ?1)) LIMIT ?2",
+        readable("expires_at")
     )
 }
 
-/// Before their chain's row, so that no one write removes a long chain whole.
-async fn rotated_of_finished_chains(app: &Arc<App>) -> Result<i64> {
-    chain_rows(
-        app,
-        format!(
-            "DELETE FROM oauth_rotated_refresh_tokens WHERE digest IN ( \
-             SELECT r.digest FROM oauth_refresh_tokens AS t \
-             JOIN oauth_rotated_refresh_tokens AS r ON r.chain_id = t.chain_id \
-             WHERE {} LIMIT ?2)",
-            finished_chain()
-        ),
-    )
-    .await
-}
-
-async fn finished_chains(app: &Arc<App>) -> Result<i64> {
-    chain_rows(
-        app,
-        format!(
-            "DELETE FROM oauth_refresh_tokens WHERE chain_id IN ( \
-             SELECT t.chain_id FROM oauth_refresh_tokens AS t WHERE {} \
-             AND NOT EXISTS (SELECT 1 FROM oauth_rotated_refresh_tokens AS r \
-                             WHERE r.chain_id = t.chain_id) \
-             LIMIT ?2)",
-            finished_chain()
-        ),
-    )
-    .await
-}
-
-async fn chain_rows(app: &Arc<App>, delete: String) -> Result<i64> {
+/// The newest token goes last, so a chain only partly removed is still found finished.
+async fn finished_chain_tokens(app: &Arc<App>) -> Result<i64> {
     let Some(now) = app.clock.judging() else {
         return Ok(0);
     };
     app.db
         .write(Write::own(), move |tx| {
-            let count = tx.execute(&delete, params![now, BATCH])?;
-            Ok(i64::try_from(count).unwrap_or(i64::MAX))
+            let chains: Vec<String> = tx
+                .prepare(&finished_chains())?
+                .query_map(params![now, BATCH], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut left = BATCH;
+            for chain in &chains {
+                if left == 0 {
+                    break;
+                }
+                let rotated = tx.execute(
+                    "DELETE FROM oauth_refresh_tokens WHERE id IN ( \
+                     SELECT id FROM oauth_refresh_tokens \
+                     WHERE chain_id = ?1 AND rotated_at IS NOT NULL LIMIT ?2)",
+                    params![chain, left],
+                )?;
+                left = left.saturating_sub(i64::try_from(rotated).unwrap_or(i64::MAX));
+                if left > 0 {
+                    let newest = tx.execute(
+                        "DELETE FROM oauth_refresh_tokens WHERE chain_id = ?1",
+                        [chain],
+                    )?;
+                    left = left.saturating_sub(i64::try_from(newest).unwrap_or(i64::MAX));
+                }
+            }
+            Ok(BATCH - left)
         })
         .await
 }
 
-const CHAINS_UNREAD: Unread<'static> = Unread {
+const NEWEST_UNREAD: Unread<'static> = Unread {
     table: "oauth_refresh_tokens",
     time: "expires_at",
-    scope: "ended_at IS NULL",
+    scope: "rotated_at IS NULL AND ended_at IS NULL",
 };
 
 pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
@@ -397,17 +392,12 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
         }
     }
     if done {
-        let (taken, finished) = drain(run, BATCH, || rotated_of_finished_chains(app)).await?;
+        let (taken, finished) = drain(run, BATCH, || finished_chain_tokens(app)).await?;
         deleted += taken;
         done = finished;
-    }
-    if done {
-        let (taken, finished) = drain(run, BATCH, || finished_chains(app)).await?;
-        deleted += taken;
-        done = finished;
-    }
-    if let (true, Some(now)) = (done, app.clock.judging()) {
-        report_kept(app, run, Cutoff::At(now), [CHAINS_UNREAD]).await?;
+        if let (true, Some(now)) = (done, app.clock.judging()) {
+            report_kept(app, run, Cutoff::At(now), [NEWEST_UNREAD]).await?;
+        }
     }
     Ok((deleted, done))
 }

@@ -139,6 +139,86 @@ describe("the credential clean-up", () => {
   );
 
   it(
+    "leaves the grant and its other sign-in on a revocation naming a token of a chain whose newest refresh token expired, before and after a run",
+    async () => {
+      const server = await bootFreshServer(
+        "credential-cleanup-expired-chain",
+        QUIET_SCHEDULE,
+      );
+      const origin = await issuerOrigin(server);
+      const cookie = await signIn(server, origin);
+      const scope = "core.note:read offline_access";
+      const app = await registerApp(server, scope);
+      const refresh = async (refreshToken: string) =>
+        token(server, {
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: app.clientId,
+        });
+      const revoke = async (refreshToken: string) => {
+        const answered = await fetch(`${server.apiUrl}/oauth/revoke`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            token: refreshToken,
+            token_type_hint: "refresh_token",
+            client_id: app.clientId,
+          }),
+        });
+        expect(answered.status).toBe(200);
+      };
+      const granted = async (): Promise<boolean> => {
+        const response = await fetch(`${server.apiUrl}/grants`, {
+          headers: { authorization: `Bearer ${server.managementKey}` },
+        });
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          data: { client_id: string }[];
+        };
+        return body.data.some((grant) => grant.client_id === app.clientId);
+      };
+
+      const finished = await connect(server, origin, cookie, app, scope);
+      const rotated = await refresh(finished.refresh_token!);
+      expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+      const finishedTokens = [
+        finished.refresh_token!,
+        rotated.body.refresh_token!,
+      ];
+      const live = await connect(server, origin, cookie, app, scope);
+      const clock = movedClock(server);
+      await clock.advance(10 * DAY_MS);
+      let renewed = await refresh(live.refresh_token!);
+      expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
+      let liveToken = renewed.body.refresh_token!;
+      // Past the 30 days the first chain's newest token lives, short of the second's.
+      await clock.advance(21 * DAY_MS);
+
+      for (const run of [false, true]) {
+        if (run) {
+          expect((await runJob(server, "credential-cleanup")).outcome).toBe(
+            "succeeded",
+          );
+        }
+        for (const held of finishedTokens) {
+          await revoke(held);
+        }
+        expect(await granted()).toBe(true);
+        renewed = await refresh(liveToken);
+        expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
+        expect(await itemsStatus(server, renewed.body.access_token!)).toBe(200);
+        liveToken = renewed.body.refresh_token!;
+      }
+
+      // The witness: a token of the live chain ends the grant.
+      await revoke(liveToken);
+      expect(await granted()).toBe(false);
+      expect(await itemsStatus(server, renewed.body.access_token!)).toBe(401);
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "removes a device code ten minutes after it expires, and not before",
     async () => {
       const server = await bootFreshServer(

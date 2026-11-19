@@ -59,13 +59,15 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         let cache = app.catalog_handle();
         app.write(&Caller::Server, GRANT_REVOKED, move |unit| {
             let tx = unit.tx();
-            // Other chains can share the same grant after this chain ends.
             let Some(found) = store::refresh_token_by_digest(tx, &digest)?
-                .map(|presented| presented.chain)
-                .filter(|chain| chain.client_id == client.id && chain.ended_at.is_none())
+                .filter(|found| found.client_id == client.id)
             else {
                 return Ok(());
             };
+            // Other chains can share the same grant after this chain ends.
+            if !store::chain_lives(tx, &found, unit.instant)? {
+                return Ok(());
+            }
             if !grant::end(unit, &cache, &client.id, &found.owner_id)? {
                 return Ok(());
             }
