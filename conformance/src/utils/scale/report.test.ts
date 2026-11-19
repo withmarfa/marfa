@@ -172,7 +172,37 @@ describe("the verdict", () => {
         { errors: 1 },
       ),
     ]);
-    expect(verdictOf(mergeFragments(fragments, run)).failedFigures).toEqual([
+    const file = mergeFragments(fragments, run);
+    expect(verdictOf(file, { search_common: 2656 }).failedFigures).toEqual([
+      "search_common",
+    ]);
+  });
+
+  it("fails each figure over its ceiling, since no issue excuses one now", () => {
+    const over = (accepted: number) => accepted * 1.01;
+    const fragments = healthyFragments();
+    fragments[1] = fragmentOf("restart", [
+      scalar("folder_first_sync", "s", 357.4),
+      scalar("folder_edit_to_server", "ms", 962),
+      scalar("device_hydrate", "s", 93.0),
+      scalar("search_common", "ms", 163.9),
+    ]);
+    const accepted = verdictOf(mergeFragments(fragments, run));
+    expect(KNOWN_OVER).toEqual({});
+    expect(accepted.failedFigures).toEqual([]);
+    // The witness: a figure a little past each ceiling fails the night.
+    fragments[1] = fragmentOf("restart", [
+      scalar("folder_first_sync", "s", over(400)),
+      scalar("folder_edit_to_server", "ms", over(2_000)),
+      scalar("device_hydrate", "s", over(100)),
+      scalar("search_common", "ms", over(200)),
+    ]);
+    expect(
+      verdictOf(mergeFragments(fragments, run)).failedFigures.sort(),
+    ).toEqual([
+      "device_hydrate",
+      "folder_edit_to_server",
+      "folder_first_sync",
       "search_common",
     ]);
   });
