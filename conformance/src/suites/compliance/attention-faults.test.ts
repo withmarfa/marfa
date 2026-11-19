@@ -274,8 +274,14 @@ it(
     await server.setFault("refuse:write");
     try {
       // No write lands from here, so only the clock at the attempt can tell
-      // that the key has expired since the list was last read.
-      await server.advanceClock(2 * 3_600_000);
+      // that the key has expired since the list was last read. A jump moves
+      // the clock without the write an advance makes.
+      const jumped = await controlRequest(
+        server.controlSocket,
+        "/_control/test/clock",
+        { method: "POST", body: { jump_ms: 2 * 3_600_000 } },
+      );
+      expect(jumped.status, JSON.stringify(jumped.body)).toBe(200);
       const refused = await fetch(`${server.apiUrl}/items/${note}`, {
         method: "PATCH",
         headers: {
