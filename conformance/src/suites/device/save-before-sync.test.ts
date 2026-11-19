@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
 import { refusal } from "../../device/marfa-answers.js";
+import { emptyKeychain } from "../../utils/keychain.js";
 import {
   requireBinary,
   scriptHydration,
@@ -24,11 +25,17 @@ function value<T>(answer: Outcome<T>): T {
   return answer.value;
 }
 
-/** A store made by its state report, as a path with no store is refused (45). */
+/**
+ * A store made by its state report, as a path with no store is refused (45).
+ * It runs on a keychain with nothing kept: a command that names no server
+ * takes the server of the last sign-in kept, so under the run's shared
+ * keychain it would name one that another file started and stopped.
+ */
 async function offline(label: string): Promise<CliDevice> {
   const device = new CliDevice({
     binary: requireBinary(),
     store: newStore(label),
+    keychain: emptyKeychain(),
   });
   value(await device.status());
   return device;
