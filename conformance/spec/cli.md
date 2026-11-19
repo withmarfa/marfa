@@ -1178,7 +1178,7 @@ When neither `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` nor `OTEL_EXPORTER_OTLP_ENDPOI
 
 ### `cli/cli-otlp-only`
 
-When a command ends in a failure, the CLI MUST send a request only to the address that an `OTEL_EXPORTER_OTLP_*` setting names, whatever `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` hold.
+When a command ends in a failure, the CLI MUST send no report of it to any address other than the one an `OTEL_EXPORTER_OTLP_*` setting names, whatever `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` hold.
 
 **Reason:** The CLI has no instance to hold settings, and the OTLP variables are the standard ones. A PostHog host in its environment is not a place it sends to.
 
