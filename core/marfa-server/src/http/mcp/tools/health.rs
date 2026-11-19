@@ -28,12 +28,14 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "How this Marfa is doing",
-        description: "Use to check this Marfa: whether it is serving and each component's state, and each connector's last run and problems. With instance.read it also shows what needs attention, the housekeeping jobs, the metrics, the file stores and unreferenced files, the settings and their values, whether a newer server is available, and, with job_id, one bulk job. A part that cannot be read is named in unread, and the others still answer.",
+        description: "Use to check this Marfa: whether it is serving and each component's state, and each connector's last run and problems. With instance.read it also shows what needs attention, the housekeeping jobs, the metrics, the file stores and unreferenced files, whether a newer server is available, with settings each setting and its value, and with job_id one bulk job. A part that cannot be read is named in unread, and the others still answer.",
         input: json!({
             "type": "object",
             "properties": {
                 "job_id": { "type": "string", "minLength": 1,
                     "description": "A bulk job to read, with instance.read." },
+                "settings": { "type": "boolean",
+                    "description": "Also list each setting and its value, with instance.read." },
             },
             "additionalProperties": false,
         }),
@@ -109,12 +111,34 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         }
     };
     let mut answer = Map::new();
-    if reads_errors {
+    let with_settings = arguments.get("settings").and_then(Value::as_bool) == Some(true);
+    if let Err(refusal) = caller.require(Permission::InstanceRead) {
+        for part in ["job_id", "settings"] {
+            if arguments.contains_key(part) {
+                unreadable.push(unread(part, &refusal));
+            }
+        }
+    } else {
         answer = instance_reads(app, caller, &arguments, &mut unreadable).await;
     }
-    let room = ANSWER_BUDGET_CHARS.saturating_sub(
-        json_length(&json!({ "health": health, "unread": unreadable, "more": answer })) + 200,
-    );
+    let used = |answer: &Map<String, Value>, unreadable: &Vec<Value>| {
+        json_length(&json!({ "health": health, "unread": unreadable, "more": answer })) + 200
+    };
+    if reads_errors && with_settings {
+        match config::listing(app).await {
+            Ok(listed) => {
+                let lines = listed["data"].as_array().cloned().unwrap_or_default();
+                let room = ANSWER_BUDGET_CHARS.saturating_sub(used(&answer, &unreadable));
+                let (kept, left_out) = fit_list(lines, room);
+                answer.insert("settings".into(), Value::Array(kept));
+                if left_out > 0 {
+                    answer.insert("settings_left_out".into(), left_out.into());
+                }
+            }
+            Err(refusal) => unreadable.push(unread("settings", &refusal)),
+        }
+    }
+    let room = ANSWER_BUDGET_CHARS.saturating_sub(used(&answer, &unreadable));
     answer.insert("health".into(), health);
     if let Some(listed) = listed {
         let (kept, left_out) = fit_list(listed, room);
@@ -158,17 +182,6 @@ async fn instance_reads(
             extra.insert("storage".into(), found);
         }
         Err(refusal) => unreadable.push(unread("storage", &refusal)),
-    }
-    match config::listing(app).await {
-        Ok(listed) => {
-            let lines = listed["data"].as_array().cloned().unwrap_or_default();
-            let (kept, left_out) = fit_list(lines, ANSWER_BUDGET_CHARS / 3);
-            extra.insert("settings".into(), Value::Array(kept));
-            if left_out > 0 {
-                extra.insert("settings_left_out".into(), left_out.into());
-            }
-        }
-        Err(refusal) => unreadable.push(unread("settings", &refusal)),
     }
     match updates::status(app).await {
         Ok(status) => {

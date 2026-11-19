@@ -55,9 +55,12 @@ interface Minted {
   key: string;
 }
 
-async function mint(body: Record<string, unknown>): Promise<Minted> {
+async function mint(
+  body: Record<string, unknown>,
+  on: FreshServer = server,
+): Promise<Minted> {
   minted += 1;
-  const answer = await controlRequest(server.controlSocket, "/keys", {
+  const answer = await controlRequest(on.controlSocket, "/keys", {
     method: "POST",
     body: {
       label: `owner tasks ${String(minted)}`,
@@ -74,8 +77,9 @@ async function call(
   method: string,
   path: string,
   body?: unknown,
+  on: FreshServer = server,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${server.apiUrl}${path}`, {
+  const response = await fetch(`${on.apiUrl}${path}`, {
     method,
     headers: {
       authorization: `Bearer ${credential}`,
@@ -148,6 +152,8 @@ const TASKS: readonly {
 ];
 
 const EVERY_TYPE = { type_permissions: { "*": "write" } };
+/** What a key needs to make a comment a part of the item it is on. */
+const COMMENTS = { edge_permissions: { "comments-on": "write" } };
 
 describe("owner tasks", () => {
   it("refuses each owner task to a key that lacks its permission, naming the permission", async () => {
@@ -766,7 +772,7 @@ describe("the owner tasks at /mcp/admin", () => {
 
   it("previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one", async () => {
     const run = randomUUID();
-    const writer = await mint({ ...EVERY_TYPE });
+    const writer = await mint({ ...EVERY_TYPE, ...COMMENTS });
     const { host, part } = await trashedWithPart(writer.key, run);
     const other = await made(writer.key, `another ${run}`);
     expect((await call(writer.key, "DELETE", `/items/${other}`)).status).toBe(
@@ -840,7 +846,7 @@ describe("the owner tasks at /mcp/admin", () => {
 
   it("refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now", async () => {
     const run = randomUUID();
-    const writer = await mint({ ...EVERY_TYPE });
+    const writer = await mint({ ...EVERY_TYPE, ...COMMENTS });
     const { host, part } = await trashedWithPart(writer.key, run);
     const purger = await mint({
       permissions: ["items.purge"],
@@ -1107,44 +1113,105 @@ describe("the owner tasks at /mcp/admin", () => {
     expect(left.map((row) => row.id)).not.toContain(grant.id);
   });
 
-  it("refuses a revoke confirmation once the owner approved the app again under the same grant, where the fresh confirmation it returns revokes", async () => {
-    const app = await approvedApp(server, ["core.note:read"]);
-    const { key } = await mint({ permissions: ["grants.manage"] });
-    const connection = await admin(key);
-    const grantOf = async () =>
-      (
-        (await call(key, "GET", "/grants")).body.data as {
-          id: string;
-          client_id: string;
-        }[]
-      ).find((row) => row.client_id === app.clientId);
-    const grant = (await grantOf())!;
-    const args = { action: "revoke", id: grant.id };
-    const preview = toolResult(
-      await callTool(connection, "marfa_manage_app", args),
-    );
-    const revoked = await call(key, "DELETE", `/grants/${grant.id}`);
-    expect(revoked.status, JSON.stringify(revoked.body)).toBeLessThan(300);
-    expect(await grantOf()).toBeUndefined();
-    await approvedApp(server, ["core.note:read"], app.clientId);
-    expect((await grantOf())?.id).toBe(grant.id);
-    const stale = toolError(
-      await callTool(connection, "marfa_manage_app", {
-        ...args,
-        confirm: preview.confirm,
-      }),
-    );
-    expect(stale.code).toBe("confirmation_stale");
-    expect(await grantOf()).toBeDefined();
-    const gone = toolResult(
-      await callTool(connection, "marfa_manage_app", {
-        ...args,
-        confirm: stale.confirm,
-      }),
-    );
-    expect(gone.revoked).toBe(grant.id);
-    expect(await grantOf()).toBeUndefined();
-  });
+  it(
+    "refuses a revoke or an end confirmation once the owner approved the app again under the same grant, where a fresh confirmation acts",
+    async () => {
+      // Approving an app three times needs the device lookups of a server of its own.
+      const own = await bootFreshServer("owner-tasks-approved-again");
+      let connection: McpConnection | undefined;
+      try {
+        const app = await approvedApp(own, ["core.note:read"]);
+        const { key } = await mint(
+          { permissions: ["grants.manage", "sign_ins.manage"] },
+          own,
+        );
+        connection = await connectMcp(
+          own.apiUrl,
+          key,
+          "2026-07-28",
+          "/mcp/admin",
+        );
+        const on = connection;
+        const grantOf = async () =>
+          (
+            (await call(key, "GET", "/grants", undefined, own)).body.data as {
+              id: string;
+              client_id: string;
+            }[]
+          ).find((row) => row.client_id === app.clientId);
+        const grant = (await grantOf())!;
+        const revoke = { action: "revoke", id: grant.id };
+        const end = { action: "end_sign_in", id: grant.id };
+        const toRevoke = toolResult(
+          await callTool(on, "marfa_manage_app", revoke),
+        );
+        const toEnd = toolResult(
+          await callTool(on, "marfa_manage_sign_in", end),
+        );
+        const revoked = await call(
+          key,
+          "DELETE",
+          `/grants/${grant.id}`,
+          undefined,
+          own,
+        );
+        expect(revoked.status, JSON.stringify(revoked.body)).toBeLessThan(300);
+        expect(await grantOf()).toBeUndefined();
+        const again = await approvedApp(own, ["core.note:read"], app.clientId);
+        expect((await grantOf())?.id).toBe(grant.id);
+        const reads = () =>
+          call(
+            again.token,
+            "GET",
+            "/items?type=core.note&limit=1",
+            undefined,
+            own,
+          );
+        const staleRevoke = toolError(
+          await callTool(on, "marfa_manage_app", {
+            ...revoke,
+            confirm: toRevoke.confirm,
+          }),
+        );
+        expect(staleRevoke.code).toBe("confirmation_stale");
+        const staleEnd = toolError(
+          await callTool(on, "marfa_manage_sign_in", {
+            ...end,
+            confirm: toEnd.confirm,
+          }),
+        );
+        expect(staleEnd.code).toBe("confirmation_stale");
+        expect(await grantOf()).toBeDefined();
+        expect((await reads()).status).toBe(200);
+        // The witness for the sign-in tool: the fresh confirmation ends it.
+        const ended = toolResult(
+          await callTool(on, "marfa_manage_sign_in", {
+            ...end,
+            confirm: staleEnd.confirm,
+          }),
+        );
+        expect(ended.ended).toBe(grant.id);
+        expect((await reads()).status).toBe(401);
+        // The witness for the app tool, on the app approved once more.
+        await approvedApp(own, ["core.note:read"], app.clientId);
+        const fresh = toolResult(
+          await callTool(on, "marfa_manage_app", revoke),
+        );
+        const gone = toolResult(
+          await callTool(on, "marfa_manage_app", {
+            ...revoke,
+            confirm: fresh.confirm,
+          }),
+        );
+        expect(gone.revoked).toBe(grant.id);
+        expect(await grantOf()).toBeUndefined();
+      } finally {
+        await connection?.close();
+        await own.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 
   it("refuses an app task the API refuses, with the API's code", async () => {
     const { key } = await mint({ permissions: ["grants.manage"] });
@@ -1211,45 +1278,6 @@ describe("the owner tasks at /mcp/admin", () => {
       confirm: preview.confirm,
     });
     expect(again.isError, JSON.stringify(again.body)).toBe(true);
-  });
-
-  it("refuses an end confirmation for an app's sign-in once the owner approved the app again, where the fresh confirmation it returns ends it", async () => {
-    const app = await approvedApp(server, ["core.note:read"]);
-    const { key } = await mint({ permissions: ["sign_ins.manage"] });
-    const connection = await admin(key);
-    const grants = await mint({ permissions: ["grants.manage"] });
-    const grant = (
-      (await call(grants.key, "GET", "/grants")).body.data as {
-        id: string;
-        client_id: string;
-      }[]
-    ).find((row) => row.client_id === app.clientId)!;
-    const args = { action: "end_sign_in", id: grant.id };
-    const preview = toolResult(
-      await callTool(connection, "marfa_manage_sign_in", args),
-    );
-    expect(
-      (await call(grants.key, "DELETE", `/grants/${grant.id}`)).status,
-    ).toBeLessThan(300);
-    const again = await approvedApp(server, ["core.note:read"], app.clientId);
-    const stale = toolError(
-      await callTool(connection, "marfa_manage_sign_in", {
-        ...args,
-        confirm: preview.confirm,
-      }),
-    );
-    expect(stale.code).toBe("confirmation_stale");
-    const reads = () =>
-      call(again.token, "GET", "/items?type=core.note&limit=1");
-    expect((await reads()).status).toBe(200);
-    const ended = toolResult(
-      await callTool(connection, "marfa_manage_sign_in", {
-        ...args,
-        confirm: stale.confirm,
-      }),
-    );
-    expect(ended.ended).toBe(grant.id);
-    expect((await reads()).status).toBe(401);
   });
 
   it("refuses a sign-in or passkey task the API refuses, with the API's code", async () => {
@@ -1334,81 +1362,85 @@ describe("the owner tasks at /mcp/admin", () => {
     );
   });
 
-  it("adopts the backup folder only in place of the store its confirmation named, where the fresh confirmation it returns adopts", async () => {
-    const parent = tempFolder("marfa-owner-tasks-adopt-");
-    const root = join(parent, "disk");
-    mkdirSync(root);
-    const fresh = await bootFreshServer("owner-tasks-adopt", {
-      MARFA_OBJECT_STORE_BUCKET: "",
-      MARFA_BACKUP_PATH: root,
-      MARFA_BACKUP_INTERVAL_SECONDS: "0",
-    });
-    let connection: McpConnection | undefined;
-    try {
-      const minted = await controlRequest(fresh.controlSocket, "/keys", {
-        method: "POST",
-        body: {
-          label: "adopts the folder",
-          source: `${SOURCE}-adopt`,
-          permissions: ["backups.manage"],
-        },
+  it(
+    "adopts the backup folder only in place of the store its confirmation named, where the fresh confirmation it returns adopts",
+    async () => {
+      const parent = tempFolder("marfa-owner-tasks-adopt-");
+      const root = join(parent, "disk");
+      mkdirSync(root);
+      const fresh = await bootFreshServer("owner-tasks-adopt", {
+        MARFA_OBJECT_STORE_BUCKET: "",
+        MARFA_BACKUP_PATH: root,
+        MARFA_BACKUP_INTERVAL_SECONDS: "0",
       });
-      expect(minted.status, JSON.stringify(minted.body)).toBe(201);
-      const key = (minted.body as unknown as Minted).key;
-      connection = await connectMcp(
-        fresh.apiUrl,
-        key,
-        "2026-07-28",
-        "/mcp/admin",
-      );
-      let disks = 0;
-      // A new, empty disk at the folder's place, as when a disk is replaced.
-      const replaced = () => {
-        disks += 1;
-        renameSync(root, join(parent, `old disk ${String(disks)}`));
-        mkdirSync(root);
-      };
-      const adopt = { action: "adopt_folder" };
-      replaced();
-      const preview = toolResult(
-        await callTool(connection, "marfa_manage_backups", adopt),
-      ) as { confirm: string; preview: { replaced_store_id: string } };
-      const viaApi = await fetch(`${fresh.apiUrl}/backups/folder/adopt`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${key}` },
-      });
-      const adoptedByApi = (await viaApi.json()) as {
-        store_id: string;
-        replaced_store_id: string;
-      };
-      expect(viaApi.status, JSON.stringify(adoptedByApi)).toBe(200);
-      expect(adoptedByApi.replaced_store_id).toBe(
-        preview.preview.replaced_store_id,
-      );
-      replaced();
-      const stale = toolError(
-        await callTool(connection, "marfa_manage_backups", {
-          ...adopt,
-          confirm: preview.confirm,
-        }),
-      );
-      expect(stale.code).toBe("confirmation_stale");
-      expect(
-        (stale.preview as { replaced_store_id: string }).replaced_store_id,
-      ).toBe(adoptedByApi.store_id);
-      const adopted = toolResult(
-        await callTool(connection, "marfa_manage_backups", {
-          ...adopt,
-          confirm: stale.confirm,
-        }),
-      ) as { adopted: { replaced_store_id: string } };
-      expect(adopted.adopted.replaced_store_id).toBe(adoptedByApi.store_id);
-    } finally {
-      await connection?.close();
-      await fresh.stop();
-      rmSync(parent, { recursive: true, force: true });
-    }
-  });
+      let connection: McpConnection | undefined;
+      try {
+        const minted = await controlRequest(fresh.controlSocket, "/keys", {
+          method: "POST",
+          body: {
+            label: "adopts the folder",
+            source: `${SOURCE}-adopting-key`,
+            permissions: ["backups.manage"],
+          },
+        });
+        expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+        const key = (minted.body as unknown as Minted).key;
+        connection = await connectMcp(
+          fresh.apiUrl,
+          key,
+          "2026-07-28",
+          "/mcp/admin",
+        );
+        let disks = 0;
+        // A new, empty disk at the folder's place, as when a disk is replaced.
+        const replaced = () => {
+          disks += 1;
+          renameSync(root, join(parent, `old disk ${String(disks)}`));
+          mkdirSync(root);
+        };
+        const adopt = { action: "adopt_folder" };
+        replaced();
+        const preview = toolResult(
+          await callTool(connection, "marfa_manage_backups", adopt),
+        ) as { confirm: string; preview: { replaced_store_id: string } };
+        const viaApi = await fetch(`${fresh.apiUrl}/backups/folder/adopt`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${key}` },
+        });
+        const adoptedByApi = (await viaApi.json()) as {
+          store_id: string;
+          replaced_store_id: string;
+        };
+        expect(viaApi.status, JSON.stringify(adoptedByApi)).toBe(200);
+        expect(adoptedByApi.replaced_store_id).toBe(
+          preview.preview.replaced_store_id,
+        );
+        replaced();
+        const stale = toolError(
+          await callTool(connection, "marfa_manage_backups", {
+            ...adopt,
+            confirm: preview.confirm,
+          }),
+        );
+        expect(stale.code).toBe("confirmation_stale");
+        expect(
+          (stale.preview as { replaced_store_id: string }).replaced_store_id,
+        ).toBe(adoptedByApi.store_id);
+        const adopted = toolResult(
+          await callTool(connection, "marfa_manage_backups", {
+            ...adopt,
+            confirm: stale.confirm,
+          }),
+        ) as { adopted: { replaced_store_id: string } };
+        expect(adopted.adopted.replaced_store_id).toBe(adoptedByApi.store_id);
+      } finally {
+        await connection?.close();
+        await fresh.stop();
+        rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 
   it("runs housekeeping and cancels a job through the maintenance tool, refusing as the API does", async () => {
     const { key } = await mint({ permissions: ["instance.maintain"] });
@@ -1460,7 +1492,9 @@ describe("the owner tasks at /mcp/admin", () => {
       "update",
     ];
     const read = toolResult(
-      await callTool(await admin(reader.key), "marfa_health", {}),
+      await callTool(await admin(reader.key), "marfa_health", {
+        settings: true,
+      }),
     );
     for (const name of opened) {
       expect(read[name], name).toBeDefined();
@@ -1470,20 +1504,33 @@ describe("the owner tasks at /mcp/admin", () => {
     expect(
       (read.settings as { key: string }[]).map((line) => line.key),
     ).toEqual(settings.map((line) => line.key));
+    expect(read.settings_left_out).toBeUndefined();
     const update = await call(reader.key, "GET", "/update");
     expect(update.status).toBe(200);
     expect(Object.keys(read.update as object).sort()).toEqual(
       Object.keys(update.body).sort(),
     );
-    // The witness: another permission that lists the tool does not add them.
+    // Without settings the answer leaves the long list out.
+    const short = toolResult(
+      await callTool(await admin(reader.key), "marfa_health", {}),
+    );
+    expect(short.settings).toBeUndefined();
+    expect(short.update).toBeDefined();
+    // The witness: another permission that lists the tool does not add them,
+    // and names what it asked for and may not read.
     const connectors = await mint({ permissions: ["connectors.manage"] });
     const plain = toolResult(
-      await callTool(await admin(connectors.key), "marfa_health", {}),
-    );
+      await callTool(await admin(connectors.key), "marfa_health", {
+        settings: true,
+      }),
+    ) as Record<string, unknown> & { unread: { read: string; code: string }[] };
     expect(plain.health).toBeDefined();
     for (const name of opened) {
       expect(plain[name], name).toBeUndefined();
     }
+    expect(plain.unread).toEqual([
+      expect.objectContaining({ read: "settings", code: "forbidden" }),
+    ]);
   });
 
   it("answers each part of the health tool on its own, so a bulk job it cannot read leaves the others", async () => {
@@ -1499,14 +1546,19 @@ describe("the owner tasks at /mcp/admin", () => {
       "update",
     ];
     // The witness: without a job_id every part answers and nothing is unread.
-    const whole = toolResult(await callTool(connection, "marfa_health", {}));
+    const whole = toolResult(
+      await callTool(connection, "marfa_health", { settings: true }),
+    );
     for (const name of parts) {
       expect(whole[name], name).toBeDefined();
     }
     expect(whole.unread).toBeUndefined();
     const missing = uuidv7();
     const job = toolResult(
-      await callTool(connection, "marfa_health", { job_id: missing }),
+      await callTool(connection, "marfa_health", {
+        job_id: missing,
+        settings: true,
+      }),
     ) as Record<string, unknown> & { unread: { read: string; code: string }[] };
     const api = await call(
       reader.key,

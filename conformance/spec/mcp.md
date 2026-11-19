@@ -90,7 +90,7 @@ When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp
 
 ### `mcp/health-instance-read`
 
-While a credential holds `instance.read`, the server MUST add to the answer of `marfa_health` what needs the owner's attention, the housekeeping jobs, the metrics, the file storage diagnostics, the settings and their values, whether a newer server is available, and the status of the bulk job a `job_id` names.
+While a credential holds `instance.read`, the server MUST add to the answer of `marfa_health` what needs the owner's attention, the housekeeping jobs, the metrics, the file storage diagnostics, whether a newer server is available, each setting and its value when the call sets `settings`, and the status of the bulk job a `job_id` names.
 
 **Reason:** these are the reads `instance.read` opens at the API, so the tool answers what the credential may read there.
 
@@ -102,7 +102,7 @@ If the server cannot read one part of the answer to `marfa_health`, then the ser
 
 **Reason:** a bulk job that does not exist, or one part that fails, says nothing about the rest, and a down instance is when health matters most.
 
-**Tests:** `compliance/owner-tasks.test.ts › answers each part of the health tool on its own, so a bulk job it cannot read leaves the others`.
+**Tests:** `compliance/owner-tasks.test.ts › answers each part of the health tool on its own, so a bulk job it cannot read leaves the others`, `› adds what instance.read opens to the health tool, and only for a credential that holds it`.
 
 ### `mcp/connector-runs`
 
@@ -152,13 +152,13 @@ If a call that `mcp/owner-preview` names carries a `confirm` token that another 
 
 **Reason:** a confirmation stands for what the person saw. An app approved again keeps its grant's ID, a connector's state moves on and a folder is replaced, so a token judged on its arguments alone would act on something the person never saw.
 
-**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`, `› refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› refuses a revoke confirmation once the owner approved the app again under the same grant, where the fresh confirmation it returns revokes`, `› refuses an end confirmation for an app's sign-in once the owner approved the app again, where the fresh confirmation it returns ends it`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`, `› retires an endpoint only as its confirmation saw it, where the fresh confirmation it returns retires`, `› adopts the backup folder only in place of the store its confirmation named, where the fresh confirmation it returns adopts`.
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`, `› refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› refuses a revoke or an end confirmation once the owner approved the app again under the same grant, where a fresh confirmation acts`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`, `› retires an endpoint only as its confirmation saw it, where the fresh confirmation it returns retires`, `› adopts the backup folder only in place of the store its confirmation named, where the fresh confirmation it returns adopts`.
 
 ### `mcp/owner-confirmation-stale-unchanged`
 
 If a call that `mcp/owner-preview` names carries a `confirm` token that `mcp/owner-confirmation-stale` refuses, then the server MUST NOT change what the call names.
 
-**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`, `› refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› refuses a revoke confirmation once the owner approved the app again under the same grant, where the fresh confirmation it returns revokes`, `› refuses an end confirmation for an app's sign-in once the owner approved the app again, where the fresh confirmation it returns ends it`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`.
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`, `› refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› refuses a revoke or an end confirmation once the owner approved the app again under the same grant, where a fresh confirmation acts`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`.
 
 ### `mcp/owner-confirmation-single-use`
 
