@@ -424,7 +424,11 @@ async function lookedUnder(replaced: boolean) {
       [
         certifiedRead(
           answers.updated(
-            wireItem({ id: ITEM, source: "connector.calendar", read_only: true }),
+            wireItem({
+              id: ITEM,
+              source: "connector.calendar",
+              read_only: true,
+            }),
           ),
           BUILT_FOR,
         ),
