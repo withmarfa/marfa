@@ -31,11 +31,15 @@ fn files(path: &Path) -> Vec<(PathBuf, Option<(usize, u64)>)> {
         .into_iter()
         .map(|suffix| {
             let file = beside(path, suffix);
-            let held = std::fs::read(&file).ok().map(|bytes| {
-                let mut digest = std::collections::hash_map::DefaultHasher::new();
-                bytes.hash(&mut digest);
-                (bytes.len(), digest.finish())
-            });
+            // An empty log holds nothing of the store, so it counts as no log.
+            let held = std::fs::read(&file)
+                .ok()
+                .filter(|bytes| !(suffix == "-wal" && bytes.is_empty()))
+                .map(|bytes| {
+                    let mut digest = std::collections::hash_map::DefaultHasher::new();
+                    bytes.hash(&mut digest);
+                    (bytes.len(), digest.finish())
+                });
             (file, held)
         })
         .collect()
