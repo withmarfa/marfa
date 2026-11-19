@@ -632,7 +632,7 @@ mod tests {
         assert!(all.contains("all tier"), "{all}");
         let beneath = refused(
             &notes,
-            json!({ "title": "Under", "query": { "types": ["core.note"], "beneath": "parent" } }),
+            json!({ "title": "Under", "query": { "types": ["core.note"], "beneath": "01900000-0000-7000-8000-000000000001" } }),
         );
         assert!(beneath.contains("parent-of"), "{beneath}");
         let backref = refused(
@@ -653,15 +653,16 @@ mod tests {
         ));
 
         let whole = copy(None, &["*", FOLDER_TYPE], "library", &["parent-of"]);
-        put(&whole, "task", "core.task", "active", "library", &[]);
+        let task = "01900000-0000-7000-8000-000000000002";
+        put(&whole, task, "core.task", "active", "library", &[]);
         folder(&whole, "active", json!({ "title": "All" }));
-        assert_eq!(listed(&whole).unwrap(), ["task"]);
+        assert_eq!(listed(&whole).unwrap(), [task]);
         folder(
             &whole,
             "active",
-            json!({ "title": "Under", "query": { "beneath": "task" } }),
+            json!({ "title": "Under", "query": { "beneath": task } }),
         );
-        assert_eq!(listed(&whole).unwrap(), ["task"]);
+        assert_eq!(listed(&whole).unwrap(), [task]);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use marfa_rules::names;
 use serde_json::{Map, Value};
 
 use super::settings::Settings;
-use super::{Folder, state};
+use super::{Folder, STATE_DIR, state};
 use crate::error::CoreError;
 use crate::http::ByIdRead;
 use crate::{Result, catch_up};
@@ -35,7 +35,7 @@ impl Folder {
             .and_then(|settings| settings.pending_beneath().map(str::to_string))
     }
 
-    fn bound_beneath(&self, path: &str) -> Result<Option<state::Bound>> {
+    pub(super) fn bound_beneath(&self, path: &str) -> Result<Option<state::Bound>> {
         let conn = self.core.conn()?;
         if let Some(bound) = state::bound_at(&conn, path)? {
             return Ok(Some(bound));
@@ -48,14 +48,50 @@ impl Folder {
         Ok(None)
     }
 
+    /// The on-disk path of the file `path` names by `names::same`, exact name first.
+    pub(super) fn file_named(&self, path: &str) -> Option<String> {
+        let parts: Vec<&str> = path.split('/').collect();
+        let mut directory = self.root_dir.clone();
+        let mut found: Vec<String> = Vec::new();
+        for (at, part) in parts.iter().enumerate() {
+            if found.is_empty() && names::same(part, STATE_DIR) {
+                return None;
+            }
+            let mut same: Vec<String> = directory
+                .entries()
+                .ok()?
+                .into_iter()
+                .filter_map(|name| name.into_string().ok())
+                .filter(|name| names::same(name, part))
+                .collect();
+            same.sort();
+            let name = same
+                .iter()
+                .find(|name| name == part)
+                .or(same.first())?
+                .clone();
+            let kind = directory.entry_kind(Path::new(&name)).ok()?;
+            found.push(name);
+            if at + 1 == parts.len() {
+                return (kind == crate::directory::FileType::RegularFile).then(|| found.join("/"));
+            }
+            if kind != crate::directory::FileType::Directory {
+                return None;
+            }
+            directory = directory.child(Path::new(&found[at]), false).ok()?;
+        }
+        None
+    }
+
     /// Why no pass could send the file at `path`, where none could.
     fn unsendable(&self, settings: &Settings, path: &str) -> Result<Option<String>> {
-        if !self.is_file(self.root.join(path)) {
+        let Some(on_disk) = self.file_named(path) else {
             return Ok(Some(format!(
                 "there is no such file in {}",
                 self.root.display()
             )));
-        }
+        };
+        let path = on_disk.as_str();
         if !settings.lists()?.takes(path) {
             return Ok(Some(
                 "the folder's include and ignore lists do not take it".into(),

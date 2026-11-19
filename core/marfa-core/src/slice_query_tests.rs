@@ -34,6 +34,7 @@ fn work() -> SliceQuery {
         states: Some(vec!["active".into(), "archived".into()]),
         filter: Some(WORK.into()),
         beneath: None,
+        nothing: false,
     }
 }
 
@@ -422,6 +423,7 @@ fn a_state_query_lets_go_of_a_row_archived_on_the_server() {
         states: Some(vec!["active".into()]),
         filter: None,
         beneath: None,
+        nothing: false,
     };
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
@@ -448,6 +450,7 @@ fn a_property_query_judges_the_row_an_event_carries() {
         states: None,
         filter: Some("properties.done eq true".into()),
         beneath: None,
+        nothing: false,
     };
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
@@ -490,6 +493,7 @@ fn a_change_to_a_status_field_the_query_reads_ends_the_copy() {
         states: None,
         filter: Some(r#"status_group eq "in_progress""#.into()),
         beneath: None,
+        nothing: false,
     };
     let before = [("doing", "in_progress"), ("done", "done")];
     let after = [("doing", "done"), ("done", "done")];
@@ -654,6 +658,76 @@ fn hydration_lists_the_query_and_its_conflicted_copies_apart() {
 }
 
 #[test]
+fn a_slice_that_holds_nothing_lists_nothing_and_takes_no_row() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following(&server, dir.path(), None);
+    hold(&core, "outside", "active", &[], json!({"title": "outside"}));
+    catalog_answers(&server, &[]);
+    server.on(
+        "/items/bulk-get",
+        vec![certified(scripted::json(
+            200,
+            r#"{"data":[],"metadata":[],"listed":[]}"#,
+        ))],
+    );
+    server.on(
+        "/keys/current",
+        vec![certified(scripted::json(
+            200,
+            r#"{"type_permissions":{"core.note":"read"}}"#,
+        ))],
+    );
+    let head = scripted::stream(
+        vec![scripted::copy_marker("stream_cursor", "10")],
+        Then::End,
+    );
+    let empty = scripted::stream(
+        vec![
+            scripted::copy_marker("stream_cursor", "10"),
+            scripted::copy_marker("stream_live", "10"),
+        ],
+        Then::End,
+    );
+    server.on("/events", vec![head, empty]);
+    let nothing = SliceQuery {
+        nothing: true,
+        ..SliceQuery::default()
+    }
+    .for_copy()
+    .unwrap();
+
+    let report = core
+        .hydrate_sliced(
+            &[NOTE.into()],
+            SliceTier::Library,
+            &[],
+            nothing.as_ref(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+    assert_eq!(report.query, nothing);
+    assert!(nothing.as_ref().is_some_and(|query| query.nothing));
+    assert!(server.seen("/items").is_empty(), "{:?}", listings(&server));
+    assert!(!held(&core, "outside"));
+    // A row made here is not one the slice takes, so it is kept as a pin.
+    hold(&core, "made", "active", &[], json!({"title": "made"}));
+    let conn = core.conn().unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
+    let taken = crate::slice::judge_held(
+        &conn,
+        &catalog,
+        nothing.as_ref().unwrap(),
+        crate::slice::Reading::Holds,
+        crate::slice::Scope::default(),
+        "made",
+    )
+    .unwrap();
+    assert!(!taken);
+}
+
+#[test]
 fn a_query_the_server_refuses_clears_nothing() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
@@ -687,6 +761,7 @@ fn a_relational_query_is_refused_for_a_copy() {
         states: None,
         filter: Some("edge[core.related] exists".into()),
         beneath: None,
+        nothing: false,
     };
     let refused = core.hydrate_sliced(
         &[NOTE.into()],
@@ -709,6 +784,7 @@ fn under_root() -> SliceQuery {
         states: Some(vec!["active".into(), "archived".into()]),
         filter: None,
         beneath: Some("root".into()),
+        nothing: false,
     }
 }
 

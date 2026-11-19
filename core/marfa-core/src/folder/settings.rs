@@ -13,11 +13,6 @@ pub const FOLDER_TYPE: &str = "system.folder";
 
 const DOCUMENT_TYPE: &str = "core.note";
 
-/// The root a copy narrows beneath while the file a folder narrows beneath
-/// has no item yet: an id no item has, so the copy holds nothing from the
-/// server.
-pub(crate) const NO_ITEM: &str = "00000000-0000-7000-8000-000000000000";
-
 /// An unknown setting is refused rather than ignored: a misspelt list or
 /// threshold would leave the folder taking what the person meant it not to.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -366,6 +361,13 @@ impl Settings {
         }
     }
 
+    /// These settings with `query.beneath` naming `item`.
+    pub(crate) fn beneath_item(&self, item: &str) -> Settings {
+        let mut named = self.clone();
+        named.query.beneath = Some(item.to_string());
+        named
+    }
+
     /// The query past its types and tier, as a file is judged by it. A path
     /// with no item yet narrows nothing here.
     pub(crate) fn slice_query(&self) -> crate::slice::SliceQuery {
@@ -377,6 +379,7 @@ impl Settings {
                 .beneath
                 .clone()
                 .filter(|_| self.pending_beneath().is_none()),
+            nothing: false,
         }
     }
 
@@ -384,11 +387,11 @@ impl Settings {
     /// (`folder-setup/copy-holds-query`), `None` where that is all of them.
     /// Beneath a path with no item yet, a copy holds no item from the server.
     pub(crate) fn copy_query(&self) -> Result<Option<crate::slice::SliceQuery>> {
-        let mut query = self.slice_query();
-        if self.pending_beneath().is_some() {
-            query.beneath = Some(NO_ITEM.into());
+        crate::slice::SliceQuery {
+            nothing: self.pending_beneath().is_some(),
+            ..self.slice_query()
         }
-        query.for_copy()
+        .for_copy()
     }
 
     /// Refuses where the copy's slice does not take every item the query
@@ -586,7 +589,8 @@ mod tests {
         assert_eq!(file.pending_beneath(), Some("Projects/p.md"));
         assert_eq!(file.slice_query().beneath, None);
         let copy = file.copy_query().unwrap().unwrap();
-        assert_eq!(copy.beneath.as_deref(), Some(NO_ITEM));
+        assert_eq!(copy.beneath, None);
+        assert!(copy.nothing);
         let named = read(json!({ "query": { "beneath": item } })).unwrap();
         assert_eq!(named.pending_beneath(), None);
         assert_eq!(named.slice_query().beneath.as_deref(), Some(item));
@@ -594,6 +598,7 @@ mod tests {
             named.copy_query().unwrap().unwrap().beneath.as_deref(),
             Some(item)
         );
+        assert!(!named.copy_query().unwrap().unwrap().nothing);
         let refused = read(json!({ "query": { "beneath": "../p.md" } }))
             .unwrap_err()
             .to_string();

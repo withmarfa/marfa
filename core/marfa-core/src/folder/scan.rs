@@ -2553,7 +2553,21 @@ impl Folder {
     /// `None` where that cannot be told. What the copy would refuse to make
     /// is not judged here: it is flagged where it is made.
     fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Result<Option<bool>> {
-        let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
+        let (catalog, edge_types) = (&scan.catalog, &scan.edge_types);
+        // Beneath a file with no item yet, only that file is known to be inside.
+        let named;
+        let settings = match scan.settings.pending_beneath() {
+            Some(path) if !marfa_rules::names::same(&file.key, path) => {
+                match self.bound_beneath(path)? {
+                    None => return Ok(Some(true)),
+                    Some(bound) => {
+                        named = scan.settings.beneath_item(&bound.item_id);
+                        &named
+                    }
+                }
+            }
+            _ => &scan.settings,
+        };
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
             let draft = file_item_draft(file, file_type, settings, catalog);
             let edges = default_edges_of(settings, None);
