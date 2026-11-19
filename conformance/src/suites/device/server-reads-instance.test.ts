@@ -486,31 +486,89 @@ describe("a look at read_only while a stream is held", () => {
   });
 });
 
+const EXPIRED = refusal(401, "unauthorized", "expired");
+const SECOND = "01a00000-0000-7000-8000-00000000000b";
+
+/** A call whose request the server refuses once for an expired credential. */
+interface Renewed {
+  /** The call, after `device --db <store>`. */
+  args: string[];
+  /** Whether the copy is hydrated before the call. */
+  held: boolean;
+  /** Scripts the refused request, and anything the hydration needs. */
+  script: (server: Harness["server"]) => void;
+  /** The request refused, then sent again. */
+  repeats: (request: RecordedRequest) => boolean;
+}
+
+const RENEWED: Record<string, Renewed> = {
+  "a table read": {
+    args: ["rows", "list", ITEM, "steps"],
+    held: true,
+    script: (server) =>
+      server.copyAnswer("GET", `/items/${ITEM}/tables/steps/rows`, EXPIRED, {
+        kind: "json",
+        status: 200,
+        body: { data: [], next_cursor: null },
+      }),
+    repeats: (request) =>
+      request.pathname === `/items/${ITEM}/tables/steps/rows`,
+  },
+  "a pin": {
+    args: ["pin", ITEM],
+    held: true,
+    script: (server) =>
+      server.copyAnswer(
+        "GET",
+        `/items/${ITEM}`,
+        EXPIRED,
+        answers.updated(
+          wireItem({ id: ITEM, properties: { title: "held", body: "held" } }),
+        ),
+      ),
+    repeats: (request) => request.pathname === `/items/${ITEM}`,
+  },
+  "a hydration": {
+    args: ["hydrate", "--type", "core.note", "--tier", "library"],
+    held: false,
+    script: () => undefined,
+    repeats: (request) =>
+      request.pathname === "/items" && request.query.get("cursor") === "1",
+  },
+};
+
 // This fixture uses a macOS keychain file for the renewable credential.
-describe("a table read repeated after a credential renewal", ON_MACOS, () => {
-  async function repeated(replacedAtRenewal: boolean) {
+describe("a request repeated after a credential renewal", ON_MACOS, () => {
+  async function repeated(name: string, replacedAtRenewal: boolean) {
+    const renewed = RENEWED[name]!;
     harness = await startHarness("server-reads-renewal");
     const { server, device } = harness;
     let instance = SCRIPTED_INSTANCE;
     server.copyAnswer("GET", "/", () =>
       answers.root(Number(BUILT_FOR), instance),
     );
+    let pageRefused = false;
     scriptHydration(server, {
       head: "10",
       items: {
         "core.note": [
           { item: { id: ITEM, properties: { title: "held", body: "held" } } },
+          {
+            item: { id: SECOND, properties: { title: "next", body: "next" } },
+          },
         ],
+      },
+      // One item a page, so a hydration's second page follows its head.
+      pageSize: 1,
+      drop: () => {
+        if (renewed.held || pageRefused) return false;
+        pageRefused = true;
+        return EXPIRED;
       },
       instance: () => instance,
     });
-    value(await device.hydrate(["core.note"], "library"));
-    server.copyAnswer(
-      "GET",
-      `/items/${ITEM}/tables/steps/rows`,
-      refusal(401, "unauthorized", "expired"),
-      { kind: "json", status: 200, body: { data: [], next_cursor: null } },
-    );
+    if (renewed.held) value(await device.hydrate(["core.note"], "library"));
+    renewed.script(server);
     server.answer("POST", "/token", () => {
       if (replacedAtRenewal) instance = REPLACED;
       return {
@@ -548,24 +606,19 @@ describe("a table read repeated after a credential renewal", ON_MACOS, () => {
     try {
       const result = await new Cli(requireBinary(), server.url, KEY)
         .as(undefined)
-        .run([
-          "--json",
-          "device",
-          "--db",
-          device.store,
-          "rows",
-          "list",
-          ITEM,
-          "steps",
-        ]);
-      const reached = server.requests.filter(
-        (request) => request.pathname === `/items/${ITEM}/tables/steps/rows`,
+        .run(["--json", "device", "--db", device.store, ...renewed.args]);
+      const reached = server.requests.filter(renewed.repeats);
+      const renewal = server.requests.findIndex(
+        (request) => request.pathname === "/token",
       );
       expect(
         server.requests.filter((request) => request.pathname === "/token"),
         "the binary did not renew the token the server refused",
       ).toHaveLength(1);
-      return { result, reached };
+      const afterRenewal = server.requests
+        .slice(renewal + 1)
+        .map((request) => `${request.method} ${request.pathname}`);
+      return { result, reached, afterRenewal };
     } finally {
       try {
         execFileSync(
@@ -586,22 +639,34 @@ describe("a table read repeated after a credential renewal", ON_MACOS, () => {
     }
   }
 
-  it("confirms the instance again before it repeats a table read after a credential renewal", async () => {
-    const witness = await repeated(false);
+  async function confirmsAgain(name: string) {
+    const witness = await repeated(name, false);
     expect(witness.result.code, witness.result.stderr).toBe(0);
     expect(
       witness.reached,
-      "the read was not repeated, so the check below proves nothing",
+      "the request was not repeated, so the check below proves nothing",
     ).toHaveLength(2);
     await harness?.stop();
     harness = undefined;
 
-    const replaced = await repeated(true);
+    const replaced = await repeated(name, true);
     expect(replaced.result.code).not.toBe(0);
     expect(replaced.result.stderr).toContain("copy_expired");
+    expect(replaced.result.stderr).toContain("instance_changed");
     expect(
       replaced.reached,
-      "the read was repeated at the instance that replaced the first",
+      "the request was repeated at the instance that replaced the first",
     ).toHaveLength(1);
-  });
+    expect(
+      replaced.afterRenewal,
+      "a request other than the root reached the instance that replaced the first",
+    ).toEqual(["GET /"]);
+  }
+
+  it("confirms the instance again before it repeats a table read after a credential renewal", () =>
+    confirmsAgain("a table read"));
+  it("confirms the instance again before it repeats a pin after a credential renewal", () =>
+    confirmsAgain("a pin"));
+  it("confirms the instance again before a hydration sends its next request after a credential renewal", () =>
+    confirmsAgain("a hydration"));
 });
