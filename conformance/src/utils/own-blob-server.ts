@@ -27,6 +27,17 @@ export const PUBLIC_ONLY: Record<string, string> = {
 };
 
 /**
+ * The run's object store at the name `scripts/garage.ts` gives it as its
+ * `root_domain`, where a bucket before the name reaches that bucket by
+ * virtual host. No lookup is sure to find the name, so a fixture scripts it.
+ */
+export function storeByName(endpoint: string): string {
+  const named = new URL(endpoint);
+  named.hostname = "s3.garage.localhost";
+  return named.toString().replace(/\/$/, "");
+}
+
+/**
  * The settings of a server of a fixture's own that attaches the run's object
  * store under a prefix no other server uses. A store's id is read from a
  * marker under its prefix, so a server of its own sharing the run's prefix

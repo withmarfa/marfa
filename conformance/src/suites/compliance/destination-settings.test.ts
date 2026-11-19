@@ -422,6 +422,101 @@ describe("a destination set through /config", () => {
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
+
+  it(
+    "refuses object store settings addressed by virtual host that cannot make the store's host, and takes the same values by path",
+    async () => {
+      const server = await bootFreshServer("destination-virtual-host", DISK);
+      try {
+        const { operator } = clientsFor(server);
+        const named = (answer: { error?: { error: { details?: unknown } } }) =>
+          (
+            (
+              answer.error?.error.details as
+                { errors?: { path: string }[] } | undefined
+            )?.errors ?? []
+          ).map((error) => error.path);
+        const set = async (changes: Record<string, unknown>) => {
+          const answer = await operator.patchConfig(changes);
+          expect(answer.status, JSON.stringify(answer.error)).toBe(200);
+        };
+        await set({
+          object_store_endpoint: "http://s3.localhost:9",
+          object_store_path_style: false,
+        });
+        for (const bucket of [
+          "tenant:bucket",
+          "My_Old_Bucket",
+          "Marfa",
+          "-marfa",
+          "marfa-",
+          "my..bucket",
+          "b".repeat(64),
+        ]) {
+          const refused = await operator.patchConfig({
+            object_store_bucket: bucket,
+          });
+          expect(refused.status, bucket).toBe(400);
+          expect(named(refused), bucket).toEqual(["object_store_bucket"]);
+          // The witness: by path, the same bucket is taken.
+          await set({
+            object_store_bucket: bucket,
+            object_store_path_style: true,
+          });
+          const back = await operator.patchConfig({
+            object_store_path_style: false,
+          });
+          expect(back.status, bucket).toBe(400);
+          expect(named(back), bucket).toEqual(["object_store_path_style"]);
+          await set({ object_store_bucket: null });
+          await set({ object_store_path_style: false });
+        }
+        // A host of 252 characters, which "marfa." before it takes past 253.
+        const long = `${["b", "c", "d"].map((letter) => letter.repeat(63)).join(".")}.${"e".repeat(50)}.localhost`;
+        expect(long).toHaveLength(252);
+        expect(`marfa.${long}`.length).toBeGreaterThan(253);
+        for (const endpoint of [
+          "http://127.0.0.1:9",
+          "http://[::1]:9",
+          `http://${long}:9`,
+        ]) {
+          const refused = await operator.patchConfig({
+            object_store_bucket: "marfa",
+            object_store_endpoint: endpoint,
+          });
+          expect(refused.status, endpoint).toBe(400);
+          expect(named(refused), endpoint).toEqual(["object_store_endpoint"]);
+          const said = JSON.stringify(refused.error);
+          expect(said).not.toContain(new URL(endpoint).hostname);
+          expect(said).not.toContain("s3.localhost");
+          await set({
+            object_store_bucket: "marfa",
+            object_store_endpoint: endpoint,
+            object_store_path_style: true,
+          });
+          await set({ object_store_bucket: null });
+          await set({ object_store_path_style: false });
+        }
+        for (const [bucket, endpoint] of [
+          ["my.marfa-bucket", "http://s3.localhost:9"],
+          ["s3", "http://s3.localhost:9"],
+        ]) {
+          await set({
+            object_store_bucket: bucket,
+            object_store_endpoint: endpoint,
+          });
+          expect((await operator.getConfig()).data).toMatchObject({
+            object_store_bucket: bucket,
+            object_store_path_style: false,
+          });
+          await set({ object_store_bucket: null });
+        }
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 describe("a stored store setting that does not read", () => {
@@ -985,6 +1080,70 @@ describe("a stored store setting that does not read", () => {
       }
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+  it(
+    "starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again",
+    async () => {
+      const server = await bootFreshServer("destination-virtual-host-stored", {
+        ...ownObjectStore(),
+        MARFA_BACKUP_INTERVAL_SECONDS: "0",
+      });
+      try {
+        const before = clientsFor(server);
+        await waitFor("the object store to be in use", async () =>
+          (await backups(server)).destination === "bucket" ? true : undefined,
+        );
+        const bytes = bytesOf("held by a bucket reached by path", 100);
+        const upload = await before.working.uploadBlob(bytes, "text/plain");
+        expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+        const hash = upload.data.hash;
+        await whenCopied(before.operator, [hash]);
+
+        // The run's store is at an IP address, which no host can go after.
+        await server.restart(() => {
+          storeSettingRow(
+            server.sqlitePath,
+            "object_store_path_style",
+            "false",
+          );
+          rmSync(blobFolder(server), { recursive: true, force: true });
+        });
+        const { operator } = clientsFor(server);
+        const told = await storeConcerns(server);
+        expect(told).toHaveLength(1);
+        expect(told[0]!.description).toContain("object_store_path_style");
+        expect(told[0]!.description).not.toContain(
+          new URL(process.env.MARFA_OBJECT_STORE_ENDPOINT!).hostname,
+        );
+        // The blob folder is missing, so health answers 503 and still says why.
+        const health = await operator.rawRequest<{
+          backups: Record<string, unknown>;
+        }>("/health");
+        expect(health.status, JSON.stringify(health.data)).toBe(503);
+        expect(health.data.backups).toMatchObject({
+          destination: "bucket",
+          reason: "destination_unusable",
+        });
+        expect((await operator.downloadBlob(hash)).status).toBe(503);
+        expect(readdirSync(blobFolder(server))).toEqual([]);
+
+        const set = await operator.patchConfig({
+          object_store_path_style: true,
+        });
+        expect(set.status, JSON.stringify(set.error)).toBe(200);
+        const served = await waitFor("the file to be served", async () => {
+          const download = await operator.downloadBlob(hash);
+          return download.status === 200 ? download : undefined;
+        });
+        expect(
+          Buffer.from(served.data as ArrayBuffer).equals(Buffer.from(bytes)),
+        ).toBe(true);
+        expect(await storeConcerns(server)).toEqual([]);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 
