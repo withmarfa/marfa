@@ -796,8 +796,7 @@ fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError>
     };
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
         .map_err(|error| on_volume(error, place))?;
-    // With WAL, `NORMAL` leaves a commit unsynced, so a write reported as
-    // queued could vanish when the system stops.
+    // With WAL, `NORMAL` leaves the last commits unsynced.
     conn.execute_batch("PRAGMA synchronous = FULL;")?;
     tune(conn)?;
     match step {

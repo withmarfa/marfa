@@ -1,11 +1,6 @@
-//! A write the device reports as queued survives the app or the system
-//! stopping, so every writable store syncs its log at each commit. The sync
-//! does not empty the drive's own cache, which is far slower. A system stop
-//! cannot be staged here, so these read the setting back from an opened
-//! writer.
-//!
-//! With `MARFA_DURABLE_BENCH` set, `durable_commit_bench` times a hydration
-//! of 10,000 items and a burst of 1,000 queued writes and their drain:
+//! A system stop cannot be staged here, so these read the setting back from
+//! an opened writer. `durable_commit_bench` runs only with
+//! `MARFA_DURABLE_BENCH` set:
 //!
 //! ```sh
 //! MARFA_DURABLE_BENCH=1 cargo test --release -p marfa-core durable_commit_bench -- --nocapture
