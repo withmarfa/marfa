@@ -670,8 +670,7 @@ fn key_of(concern: &Concern) -> Key {
     (concern.kind.to_string(), concern.reference.clone())
 }
 
-/// Records a new entry, and announces it unless its `attention.raised` went from memory.
-/// One on its way there is left for a later write, so it is never told twice.
+/// Records a new entry, announcing it unless memory sent it; one still on its way waits.
 fn record_new(
     unit: &Unit<'_, '_>,
     concern: &Concern,
@@ -690,8 +689,7 @@ fn record_new(
     remember(unit.tx(), concern.kind, &concern.reference, &unit.at)
 }
 
-/// Drops the marks of entries the newest check no longer finds, so one that comes back is
-/// announced. A fault is judged by the faults standing now, since one can be met after a check.
+/// Unmarks entries the newest check no longer finds, and faults that no longer stand.
 fn forget_gone(app: &App, gathered: &Gathered) {
     let standing = app.attention.reported.references(app.clock.now_ms());
     let looked = &app.attention.looked;
@@ -786,8 +784,7 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     Ok(written.raised)
 }
 
-/// Whether a write that would announce new entries failed in the database, refused or at a
-/// commit whose outcome is unknown.
+/// Whether an announcing write failed in the database, refused or at its commit.
 fn database_failed(refused: &Refusal) -> bool {
     refused.commit_failed
         || refused.code == Code::InsufficientStorage
@@ -797,8 +794,7 @@ fn database_failed(refused: &Refusal) -> bool {
             .is_some_and(|fault| fault.kind == Kind::Database)
 }
 
-/// Sends each new entry's `attention.raised` straight to the webhooks, unless it is on its way
-/// there or went already. A commit that failed may have landed, so the log can deliver one too.
+/// A failed commit may have landed, so the log can deliver an entry sent here too.
 fn send_from_memory(app: &Arc<App>, concerns: &[Concern]) {
     for concern in concerns {
         if let Some(pending) = app.attention.told.begin(concern.kind, &concern.reference) {

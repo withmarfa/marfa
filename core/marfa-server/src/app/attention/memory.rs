@@ -1,5 +1,4 @@
-//! The entries whose `attention.raised` went from memory, so that the log route, once writes
-//! land again, records them without announcing them a second time.
+//! Entries sent from memory, so the log route records them without announcing them again.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -83,8 +82,7 @@ impl Memory {
     }
 }
 
-/// An entry on its way to the sender: marked sent once handed to a subscription's send, and
-/// unmarked when dropped without that, so the log route still announces it.
+/// Marked sent once handed to a send, and unmarked when dropped, so the log route announces it.
 #[derive(Debug)]
 pub struct Pending {
     memory: Arc<Memory>,
