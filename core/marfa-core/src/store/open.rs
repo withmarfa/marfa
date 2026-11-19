@@ -768,10 +768,8 @@ pub fn open_in_memory() -> Result<Connection, CoreError> {
     Ok(conn)
 }
 
-/// The error SQLite gave opening or first reading a store, as `StorageFull`
-/// where it could not make the log files beside the store because the volume
-/// holding it has no room, and as it always was otherwise. A store on a
-/// volume mounted read-only is no store on a full one.
+/// `StorageFull` where SQLite could not make the files beside the store
+/// because its volume has no room. A read-only volume is never full.
 pub(crate) fn on_volume(error: rusqlite::Error, place: Option<Place<'_>>) -> CoreError {
     if matches!(
         error.sqlite_error_code(),

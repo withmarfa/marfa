@@ -2782,14 +2782,6 @@ If a device refuses a fetch `no_room`, then a device MUST leave no file of that 
 
 **Tests:** `device/large-files.test.ts › is refused before it starts, naming the size and the space free, leaving nothing`, `› is refused for the bytes still to come when part of the file is held, and drops what was held`.
 
-### `device/wrong-schema-changes-nothing`
-
-If a device refuses a store `wrong_schema`, then a device MUST change no byte of the store file.
-
-**Reason:** a store records its log mode in its header, and a writer that set the mode before it read the version would leave a store it cannot read changed for the build that can.
-
-**Tests:** `device/working-copy.test.ts › changes no byte of a store it refuses wrong_schema, whichever log mode it is in`.
-
 ### `device/open-full-volume-refused`
 
 If a device cannot open a store, as the writer or to read, because the volume that holds it has no room for the files SQLite makes beside it, then a device MUST refuse the open `storage_full`.
@@ -4123,6 +4115,14 @@ If a store was made at another schema version than the one this build makes, the
 **Reason:** a store outlives the app that made it, and a build reads only the shape its own version names. A store that records no version is one an earlier build made.
 
 **Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store an earlier build made, by name, with the writes it holds unsent`.
+
+### `device/wrong-schema-changes-nothing`
+
+If a device refuses a store `wrong_schema`, then a device MUST change no byte of the store file.
+
+**Reason:** a store records its log mode in its header, and a writer that set the mode before it read the version would leave a store it cannot read changed for the build that can.
+
+**Tests:** `device/working-copy.test.ts › changes no byte of a store it refuses wrong_schema, whichever log mode it is in`.
 
 ### `device/schema-upgrade`
 
