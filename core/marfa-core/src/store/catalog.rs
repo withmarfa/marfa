@@ -255,7 +255,6 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<CatalogCha
     }
     let icons_only = without_icons(&held) == without_icons(&rows);
     conn.execute("DELETE FROM types", [])?;
-    super::restamp_types(conn)?;
     {
         let mut insert = conn.prepare(
             "INSERT INTO types (id, parent, label, title_field, thumbnail_field, json)

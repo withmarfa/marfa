@@ -173,18 +173,9 @@ pub fn meta_delete_under(conn: &Connection, prefix: &str) -> Result<(), CoreErro
     Ok(())
 }
 
-/// A value no other state of the types has held, set with the rows so a rollback undoes both.
+/// A value no other state of the types has held: triggers on `types` set it in the transaction that changes them.
 pub fn types_stamp(conn: &Connection) -> Result<Option<String>, CoreError> {
     meta_get(conn, META_TYPES_STAMP)
-}
-
-pub(crate) fn restamp_types(conn: &Connection) -> Result<(), CoreError> {
-    conn.prepare_cached(
-        "INSERT INTO meta (key, value) VALUES (?1, hex(randomblob(16)))
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-    )?
-    .execute([META_TYPES_STAMP])?;
-    Ok(())
 }
 
 /// What the root last said this server takes in one request. Fresh in a

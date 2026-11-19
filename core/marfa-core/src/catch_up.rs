@@ -5862,7 +5862,7 @@ mod tests {
         assert_eq!(stored_cursor(&core), Some(last.to_string()));
         let writes = writes.load(Ordering::Relaxed);
         assert!(
-            writes <= 9,
+            writes <= 11,
             "{writes} writes to meta for {} skipped events",
             last - 10
         );
@@ -6015,7 +6015,7 @@ mod tests {
         assert_eq!(stored_cursor(&core), Some(last.to_string()));
         let writes = writes.load(Ordering::Relaxed);
         assert!(
-            writes <= 9,
+            writes <= 11,
             "{writes} writes to meta for {} table events that changed nothing",
             last - 10
         );

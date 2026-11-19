@@ -26,13 +26,10 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     if !hydration_complete(conn)? {
         return Ok(false);
     }
-    if meta_get(conn, META_EVENT_CURSOR)?
-        .as_deref()
-        .and_then(crate::reach::cursor)
-        .is_none()
-        || !meta_get(conn, crate::reach::FENCE)?.is_some_and(|f| crate::reach::valid_fence(&f))
-        || !meta_get(conn, META_INSTANCE_ID)?.is_some_and(|instance| !instance.is_empty())
-    {
+    let Some(cursor) = meta_get(conn, META_EVENT_CURSOR)? else {
+        return Ok(false);
+    };
+    if !keeps_current(conn, &cursor)? {
         return Ok(false);
     }
     holds_slice(conn)
@@ -43,10 +40,14 @@ pub fn lapsed(conn: &Connection) -> Result<bool, CoreError> {
     let Some(cursor) = meta_get(conn, META_EVENT_CURSOR)? else {
         return Ok(false);
     };
-    let current = crate::reach::cursor(&cursor).is_some()
+    Ok(!keeps_current(conn, &cursor)? && hydration_complete(conn)? && holds_slice(conn)?)
+}
+
+/// Whether the event cursor `cursor`, the fence and the instance the copy holds are ones it can keep current from.
+fn keeps_current(conn: &Connection, cursor: &str) -> Result<bool, CoreError> {
+    Ok(crate::reach::cursor(cursor).is_some()
         && meta_get(conn, crate::reach::FENCE)?.is_some_and(|f| crate::reach::valid_fence(&f))
-        && meta_get(conn, META_INSTANCE_ID)?.is_some_and(|instance| !instance.is_empty());
-    Ok(!current && hydration_complete(conn)? && holds_slice(conn)?)
+        && meta_get(conn, META_INSTANCE_ID)?.is_some_and(|instance| !instance.is_empty()))
 }
 
 pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {

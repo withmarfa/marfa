@@ -10,7 +10,7 @@ use std::path::Path;
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
 /// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 pub(super) const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;

@@ -218,7 +218,10 @@ pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
         return Ok(Catalog::shared(entries, limit));
     }
     let entries = Arc::new(read_entries(conn)?);
-    if let Ok(mut read) = READ.lock() {
+    // A commit between the two reads leaves the rows newer than the stamp, and a stamp never returns.
+    if store::types_stamp(conn)?.as_deref() == Some(stamp.as_str())
+        && let Ok(mut read) = READ.lock()
+    {
         if read.len() == KEPT {
             read.remove(0);
         }
@@ -1291,17 +1294,96 @@ mod tests {
     }
 
     #[test]
-    fn a_store_whose_types_carry_no_stamp_is_read_each_time() {
+    fn a_store_with_no_types_has_no_stamp_and_the_first_types_written_give_it_one() {
         let mut conn = store::open_in_memory().unwrap();
-        conn.execute("INSERT INTO types (id, json) VALUES ('acme.old', '{}')", [])
-            .unwrap();
         assert!(store::types_stamp(&conn).unwrap().is_none());
-        assert!(load(&conn).unwrap().known("acme.old"));
-        let reads = type_reads_during(&mut conn, |conn| {
-            load(conn).unwrap();
+        let empty = type_reads_during(&mut conn, |conn| {
+            assert!(!load(conn).unwrap().known("acme.a"));
             load(conn).unwrap();
         });
-        assert_eq!(reads, 2);
+        assert_eq!(empty, 2, "a store with no stamp is read at every load");
+
+        conn.execute("INSERT INTO types (id, json) VALUES ('acme.a', '{}')", [])
+            .unwrap();
+        assert!(store::types_stamp(&conn).unwrap().is_some());
+        let stamped = type_reads_during(&mut conn, |conn| {
+            assert!(load(conn).unwrap().known("acme.a"));
+            load(conn).unwrap();
+        });
+        assert_eq!(stamped, 1, "only the first load reads the rows");
+    }
+
+    #[test]
+    fn a_catalog_follows_a_write_to_the_types_that_goes_through_no_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writing = store::open(&path).unwrap();
+        let reading = store::open(&path).unwrap();
+        store::replace_types(&writing, &types_of(&["acme.a"])).unwrap();
+        assert!(load(&reading).unwrap().known("acme.a"));
+
+        writing
+            .execute("INSERT INTO types (id, json) VALUES ('acme.b', '{}')", [])
+            .unwrap();
+        assert!(load(&reading).unwrap().known("acme.b"));
+        writing
+            .execute("UPDATE types SET id = 'acme.z' WHERE id = 'acme.a'", [])
+            .unwrap();
+        let updated = load(&reading).unwrap();
+        assert!(updated.known("acme.z") && !updated.known("acme.a"));
+        writing.execute("DELETE FROM types", []).unwrap();
+        assert!(!load(&reading).unwrap().known("acme.z"));
+    }
+
+    #[test]
+    fn rows_read_as_another_connection_commits_new_types_are_not_kept_under_the_old_stamp() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let writing = store::open(&path).unwrap();
+        let mut reading = store::open(&path).unwrap();
+        let behind = store::open(&path).unwrap();
+        {
+            let _unread = uncached();
+            store::replace_types(&writing, &types_of(&["acme.a"])).unwrap();
+        }
+
+        // `behind` keeps the snapshot from before the commit below.
+        behind.execute_batch("BEGIN").unwrap();
+        behind
+            .query_row("SELECT count(*) FROM meta", [], |_| Ok(()))
+            .unwrap();
+
+        let committed = Arc::new(AtomicBool::new(false));
+        let witnessed = committed.clone();
+        reading
+            .authorizer(Some(move |ctx: AuthContext<'_>| {
+                if matches!(
+                    ctx.action,
+                    AuthAction::Read {
+                        table_name: "types",
+                        ..
+                    }
+                ) && !witnessed.swap(true, Ordering::SeqCst)
+                {
+                    store::replace_types(&writing, &types_of(&["acme.b"])).unwrap();
+                }
+                Authorization::Allow
+            }))
+            .unwrap();
+        let read = load(&reading).unwrap();
+        assert!(
+            committed.load(Ordering::SeqCst),
+            "the commit never came between the reads"
+        );
+        assert!(read.known("acme.b"));
+
+        let old = load(&behind).unwrap();
+        assert!(
+            old.known("acme.a") && !old.known("acme.b"),
+            "a catalog read across a commit was kept under the stamp from before it"
+        );
     }
 
     #[test]
