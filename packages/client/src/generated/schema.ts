@@ -8181,7 +8181,7 @@ export interface components {
         /** @description One kind of thing the archive doesn't hold, with what to do about it. */
         NotRestored: {
             /**
-             * @description What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings. `telemetry` appears only when `secrets_to_set` names a telemetry setting, which leaves what it sends off until you set it again.
+             * @description What the archive doesn't hold. `enforcement` appears only when the archive's instance couldn't read its enforcement settings, and `telemetry` only when `secrets_to_set` names a telemetry setting.
              * @enum {string}
              */
             kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs" | "enforcement" | "telemetry";
