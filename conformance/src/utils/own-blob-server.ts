@@ -58,9 +58,7 @@ export function ownObjectStore(): Record<string, string> {
   return { MARFA_OBJECT_STORE_PREFIX: `fixture-${randomUUID()}` };
 }
 
-/** The operator's client, a working key's client and the private local
- *  command's client on a fresh server, at the address it has now. The local
- *  client changes where files and backups go without a recent sign-in. */
+/** Clients use the server's current address after a restart. */
 export function clientsFor(server: FreshServer): {
   operator: MarfaClient;
   working: MarfaClient;

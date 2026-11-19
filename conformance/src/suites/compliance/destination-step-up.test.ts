@@ -11,15 +11,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
-/**
- * Changing where files and backups go asks that the owner signed in within
- * five minutes: an app's token meets it by the time its owner last signed in,
- * a key never does, and the private socket keeps it. A key may still send
- * back the values it reads. A write that moves the object store's bucket or
- * endpoint removes the secret stored for it, unless it sets one. The clock is
- * the subject, so the file boots a server of its own, with no destination
- * and no object store credentials.
- */
+// The clock changes here, so this file owns its server.
 let server: FreshServer;
 let key: string;
 const folder = tempFolder("marfa-destination-step-up-");

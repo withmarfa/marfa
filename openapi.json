@@ -60446,7 +60446,7 @@
           "Instance"
         ],
         "summary": "Update the configuration",
-        "description": "Changes only the settings the body names and returns the whole configuration. A setting you leave out stays as it is, and `null` removes one so its default applies. `enforcement` is one setting: send every lever you want on. Requires `config.manage`.",
+        "description": "Updates the named settings and returns the configuration. Unnamed settings stay, except the store secret when its bucket or endpoint changes; `null` removes a setting. Send all `enforcement` levers you want on; requires `config.manage`.",
         "security": [
           {
             "bearerAuth": []
