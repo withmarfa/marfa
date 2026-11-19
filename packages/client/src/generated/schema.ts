@@ -38536,7 +38536,7 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `blob_store_unavailable`: the backup folder is not there, or Marfa could not write the new store marker after it forgot the old disk's backups and file copies. Mount the disk it is on, or make the folder writable, then try again. */
+            /** @description `blob_store_unavailable`: the backup folder is not there, or Marfa could not write the new store marker, so it adopted nothing and forgot nothing. Mount the disk it is on, or make the folder writable, then try again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

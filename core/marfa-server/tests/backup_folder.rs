@@ -996,8 +996,7 @@ async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_
 }
 
 #[tokio::test]
-async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_and_adopts_once_it_is_writable()
- {
+async fn an_adopt_that_cannot_mark_the_folder_forgets_nothing_and_adopts_once_it_is_writable() {
     use std::os::unix::fs::PermissionsExt;
 
     let parent = TempDir::new().unwrap();
@@ -1021,7 +1020,7 @@ async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_a
         "{refused}"
     );
     let says = refused["error"]["message"].as_str().unwrap();
-    assert!(says.contains("were forgotten"), "{refused}");
+    assert!(says.contains("nothing was adopted"), "{refused}");
     assert!(says.contains("writable"), "{refused}");
     assert!(says.contains("marfa backups folder adopt"), "{refused}");
     assert!(!says.contains("is not there"), "{refused}");
@@ -1030,7 +1029,7 @@ async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_a
         .local(Method::POST, "/backups/folder/adopt", None)
         .await;
     assert_eq!(status, StatusCode::OK, "{adopted}");
-    assert_eq!(adopted["backups_forgotten"], 0, "{adopted}");
+    assert_eq!(adopted["backups_forgotten"], 1, "{adopted}");
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(copy_of(&folder, &instance.id(), &file).is_file());

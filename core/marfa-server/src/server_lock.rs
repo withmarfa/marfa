@@ -22,7 +22,7 @@ fn me() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-fn unsupported(error: &io::Error) -> bool {
+pub(crate) fn unsupported(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
         Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP || code == libc::ENOLCK
@@ -121,7 +121,7 @@ pub fn without_locks<T>(run: impl FnOnce() -> T) -> T {
     ran
 }
 
-fn try_lock(file: &File) -> Result<(), TryLockError> {
+pub(crate) fn try_lock(file: &File) -> Result<(), TryLockError> {
     #[cfg(test)]
     if NO_LOCKS.get() {
         return Err(TryLockError::Error(io::Error::from_raw_os_error(

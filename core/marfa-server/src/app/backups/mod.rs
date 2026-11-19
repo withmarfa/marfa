@@ -1412,6 +1412,26 @@ impl App {
         let (standing, checking, named) =
             (caller.clone(), self.clone(), folder.root().to_path_buf());
         self.faults.hold(HOLD_STORES_RECORD, None).await;
+        // The claim comes first, so a folder that refuses it leaves the record as it was.
+        let claimed = match folder.claim_within(id.clone(), self.blobs.check()).await {
+            Some(Ok(claimed)) => claimed,
+            Some(Err(error)) => {
+                return Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {root} could not take the new store's marker, so \
+                         nothing was adopted: {error}. Make the folder writable, then run `marfa \
+                         backups folder adopt` again."
+                    ),
+                ));
+            }
+            None => {
+                return Err(unanswered(
+                    "did not answer in time when it was given the new store's marker, so \
+                     nothing was adopted",
+                ));
+            }
+        };
         let written = self
             .db
             .write(Write::own(), move |tx| {
@@ -1430,44 +1450,13 @@ impl App {
         let (copies, backups) = match written {
             Ok(counted) => counted,
             Err(refusal) => {
-                if refusal.commit_failed
-                    && let Err(refused) = self.retake_folder(folder).await
-                {
-                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
-                    self.blobs.doubt_record();
-                }
+                self.settle_claim(folder, claimed, id, refusal.commit_failed)
+                    .await;
                 return Err(refusal);
             }
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
-        let forgot = format!(
-            "The old store's {} and {} were forgotten.",
-            counted(backups, "backup", "backups"),
-            counted(copies, "file copy", "file copies"),
-        );
-        match folder.claim_within(id.clone(), self.blobs.check()).await {
-            Some(Ok(())) => {}
-            Some(Err(error)) => {
-                return Err(Refusal::new(
-                    Code::BlobStoreUnavailable,
-                    format!(
-                        "The backup folder {root} could not take the new store's marker: {error}. \
-                         {forgot} Make the folder writable, then run `marfa backups folder adopt` \
-                         again."
-                    ),
-                ));
-            }
-            None => {
-                if let Err(refused) = self.retake_folder(folder).await {
-                    tracing::error!(%refused, "An adopt whose claim did not answer left the backup folder unchecked");
-                    self.blobs.doubt_record();
-                }
-                return Err(unanswered(&format!(
-                    "did not answer in time when it was given the new store's marker. {forgot} \
-                     Backups wait until it answers"
-                )));
-            }
-        }
+        folder.take(claimed);
         tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
         Ok(json!({
             "store_id": id,
@@ -1477,8 +1466,9 @@ impl App {
         }))
     }
 
-    /// Whether the folder's disk is there, or `None` when a look at it has not answered.
-    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<bool> {
+    /// Whether the folder's disk is there and its lock held, taking the lock back where it can, or
+    /// `None` when a look at it has not answered.
+    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<Looked> {
         let looking = self.backups.looking.clone();
         if looking.swap(true, Ordering::AcqRel) {
             return None;
@@ -1486,7 +1476,14 @@ impl App {
         let (folder, faults) = (folder.clone(), self.faults.clone());
         let answered = super::health::bounded(move || {
             faults.hold_blocking(HOLD_DISK_PROBE);
-            let there = folder.reachable();
+            let files = folder.files();
+            let there = match files.reachable() {
+                false => Looked::Gone,
+                true => match files.lost() {
+                    Some((_, why)) => Looked::Unlocked(why),
+                    None => Looked::There,
+                },
+            };
             looking.store(false, Ordering::Release);
             there
         })
@@ -1733,11 +1730,21 @@ impl Assembly {
     }
 }
 
+/// What a look at the backup folder found.
+enum Looked {
+    There,
+    Gone,
+    /// Its files area is there, and the server could not lock it, for this reason.
+    Unlocked(String),
+}
+
 /// How the destination fails to take the copies that wait for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreFault {
     /// The disk of the backup folder is not there.
     FolderGone,
+    /// The files area of the backup folder could not be locked, as when another server holds it.
+    FolderUnlocked,
     /// A look at the backup folder did not answer in time.
     FolderSilent,
     /// The last run of `blob-replicate` copied nothing because the destination refused.
@@ -1764,12 +1771,15 @@ fn refused_by(result: &Value, destination: &str) -> Option<String> {
 /// found. A failure copying to another store is not the destination's.
 fn store_trouble(
     destination: &Destination,
-    look: Option<Option<bool>>,
+    look: Option<Option<Looked>>,
     refused: Option<String>,
 ) -> Option<(StoreFault, String)> {
     if let Destination::Folder(folder) = destination {
         match look {
-            Some(Some(false)) => return Some((StoreFault::FolderGone, folder_not_there(folder))),
+            Some(Some(Looked::Gone)) => {
+                return Some((StoreFault::FolderGone, folder_not_there(folder)));
+            }
+            Some(Some(Looked::Unlocked(why))) => return Some((StoreFault::FolderUnlocked, why)),
             Some(None) => {
                 let error = format!(
                     "The backup folder {} did not answer in time.",

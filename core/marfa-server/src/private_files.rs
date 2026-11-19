@@ -407,13 +407,19 @@ impl Kept {
         if !self.blobs_made {
             return Ok(());
         }
-        let me = me();
-        let reached = walk(&self.blobs, me)?;
-        let path = reached.path();
-        match open(&path, true)? {
-            Some(opened) if reached.missing.is_empty() => secure_blob_folder(&opened, &path, me),
-            _ => Err(refused(&path, "is not there")),
-        }
+        make_blob_folder_private(&self.blobs)
+    }
+}
+
+/// Makes the blob folder private as a start does, for a folder the store takes back into use. It
+/// blocks.
+pub fn make_blob_folder_private(blobs: &Path) -> Result<(), Failure> {
+    let me = me();
+    let reached = walk(blobs, me)?;
+    let path = reached.path();
+    match open(&path, true)? {
+        Some(opened) if reached.missing.is_empty() => secure_blob_folder(&opened, &path, me),
+        _ => Err(refused(&path, "is not there")),
     }
 }
 

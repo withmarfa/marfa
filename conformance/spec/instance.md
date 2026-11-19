@@ -68,11 +68,11 @@ While the object store or the backup folder does not take the copies that wait f
 
 ### `instance/attention-backup-store-title`
 
-While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, and otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
+While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, `The backup folder could not be locked` while the server cannot lock its files folder, and otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
 
 **Reason:** a run that copied nothing because one file was refused is not a store that is gone, and the title says what is known.
 
-**Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `› tells one file the object store refused as files waiting for their copy, not as a store that is gone`.
+**Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `› tells one file the object store refused as files waiting for their copy, not as a store that is gone`, `compliance/backup-folder.test.ts › says in health and attention that the backup folder could not be locked once its lock file is replaced by one it refuses, and clears once it can lock it`.
 
 ### `instance/attention-backup-run`
 
@@ -704,9 +704,25 @@ Where `backup_path` is set, if a backup run fails because `<backup_path>/files/<
 
 ### `instance/backup-folder-adopt`
 
-Where `backup_path` is set, when a caller holding `backups.manage` sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
+Where `backup_path` is set, when a caller holding `backups.manage` sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker and the server can write in it, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
+**Reason:** the files folder may have lost its marker while the server kept it in use, and the server adopts it all the same.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`, `› adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder`.
+
+### `instance/backup-folder-adopt-unwritable`
+
+If a caller holding `backups.manage` sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds no store marker and the server cannot write in it, then the server MUST answer `503 blob_store_unavailable`.
+
+**Tests:** `compliance/backup-folder.test.ts › adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder`.
+
+### `instance/backup-folder-adopt-unwritable-kept`
+
+When the server refuses an adopt under `instance/backup-folder-adopt-unwritable`, the server MUST NOT change the stores it lists in `GET /blobs/stores` or forget a backup it recorded.
+
+**Reason:** the owner makes the folder writable and adopts it again, and the backups and copies are forgotten only by the adopt that takes the folder.
+
+**Tests:** `compliance/backup-folder.test.ts › adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder`.
 
 ### `instance/backup-folder-adopt-forgets`
 
@@ -2176,13 +2192,21 @@ If the server starts on a blob folder that another running server has open, then
 
 **Tests:** `compliance/one-server.test.ts › is refused on the blob folder though it has a database of its own, and names the folder`.
 
+### `instance/open-blobs-lock-gone`
+
+If the file `.server-lock` in another running server's blob folder was removed or replaced, and that server is receiving an upload there or has since stored a file there or answered `GET /health`, and the server starts on that folder, then the server MUST refuse to start.
+
+**Reason:** a server keeps its blob folder until it ends, though its lock file there is removed, replaced or hidden by a disk mounted over the folder.
+
+**Tests:** `compliance/one-server.test.ts › refuses a second server while an upload is in progress, and takes the lock back before the upload lands`, `› takes the lock back once its lock file is replaced and it answers GET /health, so a second server is refused`.
+
 ### `instance/open-held-named`
 
-When the server refuses to start under `instance/open-database-held` or `instance/open-blobs-held`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
+When the server refuses to start under `instance/open-database-held`, `instance/open-blobs-held` or `instance/open-blobs-lock-gone`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
 
 **Reason:** the owner stops the other server or gives this one files of its own, and needs to know which.
 
-**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the database, not the control socket, when both have the socket beside the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`.
+**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the database, not the control socket, when both have the socket beside the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`, `› refuses a second server while an upload is in progress, and takes the lock back before the upload lands`, `› takes the lock back once its lock file is replaced and it answers GET /health, so a second server is refused`.
 
 ### `instance/open-database-one-link`
 
@@ -2202,9 +2226,9 @@ When the server starts and its own account owns the file `<database file>.server
 
 ### `instance/open-held-leaves-files`
 
-If the server refuses to start under `instance/open-database-held` or `instance/open-blobs-held`, then the server MUST leave the running server's database, blob folder and uploads in progress as they were.
+If the server refuses to start under `instance/open-database-held`, `instance/open-blobs-held` or `instance/open-blobs-lock-gone`, then the server MUST leave the running server's database, blob folder and uploads in progress as they were.
 
-**Tests:** `compliance/one-server.test.ts › leaves the running server's upload in progress, which lands once it is let go`.
+**Tests:** `compliance/one-server.test.ts › leaves the running server's upload in progress, which lands once it is let go`, `› refuses a second server while an upload is in progress, and takes the lock back before the upload lands`.
 
 ### `instance/open-after-end`
 

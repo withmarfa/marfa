@@ -10,7 +10,7 @@ use tokio::sync::watch;
 
 use super::App;
 use super::backups::BackupHealth;
-use super::blobs::{MARKER, bytes_in_words};
+use super::blobs::{Lost, MARKER, bytes_in_words};
 use super::clock::Standing;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::instance;
@@ -360,9 +360,10 @@ async fn blob_storage(app: &Arc<App>) -> Component {
         {
             return Some("the blob folder or its marker is missing");
         }
-        app.blobs
-            .folder_unlockable()
-            .then_some("the blob folder could not be locked, so no file can be stored")
+        app.blobs.folder_lost().map(|lost| match lost {
+            Lost::Lock => "the blob folder could not be locked, so no file can be stored",
+            Lost::Privacy => "the blob folder could not be made private, so no file can be stored",
+        })
     })
     .await;
     match looked {

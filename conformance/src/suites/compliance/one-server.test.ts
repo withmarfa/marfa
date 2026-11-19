@@ -1,4 +1,12 @@
-import { chmod, link, rename, rm, stat, symlink } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
@@ -57,6 +65,14 @@ async function refused(extraEnv: Record<string, string>): Promise<RefusedBoot> {
 
 const health = async () =>
   (await controlRequest(first.controlSocket, "/health")).status;
+
+const blobStorage = async (server: FreshServer = first) => {
+  const { body } = await controlRequest(server.controlSocket, "/health");
+  const { components } = body as {
+    components: Record<string, { status: string; error?: string | null }>;
+  };
+  return components.blob_storage;
+};
 
 const spool = async (server: FreshServer = first) =>
   (await inspectStores(server.controlSocket)).spool;
@@ -235,7 +251,7 @@ describe("a blob folder that returns to a server started without it", () => {
     operator: reader,
     working: client,
   }: Awaited<ReturnType<typeof startedWithoutItsFolder>>) {
-    expect(await blobStorage(server)).toBe("down");
+    expect((await blobStorage(server))?.status).toBe("down");
     const upload = await client.uploadBlob(
       new TextEncoder().encode("sent to a folder not kept"),
       "text/plain",
@@ -253,14 +269,6 @@ describe("a blob folder that returns to a server started without it", () => {
     expect(read.status).toBe(200);
     expect(new TextDecoder().decode(read.data)).toBe(KEPT_TEXT);
   }
-
-  const blobStorage = async (server: FreshServer) => {
-    const { body } = await controlRequest(server.controlSocket, "/health");
-    const { components } = body as {
-      components: Record<string, { status: string }>;
-    };
-    return components.blob_storage?.status;
-  };
 
   it(
     "refuses a second server on a returned folder while an upload is in progress there, and the upload lands",
@@ -329,7 +337,7 @@ describe("a blob folder that returns to a server started without it", () => {
           await holder.stop();
         }
         // The witness: all of it recovers once the folder is free, with no write first.
-        expect(await blobStorage(server)).toBe("ok");
+        expect((await blobStorage(server))?.status).toBe("ok");
         const backup = await operator.runBackup();
         expect(backup.status, JSON.stringify(backup.error)).toBe(200);
         const later = await client.uploadBlob(
@@ -356,12 +364,40 @@ describe("a blob folder that returns to a server started without it", () => {
         await rename(away, folder);
         await expectNothingStored(started);
         await rm(secondLink);
-        expect(await blobStorage(server)).toBe("ok");
+        expect((await blobStorage(server))?.status).toBe("ok");
         const later = await client.uploadBlob(
           new TextEncoder().encode("sent once it can be locked"),
           "text/plain",
         );
         expect(later.status, JSON.stringify(later.error)).toBe(201);
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "makes a returned folder that others could read private before it stores a file there",
+    async () => {
+      const {
+        server,
+        folder,
+        away,
+        working: client,
+      } = await startedWithoutItsFolder("one-server-returned-open");
+      const mode = async () => (await stat(folder)).mode & 0o777;
+      try {
+        await chmod(away, 0o755);
+        await rename(away, folder);
+        // The witness: the folder returns as open as it was left.
+        expect(await mode()).toBe(0o755);
+        const stored = await client.uploadBlob(
+          new TextEncoder().encode("sent to a returned folder"),
+          "text/plain",
+        );
+        expect(stored.status, JSON.stringify(stored.error)).toBe(201);
+        expect(await mode()).toBe(0o700);
       } finally {
         await server.stop();
       }
@@ -422,6 +458,103 @@ describe("a restart on lock files opened to the server's group", () => {
       expect(await Promise.all(locks.map(mode))).toEqual([0o600, 0o600]);
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a blob folder whose lock file goes under a running server", () => {
+  const folderLock = () => join(blobFolder(first), ".server-lock");
+  // Made for each test, since a restart earlier in the file moves the server to another port.
+  const clients = () => clientsFor(first);
+
+  async function expectSecondRefused() {
+    const folder = blobFolder(first);
+    const second = await refused({ MARFA_BLOB_PATH: folder });
+    expect(second.code, second.output).toBe(1);
+    expect(second.output).toContain(
+      `The blob folder ${folder} is open in another Marfa server`,
+    );
+  }
+
+  it(
+    "refuses a second server while an upload is in progress, and takes the lock back before the upload lands",
+    async () => {
+      const { bytes, answer } = await heldUpload(first, clients().working);
+      const before = await spool();
+      expect(before.map((file) => file.size)).toEqual([UPLOAD_BYTES]);
+      await rm(folderLock());
+
+      await expectSecondRefused();
+      expect(await spool()).toEqual(before);
+
+      await first.clearFault("hold:blob-write");
+      const landed = await answer;
+      expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+      const read = await clients().operator.downloadBlob(landed.data.hash);
+      expect(new Uint8Array(read.data)).toEqual(bytes);
+      await expectSecondRefused();
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "takes the lock back once its lock file is replaced and it answers GET /health, so a second server is refused",
+    async () => {
+      const replacement = `${folderLock()}.new`;
+      await writeFile(replacement, "");
+      await rename(replacement, folderLock());
+      expect((await blobStorage())?.status).toBe("ok");
+      await expectSecondRefused();
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "stores nothing once another server took the lock it lost, still serves its files and reports it, and stores again once that server ends",
+    async () => {
+      const { operator, working } = clients();
+      const kept = await working.uploadBlob(
+        new TextEncoder().encode("a file stored before the lock went"),
+        "text/plain",
+      );
+      expect(kept.status, JSON.stringify(kept.error)).toBe(201);
+      await rm(folderLock());
+      // The witness: with no upload in progress, a second server starts on the folder.
+      const holder = await bootFreshServer("one-server-took-lock", {
+        ...DISK_ONLY,
+        MARFA_BLOB_PATH: blobFolder(first),
+      });
+      try {
+        const component = await blobStorage();
+        expect(component?.status).toBe("down");
+        expect(component?.error).toContain("could not be locked");
+        const upload = await working.uploadBlob(
+          new TextEncoder().encode(
+            "sent while another server holds the folder",
+          ),
+          "text/plain",
+        );
+        expect(upload.status).toBe(503);
+        expect(upload.error?.error.code).toBe("blob_store_unavailable");
+        const exported = await fetch(`${first.apiUrl}/export?format=archive`, {
+          headers: { Authorization: `Bearer ${first.workingKey}` },
+        });
+        expect(exported.status).toBe(503);
+        expect(
+          ((await exported.json()) as { error: { code: string } }).error.code,
+        ).toBe("blob_store_unavailable");
+        const read = await operator.downloadBlob(kept.data.hash);
+        expect(read.status).toBe(200);
+      } finally {
+        await holder.stop();
+      }
+      expect((await blobStorage())?.status).toBe("ok");
+      const later = await working.uploadBlob(
+        new TextEncoder().encode("sent once that server ended"),
+        "text/plain",
+      );
+      expect(later.status, JSON.stringify(later.error)).toBe(201);
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 

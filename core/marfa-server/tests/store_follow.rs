@@ -769,7 +769,7 @@ async fn an_adopt_whose_request_goes_away_after_its_record_still_claims_the_fold
 async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_same_folder() {
     let parent = TempDir::new().unwrap();
     let instance = Instance::start().await;
-    let (folder, _) = replaced(&instance, &parent).await;
+    let (folder, old) = replaced(&instance, &parent).await;
     // The folder is recorded under a link to it as well as under its own path.
     let link = parent.path().join("link");
     std::os::unix::fs::symlink(&folder, &link).unwrap();
@@ -790,8 +790,9 @@ async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_
     let area = instance.area(&folder);
     fs::create_dir_all(&area).unwrap();
     let marker = area.join(MARKER);
+    let before = folder_ids(&instance, &area).await;
 
-    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    instance.app.faults.set("hold:stores-record", None).unwrap();
     let adopting = tokio::spawn({
         let instance = instance.clone();
         async move {
@@ -800,11 +801,12 @@ async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_
                 .await
         }
     });
-    instance.reached("hold:stores-swap").await;
+    instance.reached("hold:stores-record").await;
     stall_at(&marker);
-    instance.app.faults.clear(Some("hold:stores-swap"));
+    instance.app.faults.clear(Some("hold:stores-record"));
     let writer = read_stalls(&marker).await;
     let adopted = adopting.await.unwrap();
+    let after = folder_ids(&instance, &area).await;
     // The stalled claim keeps the FIFO open, and a look at the folder now finds no marker.
     fs::remove_file(&marker).unwrap();
     let switched = instance.patch(json!({ "backup_path": link })).await;
@@ -844,29 +846,30 @@ async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_
         through_link.body
     );
     assert!(!first.claim_unended());
-    let late = fs::read_to_string(&marker).unwrap();
-    let recorded: Vec<String> = folder_ids(&instance, &area)
+    assert_eq!(after, before, "the refused adopt changed the record");
+    assert!(!marker.exists(), "the late claim's marker was left");
+    let ids: Vec<String> = folder_ids(&instance, &area)
         .await
         .into_iter()
         .map(|(id, _)| id)
         .collect();
-    assert!(recorded.contains(&late), "{late} is not in {recorded:?}");
-    assert!(!instance.app.blobs.folder().unwrap().reachable());
+    assert_eq!(ids, std::slice::from_ref(&old));
 
-    // Named by its own path again, the folder holds the store its record names.
+    // Named by its own path again, the folder still waits for the store its record names, and an
+    // adopt there now takes it.
     drop(first);
     instance.name(json!({ "backup_path": folder })).await;
     instance.settle().await;
     assert!(instance.app.blobs.settled());
     let current = instance.app.blobs.folder().unwrap();
-    assert!(current.reachable());
-    assert_eq!(current.files().id(), late);
-    let attached: Vec<String> = folder_ids(&instance, &area)
-        .await
-        .into_iter()
-        .filter_map(|(id, attached)| attached.then_some(id))
-        .collect();
-    assert_eq!(attached, [late]);
+    assert!(!current.reachable());
+    assert_eq!(current.files().id(), old);
+    let adopted = instance
+        .send(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(adopted.status, StatusCode::OK, "{}", adopted.body);
+    let id = adopted.body["store_id"].as_str().unwrap().to_string();
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), id);
 }
 
 /// Puts a FIFO where `marker` was, so a read of it waits for a writer.
@@ -988,7 +991,8 @@ async fn an_adopt_whose_folder_does_not_answer_refuses_and_lets_a_later_settings
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees_with_the_record() {
+async fn an_adopt_whose_claim_does_not_answer_refuses_forgets_nothing_and_its_late_claim_is_undone()
+{
     let parent = TempDir::new().unwrap();
     let instance = Instance::start().await;
     let (folder, old) = replaced(&instance, &parent).await;
@@ -1000,8 +1004,9 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
     let area = instance.area(&folder);
     fs::create_dir_all(&area).unwrap();
     let marker = area.join(MARKER);
+    let before = folder_ids(&instance, &area).await;
 
-    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    instance.app.faults.set("hold:stores-record", None).unwrap();
     let mut adopting = tokio::spawn({
         let instance = instance.clone();
         async move {
@@ -1010,9 +1015,9 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
                 .await
         }
     });
-    instance.reached("hold:stores-swap").await;
+    instance.reached("hold:stores-record").await;
     stall_at(&marker);
-    instance.app.faults.clear(Some("hold:stores-swap"));
+    instance.app.faults.clear(Some("hold:stores-record"));
     let writer = read_stalls(&marker).await;
     let answered = tokio::time::timeout(Duration::from_secs(3), &mut adopting).await;
     let follow = tokio::time::timeout(
@@ -1042,10 +1047,19 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
     );
     assert_eq!(adopted.body["error"]["code"], "blob_store_unavailable");
     assert!(
-        matches!(follow, Ok(Err(_))),
-        "a follow during the stalled claim counted the folder as settled or waited on it"
+        adopted.body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("nothing was adopted"),
+        "{}",
+        adopted.body
     );
-    assert!(!settled_while_stalled);
+    // Nothing was recorded, so the record is not in doubt.
+    assert!(
+        matches!(follow, Ok(Ok(()))),
+        "a follow during the stalled claim failed or waited on it: {follow:?}"
+    );
+    assert!(settled_while_stalled);
     let again = again.expect("a second adopt waited on the stalled claim");
     assert_eq!(
         again.status,
@@ -1069,10 +1083,21 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    instance.settle().await;
-    assert!(instance.app.blobs.settled());
-    let id = folder.files().id().to_string();
-    assert_ne!(id, old);
+    assert!(!folder.claim_unended());
+    assert!(!marker.exists(), "the late claim's marker was left");
+    assert_eq!(folder.files().id(), old);
+    assert_eq!(
+        folder_ids(&instance, &area).await,
+        before,
+        "the refused adopt changed the record"
+    );
+
+    // The witness: with the late claim undone, an adopt takes the folder.
+    let adopted = instance
+        .send(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(adopted.status, StatusCode::OK, "{}", adopted.body);
+    let id = adopted.body["store_id"].as_str().unwrap().to_string();
     assert_eq!(fs::read_to_string(&marker).unwrap().trim(), id);
     let attached: Vec<String> = folder_ids(&instance, &area)
         .await

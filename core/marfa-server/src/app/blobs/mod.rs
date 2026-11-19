@@ -46,7 +46,7 @@ use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::telemetry::caught;
 use disk::{Disk, Place, Staged};
-pub use disk::{MARKER, Scratch, lock_blobs};
+pub use disk::{Lost, MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
@@ -555,7 +555,7 @@ impl Blobs {
         }
         let folder_opened = away.is_none();
         let disk = Arc::new(match away {
-            Some(id) => Disk::awaiting_blob_folder(id, root.to_path_buf()),
+            Some(id) => Disk::unmounted(id, root.to_path_buf(), Place::Blobs),
             None => {
                 let folder = root.to_path_buf();
                 tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
@@ -588,9 +588,10 @@ impl Blobs {
         self.folder_opened
     }
 
-    /// Whether the blob folder returned after the start and cannot be locked now. It blocks.
-    pub fn folder_unlockable(&self) -> bool {
-        self.disk.returned_unlockable()
+    /// Why the blob folder is there and takes no write; takes its lock back where it can. It
+    /// blocks.
+    pub fn folder_lost(&self) -> Option<Lost> {
+        self.disk.lost().map(|(lost, _)| lost)
     }
 
     /// Whether the store in use is the usable one `wanted` names.
@@ -1339,12 +1340,47 @@ impl App {
         let Some(id) = recorded.filter(|id| id != files.id()) else {
             return Ok(());
         };
-        match folder.claim_within(id, deadline).await {
+        match folder.claim_within(id.clone(), deadline).await {
             None => Err(late()),
-            Some(Ok(())) => Ok(()),
+            Some(Ok(claimed)) => {
+                folder.take(claimed);
+                Ok(())
+            }
             Some(Err(error)) => {
                 tracing::warn!(%error, "The backup folder could not take the store the record names");
+                folder.await_store(id);
                 Ok(())
+            }
+        }
+    }
+
+    /// Puts an adopt's claim in use where its record landed, and undoes it otherwise. Where the
+    /// outcome of the record is not known, the record is read, and doubted if it does not read.
+    pub(crate) async fn settle_claim(
+        &self,
+        folder: &Arc<Folder>,
+        claimed: folder::Claimed,
+        id: String,
+        unknown: bool,
+    ) {
+        if unknown {
+            let locator = folder.files().root().display().to_string();
+            match self.db.read(move |tx| rows::folder_at(tx, &locator)).await {
+                Ok(Some(recorded)) if recorded == id => return folder.take(claimed),
+                Ok(_) => {}
+                Err(refused) => {
+                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
+                    self.blobs.doubt_record();
+                }
+            }
+        }
+        match tokio::task::spawn_blocking(move || claimed.undo()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(%error, "An adopt that did not land left its marker in the backup folder");
+            }
+            Err(error) => {
+                tracing::error!(%error, "An adopt that did not land was not undone");
             }
         }
     }

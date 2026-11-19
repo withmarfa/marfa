@@ -1,41 +1,131 @@
 //! The disk store: one file per blob under `<folder>/<hex 0..4>/<hex>`, and a `tmp`
 //! folder that holds bytes until they are whole.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::hash::Hash;
 use crate::failure::Failure;
+use crate::private_files;
 use crate::server_lock::{self, Untaken};
 
 pub const MARKER: &str = ".marfa-store";
 const TMP: &str = "tmp";
 const LOCK: &str = ".server-lock";
 
+/// The lock is checked before each write, so a lock file removed or replaced, or a folder
+/// remounted, is taken back before the store writes in it again.
 #[derive(Debug)]
 pub struct Disk {
     id: String,
     root: PathBuf,
+    place: Place,
     /// Keeps a second server from emptying `tmp`, until `let_go` or the process ends.
-    lock: Mutex<Option<File>>,
+    lock: Mutex<Option<Arc<File>>>,
     /// Why the folder is not locked, where its file system would not lock it.
-    unlocked: Option<String>,
-    returning: Returning,
+    unlocked: Mutex<Option<String>>,
+    let_go: AtomicBool,
+    /// Whether the lock was lost and not taken back, so that is logged once.
+    lost: AtomicBool,
+    /// Kept apart from `lock`, which the runtime waits on, since taking a lock does I/O.
+    taking: Mutex<()>,
 }
 
-/// A blob folder the start did not find, whose lock is taken before the first write to it.
-#[derive(Debug, Default)]
-struct Returning {
-    awaited: AtomicBool,
-    refused: AtomicBool,
-    /// Kept apart from `Disk::lock`, which the runtime waits on, since taking a lock does I/O.
-    taking: Mutex<()>,
+/// Why a store whose folder is there writes nothing in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lost {
+    /// Another server holds the folder's lock, or its lock file is refused.
+    Lock,
+    /// The blob folder could not be made private when the store took it back.
+    Privacy,
+}
+
+/// Whether `held` is still the file at `path`. A removed or replaced lock file, or a folder
+/// remounted or replaced, names another file or none; the open file keeps its inode from reuse.
+fn names(held: &File, path: &Path) -> bool {
+    match (held.metadata(), fs::symlink_metadata(path)) {
+        (Ok(held), Ok(named)) => (held.dev(), held.ino()) == (named.dev(), named.ino()),
+        _ => false,
+    }
+}
+
+/// Locks a working file just made at `path`, so another server's start keeps it. It blocks.
+fn hold_working(file: &File, path: &Path) -> io::Result<()> {
+    match server_lock::try_lock(file) {
+        Ok(()) => {}
+        Err(TryLockError::Error(error)) if server_lock::unsupported(&error) => return Ok(()),
+        Err(TryLockError::Error(error)) => return Err(error),
+        Err(TryLockError::WouldBlock) => {
+            return Err(io::Error::other(
+                "a new working file was held by another server",
+            ));
+        }
+    }
+    if names(file, path) {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "a new working file was removed by another server",
+        ))
+    }
+}
+
+enum Swept {
+    Removed,
+    Gone,
+    /// A live server holds it.
+    Held,
+}
+
+/// Removes an entry of `tmp` unless a live server holds it. It blocks.
+fn sweep(path: &Path) -> io::Result<Swept> {
+    let gone = |error: io::Error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            Ok(Swept::Gone)
+        } else {
+            Err(error)
+        }
+    };
+    let found = match fs::symlink_metadata(path) {
+        Ok(found) => found,
+        Err(error) => return gone(error),
+    };
+    if found.is_dir() {
+        return fs::remove_dir_all(path).map_or_else(gone, |()| Ok(Swept::Removed));
+    }
+    if found.is_file() {
+        let flags = libc::O_NOFOLLOW | libc::O_NONBLOCK;
+        let opened = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(flags)
+            .open(path)
+            .or_else(|error| match error.kind() {
+                io::ErrorKind::PermissionDenied => {
+                    OpenOptions::new().read(true).custom_flags(flags).open(path)
+                }
+                _ => Err(error),
+            });
+        let file = match opened {
+            Ok(file) => file,
+            Err(error) => return gone(error),
+        };
+        match server_lock::try_lock(&file) {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Ok(Swept::Held),
+            Err(TryLockError::Error(error)) if server_lock::unsupported(&error) => {}
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
+        return fs::remove_file(path).map_or_else(gone, |()| Ok(Swept::Removed));
+    }
+    fs::remove_file(path).map_or_else(gone, |()| Ok(Swept::Removed))
 }
 
 /// Which folder a disk store is, for what the server says of it.
@@ -68,27 +158,32 @@ enum Taken {
 
 /// The folder's lock, or why its file system takes none; anything else refuses the start.
 fn lock_or_why(root: &Path, place: Place) -> Result<Result<File, String>, Failure> {
-    let named = place.named(root);
     match server_lock::take(&root.join(LOCK)) {
         Ok(file) => Ok(Ok(file)),
-        Err(Untaken::Held) => Err(Failure::start(match place {
-            Place::Blobs => format!(
-                "{named} is open in another Marfa server. Stop that server, or give this one a \
-                 blob folder of its own."
-            ),
-            Place::BackupFiles => format!(
-                "{named} is open in another Marfa server, which runs a copy of this instance. \
-                 Stop that server, or give this one a backup folder of its own."
-            ),
-        })),
+        Err(Untaken::Held) => Err(open_elsewhere(place, root)),
         Err(Untaken::Unsupported(error)) => {
             Ok(Err(format!("its file system takes no locks ({error})")))
         }
         // The lock file of a server running as another account is refused here too.
         Err(Untaken::Refused(why)) => Err(Failure::start(format!(
-            "{named} could not be locked: its lock file {why}"
+            "{} could not be locked: its lock file {why}",
+            place.named(root)
         ))),
     }
+}
+
+fn open_elsewhere(place: Place, root: &Path) -> Failure {
+    let named = place.named(root);
+    Failure::start(match place {
+        Place::Blobs => format!(
+            "{named} is open in another Marfa server. Stop that server, or give this one a blob \
+             folder of its own."
+        ),
+        Place::BackupFiles => format!(
+            "{named} is open in another Marfa server, which runs a copy of this instance. Stop \
+             that server, or give this one a backup folder of its own."
+        ),
+    })
 }
 
 fn unlockable(place: Place, root: &Path, why: &str) -> Failure {
@@ -152,47 +247,67 @@ impl Disk {
             Some(id) => id,
             None => fresh_marker(root, place)?,
         };
-        let disk = Disk {
-            id,
-            root: root.to_path_buf(),
-            lock: Mutex::new(lock),
-            unlocked,
-            returning: Returning::default(),
-        };
-        let tmp = disk.tmp();
-        match fs::remove_dir_all(&tmp) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(refused(
-                    place,
-                    root,
-                    "has a tmp folder that did not empty",
-                    error,
-                ));
-            }
-        }
-        fs::create_dir_all(&tmp)
+        let disk = Disk::made(id, root.to_path_buf(), place, lock.map(Arc::new), unlocked);
+        disk.empty_tmp()?;
+        fs::create_dir_all(disk.tmp())
             .map_err(|error| refused(place, root, "has no tmp folder", error))?;
         Ok(disk)
     }
 
-    /// A store the server recorded at `root` whose folder is not there now; nothing is touched.
-    pub fn unmounted(id: String, root: PathBuf) -> Disk {
+    fn made(
+        id: String,
+        root: PathBuf,
+        place: Place,
+        lock: Option<Arc<File>>,
+        unlocked: Option<String>,
+    ) -> Disk {
         Disk {
             id,
             root,
-            lock: Mutex::default(),
-            unlocked: None,
-            returning: Returning::default(),
+            place,
+            lock: Mutex::new(lock),
+            unlocked: Mutex::new(unlocked),
+            let_go: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
+            taking: Mutex::new(()),
         }
     }
 
-    /// The blob folder's store, at a `root` the start did not find, locked before any write.
-    pub fn awaiting_blob_folder(id: String, root: PathBuf) -> Disk {
-        let disk = Disk::unmounted(id, root);
-        disk.returning.awaited.store(true, Ordering::Release);
-        disk
+    /// Removes what a server that ended left in `tmp`. A file a live server still holds refuses
+    /// the start, since that server lost its lock and is still writing here.
+    fn empty_tmp(&self) -> Result<(), Failure> {
+        let tmp = self.tmp();
+        let not_emptied = |error| {
+            refused(
+                self.place,
+                &self.root,
+                "has a tmp folder that did not empty",
+                error,
+            )
+        };
+        match fs::symlink_metadata(&tmp) {
+            Ok(found) if found.is_dir() => {}
+            Ok(_) => return fs::remove_file(&tmp).map_err(not_emptied),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(not_emptied(error)),
+        }
+        let mut held = false;
+        for entry in fs::read_dir(&tmp).map_err(not_emptied)? {
+            let swept = entry
+                .and_then(|entry| sweep(&entry.path()))
+                .map_err(not_emptied)?;
+            held |= matches!(swept, Swept::Held);
+        }
+        if held {
+            return Err(open_elsewhere(self.place, &self.root));
+        }
+        Ok(())
+    }
+
+    /// A store the server recorded at `root` whose folder is not there now; nothing is touched.
+    /// Its lock is taken before the first write once the folder is back.
+    pub fn unmounted(id: String, root: PathBuf, place: Place) -> Disk {
+        Disk::made(id, root, place, None, None)
     }
 
     /// The id the marker in the backup folder's files area `root` holds, where it holds one. It
@@ -202,16 +317,21 @@ impl Disk {
     }
 
     /// Takes the backup folder's files area `root`, which must exist and hold no other store's
-    /// marker, as the store `id`, locked as one opened at the start is. It blocks.
-    pub fn claim(root: &Path, id: &str) -> io::Result<Disk> {
-        let (lock, unlocked) = match take_lock(root, Place::BackupFiles) {
-            Ok(Taken::Locked(file)) => (Some(file), None),
-            Ok(Taken::Unlocked(why)) => (None, Some(why)),
-            Err(failure) => return Err(io::Error::other(failure.message)),
+    /// marker, as the store `id`, locked as one opened at the start is. `held` is the lock of the
+    /// store it replaces, kept where it is still the area's. Answers whether the marker is new.
+    /// It blocks.
+    pub fn claim(root: &Path, id: &str, held: Option<Arc<File>>) -> io::Result<(Disk, bool)> {
+        let (lock, unlocked) = match held.filter(|file| names(file, &root.join(LOCK))) {
+            Some(file) => (Some(file), None),
+            None => match take_lock(root, Place::BackupFiles) {
+                Ok(Taken::Locked(file)) => (Some(Arc::new(file)), None),
+                Ok(Taken::Unlocked(why)) => (None, Some(why)),
+                Err(failure) => return Err(io::Error::other(failure.message)),
+            },
         };
-        match read_marker(root, Place::BackupFiles) {
-            Ok(None) => {}
-            Ok(Some(found)) if found == id => {}
+        let fresh = match read_marker(root, Place::BackupFiles) {
+            Ok(None) => true,
+            Ok(Some(found)) if found == id => false,
             Ok(Some(found)) => {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
@@ -219,21 +339,21 @@ impl Disk {
                 ));
             }
             Err(failure) => return Err(io::Error::other(failure.message)),
-        }
+        };
         let mut file = File::create(root.join(MARKER))?;
         file.write_all(id.as_bytes())?;
         file.sync_all()?;
         drop(file);
         File::open(root)?.sync_all()?;
-        let disk = Disk {
-            id: id.to_string(),
-            root: root.to_path_buf(),
-            lock: Mutex::new(lock),
+        let disk = Disk::made(
+            id.to_string(),
+            root.to_path_buf(),
+            Place::BackupFiles,
+            lock,
             unlocked,
-            returning: Returning::default(),
-        };
+        );
         fs::create_dir_all(disk.tmp())?;
-        Ok(disk)
+        Ok((disk, fresh))
     }
 
     pub fn id(&self) -> &str {
@@ -242,7 +362,7 @@ impl Disk {
 
     /// Lets another server open the folder, once this one writes nothing more in it.
     pub fn let_go(&self) {
-        self.returning.awaited.store(false, Ordering::Release);
+        self.let_go.store(true, Ordering::Release);
         self.lock
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -254,8 +374,19 @@ impl Disk {
     }
 
     /// Why the folder is not locked against another server, where it could not be.
-    pub fn unlocked(&self) -> Option<&str> {
-        self.unlocked.as_deref()
+    pub fn unlocked(&self) -> Option<String> {
+        self.unlocked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The lock the store holds, which a claim of the same area keeps.
+    pub fn lock_file(&self) -> Option<Arc<File>> {
+        self.lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn tmp(&self) -> PathBuf {
@@ -277,48 +408,85 @@ impl Disk {
         io::Error::other("the disk store's folder or marker is missing")
     }
 
-    /// Whether a returned blob folder cannot be locked now; takes the lock if it can. It blocks.
-    pub fn returned_unlockable(&self) -> bool {
-        self.returning.awaited.load(Ordering::Acquire)
-            && self.reachable()
-            && self.writable().is_err()
+    /// Why the store writes nothing though its folder is there, with what refused it; takes its
+    /// lock back where it can. It blocks.
+    pub fn lost(&self) -> Option<(Lost, String)> {
+        if !self.reachable() {
+            return None;
+        }
+        self.held()
+            .err()
+            .map(|(lost, failure)| (lost, failure.message))
     }
 
-    /// Checks the folder is there and, if it returned after the start, locks it. It blocks.
-    fn writable(&self) -> io::Result<()> {
+    /// Checks the folder is there and that the store holds its lock, taking it back where its
+    /// lock file is gone or another file. It blocks.
+    pub fn writable(&self) -> io::Result<()> {
         if !self.reachable() {
             return Err(Disk::unreachable());
         }
-        let returning = &self.returning;
-        if !returning.awaited.load(Ordering::Acquire) {
+        self.held()
+            .map_err(|(_, failure)| io::Error::other(failure.message))
+    }
+
+    fn holds_its_lock(&self) -> bool {
+        let path = self.root.join(LOCK);
+        self.let_go.load(Ordering::Acquire)
+            || self.unlocked().is_some()
+            || self.lock_file().is_some_and(|file| names(&file, &path))
+    }
+
+    fn held(&self) -> Result<(), (Lost, Failure)> {
+        if self.holds_its_lock() {
             return Ok(());
         }
-        let _one_at_a_time = returning
-            .taking
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if !returning.awaited.load(Ordering::Acquire) {
+        let _one_at_a_time = self.taking.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.holds_its_lock() {
             return Ok(());
         }
-        let file = match lock_blobs(&self.root) {
-            Ok(file) => file,
-            Err(failure) => {
-                if !returning.refused.swap(true, Ordering::AcqRel) {
-                    tracing::warn!(reason = %failure.message, "The blob folder could not be locked");
-                }
-                return Err(io::Error::other("the blob folder could not be locked"));
+        let file = match lock_or_why(&self.root, self.place) {
+            Ok(Ok(file)) => file,
+            Ok(Err(why)) if self.place == Place::BackupFiles => {
+                tracing::warn!(
+                    folder = %self.root.display(),
+                    reason = %why,
+                    "The backup folder's files area is not locked, so another server could use it too"
+                );
+                *self.unlocked.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
+                return Ok(());
             }
+            Ok(Err(why)) => {
+                return Err(self.losing(Lost::Lock, unlockable(self.place, &self.root, &why)));
+            }
+            Err(failure) => return Err(self.losing(Lost::Lock, failure)),
         };
-        if !self.reachable() {
-            return Err(Disk::unreachable());
+        if self.place == Place::Blobs
+            && let Err(failure) = private_files::make_blob_folder_private(&self.root)
+        {
+            return Err(self.losing(Lost::Privacy, failure));
         }
         let mut lock = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         // `let_go` may have run since the look above, and the file then closes here.
-        if returning.awaited.swap(false, Ordering::AcqRel) {
-            *lock = Some(file);
+        if !self.let_go.load(Ordering::Acquire) {
+            let replaced = lock.replace(Arc::new(file)).is_some();
+            if self.lost.swap(false, Ordering::AcqRel) || replaced {
+                tracing::warn!(
+                    folder = %self.root.display(),
+                    "The store's folder lost its lock, and the server took it back"
+                );
+            }
         }
-        returning.refused.store(false, Ordering::Release);
         Ok(())
+    }
+
+    fn losing(&self, lost: Lost, failure: Failure) -> (Lost, Failure) {
+        if !self.lost.swap(true, Ordering::AcqRel) {
+            tracing::warn!(
+                reason = %failure.message,
+                "The store's folder could not be taken back into use, so the server writes nothing in it"
+            );
+        }
+        (lost, failure)
     }
 
     /// Makes `tmp` where a disk that came back, or a tool that copied it, left it out. Only
@@ -341,13 +509,16 @@ impl Disk {
             .write(true)
             .create_new(true)
             .open(&path)?;
-        Ok(Staged {
+        let staged = Staged {
             path,
-            file: Some(file),
+            file,
+            sealed: false,
             hasher: Sha256::new(),
             size: 0,
             published: false,
-        })
+        };
+        hold_working(&staged.file, &staged.path)?;
+        Ok(staged)
     }
 
     /// A file of the server's own in `tmp`, which a start empties. It blocks.
@@ -358,7 +529,9 @@ impl Disk {
             .write(true)
             .create_new(true)
             .open(&path)?;
-        Ok(Scratch { path, file })
+        let scratch = Scratch { path, file };
+        hold_working(&scratch.file, &scratch.path)?;
+        Ok(scratch)
     }
 
     /// Moves a sealed file into place over whatever stands there, which may be a damaged
@@ -440,8 +613,7 @@ impl Disk {
         Ok(Some((size, Hash::from_digest(&hasher.finalize()))))
     }
 
-    /// Removes each file in `tmp` staged before `before`, which only a process that ended left.
-    /// It blocks.
+    /// Removes each file in `tmp` staged before `before` that no live server holds. It blocks.
     pub fn clear_tmp_before(&self, before: std::time::SystemTime) -> io::Result<usize> {
         self.writable()?;
         let entries = match fs::read_dir(self.tmp()) {
@@ -459,12 +631,10 @@ impl Disk {
                     let (seconds, nanos) = stamp.to_unix();
                     std::time::UNIX_EPOCH + std::time::Duration::new(seconds, nanos)
                 });
-            if staged_at.is_none_or(|at| at < before) {
-                match fs::remove_file(entry.path()) {
-                    Ok(()) => cleared += 1,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
+            if staged_at.is_none_or(|at| at < before)
+                && matches!(sweep(&entry.path())?, Swept::Removed)
+            {
+                cleared += 1;
             }
         }
         if cleared > 0 {
@@ -542,7 +712,9 @@ fn fresh_marker(root: &Path, place: Place) -> Result<String, Failure> {
 #[derive(Debug)]
 pub struct Staged {
     path: PathBuf,
-    file: Option<File>,
+    /// Held open after the seal, so its lock keeps it from another server's start.
+    file: File,
+    sealed: bool,
     hasher: Sha256,
     size: u64,
     published: bool,
@@ -559,10 +731,10 @@ impl Staged {
 
     /// Writes and hashes `bytes`. It blocks.
     pub fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
-        let Some(file) = self.file.as_mut() else {
+        if self.sealed {
             return Err(io::Error::other("a staged file was closed"));
-        };
-        file.write_all(bytes)?;
+        }
+        self.file.write_all(bytes)?;
         self.hasher.update(bytes);
         self.size += bytes.len() as u64;
         Ok(())
@@ -575,10 +747,10 @@ impl Staged {
 
     /// Syncs the file and names it by what it holds. It blocks.
     pub fn seal(&mut self) -> io::Result<Hash> {
-        let Some(file) = self.file.take() else {
+        if std::mem::replace(&mut self.sealed, true) {
             return Err(io::Error::other("a staged file was closed"));
-        };
-        file.sync_all()?;
+        }
+        self.file.sync_all()?;
         Ok(Hash::from_digest(&self.hasher.clone().finalize()))
     }
 }
@@ -715,8 +887,8 @@ mod tests {
         );
         fs::create_dir_all(dir.path().join("adopted")).unwrap();
         let id = Uuid::now_v7().to_string();
-        let _adopted = Disk::claim(&dir.path().join("adopted"), &id).unwrap();
-        let again = Disk::claim(&dir.path().join("adopted"), &id).unwrap_err();
+        let _adopted = Disk::claim(&dir.path().join("adopted"), &id, None).unwrap();
+        let again = Disk::claim(&dir.path().join("adopted"), &id, None).unwrap_err();
         assert!(
             again
                 .to_string()
@@ -750,7 +922,8 @@ mod tests {
         let adopted = dir.path().join("adopted");
         fs::create_dir_all(&adopted).unwrap();
         let id = Uuid::now_v7().to_string();
-        let claimed = without_locks(|| Disk::claim(&adopted, &id)).unwrap();
+        let claimed =
+            without_locks(|| Disk::claim(&adopted, &id, None).map(|(disk, _)| disk)).unwrap();
         assert!(claimed.unlocked().is_some());
 
         let blobs = dir.path().join("blobs");
@@ -791,7 +964,7 @@ mod tests {
         );
         assert!(half.exists());
         let id = Uuid::now_v7().to_string();
-        let refused = Disk::claim(&area, &id).unwrap_err();
+        let refused = Disk::claim(&area, &id, None).unwrap_err();
         assert!(refused.to_string().contains("its lock file"), "{refused}");
         assert!(half.exists());
     }
@@ -903,7 +1076,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("blobs");
         let id = left_marked(&root);
-        let disk = Disk::awaiting_blob_folder(id, root.clone());
+        let disk = Disk::unmounted(id, root.clone(), Place::Blobs);
         assert!(disk.reachable());
         assert!(
             disk.size_of(&Hash::from_digest(&Sha256::digest(b"x")))
@@ -920,18 +1093,18 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("blobs");
         let id = left_marked(&root);
-        let disk = Disk::awaiting_blob_folder(id, root.clone());
+        let disk = Disk::unmounted(id, root.clone(), Place::Blobs);
         let other = Disk::open(&root, Place::Blobs, None).unwrap();
         let hash = Hash::from_digest(&Sha256::digest(b"x"));
         assert!(disk.reachable());
         assert!(disk.size_of(&hash).is_ok());
-        assert!(disk.returned_unlockable());
+        assert!(disk.lost().is_some());
         assert!(disk.stage().is_err());
         assert!(disk.scratch().is_err());
         assert!(disk.delete(&hash).is_err());
         assert!(disk.clear_tmp_before(std::time::SystemTime::now()).is_err());
         drop(other);
-        assert!(!disk.returned_unlockable());
+        assert!(disk.lost().is_none());
         assert!(open_refused(&root), "the look took the lock");
         assert!(disk.stage().is_ok());
     }
@@ -942,7 +1115,7 @@ mod tests {
         let root = dir.path().join("blobs");
         fs::create_dir(&root).unwrap();
         let id = Uuid::now_v7().to_string();
-        let disk = Disk::awaiting_blob_folder(id.clone(), root.clone());
+        let disk = Disk::unmounted(id.clone(), root.clone(), Place::Blobs);
         assert!(disk.stage().is_err());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         // The witness: the same write makes the lock file once the marker is there.
@@ -956,7 +1129,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("blobs");
         let id = left_marked(&root);
-        let disk = Disk::awaiting_blob_folder(id, root.clone());
+        let disk = Disk::unmounted(id, root.clone(), Place::Blobs);
         disk.let_go();
         assert!(disk.stage().is_ok());
         assert!(!open_refused(&root));
@@ -967,9 +1140,154 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("blobs");
         let id = left_marked(&root);
-        let disk = Disk::awaiting_blob_folder(id, root);
+        let disk = Disk::unmounted(id, root, Place::Blobs);
         assert!(without_locks(|| disk.stage()).is_err());
-        assert!(without_locks(|| disk.returned_unlockable()));
+        assert!(without_locks(|| disk.lost().is_some()));
+    }
+
+    #[test]
+    fn a_store_takes_its_lock_again_before_a_write_once_its_lock_file_is_removed_or_replaced() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let disk = Disk::open(&root, Place::Blobs, None).unwrap();
+        fs::remove_file(root.join(LOCK)).unwrap();
+        assert!(
+            !open_refused(&root),
+            "the witness: a removed lock file keeps no server out"
+        );
+        assert!(disk.stage().is_ok());
+        assert!(open_refused(&root));
+
+        let other = dir.path().join("other");
+        fs::write(&other, b"").unwrap();
+        fs::rename(&other, root.join(LOCK)).unwrap();
+        assert!(disk.scratch().is_ok());
+        assert!(open_refused(&root));
+    }
+
+    #[test]
+    fn a_store_whose_folder_is_replaced_by_a_copy_locks_the_copy_before_a_write() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let disk = Disk::open(&root, Place::Blobs, None).unwrap();
+        fs::rename(&root, dir.path().join("blobs.before")).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join(MARKER), disk.id()).unwrap();
+        assert!(disk.reachable());
+        assert!(disk.stage().is_ok());
+        assert!(open_refused(&root));
+    }
+
+    #[test]
+    fn a_store_whose_lock_another_server_took_writes_nothing_and_reads_until_it_ends() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let disk = Disk::open(&root, Place::Blobs, None).unwrap();
+        let mut staged = disk.stage().unwrap();
+        staged.append(b"kept").unwrap();
+        let hash = staged.seal().unwrap();
+        disk.publish(&mut staged, &hash).unwrap();
+        drop(staged);
+        fs::remove_file(root.join(LOCK)).unwrap();
+        let other = Disk::open(&root, Place::Blobs, None).unwrap();
+        assert!(disk.stage().is_err());
+        assert!(disk.scratch().is_err());
+        assert!(disk.delete(&hash).is_err());
+        assert!(disk.clear_tmp_before(std::time::SystemTime::now()).is_err());
+        assert_eq!(disk.size_of(&hash).unwrap(), Some(4));
+        drop(other);
+        assert!(disk.stage().is_ok());
+        assert!(open_refused(&root));
+    }
+
+    #[test]
+    fn a_start_keeps_a_working_file_a_running_store_holds_and_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let disk = Disk::open(&root, Place::Blobs, None).unwrap();
+        let mut staged = disk.stage().unwrap();
+        staged.append(b"half an upload").unwrap();
+        let left = root.join(TMP).join("left by a server that ended");
+        fs::write(&left, b"left").unwrap();
+        fs::remove_file(root.join(LOCK)).unwrap();
+        let refused = Disk::open(&root, Place::Blobs, None).unwrap_err();
+        assert!(
+            refused.message.contains("is open in another Marfa server"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(fs::read(staged.path()).unwrap(), b"half an upload");
+        // The witness: once the working file is let go, a start clears it.
+        drop(staged);
+        drop(disk);
+        Disk::open(&root, Place::Blobs, None).unwrap();
+        assert!(fs::read_dir(root.join(TMP)).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_sealed_working_file_is_held_until_it_goes_and_only_then_cleared() {
+        let dir = TempDir::new().unwrap();
+        let disk = Disk::open(&dir.path().join("area"), Place::BackupFiles, None).unwrap();
+        let mut staged = disk.stage().unwrap();
+        staged.append(b"a copy on its way").unwrap();
+        staged.seal().unwrap();
+        let unheld = dir
+            .path()
+            .join("area")
+            .join(TMP)
+            .join("left by a server that ended");
+        fs::write(&unheld, b"left").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        assert_eq!(disk.clear_tmp_before(later).unwrap(), 1);
+        assert!(
+            !unheld.exists(),
+            "the witness: a file no server holds is cleared"
+        );
+        assert!(staged.path().is_file());
+    }
+
+    #[test]
+    fn a_returned_backup_files_area_is_locked_by_its_first_write() {
+        let dir = TempDir::new().unwrap();
+        let area = dir.path().join("area");
+        let id = Disk::open(&area, Place::BackupFiles, None)
+            .unwrap()
+            .id()
+            .to_string();
+        let disk = Disk::unmounted(id, area.clone(), Place::BackupFiles);
+        assert!(
+            Disk::open(&area, Place::BackupFiles, None).is_ok(),
+            "the witness: the store took no lock before a write"
+        );
+        assert!(disk.stage().is_ok());
+        assert!(
+            Disk::open(&area, Place::BackupFiles, None)
+                .is_err_and(|refused| refused.message.contains("is open in another Marfa server"))
+        );
+    }
+
+    #[test]
+    fn a_returned_blob_folder_is_made_private_when_it_is_taken_back() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let id = left_marked(&root);
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        let disk = Disk::unmounted(id, root.clone(), Place::Blobs);
+        assert!(
+            disk.size_of(&Hash::from_digest(&Sha256::digest(b"x")))
+                .is_ok()
+        );
+        assert_eq!(
+            fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o755,
+            "the witness: a read changes nothing"
+        );
+        assert!(disk.stage().is_ok());
+        assert_eq!(
+            fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
     }
 
     #[test]
@@ -1008,14 +1326,17 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let disk = Disk::open(dir.path(), Place::Blobs, None).unwrap();
         fs::write(disk.tmp().join("not an id"), b"stray").unwrap();
-        let early = disk.stage().unwrap();
+        // Left by a process that ended: named as a staged file is, and held by no one.
+        let early = disk.tmp().join(Uuid::now_v7().to_string());
+        fs::write(&early, b"half").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
         let cut = std::time::SystemTime::now();
         std::thread::sleep(std::time::Duration::from_millis(5));
-        let late = disk.stage().unwrap();
+        let late = disk.tmp().join(Uuid::now_v7().to_string());
+        fs::write(&late, b"half").unwrap();
         assert_eq!(disk.clear_tmp_before(cut).unwrap(), 2);
-        assert!(!early.path().exists());
-        assert!(late.path().exists());
+        assert!(!early.exists());
+        assert!(late.exists());
         fs::remove_file(dir.path().join(MARKER)).unwrap();
         assert!(disk.clear_tmp_before(cut).is_err());
     }
