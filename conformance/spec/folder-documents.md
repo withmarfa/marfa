@@ -1340,7 +1340,7 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 ### `folder-documents/moved-save-same-name`
 
-When a file's path equals the path a pull last moved an item's file away from only without regard to case or Unicode normalization, and the file system holds the two paths as different names, a device MUST NOT put that file in the item's file's place.
+When a file's path differs from the path a pull last moved an item's file away from only in case or Unicode normalization, and the file system holds the two paths as different names, a device MUST NOT put that file in the item's file's place.
 
 **Reason:** on such a file system the file is another file the person made, such as one held under `folder-documents/same-name-scan-choice-other-paths-held` beside the item's file before the move, and taking it would replace the item's file with its bytes and remove that file.
 
