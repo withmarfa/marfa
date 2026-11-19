@@ -779,8 +779,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
         })
         .await?;
     run.kept_unread(kept);
-    let (mut purged, mut waiting) = (0u64, 0u64);
-    if !candidates.is_empty() && run.go_on().await {
+    let (purged, waiting) = if !candidates.is_empty() && run.go_on().await {
         // The writer's index recheck protects references committed after this scan.
         let hexes: HashSet<String> = candidates
             .iter()
@@ -817,20 +816,20 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
                 Vec::new()
             }
         };
-        for hash in gone {
-            purged += 1;
-            let mut whole = true;
+        for hash in &gone {
             for store in app.blobs.attached() {
-                if let Err(failure) = app.retry_deletion(&store, &hash).await {
+                if let Err(failure) = app.retry_deletion(&store, hash).await {
                     tracing::warn!(?failure, "A purged blob's bytes wait for a later run");
-                    whole = false;
                 }
             }
-            if !whole {
-                waiting += 1;
-            }
         }
-    }
+        let purged = u64::try_from(gone.len()).unwrap_or(u64::MAX);
+        // Read from what is queued, whichever stores were attached while the run deleted.
+        let waiting = app.db.read(move |tx| rows::waiting(tx, &gone)).await?;
+        (purged, waiting)
+    } else {
+        (0, 0)
+    };
     let reported = app.db.read(rows::report_size).await?;
     Ok(Report::done(
         json!({ "reported": reported, "purged": purged, "bytes_waiting": waiting }),

@@ -2246,6 +2246,65 @@ async fn nothing_is_purged_while_the_store_in_use_is_not_the_one_the_settings_no
 }
 
 #[tokio::test]
+async fn a_purge_reports_the_bytes_left_queued_for_a_store_that_was_replaced_during_the_sweep() {
+    let s3 = FakeS3::start().await;
+    let mut env = s3.settings(BUCKET, "blobs");
+    env.push((
+        "MARFA_BLOB_CLEANUP_GRACE_SECONDS".to_string(),
+        "0".to_string(),
+    ));
+    let instance = Instance::start(&pairs(&env)).await;
+
+    // The witness: with the store unchanged, a purge of a blob held in it leaves nothing waiting.
+    let steady = instance
+        .replicated(&s3, b"purged with the store unchanged")
+        .await;
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+    let clean = instance.run("blob-orphans").await;
+    assert_eq!(clean["purged"], 1, "{clean}");
+    assert_eq!(clean["bytes_waiting"], 0, "{clean}");
+    assert!(!instance.file(&steady).exists());
+
+    let first = instance
+        .replicated(&s3, b"first purged during a change")
+        .await;
+    let second = instance
+        .replicated(&s3, b"second purged during a change")
+        .await;
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+
+    instance.arm("hold:blob-delete", None);
+    let replaced = async {
+        instance.when_held().await;
+        instance.name_bucket(&s3, "other").await;
+        let began = Instant::now();
+        while instance
+            .app
+            .blobs
+            .s3()
+            .is_none_or(|bucket| bucket.locator() != "s3://marfa/other")
+        {
+            assert!(
+                began.elapsed() < Duration::from_secs(10),
+                "the store was not replaced"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        instance.app.faults.clear(Some("hold:blob-delete"));
+    };
+    let (run, ()) = tokio::join!(instance.run("blob-orphans"), replaced);
+
+    assert_eq!(run["purged"], 2, "{run}");
+    assert_eq!(run["bytes_waiting"], 1, "{run}");
+    assert_eq!(
+        instance.count("SELECT count(DISTINCT hash) FROM blob_pending_deletions"),
+        1
+    );
+    assert!(!instance.file(&first).exists());
+    assert!(!instance.file(&second).exists());
+}
+
+#[tokio::test]
 async fn a_start_over_an_empty_folder_with_a_store_setting_that_does_not_read_is_mended_by_config()
 {
     let s3 = FakeS3::start().await;

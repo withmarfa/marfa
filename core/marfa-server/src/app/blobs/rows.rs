@@ -685,6 +685,19 @@ pub fn queued_objects(
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// How many of `hashes` still have bytes queued for deletion in any store.
+pub fn waiting(tx: &Transaction<'_>, hashes: &[Hash]) -> Result<u64> {
+    let mut statement =
+        tx.prepare_cached("SELECT EXISTS (SELECT 1 FROM blob_pending_deletions WHERE hash = ?1)")?;
+    let mut count = 0u64;
+    for hash in hashes {
+        if statement.query_row([hash.as_str()], |row| row.get::<_, bool>(0))? {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 /// Whether the server queued `object` in `store_id` for deletion, which it does for each object
 /// before it writes one.
 pub fn queued(tx: &Transaction<'_>, hash: &Hash, store_id: &str, object: &str) -> Result<bool> {
