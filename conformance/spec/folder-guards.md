@@ -198,17 +198,31 @@ When a missing file returns to its folder under another name before its paused r
 
 ### `folder-guards/confirm-unread-folder`
 
-If a paused disk removal is confirmed while part of the folder or a missing file's path cannot be read, then a device MUST leave the missing file's item undeleted.
+If a paused disk removal is confirmed while part of the folder cannot be read, then a device MUST leave each missing file's item undeleted.
 
-**Reason:** an unread directory can hold the file under any name, and a path that cannot be checked is not proof that the file is gone.
+**Reason:** an unread directory can hold the file under any name.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`.
 
 ### `folder-guards/confirm-unread-folder-unsure-count`
 
-If a paused disk removal is confirmed while part of the folder or a missing file's path cannot be read, then a device MUST report the missing file in `unsure`.
+If a paused disk removal is confirmed while part of the folder cannot be read, then a device MUST report each missing file in `unsure`.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`.
+
+### `folder-guards/confirm-unread-path`
+
+If a paused disk removal is confirmed while a missing file's path cannot be read, then a device MUST leave that file's item undeleted.
+
+**Reason:** a path that cannot be checked is not proof that the file is gone.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while a missing file's path cannot be read`.
+
+### `folder-guards/confirm-unread-path-unsure-count`
+
+If a paused disk removal is confirmed while a missing file's path cannot be read, then a device MUST report that file in `unsure`.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while a missing file's path cannot be read`.
 
 ### `folder-guards/confirm-uncertain-file`
 
@@ -224,7 +238,7 @@ When a paused disk removal is confirmed but an unavailable peer folder prevents 
 
 ### `folder-guards/confirm-deletes-queued`
 
-When a paused disk removal is confirmed, a missing file is found in no other folder and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of the item for the next push.
+When a paused disk removal is confirmed after reading the whole folder and a missing file's path, the file is found under no name in the folder or in any other folder, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of the item for the next push.
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`, `device/folders-one-mac.test.ts › confirms a large removal of file items and sends their deletes without pausing again`.
 

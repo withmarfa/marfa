@@ -20,6 +20,7 @@ import { ON_MACOS } from "../../utils/platform.js";
 import {
   detachImage,
   detachImageAtCleanup,
+  onCleanup,
   tempFolder,
 } from "../../utils/temp-folder.js";
 const execute = promisify(execFile);
@@ -710,6 +711,54 @@ it("keeps a paused removal unsure while part of the folder cannot be read", asyn
   expect(rescanned.ok && rescanned.value.paused).toBe(3);
   const released = await harness.folder.confirm();
   expect(released.ok && released.value.deleted).toBe(3);
+});
+
+it("keeps a paused removal unsure while a missing file's path cannot be read", async () => {
+  harness = await folderHarness("contract-b-confirm-unread-path", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const sub = join(harness.dir, "sub");
+  mkdirSync(sub);
+  for (const n of [0, 1, 2])
+    renameSync(
+      join(harness.dir, `Note ${String(n)}.md`),
+      join(sub, `Note ${String(n)}.md`),
+    );
+  expect((await harness.folder.scan()).ok).toBe(true);
+  const away = tempFolder("contract-b-confirm-unread-path-away");
+  for (const n of [0, 1, 2])
+    renameSync(join(sub, `Note ${String(n)}.md`), join(away, `Note ${String(n)}.md`));
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  renameSync(join(away, "Note 0.md"), join(sub, "Note 0.md"));
+  chmodSync(sub, 0o000);
+  onCleanup(() => chmodSync(sub, 0o700));
+  try {
+    const confirmed = await harness.folder.confirm();
+    expect(confirmed.ok && confirmed.value.deleted).toBe(0);
+    expect(
+      confirmed.ok && confirmed.value.unsure.map((f) => f.path).sort(),
+    ).toEqual(["sub/Note 0.md", "sub/Note 1.md", "sub/Note 2.md"]);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((r) => r.kind === "delete_item"),
+    ).toEqual([]);
+  } finally {
+    chmodSync(sub, 0o700);
+  }
+  // The witness: once the path can be read, the file back in it keeps its
+  // item and the two gone under every name are let go.
+  const rescanned = await harness.folder.scan();
+  expect(rescanned.ok && rescanned.value.paused).toBe(2);
+  const released = await harness.folder.confirm();
+  expect(released.ok && released.value.deleted).toBe(2);
+  const status = await harness.folder.status();
+  expect(
+    status.ok &&
+      status.value.files.find((f) => f.path === "sub/Note 0.md")?.item_id,
+  ).toBe(row(0).item.id);
 });
 
 it.each(["include", "ignore"] as const)(
