@@ -879,11 +879,9 @@ mod tests {
         }
     }
 
-    fn waited(answer: Result<(), &'static str>) -> impl Future<Output = Result<(), &'static str>> {
-        async move {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            answer
-        }
+    async fn waited(answer: Result<(), &'static str>) -> Result<(), &'static str> {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        answer
     }
 
     #[tokio::test]
