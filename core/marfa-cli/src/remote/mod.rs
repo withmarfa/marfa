@@ -1259,7 +1259,7 @@ mod tests {
                 code: "invalid_scope".into(),
                 message: "refused scope".into(),
                 retry_after_seconds: None,
-                request_id: None,
+                request_id: Some("req-renew-400".into()),
                 details: Some(Box::new(
                     serde_json::json!({ "required_scope": "items.read" }),
                 )),
@@ -1269,7 +1269,7 @@ mod tests {
                 code: "rate_limited".into(),
                 message: "slow down".into(),
                 retry_after_seconds: Some(30),
-                request_id: None,
+                request_id: Some("req-renew-429".into()),
                 details: None,
             },
         ];
@@ -1278,6 +1278,16 @@ mod tests {
             let crossed = CliError::from(CoreError::RenewalFailed(Box::new(renewal_error(error))));
             assert_eq!(crossed.envelope(), expected);
         }
+        let ended = CliError::Refused {
+            status: 401,
+            code: "invalid_grant".into(),
+            message: "the refresh token ended".into(),
+            retry_after_seconds: None,
+            request_id: Some("req-renew-401".into()),
+            details: None,
+        };
+        let crossed = CliError::from(CoreError::RenewalFailed(Box::new(renewal_error(ended))));
+        assert_eq!(crossed.request_id().as_deref(), Some("req-renew-401"));
     }
 
     #[test]
