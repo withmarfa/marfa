@@ -1166,43 +1166,29 @@ If a standard stream of the CLI is not a terminal, or `NO_COLOR` is set and not 
 
 ## Telemetry
 
-The command line reports a run in two ways, and each has settings of its own: a trace over OTLP, and an exception report to error tracking. One being unset, or unusable, leaves the other as it was.
+The command line reports a run only as a trace over OTLP, to the collector the standard `OTEL_EXPORTER_OTLP_*` settings name.
 
 ### `cli/cli-trace-endpoint`
 
 When neither `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` nor `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the CLI MUST send no trace.
 
-**Reason:** Some agent hosts remove every `OTEL_` setting from the shells they give an agent, and a trace needs a collector to go to.
+**Reason:** A trace needs a collector to go to, and with nothing set the CLI sends nothing at all.
 
-**Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`.
+**Tests:** `device/cli-telemetry.test.ts › sends no trace when no OTLP endpoint is set, and one when it is`.
 
-### `cli/cli-exception-report`
+### `cli/cli-otlp-only`
 
-When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, and a command ends in a fault, the CLI MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
+When a command ends in a failure, the CLI MUST send a request only to the address that an `OTEL_EXPORTER_OTLP_*` setting names, whatever `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` hold.
 
-**Reason:** An agent host that removes the `OTEL_` settings must not also silence the report of a fault, and an endpoint that cannot be used is the trace's trouble alone. A fault is what the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`; the local store failing for a reason of its own; an answer that cannot be read; or an answer status that the command line should never cause and that no refusal is named for, such as `405` or `415`.
+**Reason:** The CLI has no instance to hold settings, and the OTLP variables are the standard ones. A PostHog host in its environment is not a place it sends to.
 
-**Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`, `› still sends the exception when the OTLP endpoint is not an address`.
-
-### `cli/cli-exception-refusal-quiet`
-
-When a command ends in a refusal by design or in a failure of the server or the environment, the CLI MUST NOT send an exception report.
-
-**Reason:** A refusal by design is an answer that works as intended: a `4xx` answer that names a refusal, a usage error, a missing credential or a missing docs page. A failure of the environment is one a retry can clear: offline, a timeout, a rate limit, a `408` or `425` answer, or full local storage. A `5xx` answer is the server's own failure, which the server reports itself, including a `503` `write_contention` or `stream_capacity_exhausted` and a `507` `insufficient_storage`. None tells error tracking about a fault in the command line or the core, and reporting them would bury the faults.
-
-**Tests:** `device/cli-exception-report.test.ts › sends no exception when the command ends in a refusal by design`.
-
-### `cli/cli-exception-success`
-
-When a command succeeds, the CLI MUST NOT send an exception report.
-
-**Tests:** `device/cli-exception-report.test.ts › sends no exception when the command succeeds`.
+**Tests:** `device/cli-telemetry.test.ts › sends a failed command's report to the OTLP endpoint alone, whatever PostHog settings are set`.
 
 ### `cli/cli-telemetry-disabled`
 
-When `OTEL_SDK_DISABLED` is `true`, the CLI MUST send neither a trace nor an exception report.
+When `OTEL_SDK_DISABLED` is `true`, the CLI MUST send no trace.
 
-**Tests:** `device/cli-exception-report.test.ts › sends nothing when the SDK is disabled, with an endpoint or without`.
+**Tests:** `device/cli-telemetry.test.ts › sends nothing when the SDK is disabled, with an endpoint or without`.
 
 ## The docs site
 

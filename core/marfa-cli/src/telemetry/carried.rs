@@ -9,9 +9,8 @@
 //!
 //! One file holds all of them, and not only the settings that obviously hold
 //! a secret: `OTEL_EXPORTER_OTLP_HEADERS` carries credentials, an endpoint
-//! can carry a user name and password, and PostHog's project token, though
-//! it only lets a client send events, is no more for others to read than the
-//! rest. The agent's own file is readable by others and holds the path alone.
+//! can carry a user name and password. The agent's own file is readable by
+//! others and holds the path alone.
 
 use std::io::Read as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
@@ -25,9 +24,7 @@ pub const FILE_NAME: &str = "folder-watch.env";
 
 /// Every setting the command line reads to report, in the order the file
 /// lists them. A test fails when a source names one that is missing here.
-pub const NAMES: [&str; 13] = [
-    "MARFA_POSTHOG_HOST",
-    "MARFA_POSTHOG_PROJECT_TOKEN",
+pub const NAMES: [&str; 11] = [
     "OTEL_SDK_DISABLED",
     "OTEL_SERVICE_NAME",
     "OTEL_RESOURCE_ATTRIBUTES",
@@ -189,17 +186,17 @@ mod tests {
     fn carries_what_is_set_and_nothing_for_the_rest() {
         let carried = carry(&getter(&[
             ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer a=b"),
-            ("MARFA_POSTHOG_HOST", "https://posthog.invalid"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.invalid"),
             ("OTEL_SERVICE_NAME", "   "),
             ("UNRELATED", "x"),
         ]))
         .expect("carried");
         assert_eq!(
             carried.names,
-            ["MARFA_POSTHOG_HOST", "OTEL_EXPORTER_OTLP_HEADERS"]
+            ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_HEADERS"]
         );
         let content = carried.content.expect("a file");
-        assert!(content.contains("MARFA_POSTHOG_HOST=https://posthog.invalid\n"));
+        assert!(content.contains("OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.invalid\n"));
         assert!(!content.contains("OTEL_SERVICE_NAME"));
         assert!(!content.contains("UNRELATED"));
     }
@@ -263,12 +260,11 @@ mod tests {
     fn names_every_setting_the_command_line_reads() {
         for source in [
             include_str!("settings.rs"),
-            include_str!("posthog.rs"),
             include_str!("otlp.rs"),
             include_str!("../telemetry.rs"),
         ] {
             for quoted in source.split('"').skip(1).step_by(2) {
-                let setting = ["OTEL_", "MARFA_OTEL_", "MARFA_POSTHOG_"]
+                let setting = ["OTEL_", "MARFA_OTEL_"]
                     .iter()
                     .any(|prefix| quoted.starts_with(prefix))
                     && quoted.chars().all(|c| c.is_ascii_uppercase() || c == '_')

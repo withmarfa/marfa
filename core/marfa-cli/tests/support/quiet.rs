@@ -1,6 +1,6 @@
 //! The only way a CLI integration test starts the `marfa` binary. A test
-//! that fails on purpose ends a command in a fault, which reports an
-//! exception wherever `MARFA_POSTHOG_*` points, so no test may inherit a
+//! that fails on purpose ends a command in a failure, which a trace reports
+//! wherever `OTEL_EXPORTER_OTLP_*` points, so no test may inherit a
 //! developer's telemetry settings. `quiet_binary.rs` fails any test file that
 //! starts the binary another way. A test that wants telemetry sets its own
 //! environment on the command this returns. It also keeps the binary from
@@ -10,9 +10,7 @@ use std::process::Command;
 
 /// Whether `name` is one of the settings that route telemetry.
 fn is_telemetry(name: &str) -> bool {
-    name.starts_with("OTEL_")
-        || name.starts_with("MARFA_OTEL_")
-        || name.starts_with("MARFA_POSTHOG_")
+    name.starts_with("OTEL_") || name.starts_with("MARFA_OTEL_")
 }
 
 /// Takes the telemetry settings out of the command's environment, the
