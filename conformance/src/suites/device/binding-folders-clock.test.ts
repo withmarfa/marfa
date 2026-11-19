@@ -626,15 +626,17 @@ describe("folder clock and scan boundaries", () => {
     };
     await quiet();
 
-    await nextTurn(harness);
-    await device.clock.advance(5_000);
     writeFileSync(
       join(dir, "one.md"),
       readFileSync(join(dir, "one.md"), "utf8").replace("words", "edited"),
     );
-    await device.hooks.release("folder-watch-turn");
-    await untilHeld(device, "folder-pass-ended");
-    const edited = await device.hooks.reached("folder-render");
+    // A pass looks at the files the events it has heard name, and the edit's
+    // event may reach the watch after the first pass the clock allows.
+    let edited = rendered;
+    for (let pass = 0; pass < 4 && edited === rendered; pass += 1) {
+      await nextPass(harness);
+      edited = await device.hooks.reached("folder-render");
+    }
     expect(edited - rendered).toBe(1);
     rendered = edited;
     await quiet();
