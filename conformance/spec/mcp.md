@@ -110,21 +110,45 @@ When `marfa_connectors` is called with an `id`, the server MUST answer the conne
 
 **Tests:** `compliance/owner-tasks.test.ts › lists a connector with its runs and makes an endpoint for it, refusing as the API does`, `› pages a connector's runs that do not fit one answer, each page continuing where the last stopped`.
 
+### `mcp/connector-metadata-once`
+
+When `marfa_connectors` is called with an `id` and a `runs_cursor`, the server MUST answer the runs without the connector and its endpoints.
+
+**Reason:** the connector and its endpoints are the same on every page, and repeating them on each page spends the room the runs need.
+
+**Tests:** `compliance/owner-tasks.test.ts › answers a connector's metadata with its first page of runs only, so every page of a connector with many declared types stays within the budget`.
+
+### `mcp/connector-types-fit`
+
+If the types a connector declares do not fit the first answer of `marfa_connectors` for its `id`, then the server MUST answer the declared types that fit, in the order the connector holds them, and the number it left out in `read_only_types_left_out`.
+
+**Reason:** a connector may declare a thousand types, and the answer must stay within what a client hands to the model whole; `GET /connectors/{id}` lists every one.
+
+**Tests:** `compliance/owner-tasks.test.ts › answers a connector's metadata with its first page of runs only, so every page of a connector with many declared types stays within the budget`.
+
 ### `mcp/page-continues`
 
-If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not all fit one answer, then the server MUST answer fewer rows, with a cursor that continues right after the last row the answer holds.
+When `marfa_trash` or `marfa_connectors` answers a page of rows, the server MUST answer a cursor that continues right after the last row the answer holds if and only if another row follows that row.
 
 **Reason:** an agent reads a long list a page at a time, and a page cut short without its cursor loses the rest of the list.
 
 **Tests:** `compliance/owner-tasks.test.ts › pages a connector's runs that do not fit one answer, each page continuing where the last stopped`, `› pages the trash that does not fit one answer, each page continuing where the last stopped`.
 
+### `mcp/page-fits`
+
+If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not all fit one answer, then the server MUST answer fewer rows, except that a single row that alone exceeds the room is answered alone.
+
+**Reason:** the answer stays within what a client hands to the model whole, and a page always holds a row, so the cursor advances past a row too long to share a page.
+
+**Tests:** `compliance/owner-tasks.test.ts › pages a connector's runs that do not fit one answer, each page continuing where the last stopped`, `› pages the trash that does not fit one answer, each page continuing where the last stopped`.
+
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that purges items or empties the trash, revokes an app, ends a sign-in, removes a passkey, deletes a connector, clears a connector's state, retires an inbound endpoint, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that purges chosen items or empties the trash, revokes an app, ends a sign-in, removes a passkey, deletes a connector, clears a connector's state, retires an inbound endpoint, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for purging, emptying, revoking, ending, removing, deleting, clearing, retiring and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance.
+**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for purging, emptying, revoking, ending, removing, deleting, clearing, retiring and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
-**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
+**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
 
 ### `mcp/settings-step-up-withheld`
 

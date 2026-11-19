@@ -19,6 +19,13 @@ import {
   type ToolAnswer,
 } from "../../utils/mcp.js";
 import { tempFolder } from "../../utils/temp-folder.js";
+import {
+  DAY_MS,
+  movedClock,
+  QUIET_SCHEDULE,
+  quiet,
+  writerOf,
+} from "../../utils/moved-clock.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -42,9 +49,11 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 const connections: McpConnection[] = [];
+const ownServers: FreshServer[] = [];
 
 afterAll(async () => {
   await Promise.all(connections.map((connection) => connection.close()));
+  await Promise.all(ownServers.map((own) => own.stop()));
   await server.stop();
   rmSync(backups, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -691,7 +700,31 @@ describe("the owner tasks at /mcp/admin", () => {
       );
       expect(refused.code, name).toBe("app_sign_in_required");
       expect(String(refused.message), name).toContain(name);
+      // Named beside a setting that does not exist, in either order, or beside
+      // a name, the call is refused the same way.
+      for (const settings of [
+        { a_typo: 1, [name]: value },
+        { [name]: value, a_typo: 1 },
+      ]) {
+        const mixed = toolError(
+          await callTool(connection, "marfa_change_settings", {
+            name: "Named beside a step-up setting",
+            settings,
+          }),
+        );
+        expect(mixed.code, `${name} ${JSON.stringify(settings)}`).toBe(
+          "app_sign_in_required",
+        );
+      }
     }
+    // The witness: the same typo without a step-up setting is a refused setting.
+    expect(
+      toolError(
+        await callTool(connection, "marfa_change_settings", {
+          settings: { a_typo: 1 },
+        }),
+      ).code,
+    ).toBe("validation_error");
     const after = await call(key, "GET", "/config/settings");
     expect(after.body).toEqual(before.body);
     // The API refuses a key the same way.
@@ -1197,6 +1230,85 @@ describe("the owner tasks at /mcp/admin", () => {
     expect(seen).toEqual(expected);
   });
 
+  it("answers a connector's metadata with its first page of runs only, so every page of a connector with many declared types stays within the budget", async () => {
+    const owner = await mint({ permissions: ["connectors.manage"] });
+    const declared = Array.from(
+      { length: 900 },
+      (_, n) => `acme.declared.${"t".repeat(38)}${String(n).padStart(4, "0")}`,
+    );
+    const created = await call(owner.key, "POST", "/connectors", {
+      name: "Many declared types",
+      read_only_types: declared,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = created.body.id as string;
+    const count = 6;
+    for (let index = 0; index < count; index += 1) {
+      const reported = await call(owner.key, "POST", `/connectors/${id}/runs`, {
+        outcome: "succeeded",
+        started_at: `2026-01-01T00:0${String(index)}:00.000Z`,
+        finished_at: `2026-01-01T00:0${String(index)}:30.000Z`,
+        summary: `run ${String(index)}`,
+      });
+      expect(reported.status, JSON.stringify(reported.body)).toBe(201);
+    }
+    const whole = await call(owner.key, "GET", `/connectors/${id}`);
+    expect(whole.body.read_only_types).toEqual(declared);
+    const expected = (
+      (await call(owner.key, "GET", `/connectors/${id}/runs?limit=200`)).body
+        .data as { id: string }[]
+    ).map((run) => run.id);
+    expect(expected).toHaveLength(count);
+
+    const connection = await admin(owner.key);
+    const seen: string[] = [];
+    const sizes: number[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const args: Record<string, unknown> = { id, runs_limit: 2 };
+      if (cursor !== null) args.runs_cursor = cursor;
+      const answer = await callTool(connection, "marfa_connectors", args);
+      const page = toolResult(answer) as {
+        connector?: {
+          read_only_types: string[];
+          read_only_types_left_out?: number;
+        };
+        endpoints?: unknown[];
+        runs: { id: string }[];
+        runs_next_cursor: string | null;
+      };
+      sizes.push(answer.text.length);
+      expect(page.runs.length).toBeGreaterThan(0);
+      seen.push(...page.runs.map((run) => run.id));
+      if (pages === 0) {
+        const kept = page.connector?.read_only_types ?? [];
+        expect(page.endpoints).toEqual([]);
+        expect(kept.length).toBeGreaterThan(0);
+        expect(kept).toEqual(declared.slice(0, kept.length));
+        expect(
+          kept.length + (page.connector?.read_only_types_left_out ?? 0),
+        ).toBe(declared.length);
+      } else {
+        expect(page.connector).toBeUndefined();
+        expect(page.endpoints).toBeUndefined();
+      }
+      cursor = page.runs_next_cursor;
+      pages += 1;
+    } while (cursor !== null && pages < count);
+    expect(pages).toBe(3);
+    expect(seen).toEqual(expected);
+    for (const size of sizes) expect(size).toBeLessThanOrEqual(40_000);
+    // The witness: a connector that declares few types answers them all.
+    const other = await mint({ permissions: ["connectors.manage"] });
+    const small = await registered(other.key, "Few declared types");
+    const read = toolResult(
+      await callTool(await admin(other.key), "marfa_connectors", { id: small }),
+    ) as { connector: Record<string, unknown> };
+    expect(read.connector.read_only_types).toEqual([]);
+    expect(read.connector.read_only_types_left_out).toBeUndefined();
+  });
+
   it("lists a file's copies through the files tool, as the API does", async () => {
     const { key } = await mint({
       ...EVERY_TYPE,
@@ -1231,4 +1343,82 @@ describe("the owner tasks at /mcp/admin", () => {
       settled.map((copy) => copy.store_id).sort(),
     );
   });
+
+  it(
+    "runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item",
+    async () => {
+      // A server of its own: the item's age is a clock the file's server keeps.
+      const own = await bootFreshServer(
+        "owner-tasks-retention",
+        QUIET_SCHEDULE,
+      );
+      ownServers.push(own);
+      const connection = await (async () => {
+        const minted = await controlRequest(own.controlSocket, "/keys", {
+          method: "POST",
+          body: {
+            label: "owner tasks retention",
+            source: "retention-maintainer",
+            permissions: ["instance.maintain", "items.purge"],
+            type_permissions: { "core.note": "write" },
+          },
+        });
+        expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+        const opened = await connectMcp(
+          own.apiUrl,
+          (minted.body as unknown as Minted).key,
+          "2026-07-28",
+          "/mcp/admin",
+        );
+        connections.push(opened);
+        return opened;
+      })();
+      await quiet(own, ["trash-purge"]);
+      const writer = writerOf(own);
+      const config = (await writer.getConfig()).data as Record<string, unknown>;
+      expect(
+        (await writer.updateConfig({ ...config, trash_retention_days: 1 }))
+          .status,
+      ).toBe(200);
+      const binned = async (title: string) => {
+        const made = await writer.createItem({
+          type: "core.note",
+          properties: { body: title },
+        });
+        expect(made.ok, JSON.stringify(made.error)).toBe(true);
+        expect((await writer.deleteItem(made.data.item.id)).ok).toBe(true);
+        return made.data.item.id;
+      };
+      const inBin = async (id: string) =>
+        (await writer.getItem(id, "trashed")).status === 200;
+      const old = await binned("trashed before the retention ended");
+      await movedClock(own).advance(2 * DAY_MS);
+      const recent = await binned("trashed inside the retention period");
+      // The witness: both are in the bin, and the tool names no item to purge.
+      expect(await inBin(old)).toBe(true);
+      expect(await inBin(recent)).toBe(true);
+      const { tools } = await connection.client.listTools();
+      expect(
+        tools
+          .filter((tool) => /purge|empty/.test(tool.name))
+          .map((tool) => tool.name),
+      ).toEqual([]);
+      const maintain = tools.find((tool) => tool.name === "marfa_maintain");
+      expect(
+        Object.keys(maintain?.inputSchema.properties ?? {}).sort(),
+      ).toEqual(["action", "id", "name"]);
+
+      const run = toolResult(
+        await callTool(connection, "marfa_maintain", {
+          action: "run_housekeeping",
+          name: "trash-purge",
+        }),
+      ) as { ended: { outcome: string } };
+      expect(run.ended.outcome).toBe("succeeded");
+      // Eligible by the policy: gone for good. Inside the retention: still there.
+      expect((await writer.getItem(old, "any")).status).toBe(404);
+      expect(await inBin(recent)).toBe(true);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

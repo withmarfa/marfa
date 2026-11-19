@@ -17,7 +17,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Run housekeeping or cancel a bulk job",
-        description: "Use to run one housekeeping job now, by the name marfa_health lists, or to cancel a bulk job that is still running, by its id. Updating the server and confirming the clock are not offered here.",
+        description: "Use to run one housekeeping job now, by the name marfa_health lists, or to cancel a bulk job that is still running, by its id. Running the trash's job removes the trashed items the owner's retention policy makes eligible, and no other. Updating the server and confirming the clock are not offered here.",
         input: json!({
             "type": "object",
             "properties": {
