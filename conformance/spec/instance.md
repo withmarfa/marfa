@@ -3386,11 +3386,11 @@ When a write to `/config` sets `error_webhook_url`, the server MUST post its not
 
 The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `error_webhook_url`, `posthog_host` and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
 
-### `instance/private-addresses-local`
+### `instance/private-addresses-allowed`
 
 When a write sets `allow_private_addresses` to `true` through `/config`, the server MUST send to destinations at addresses that are not public from then on, without a restart.
 
-**Tests:** `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which an app whose owner signed in just now changes`, `› takes an object store on a private address once the private local process turns the switch on, and not before`.
+**Tests:** `compliance/destination-addresses.test.ts › sends no heartbeat to a name that leads to a private address until the switch is on`, `› takes an object store on a private address once a write to /config turns the switch on, and not before`.
 
 ### `instance/destination-private-refused`
 
@@ -3532,7 +3532,7 @@ Where `allow_private_addresses` is `false` and the server has never attached an 
 
 **Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`). The attempt runs after a write to `/config` has been answered, so until it finishes `GET /health` can still answer for the destination the server had before. A store already attached there under a recorded id keeps that attachment.
 
-**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
+**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once a write to /config turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
 
 ## Start-only settings
 
