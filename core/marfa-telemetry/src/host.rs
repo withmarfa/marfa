@@ -19,25 +19,12 @@ pub fn may_use_proxy(target: &str) -> bool {
     !Url::parse(target).is_ok_and(|url| is_loopback(&url))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Capture {
-    One,
-    /// PostHog capture v1, which takes a batch and the token in `Authorization`.
-    Events,
-}
-
-impl Capture {
-    fn path(self) -> &'static [&'static str] {
-        match self {
-            Capture::One => &["i", "v0", "e", ""],
-            Capture::Events => &["i", "v1", "analytics", "events"],
-        }
-    }
-}
+/// PostHog capture v1, which takes a batch and the token in `Authorization`.
+const CAPTURE_PATH: [&str; 4] = ["i", "v1", "analytics", "events"];
 
 /// `https` only, as the token travels with every post; `http` only to this machine.
 /// `None` for any other host, or one with a user name or password.
-pub fn capture_url(host: &str, capture: Capture) -> Option<String> {
+pub fn capture_url(host: &str) -> Option<String> {
     let mut url = Url::parse(host).ok()?;
     let private = match url.scheme() {
         "https" => true,
@@ -57,7 +44,7 @@ pub fn capture_url(host: &str, capture: Capture) -> Option<String> {
     url.path_segments_mut()
         .ok()?
         .pop_if_empty()
-        .extend(capture.path());
+        .extend(CAPTURE_PATH);
     Some(url.to_string())
 }
 
@@ -104,26 +91,7 @@ mod tests {
 
     #[test]
     fn events_go_to_the_capture_path_under_the_host_as_written() {
-        let one = |host| capture_url(host, Capture::One).unwrap();
-        assert_eq!(
-            one("https://eu.i.posthog.com"),
-            "https://eu.i.posthog.com/i/v0/e/"
-        );
-        assert_eq!(
-            one("https://eu.i.posthog.com/"),
-            "https://eu.i.posthog.com/i/v0/e/"
-        );
-        assert_eq!(
-            one("https://proxy.example/ingest/?key=x#top"),
-            "https://proxy.example/ingest/i/v0/e/"
-        );
-        assert_eq!(
-            one("http://127.0.0.1:8123"),
-            "http://127.0.0.1:8123/i/v0/e/"
-        );
-        assert_eq!(one("http://[::1]:8123"), "http://[::1]:8123/i/v0/e/");
-        assert_eq!(one("http://localhost"), "http://localhost/i/v0/e/");
-        let events = |host| capture_url(host, Capture::Events).unwrap();
+        let events = |host| capture_url(host).unwrap();
         assert_eq!(
             events("https://proxy.example/ingest/?key=x#top"),
             "https://proxy.example/ingest/i/v1/analytics/events"
@@ -131,6 +99,18 @@ mod tests {
         assert_eq!(
             events("https://eu.i.posthog.com"),
             "https://eu.i.posthog.com/i/v1/analytics/events"
+        );
+        assert_eq!(
+            events("http://127.0.0.1:8123/"),
+            "http://127.0.0.1:8123/i/v1/analytics/events"
+        );
+        assert_eq!(
+            events("http://[::1]:8123"),
+            "http://[::1]:8123/i/v1/analytics/events"
+        );
+        assert_eq!(
+            events("http://localhost"),
+            "http://localhost/i/v1/analytics/events"
         );
     }
 
@@ -147,9 +127,7 @@ mod tests {
             "https://user@us.i.posthog.com",
             "https://",
         ] {
-            for capture in [Capture::One, Capture::Events] {
-                assert_eq!(capture_url(host, capture), None, "{host}");
-            }
+            assert_eq!(capture_url(host), None, "{host}");
         }
     }
 }

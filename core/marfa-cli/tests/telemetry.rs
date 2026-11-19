@@ -1,5 +1,5 @@
-//! The `marfa` binary as a process, reporting to a collector and to a stub
-//! PostHog that this file runs. No keychain is read: every command is given
+//! The `marfa` binary as a process, reporting to a collector that this file
+//! runs. No keychain is read: every command is given
 //! both a server and a key, or needs neither.
 
 #[allow(dead_code)]
@@ -24,10 +24,6 @@ use serde_json::Value;
 /// collector.
 const SECRET: &str = "s3cr3t-planted-value";
 
-/// The project token of the stub PostHog. It belongs in the one field PostHog
-/// reads it from, and nowhere else.
-const TOKEN: &str = "phc_stub_project_token";
-
 #[derive(Clone, Copy)]
 enum Reply {
     Answer(u16),
@@ -35,12 +31,8 @@ enum Reply {
     Silence,
     Redirect,
     /// A Marfa server answering a status no request of the CLI's should meet,
-    /// a 405 on its own contract, saying this: a fault.
+    /// a 405 on its own contract, saying this.
     Fault(&'static str),
-    /// A Marfa server refusing as it should: this status on its own contract.
-    Refusal(u16),
-    /// A Marfa server answering this status and code on its own contract.
-    Coded(u16, &'static str),
 }
 
 /// What a Marfa server answers with `status`: its contract and an error.
@@ -94,8 +86,6 @@ impl Collector {
                             )
                         }
                         Reply::Fault(message) => marfa_answer(405, "method_not_allowed", message),
-                        Reply::Refusal(status) => marfa_answer(status, "refused", "no"),
-                        Reply::Coded(status, code) => marfa_answer(status, code, "no"),
                         Reply::Redirect => format!(
                             "HTTP/1.1 307 X\r\nLocation: {redirect}/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                         ),
@@ -136,15 +126,6 @@ impl Collector {
                     .flat_map(|scope| scope["spans"].as_array().unwrap().clone())
                     .collect::<Vec<_>>()
             })
-            .collect()
-    }
-
-    /// The `$exception` events posted to the capture path.
-    fn events(&self) -> Vec<Value> {
-        self.received()
-            .iter()
-            .filter(|post| post.path() == "/i/v0/e/")
-            .map(|post| serde_json::from_str(&post.body).unwrap())
             .collect()
     }
 
@@ -1007,102 +988,15 @@ fn a_first_interrupt_ends_a_hydration_waiting_on_the_server_and_it_is_not_a_fail
     );
 }
 
-// ---- Exceptions to PostHog ----
-
-fn exceptions_to<'a>(collector: &'a Collector, posthog: &'a Collector) -> Vec<(&'a str, &'a str)> {
-    report_to(
-        collector,
-        &[
-            ("MARFA_POSTHOG_HOST", posthog.url.as_str()),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-        ],
-    )
-}
-
-fn same_output(ran: &Ran, plain: &Ran, what: &str) {
-    assert_eq!(
-        (ran.code, &ran.stdout, &ran.stderr),
-        (plain.code, &plain.stdout, &plain.stderr),
-        "{what}"
-    );
-}
-
-const HOST_ALONE: &str = "marfa: MARFA_POSTHOG_HOST is set without MARFA_POSTHOG_PROJECT_TOKEN, so this run sends no exception report\n";
-const TOKEN_ALONE: &str = "marfa: MARFA_POSTHOG_PROJECT_TOKEN is set without MARFA_POSTHOG_HOST, so this run sends no exception report\n";
-const NOT_HTTPS: &str = "marfa: MARFA_POSTHOG_HOST is not an https address, or an http address on this machine, without a user name or password, so this run sends no exception report\n";
+// ---- A failed run's trace ----
 
 #[test]
-fn a_failing_command_sends_one_exception_with_its_codes_a_fixed_sentence_and_no_person() {
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let env = exceptions_to(&collector, &posthog);
-    let ran = run(&env, &FAULT);
-    assert_eq!(ran.code, 1, "{}", ran.stderr);
-
-    let posts = posthog.received();
-    assert_eq!(posts.len(), 1, "one failed run is one post");
-    let post = &posts[0];
-    assert_eq!(post.method(), "POST");
-    assert_eq!(post.path(), "/i/v0/e/");
-    assert_eq!(post.header("content-type"), Some("application/json"));
-    let events = posthog.events();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event["event"], "$exception");
-    assert_eq!(event["api_key"], TOKEN);
-    let id = event["distinct_id"].as_str().unwrap();
-    assert_eq!(id.len(), 32);
-    let properties = &event["properties"];
-    assert_eq!(properties["$process_person_profile"], false);
-    assert_eq!(properties["$geoip_disable"], true);
-    assert_eq!(properties["command"], "items get");
-    assert_eq!(properties["error_code"], "server");
-    assert_eq!(properties["exit_code"], 1);
-    assert_eq!(properties["service.name"], "marfa-cli");
-    assert_eq!(properties["$exception_level"], "error");
-    let exception = &properties["$exception_list"][0];
-    assert_eq!(exception["type"], "server");
-    assert_eq!(
-        exception["value"],
-        "the server answered with a status this build does not expect"
-    );
-    assert_eq!(exception["mechanism"]["handled"], true);
-    assert!(
-        exception.get("stacktrace").is_none(),
-        "a CliError has no frames to report"
-    );
-
-    // The token is in the field PostHog reads it from and nowhere else.
-    assert_eq!(post.body.matches(TOKEN).count(), 1, "{}", post.body);
-    assert!(post.headers.iter().all(|(_, value)| !value.contains(TOKEN)));
-    assert!(!post.line.contains(TOKEN));
-    // The trace went where it always did, and carried none of this.
-    assert_eq!(collector.root()["name"], "marfa items get");
-    assert!(
-        collector
-            .received()
-            .iter()
-            .all(|post| !post.body.contains(TOKEN) && post.path() == "/v1/traces")
-    );
-
-    // A process of its own has an id of its own, and the service name is the trace's.
-    let mut named = exceptions_to(&collector, &posthog);
-    named.push(("OTEL_SERVICE_NAME", "my-service"));
-    run(&named, &FAULT);
-    let events = posthog.events();
-    assert_eq!(events.len(), 2);
-    assert_ne!(events[1]["distinct_id"].as_str().unwrap(), id);
-    assert_eq!(events[1]["properties"]["service.name"], "my-service");
-}
-
-#[test]
-fn resource_attributes_the_operator_names_reach_the_trace_and_the_exception() {
+fn resource_attributes_the_operator_names_reach_the_trace() {
     let named = "deployment.environment=rehearsal,team=a%20b,service.version=9.9.9";
 
     // The witness: with no attributes named, the run names none of these.
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    run(&exceptions_to(&collector, &posthog), &FAULT);
+    run(&report_to(&collector, &[]), &FAULT);
     let plain: Value = serde_json::from_str(&collector.received()[0].body).unwrap();
     let plain = &plain["resourceSpans"][0]["resource"];
     assert!(attribute(plain, "deployment.environment").is_none());
@@ -1111,8 +1005,7 @@ fn resource_attributes_the_operator_names_reach_the_trace_and_the_exception() {
     assert_eq!(word(plain, "service.name"), "marfa-cli");
 
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let mut env = exceptions_to(&collector, &posthog);
+    let mut env = report_to(&collector, &[]);
     env.push(("OTEL_RESOURCE_ATTRIBUTES", named));
     run(&env, &FAULT);
 
@@ -1122,14 +1015,6 @@ fn resource_attributes_the_operator_names_reach_the_trace_and_the_exception() {
     assert_eq!(word(resource, "team"), "a b");
     assert_eq!(word(resource, "service.version"), "9.9.9");
     assert_eq!(word(resource, "service.name"), "marfa-cli");
-
-    let events = posthog.events();
-    assert_eq!(events.len(), 1);
-    let properties = &events[0]["properties"];
-    assert_eq!(properties["deployment.environment"], "rehearsal");
-    assert_eq!(properties["team"], "a b");
-    assert_eq!(properties["service.version"], "9.9.9");
-    assert_eq!(properties["service.name"], "marfa-cli");
 }
 
 #[test]
@@ -1153,613 +1038,36 @@ fn a_resource_attribute_list_with_a_bad_pair_names_nothing_and_the_run_is_unchan
 }
 
 #[test]
-fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posthog() {
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let store = store();
-    // A server whose answer is a fault, and says the secret in its message.
-    let broken = Collector::open(Reply::Fault(SECRET));
-    let hostport = broken.url.trim_start_matches("http://");
-    let address = format!("http://user:{SECRET}@{hostport}/path?token={SECRET}");
-    let key = format!("marfa_k1_{SECRET}");
-    let held = format!("item-{SECRET}");
-    let folder = scratch("folder", SECRET);
-    let registry = scratch("registry", "folders.json");
-    let mut env = exceptions_to(&collector, &posthog);
-    env.push(("MARFA_API_KEY", key.as_str()));
-    env.push(("MARFA_API_URL", address.as_str()));
-    env.push(("MARFA_FOLDER_REGISTRY", registry.to_str().unwrap()));
-
-    // A copy that names the id it refused, a request that goes out and fails
-    // with the address and the content in it, and a folder that names its path.
-    let refused = run(
-        &env,
-        &[
-            "--json",
-            "--key",
-            &key,
-            "device",
-            "--db",
-            store.to_str().unwrap(),
-            "items",
-            "get",
-            &held,
-        ],
-    );
-    assert_eq!(refused.code, 1, "{}", refused.stderr);
-    let create = run(
-        &env,
-        &[
-            "--json",
-            "--key",
-            &key,
-            "items",
-            "create",
-            "--type",
-            "core.note",
-            "--prop",
-            &format!("title={SECRET}"),
-            "--properties",
-            &format!("{{\"body\":\"{SECRET}\"}}"),
-            "--tag",
-            SECRET,
-        ],
-    );
-    assert_eq!(create.code, 1, "{}", create.stderr);
-    let watch = run(&env, &["folders", "watch", folder.to_str().unwrap()]);
-    assert_eq!(watch.code, 1, "{}", watch.stderr);
-    // A panic whose message carries content.
-    let message = format!("boom {SECRET}");
-    let mut panicking = env.clone();
-    panicking.push(("MARFA_TEST_PANIC", message.as_str()));
-    let panicked = run(&panicking, &["operations"]);
-    assert_eq!(panicked.code, 101, "{}", panicked.stderr);
-    assert!(panicked.stderr.contains(SECRET), "{}", panicked.stderr);
-    // The witness: the secret is in what each command says on stderr, so an
-    // exception carrying the message would have carried it.
-    assert!(refused.stderr.contains(SECRET), "{}", refused.stderr);
-    assert!(watch.stderr.contains(SECRET), "{}", watch.stderr);
-
-    let posts = posthog.received();
-    // The refusals said the secret and reported nothing: only the fault and the
-    // panic did.
-    assert_eq!(posts.len(), 2, "each fault reported");
-    let events = posthog.events();
-    let commands: Vec<_> = events
-        .iter()
-        .map(|event| event["properties"]["command"].as_str().unwrap())
-        .collect();
-    assert_eq!(commands, ["items create", "operations"]);
-    let codes: Vec<_> = events
-        .iter()
-        .map(|event| event["properties"]["exit_code"].as_i64().unwrap())
-        .collect();
-    assert_eq!(codes, [1, 101]);
-    for post in &posts {
-        for planted in [
-            SECRET,
-            "user:",
-            hostport,
-            store.to_str().unwrap(),
-            folder.to_str().unwrap(),
-            "/path?",
-            "marfa_k1_",
-            "core.note",
-            "main.rs",
-            "panicked",
-        ] {
-            assert!(
-                !post.body.contains(planted) && !post.line.contains(planted),
-                "{planted} reached PostHog: {}",
-                post.body
-            );
-        }
-        assert!(
-            post.headers
-                .iter()
-                .all(|(_, value)| !value.contains(SECRET))
-        );
-    }
-    // Nor did the token reach the collector, or the key reach either.
-    assert!(
-        collector
-            .received()
-            .iter()
-            .all(|post| !post.body.contains(TOKEN) && !post.body.contains(SECRET))
-    );
-}
-
-#[test]
-fn without_both_posthog_settings_or_with_the_sdk_disabled_no_exception_is_sent_and_the_output_is_the_same()
- {
+fn posthog_settings_in_the_environment_send_nothing() {
     let args = FAULT;
     let plain = run(&[], &args);
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let host = posthog.url.as_str();
-
-    for (what, env) in [
-        (
-            "no token",
-            report_to(&collector, &[("MARFA_POSTHOG_HOST", host)]),
-        ),
-        (
-            "no host",
-            report_to(&collector, &[("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN)]),
-        ),
-        (
-            "a blank token",
-            report_to(
-                &collector,
-                &[
-                    ("MARFA_POSTHOG_HOST", host),
-                    ("MARFA_POSTHOG_PROJECT_TOKEN", "  "),
-                ],
-            ),
-        ),
-        (
-            "the sdk disabled",
-            report_to(
-                &collector,
-                &[
-                    ("MARFA_POSTHOG_HOST", host),
-                    ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-                    ("OTEL_SDK_DISABLED", "true"),
-                ],
-            ),
-        ),
-        (
-            "the sdk disabled and no endpoint",
-            vec![
-                ("MARFA_POSTHOG_HOST", host),
-                ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-                ("OTEL_SDK_DISABLED", "true"),
-            ],
-        ),
-    ] {
-        let ran = run(&env, &args);
-        same_output(&ran, &plain, what);
-    }
-    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-
-    // The witness: both PostHog settings, the same command, and it is sent.
-    let ran = run(&exceptions_to(&collector, &posthog), &args);
-    same_output(&ran, &plain, "both set");
-    assert_eq!(posthog.events().len(), 1);
-}
-
-fn only_posthog<'a>(
-    posthog: &'a Collector,
-    extra: &[(&'a str, &'a str)],
-) -> Vec<(&'a str, &'a str)> {
-    let mut env = vec![
-        ("MARFA_POSTHOG_HOST", posthog.url.as_str()),
-        ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-    ];
-    env.extend_from_slice(extra);
-    env
-}
-
-#[test]
-fn a_failing_command_sends_its_exception_whatever_the_otlp_settings_are() {
-    let store = store();
-    let args = FAULT;
-    let plain = run(&[], &args);
-    let posthog = Collector::open(Reply::Answer(200));
-
-    // No OTLP setting at all, as in a shell an agent host has cleared.
-    let ran = run(&only_posthog(&posthog, &[]), &args);
-    same_output(&ran, &plain, "no endpoint");
-    let events = posthog.events();
-    assert_eq!(events.len(), 1, "one failed run is one post");
-    assert_eq!(posthog.received()[0].path(), "/i/v0/e/");
-    let properties = &events[0]["properties"];
-    assert_eq!(events[0]["event"], "$exception");
-    assert_eq!(properties["error_code"], "server");
-    assert_eq!(properties["service.name"], "marfa-cli");
-
-    // The identity and the time budget are read without an endpoint too.
+    let receiver = Collector::open(Reply::Answer(200));
     let ran = run(
-        &only_posthog(
-            &posthog,
-            &[
-                ("OTEL_SERVICE_NAME", "my-service"),
-                (
-                    "OTEL_RESOURCE_ATTRIBUTES",
-                    "deployment.environment=rehearsal",
-                ),
-                ("OTEL_EXPORTER_OTLP_TIMEOUT", "1500"),
-            ],
-        ),
+        &[
+            ("MARFA_POSTHOG_HOST", receiver.url.as_str()),
+            ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_unused"),
+        ],
         &args,
     );
-    same_output(&ran, &plain, "named without an endpoint");
-    let events = posthog.events();
-    assert_eq!(events.len(), 2);
-    let properties = &events[1]["properties"];
-    assert_eq!(properties["service.name"], "my-service");
-    assert_eq!(properties["deployment.environment"], "rehearsal");
-    assert_eq!(posthog.received().len(), 2);
-
-    // A run that did not fail sends nothing, with the same settings.
-    let done = run(
-        &only_posthog(&posthog, &[]),
-        &[
-            "--json",
-            "device",
-            "--db",
-            store.to_str().unwrap(),
-            "search",
-            "x",
-        ],
-    );
-    assert_eq!(done.code, 0, "{}", done.stderr);
-    assert_eq!(posthog.received().len(), 2);
-}
-
-#[test]
-fn an_endpoint_that_cannot_be_used_turns_off_the_traces_and_not_the_exception() {
-    let words = ["items", "get", "an-id"];
-    let plain = run(&[], &words);
-    let posthog = Collector::open(Reply::Answer(200));
-    let bad = format!("not a url {SECRET}");
-
-    let ran = run(
-        &only_posthog(&posthog, &[("OTEL_EXPORTER_OTLP_ENDPOINT", bad.as_str())]),
-        &words,
-    );
-    assert_eq!(ran.code, plain.code);
-    assert_eq!(ran.stdout, plain.stdout);
     assert_eq!(
-        ran.stderr,
-        format!(
-            "marfa: OTEL_EXPORTER_OTLP_ENDPOINT is not an http or https address, so this run sends no traces\n{}",
-            plain.stderr
-        )
+        (ran.code, &ran.stdout, &ran.stderr),
+        (plain.code, &plain.stdout, &plain.stderr)
     );
-    assert!(!ran.stderr.contains(SECRET));
-    assert_eq!(posthog.events().len(), 1);
-
-    // The other way round: a host that cannot be used leaves the trace alone.
-    let collector = Collector::open(Reply::Answer(200));
-    let env = report_to(
-        &collector,
-        &[
-            ("MARFA_POSTHOG_HOST", "ftp://posthog.example"),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-        ],
-    );
-    run(&env, &words);
-    assert_eq!(collector.received().len(), 1);
-    assert_eq!(posthog.events().len(), 1);
+    assert_eq!(receiver.connections.load(Ordering::SeqCst), 0);
+    // The witness: a receiver named as a trace endpoint is reached by the same run.
+    run(&report_to(&receiver, &[]), &args);
+    assert_eq!(receiver.root()["name"], "marfa items get");
 }
 
 #[test]
-fn a_host_without_a_token_or_a_token_without_a_host_is_said_once_without_its_value() {
+fn a_panic_ends_the_trace_as_failed_with_the_exit_status_and_message_unchanged() {
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let words = ["items", "get", "an-id"];
-    let plain = run(&[], &words);
-    let plain_json = run(&[], &FAULT);
-    let value = format!("{}/{SECRET}", posthog.url);
-
-    for (said, extra) in [
-        (HOST_ALONE, ("MARFA_POSTHOG_HOST", value.as_str())),
-        (TOKEN_ALONE, ("MARFA_POSTHOG_PROJECT_TOKEN", SECRET)),
-    ] {
-        let env = report_to(&collector, &[extra]);
-        let ran = run(&env, &words);
-        assert_eq!((ran.code, &ran.stdout), (plain.code, &plain.stdout));
-        assert_eq!(ran.stderr, format!("{said}{}", plain.stderr));
-        assert!(!ran.stderr.contains(SECRET));
-        // Under --json the line is not printed.
-        let json = run(&env, &FAULT);
-        same_output(&json, &plain_json, "--json");
-    }
-    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-    // The trace is not touched by it: one for each of the four runs.
-    assert_eq!(collector.received().len(), 4);
-}
-
-#[test]
-fn a_host_that_is_not_https_and_not_this_machine_stays_off_and_is_said_once() {
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let words = ["items", "get", "an-id"];
-    let plain = run(&[], &words);
-    let plain_json = run(&[], &FAULT);
-    // The same listener, reached by a name that is not loopback: a gate that
-    // let it through would reach the stub.
-    let elsewhere = posthog.url.replace("127.0.0.1", "0.0.0.0");
-    assert_ne!(elsewhere, posthog.url);
-    let secret_host = format!("{elsewhere}/{SECRET}?key={SECRET}");
-
-    for host in [
-        elsewhere.as_str(),
-        secret_host.as_str(),
-        "ftp://posthog.example",
-        "posthog.example",
-    ] {
-        let env = report_to(
-            &collector,
-            &[
-                ("MARFA_POSTHOG_HOST", host),
-                ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-            ],
-        );
-        let ran = run(&env, &words);
-        assert_eq!(
-            (ran.code, &ran.stdout),
-            (plain.code, &plain.stdout),
-            "{host}"
-        );
-        assert_eq!(ran.stderr, format!("{NOT_HTTPS}{}", plain.stderr), "{host}");
-        assert!(!ran.stderr.contains(SECRET));
-        same_output(&run(&env, &FAULT), &plain_json, host);
-    }
-    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-
-    // The witness: this machine, over plain http, is reached.
-    let ran = run(&exceptions_to(&collector, &posthog), &words);
-    assert_eq!(ran.stderr, plain.stderr);
-    assert_eq!(posthog.events().len(), 1);
-}
-
-#[test]
-fn a_posthog_that_is_down_silent_or_refusing_changes_neither_the_exit_nor_the_output() {
-    let args = FAULT;
-    let plain = run(&[], &args);
-    let collector = Collector::open(Reply::Answer(200));
-
-    for dead in [closed_port(), "http://127.0.0.1:9".to_string()] {
-        let env = report_to(
-            &collector,
-            &[
-                ("MARFA_POSTHOG_HOST", dead.as_str()),
-                ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
-            ],
-        );
-        let ran = run(&env, &args);
-        same_output(&ran, &plain, &dead);
-        assert!(ran.took < Duration::from_secs(3), "{:?}", ran.took);
-    }
-
-    for reply in [
-        Reply::Answer(401),
-        Reply::Answer(404),
-        Reply::Answer(500),
-        Reply::Answer(503),
-        Reply::Redirect,
-    ] {
-        let posthog = Collector::open(reply);
-        let ran = run(&exceptions_to(&collector, &posthog), &args);
-        same_output(&ran, &plain, "a refusal");
-        assert!(ran.took < Duration::from_secs(3), "{:?}", ran.took);
-        // The witness: it was sent, once, and a redirect was not followed
-        // with the token in its body.
-        assert_eq!(posthog.received().len(), 1);
-        assert_eq!(posthog.received()[0].path(), "/i/v0/e/");
-    }
-
-    let silent = Collector::open(Reply::Silence);
-    let mut env = exceptions_to(&collector, &silent);
-    env.push(("OTEL_EXPORTER_OTLP_TIMEOUT", "600"));
-    let short = run(&env, &args);
-    same_output(&short, &plain, "a silent PostHog");
-    // The witness that it waited: the run reached the listener, and took the timeout.
-    assert_eq!(silent.received().len(), 1);
-    assert!(short.took >= Duration::from_millis(550), "{:?}", short.took);
-    assert!(short.took < Duration::from_secs(3), "{:?}", short.took);
-
-    // With no setting the wait is a couple of seconds, as the trace's is.
-    let default = run(&exceptions_to(&collector, &silent), &args);
-    same_output(&default, &plain, "a silent PostHog, by default");
-    assert!(
-        default.took >= Duration::from_millis(1900),
-        "{:?}",
-        default.took
-    );
-    assert!(default.took < Duration::from_secs(15), "{:?}", default.took);
-}
-
-#[test]
-fn a_silent_collector_and_a_silent_posthog_are_waited_for_together() {
-    let args = FAULT;
-    let plain = run(&[], &args);
-    let collector = Collector::open(Reply::Silence);
-    let posthog = Collector::open(Reply::Silence);
-    let mut env = exceptions_to(&collector, &posthog);
-    env.push(("OTEL_EXPORTER_OTLP_TIMEOUT", "1000"));
-    let ran = run(&env, &args);
-    same_output(&ran, &plain, "both silent");
-    assert_eq!(collector.received().len(), 1);
-    assert_eq!(posthog.received().len(), 1);
-    assert!(ran.took >= Duration::from_millis(950), "{:?}", ran.took);
-    assert!(
-        ran.took < Duration::from_millis(1800),
-        "one after the other would take two: {:?}",
-        ran.took
-    );
-}
-
-#[test]
-fn a_refusal_by_design_sends_nothing_and_a_fault_sends_one() {
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let env = exceptions_to(&collector, &posthog);
-    let ask = ["--json", "items", "get", "an-id"];
-
-    // The server refuses as it should: not found, in conflict, invalid, not
-    // permitted, a credential it does not accept, too large, rate limited.
-    for (status, exit) in [
-        (404, 1),
-        (409, 1),
-        (422, 1),
-        (403, 1),
-        (401, 5),
-        (413, 1),
-        (429, 3),
-    ] {
-        let server = Collector::open(Reply::Refusal(status));
-        let mut refused = env.clone();
-        refused.push(("MARFA_API_URL", server.url.as_str()));
-        let ran = run(&refused, &ask);
-        assert_eq!(ran.code, exit, "{status}: {}", ran.stderr);
-        assert!(
-            !server.received().is_empty(),
-            "{status}: the server was asked"
-        );
-    }
-
-    // The CLI refuses a command line, a missing docs page and a missing
-    // credential itself.
-    let usage = run(&env, &["--socket", "/nowhere/control.sock", "login"]);
-    assert_eq!(usage.code, 2, "{}", usage.stderr);
-    let docs = Collector::open(Reply::Answer(404));
-    let mut page = env.clone();
-    page.push(("MARFA_DOCS_URL", docs.url.as_str()));
-    let missing = run(&page, &["--json", "docs", "no-such-page"]);
-    assert_eq!(missing.code, 1, "{}", missing.stderr);
-    assert!(
-        missing.stderr.contains("docs_page_not_found"),
-        "{}",
-        missing.stderr
-    );
-    assert!(!docs.received().is_empty(), "the docs site was asked");
-    let mut keyless = env.clone();
-    keyless.push(("MARFA_API_KEY", ""));
-    let nothing = run(&keyless, &["--json", "items", "get", "an-id"]);
-    assert_eq!(nothing.code, 5, "{}", nothing.stderr);
-
-    // Nor does the environment failing: the server's address is nobody's.
-    let down = closed_port();
-    let mut offline = env.clone();
-    offline.push(("MARFA_API_URL", down.as_str()));
-    let ran = run(&offline, &ask);
-    assert_eq!(ran.code, 3, "{}", ran.stderr);
-    assert!(ran.stderr.contains("\"network\""), "{}", ran.stderr);
-
-    // Nor does the server failing, which it reports itself, nor an answer
-    // that asks for the request again.
-    for (status, code) in [
-        (500, "internal"),
-        (503, "write_contention"),
-        (503, "stream_capacity_exhausted"),
-        (507, "insufficient_storage"),
-        (425, "too_early"),
-        (408, "request_timeout"),
-    ] {
-        let server = Collector::open(Reply::Coded(status, code));
-        let mut failing = env.clone();
-        failing.push(("MARFA_API_URL", server.url.as_str()));
-        let ran = run(&failing, &ask);
-        assert_eq!(ran.code, 3, "{status} {code}: {}", ran.stderr);
-        assert!(
-            !server.received().is_empty(),
-            "{status}: the server was asked"
-        );
-    }
-
-    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-    // The witness: the same settings send for an answer the CLI should never
-    // meet.
-    assert_eq!(run(&env, &ask).code, 1);
-    assert_eq!(posthog.events().len(), 1);
-    let sent = &posthog.events()[0]["properties"];
-    assert_eq!(sent["error_code"], "server");
-}
-
-#[test]
-fn a_run_that_did_not_fail_sends_nothing() {
-    let store = store();
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let env = exceptions_to(&collector, &posthog);
-
-    let done = run(
-        &env,
-        &[
-            "--json",
-            "device",
-            "--db",
-            store.to_str().unwrap(),
-            "search",
-            "x",
-        ],
-    );
-    assert_eq!(done.code, 0, "{}", done.stderr);
-
-    // Stopped by Ctrl-C: how a command that runs until it is stopped ends.
-    let stopped = events_until_interrupted(&env, || {});
-    assert_eq!(stopped.code(), Some(130));
-
-    // Stopped by Ctrl-C while it waited on the server: a canceled hydration.
-    let copy = scratch("hydrate", "copy.sqlite");
-    let (status, _, stderr) = interrupted_while_the_server_is_silent(
-        &[
-            "--json",
-            "device",
-            "--db",
-            copy.to_str().unwrap(),
-            "hydrate",
-            "--type",
-            "core.note",
-            "--tier",
-            "library",
-        ],
-        &env,
-    );
-    assert_eq!(status.code(), Some(3), "{stderr}");
-    assert!(stderr.contains("\"canceled\""), "{stderr}");
-
-    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-    // The witness: the same settings send for a run that failed.
-    assert_eq!(run(&env, &FAULT).code, 1);
-    assert_eq!(posthog.events().len(), 1);
-}
-
-#[test]
-fn an_interrupted_run_sends_nothing_to_a_posthog_that_would_never_answer() {
-    let silent = Collector::open(Reply::Silence);
-    let collector = Collector::open(Reply::Answer(200));
-    let status = events_until_interrupted(&exceptions_to(&collector, &silent), || {});
-    assert_eq!(status.code(), Some(130));
-    assert_eq!(silent.connections.load(Ordering::SeqCst), 0);
-    assert_eq!(collector.root()["name"], "marfa events");
-}
-
-#[test]
-fn the_sampler_decides_the_trace_and_not_the_exception() {
-    let args = FAULT;
-    let plain = run(&[], &args);
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    for sampler in [
-        vec![("OTEL_TRACES_SAMPLER", "always_off")],
-        vec![
-            ("OTEL_TRACES_SAMPLER", "traceidratio"),
-            ("OTEL_TRACES_SAMPLER_ARG", "0"),
-        ],
-    ] {
-        let mut env = exceptions_to(&collector, &posthog);
-        env.extend(sampler);
-        let ran = run(&env, &args);
-        same_output(&ran, &plain, "sampled out");
-    }
-    assert_eq!(collector.connections.load(Ordering::SeqCst), 0, "no trace");
-    assert_eq!(posthog.events().len(), 2, "an exception for each run");
-}
-
-#[test]
-fn a_panic_sends_one_event_of_a_fixed_type_and_the_exit_and_message_are_unchanged() {
-    let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
     let message = format!("boom {SECRET}");
     let plain = run(&[("MARFA_TEST_PANIC", message.as_str())], &["operations"]);
     assert_eq!(plain.code, 101, "{}", plain.stderr);
     assert!(plain.stderr.contains(&message), "{}", plain.stderr);
 
-    let mut env = exceptions_to(&collector, &posthog);
+    let mut env = report_to(&collector, &[]);
     env.push(("MARFA_TEST_PANIC", message.as_str()));
     let ran = run(&env, &["operations"]);
     // The thread's number is the one thing that differs between two runs.
@@ -1772,18 +1080,6 @@ fn a_panic_sends_one_event_of_a_fixed_type_and_the_exit_and_message_are_unchange
     assert_eq!(ran.stdout, plain.stdout);
     assert_eq!(unnumbered(&ran.stderr), unnumbered(&plain.stderr));
 
-    let events = posthog.events();
-    assert_eq!(events.len(), 1);
-    let properties = &events[0]["properties"];
-    assert_eq!(properties["command"], "operations");
-    assert_eq!(properties["exit_code"], 101);
-    assert_eq!(properties["error_code"], "panic");
-    let exception = &properties["$exception_list"][0];
-    assert_eq!(exception["type"], "panic");
-    assert_eq!(
-        exception["value"],
-        "the command stopped on an internal fault"
-    );
     // The trace is ended as failed, with the same code and no text.
     let root = collector.root();
     assert_eq!(root["name"], "marfa operations");
@@ -1791,15 +1087,13 @@ fn a_panic_sends_one_event_of_a_fixed_type_and_the_exit_and_message_are_unchange
     assert_eq!(number(&root, "exit_code"), 101);
     assert_eq!(word(&root["events"][0], "code"), "panic");
     assert!(!collector.received()[0].body.contains(SECRET));
-    assert!(!posthog.received()[0].body.contains(SECRET));
 }
 
 #[test]
-fn a_panic_the_core_caught_in_a_watch_sends_one_event_as_a_fault() {
+fn a_panic_the_core_caught_in_a_watch_ends_the_trace_as_failed_with_the_code_fault() {
     let store = store();
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let mut env = exceptions_to(&collector, &posthog);
+    let mut env = report_to(&collector, &[]);
     env.push(("MARFA_TEST_FAULT", "watch-source-panics"));
     let ran = run(
         &env,
@@ -1818,21 +1112,18 @@ fn a_panic_the_core_caught_in_a_watch_sends_one_event_as_a_fault() {
     assert!(ran.took < Duration::from_secs(15), "{:?}", ran.took);
     assert!(ran.stderr.contains("\"fault\""), "{}", ran.stderr);
 
-    let events = posthog.events();
-    assert_eq!(events.len(), 1, "one caught fault is one report");
-    let properties = &events[0]["properties"];
-    assert_eq!(properties["command"], "device changes");
-    assert_eq!(properties["error_code"], "fault");
-    assert_eq!(properties["exit_code"], 4);
-    let exception = &properties["$exception_list"][0];
-    assert_eq!(exception["type"], "fault");
-    assert_eq!(exception["value"], "the core stopped on an internal fault");
-    assert!(!posthog.received()[0].body.contains("made to panic"));
+    let root = collector.root();
+    assert_eq!(root["name"], "marfa device changes");
+    assert_eq!(root["status"]["code"], 2);
+    assert_eq!(number(&root, "exit_code"), 4);
+    assert_eq!(word(&root["events"][0], "code"), "fault");
+    assert!(!collector.received()[0].body.contains("made to panic"));
 
     // The witness: without the fault, the same watch ends at its stop and
-    // sends nothing.
-    let quiet = run(
-        &exceptions_to(&collector, &posthog),
+    // its trace has no error.
+    let quiet = Collector::open(Reply::Answer(200));
+    let ran = run(
+        &report_to(&quiet, &[]),
         &[
             "--json",
             "device",
@@ -1843,16 +1134,15 @@ fn a_panic_the_core_caught_in_a_watch_sends_one_event_as_a_fault() {
             "1",
         ],
     );
-    assert_eq!(quiet.code, 0, "{}", quiet.stderr);
-    assert_eq!(posthog.events().len(), 1);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert!(quiet.root().get("status").is_none());
 }
 
 #[test]
 fn a_proxy_in_the_environment_is_not_used_for_a_post_to_this_machine() {
     let proxy = Collector::open(Reply::Answer(502));
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let mut env = exceptions_to(&collector, &posthog);
+    let mut env = report_to(&collector, &[]);
     for name in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -1866,8 +1156,7 @@ fn a_proxy_in_the_environment_is_not_used_for_a_post_to_this_machine() {
     env.push(("MARFA_TEST_PANIC", "a fault with no request to send"));
     let ran = run(&env, &["--json", "operations"]);
     assert_eq!(ran.code, 101, "{}", ran.stderr);
-    // Both posts reached the local servers, in the clear to this machine only.
-    assert_eq!(posthog.events().len(), 1);
+    // The post reached the local collector, in the clear to this machine only.
     assert_eq!(collector.root()["name"], "marfa operations");
     assert_eq!(
         proxy.connections.load(Ordering::SeqCst),
@@ -1884,15 +1173,17 @@ fn a_proxy_in_the_environment_is_still_used_for_a_post_to_another_host() {
     let plain = run(&[], &args);
     let env = [
         ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example"),
-        ("MARFA_POSTHOG_HOST", "https://posthog.example"),
-        ("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN),
         ("HTTPS_PROXY", proxy.url.as_str()),
         ("https_proxy", proxy.url.as_str()),
         // The server under test is on this machine.
         ("NO_PROXY", "127.0.0.1"),
     ];
     let ran = run(&env, &args);
-    same_output(&ran, &plain, "a refusing proxy");
+    assert_eq!(
+        (ran.code, &ran.stdout, &ran.stderr),
+        (plain.code, &plain.stdout, &plain.stderr),
+        "a refusing proxy"
+    );
     let tunnels: Vec<String> = proxy
         .received()
         .iter()
@@ -1901,24 +1192,19 @@ fn a_proxy_in_the_environment_is_still_used_for_a_post_to_another_host() {
     assert!(
         tunnels
             .iter()
-            .any(|line| line.starts_with("CONNECT posthog.example:443 ")),
+            .any(|line| line.starts_with("CONNECT collector.example:443 ")),
         "{tunnels:?}"
     );
-    assert!(!tunnels.iter().any(|line| line.contains(TOKEN)));
 }
 
 // ---- A test run in a shell that has telemetry settings ----
 
 /// The test runner (`.cargo/config.toml`) around a failing `marfa` command,
-/// started in a parent environment that names a collector and PostHog the way a
-/// developer's shell would. `through_runner` false runs the same command with no
-/// runner, which is the witness that the settings do reach it.
+/// started in a parent environment that names a collector the way a
+/// developer's shell would. `through_runner` false runs the same command with
+/// no runner, which is the witness that the settings do reach it.
 #[cfg(unix)]
-fn failing_command_in_a_shell_with_telemetry(
-    collector: &Collector,
-    posthog: &Collector,
-    through_runner: bool,
-) -> Ran {
+fn failing_command_in_a_shell_with_telemetry(collector: &Collector, through_runner: bool) -> Ran {
     use std::os::unix::fs::PermissionsExt;
 
     let folder = tempfile::Builder::new()
@@ -1956,8 +1242,6 @@ fn failing_command_in_a_shell_with_telemetry(
         .env("OTEL_EXPORTER_OTLP_ENDPOINT", &collector.url)
         .env("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer planted")
         .env("OTEL_SERVICE_NAME", "a-developers-shell")
-        .env("MARFA_POSTHOG_HOST", &posthog.url)
-        .env("MARFA_POSTHOG_PROJECT_TOKEN", TOKEN)
         .output()
         .unwrap();
     Ran {
@@ -1972,21 +1256,17 @@ fn failing_command_in_a_shell_with_telemetry(
 #[test]
 fn a_test_run_in_a_shell_with_telemetry_settings_sends_nothing_from_a_failing_command() {
     // The witness: with no runner, the same command in the same shell reports
-    // the failure to both.
+    // the failure.
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let bare = failing_command_in_a_shell_with_telemetry(&collector, &posthog, false);
+    let bare = failing_command_in_a_shell_with_telemetry(&collector, false);
     assert_eq!(bare.code, 1, "{}", bare.stderr);
     assert!(!collector.spans().is_empty(), "the trace was sent");
-    assert_eq!(posthog.events().len(), 1, "the exception was sent");
 
-    // Through the runner every test binary runs under, nothing reaches either.
+    // Through the runner every test binary runs under, nothing reaches it.
     let collector = Collector::open(Reply::Answer(200));
-    let posthog = Collector::open(Reply::Answer(200));
-    let ran = failing_command_in_a_shell_with_telemetry(&collector, &posthog, true);
+    let ran = failing_command_in_a_shell_with_telemetry(&collector, true);
     assert_eq!(ran.code, 1, "{}", ran.stderr);
     assert!(ran.stderr.contains("\"server\""), "{}", ran.stderr);
     assert_eq!(collector.connections.load(Ordering::SeqCst), 0);
-    assert_eq!(posthog.connections.load(Ordering::SeqCst), 0);
-    assert!(collector.received().is_empty() && posthog.received().is_empty());
+    assert!(collector.received().is_empty());
 }
