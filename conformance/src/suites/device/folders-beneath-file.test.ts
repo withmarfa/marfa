@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname } from "node:path";
 import { answers, refusal } from "../../device/marfa-answers.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import type { Item, Outcome } from "../../device/protocol.js";
-import type { Answer } from "../../device/scripted-server.js";
+import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import { folderHarness, folderItem, type FolderHarness } from "./harness.js";
-import { ON_MACOS } from "../../utils/platform.js";
-import { put, scriptFolderWrites } from "./folders.shared.js";
+import { put, scriptFolderWrites, settingsFile } from "./folders.shared.js";
 
 /**
  * A folder whose query narrows beneath the path of a file it holds, on a
@@ -36,17 +42,9 @@ const parentOf = (n: number, from: number, to: number) => ({
 
 const PATH = "Projects/project.md";
 
-/** The id a copy narrows beneath while the query names a path, which no
- *  item has. */
-const NO_ITEM = "00000000-0000-7000-8000-000000000000";
-
-const noItem = (server: FolderHarness["server"]): void => {
-  server.copyAnswer(
-    "GET",
-    `/items/${NO_ITEM}`,
-    refusal(404, "item_not_found", "Item not found"),
-  );
-};
+/** An id a device once narrowed a copy beneath while the query named a path;
+ *  an item may have it, as the server takes any id a client chooses. */
+const RESERVED = "00000000-0000-7000-8000-000000000000";
 
 function value<T>(outcome: Outcome<T>): T {
   expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
@@ -67,19 +65,25 @@ async function beneathFile(
   label: string,
   named = PATH,
   at = PATH,
+  settings: Partial<FolderSettings> = {},
 ): Promise<FolderHarness> {
   const made = await folderHarness(label, {
-    settings: { query: { types: ["core.note"], beneath: named } },
+    settings: { ...settings, query: { types: ["core.note"], beneath: named } },
     items: {
       "core.note": [
         note(1, "Project"),
         note(2, "Inside one"),
         note(3, "Inside two"),
         note(4, "Outside"),
+        {
+          item: {
+            id: RESERVED,
+            properties: { title: "Reserved", body: "r\n" },
+          },
+        },
       ],
     },
     edges: { "parent-of": [parentOf(1, 1, 2), parentOf(2, 1, 3)] },
-    beforeAdd: noItem,
     files: {
       [at]: `---\nmarfa_id: ${id(1)}\ntitle: Project\n---\nProject\n`,
     },
@@ -117,6 +121,34 @@ const CHANGES: Array<[string, Partial<FolderSettings>, number]> = [
   ],
   ["the folder was renamed by another device", { title: "renamed" }, 1],
 ];
+
+/** What stops a device between sending the file and changing the query: the
+ *  folder door answers it is busy, or the connection drops. */
+const INTERRUPTIONS: Array<[string, Answer]> = [
+  [
+    "the folder door answered it was busy",
+    refusal(503, "unavailable", "The server is busy"),
+  ],
+  ["the connection dropped", { kind: "drop" }],
+];
+
+/** The requests that list items. */
+const listings = (folder: FolderHarness): RecordedRequest[] =>
+  folder.server.requests.filter(
+    (request) => request.method === "GET" && request.pathname === "/items",
+  );
+
+/** The requests that name the id a device once made up. */
+const namingReserved = (folder: FolderHarness): string[] =>
+  folder.server.requests
+    .filter((request) => request.target.includes(RESERVED))
+    .map((request) => `${request.method} ${request.target}`);
+
+/** The items the device asked the server to make. */
+const created = (folder: FolderHarness): number =>
+  folder.server.requests.filter(
+    (request) => request.method === "POST" && request.pathname === "/items",
+  ).length;
 
 const written = (folder: FolderHarness): string[] =>
   readdirSync(folder.dir).filter((name) => name !== ".marfa");
@@ -165,58 +197,149 @@ describe("a folder narrowed beneath a file it holds", () => {
     },
   );
 
-  it("holds nothing from the server while the change is not sent, and finishes at the next pass", async () => {
-    harness = await beneathFile("beneath-file-interrupted");
-    let down = true;
-    const sent = changes(harness, () =>
-      down ? refusal(503, "unavailable", "The server is busy") : undefined,
-    );
-
-    value(await harness.folder.push());
-    expect(sent).toHaveLength(1);
-    expect(await heldIds(harness)).toEqual([id(1)]);
-    expect(written(harness)).toEqual(["Projects"]);
-    const status = value(await harness.folder.status());
-    expect(status.beneath_waiting).toBe(PATH);
-
-    down = false;
-    value(await harness.folder.push());
-    expect(await heldIds(harness)).toEqual([id(1), id(2), id(3)]);
-    expect(written(harness).sort()).toEqual([
-      "Inside one.md",
-      "Inside two.md",
-      "Projects",
-    ]);
-  });
-
-  it(
-    "takes the file the query names for the one the folder holds, as the folder compares paths",
-    ON_MACOS,
-    async () => {
-      // One file name, in two Unicode forms and two cases: the file system
-      // opens both.
-      harness = await beneathFile(
-        "beneath-file-names",
-        "projects/CAF\u00c9.md",
-        "Projects/Cafe\u0301.md",
-      );
-      changes(harness);
+  it.each(INTERRUPTIONS)(
+    "holds nothing from the server while the change is not sent after %s, and finishes at the next pass",
+    async (_name, interrupted) => {
+      harness = await beneathFile("beneath-file-interrupted");
+      let down = true;
+      const sent = changes(harness, () => (down ? interrupted : undefined));
 
       value(await harness.folder.push());
-      expect(harness.settings.settings.query).toEqual({
-        types: ["core.note"],
-        beneath: id(1),
-      });
+      expect(sent).toHaveLength(1);
+      expect(await heldIds(harness)).toEqual([id(1)]);
+      expect(written(harness)).toEqual(["Projects"]);
+      const status = value(await harness.folder.status());
+      expect(status.beneath_waiting).toBe(PATH);
+      // No request asked the server for items beneath a path, or named an id
+      // the folder made up.
+      expect(listings(harness)).toEqual([]);
+      expect(namingReserved(harness)).toEqual([]);
+
+      down = false;
+      value(await harness.folder.push());
+      const change = harness.server.requests
+        .filter((request) => request.method === "PATCH")
+        .at(-1);
       expect(await heldIds(harness)).toEqual([id(1), id(2), id(3)]);
+      expect(written(harness).sort()).toEqual([
+        "Inside one.md",
+        "Inside two.md",
+        "Projects",
+      ]);
+      // Nothing was pulled before the path was replaced by the item's id.
+      const asked = listings(harness);
+      expect(asked.length).toBeGreaterThan(0);
+      for (const request of asked) {
+        expect(request.seq).toBeGreaterThan(change?.seq ?? Infinity);
+        // The conflicted copies are listed beside, whatever they are under.
+        if (request.query.get("tags") === null)
+          expect(request.query.get("beneath")).toBe(id(1));
+      }
+      expect(namingReserved(harness)).toEqual([]);
     },
   );
+
+  it("sends no new file but the one the path names while it holds files outside the query", async () => {
+    const project = "---\ntitle: Project\n---\nProject\n";
+    const outside = "---\ntitle: Other\n---\nx\n";
+    harness = await folderHarness("beneath-file-hold", {
+      settings: {
+        query: { types: ["core.note"], beneath: PATH },
+        defaults: { type: "core.note" },
+        outside_query: "hold",
+      },
+      items: { "core.note": [note(4, "Outside")] },
+    });
+    scriptFolderWrites(harness);
+    changes(harness);
+    put(harness, PATH, project);
+    const other = put(harness, "Other/x.md", outside);
+
+    // The witness: a folder that holds nothing outside sends both files.
+    const control = await folderHarness("beneath-file-hold-control", {
+      settings: {
+        query: { types: ["core.note"] },
+        defaults: { type: "core.note" },
+      },
+    });
+    try {
+      scriptFolderWrites(control);
+      put(control, PATH, project);
+      put(control, "Other/x.md", outside);
+      value(await control.folder.push());
+      expect(created(control)).toBe(2);
+    } finally {
+      await control.stop();
+    }
+
+    value(await harness.folder.push());
+    expect(created(harness)).toBe(1);
+    expect(readFileSync(other, "utf8")).toBe(outside);
+    const status = value(await harness.folder.status());
+    expect(status.paused.outside_query).toBe(1);
+  });
+
+  it("takes the file the query names for the one the folder holds, as the folder compares paths", async () => {
+    // One file name, in two Unicode forms and two cases, one of them a full
+    // fold (`\u00df` and `SS`) that no file system opens as one name: the
+    // folder compares them as one, on every platform.
+    harness = await beneathFile(
+      "beneath-file-names",
+      "projects/Stra\u00dfe Caf\u00e9.md",
+      "Projects/STRASSE Cafe\u0301.md",
+    );
+    changes(harness);
+
+    value(await harness.folder.push());
+    expect(harness.settings.settings.query).toEqual({
+      types: ["core.note"],
+      beneath: id(1),
+    });
+    expect(await heldIds(harness)).toEqual([id(1), id(2), id(3)]);
+  });
+
+  it("judges the path a person has put in the settings file, so a bad path can be mended there", async () => {
+    harness = await folderHarness("beneath-file-mended", {
+      settings: {
+        query: { types: ["core.note"], beneath: "Projects/gone.md" },
+      },
+      items: { "core.note": [note(1, "Project"), note(2, "Inside one")] },
+      edges: { "parent-of": [parentOf(1, 1, 2)] },
+      files: {
+        [PATH]: `---\nmarfa_id: ${id(1)}\ntitle: Project\n---\nProject\n`,
+      },
+    });
+    scriptFolderWrites(harness);
+    const sent = changes(harness);
+
+    // The witness: the path as it stands is refused, naming it.
+    const refused = await harness.folder.push();
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    if (!refused.ok) expect(refused.refusal.raw).toContain("Projects/gone.md");
+    expect(sent).toEqual([]);
+
+    const file = settingsFile(harness);
+    mkdirSync(dirname(file), { recursive: true });
+    const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+    writeFileSync(
+      file,
+      text.includes("Projects/gone.md")
+        ? text.replace("Projects/gone.md", PATH)
+        : `folder: ${harness.settings.id}\nversion: ${harness.settings.version}\nquery:\n  types:\n    - core.note\n  beneath: ${PATH}\n`,
+    );
+    value(await harness.folder.push());
+    expect(sent.map((body) => body.query)).toEqual([
+      { types: ["core.note"], beneath: PATH },
+      { types: ["core.note"], beneath: id(1) },
+    ]);
+    expect(await heldIds(harness)).toEqual([id(1), id(2)]);
+  });
 
   it("refuses a first sync that names a file the folder does not have, writing and sending nothing", async () => {
     harness = await folderHarness("beneath-file-missing", {
       settings: { query: { types: ["core.note"], beneath: PATH } },
       items: { "core.note": [note(1, "Project"), note(2, "Inside")] },
       edges: { "parent-of": [parentOf(1, 1, 2)] },
-      beforeAdd: noItem,
     });
     scriptFolderWrites(harness);
     const sent = changes(harness);

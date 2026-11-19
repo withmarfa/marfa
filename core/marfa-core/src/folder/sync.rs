@@ -164,9 +164,10 @@ impl Folder {
 
     fn sync_confirmed(&self) -> Result<SyncReport> {
         let hydrated = self.resume()?;
-        self.check_beneath_file()?;
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
+        // After the edit, so a person can mend a bad path in the settings file.
+        self.check_beneath_file()?;
         let scan = self.scan()?;
         let mut rebuilt = None;
         let mut drain = self.drain_rebuilding(&mut rebuilt)?;
