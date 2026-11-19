@@ -59,7 +59,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         let cache = app.catalog_handle();
         app.write(&Caller::Server, GRANT_REVOKED, move |unit| {
             let tx = unit.tx();
-            // A rotated token answers for its chain; an ended chain is of an approval that no longer stands.
+            // Other chains can share the same grant after this chain ends.
             let Some(found) = store::refresh_token_by_digest(tx, &digest)?
                 .map(|presented| presented.chain)
                 .filter(|chain| chain.client_id == client.id && chain.ended_at.is_none())

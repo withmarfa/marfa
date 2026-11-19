@@ -829,8 +829,7 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 
 CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_grant ON oauth_refresh_tokens (client_id, owner_id);
 
--- The tokens a chain's refreshes replaced, kept as long as the chain's own
--- row, so that revoking or replaying one still reaches the chain.
+-- Retain each digest so revocation and replay still identify its chain.
 CREATE TABLE IF NOT EXISTS oauth_rotated_refresh_tokens (
     digest TEXT PRIMARY KEY NOT NULL,
     chain_id TEXT NOT NULL REFERENCES oauth_refresh_tokens (chain_id) ON DELETE CASCADE

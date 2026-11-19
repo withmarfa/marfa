@@ -362,8 +362,6 @@ const CHAINS_UNREAD: Unread<'static> = Unread {
     scope: "ended_at IS NULL",
 };
 
-/// A refresh token a refresh rotated stays as long as its chain, so revoking or replaying it
-/// still reaches the chain.
 pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (mut deleted, mut done) = drain(run, BATCH, || expired_sessions(app)).await?;
     if done {
