@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
 import { createServer, get, type RequestOptions } from "node:http";
 import { describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import type { BlobStoreRow } from "../../client/types.js";
 import { beatReceiver } from "../../utils/beat-receiver.js";
 import {
   approvedAppToken,
@@ -11,14 +11,12 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
-  blobFolder,
   bytesOf,
   clientsFor,
   PUBLIC_ONLY,
   replicateUntilCaughtUp,
   runJob,
   storeByName,
-  whenCopied,
 } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -121,10 +119,28 @@ async function storeInUse(server: FreshServer): Promise<void> {
   });
 }
 
-async function expectStoreOutOfUse(
+/** The one object store `GET /blobs/stores` lists as attached. */
+async function attachedStore(server: FreshServer): Promise<BlobStoreRow> {
+  const stores = (await clientsFor(server).operator.listBlobStores()).data.data;
+  const attached = stores.filter(
+    (store) => store.kind === "s3" && store.detached_at === null,
+  );
+  expect(attached, JSON.stringify(stores)).toHaveLength(1);
+  return attached[0];
+}
+
+/** Files kept in the store in use: `held` also on the disk, `storeOnly` in the store alone. */
+interface Kept {
+  held: string;
+  storeOnly: string;
+}
+
+/** Checks that the store `id` stays attached and that nothing uses it. */
+async function expectStoreUnusable(
   server: FreshServer,
   storeHost: string,
-  held: string,
+  id: string,
+  kept: Kept,
 ): Promise<void> {
   const { operator, working } = clientsFor(server);
   const replicated = await runJob(operator, "blob-replicate");
@@ -136,19 +152,22 @@ async function expectStoreOutOfUse(
     destination: "bucket",
     reason: "destination_unusable",
   });
-  const stores = (await operator.listBlobStores()).data.data;
-  expect(
-    stores.filter((store) => store.kind === "s3" && store.detached_at === null),
-  ).toEqual([]);
+  const store = await attachedStore(server);
+  expect(store.id).toBe(id);
+  expect(store.unusable_reason).toContain(SWITCH);
   const owner = socketOf(server);
   for (const answer of [await owner.listBackups(), await owner.runBackup()]) {
     expect(answer.status, JSON.stringify(answer.error)).toBe(503);
     expect(answer.error?.error.code).toBe("blob_store_unavailable");
   }
-  const link = await working.getBlobUrl(held);
+  const link = await working.getBlobUrl(kept.held);
   expect(link.status, JSON.stringify(link.error)).toBe(200);
   expect(new URL(link.data.url).host).not.toBe(storeHost);
-  expect((await operator.downloadBlob(held)).status).toBe(200);
+  expect((await operator.downloadBlob(kept.held)).status).toBe(200);
+  const unlinked = await working.getBlobUrl(kept.storeOnly);
+  expect(unlinked.status, JSON.stringify(unlinked.error)).toBe(503);
+  expect(unlinked.error?.error.code).toBe("blob_store_unavailable");
+  expect((await operator.downloadBlob(kept.storeOnly)).status).toBe(503);
   const later = await working.uploadBlob(
     bytesOf("kept on the disk alone", 64),
     "text/plain",
@@ -164,12 +183,10 @@ async function expectStoreOutOfUse(
 async function heldInStore(
   server: FreshServer,
   storeHost: string,
+  label = "kept in the store while it is in use",
 ): Promise<string> {
   const { operator, working } = clientsFor(server);
-  const upload = await working.uploadBlob(
-    bytesOf("kept in the store while it is in use", 100),
-    "text/plain",
-  );
+  const upload = await working.uploadBlob(bytesOf(label, 100), "text/plain");
   expect(upload.status, JSON.stringify(upload.error)).toBe(201);
   const note = await working.createItem({
     type: "core.note",
@@ -186,6 +203,27 @@ async function heldInStore(
   const listed = await socketOf(server).listBackups();
   expect(listed.status, JSON.stringify(listed.error)).toBe(200);
   return upload.data.hash;
+}
+
+/** A file in the store in use and on the disk, and one whose disk copy is dropped. */
+async function keptInStore(
+  server: FreshServer,
+  storeHost: string,
+): Promise<Kept> {
+  const { operator } = clientsFor(server);
+  const held = await heldInStore(server, storeHost);
+  const storeOnly = await heldInStore(
+    server,
+    storeHost,
+    "kept in the store alone",
+  );
+  const disk = (await operator.listBlobStores()).data.data.find(
+    (store) => store.kind === "disk",
+  );
+  const dropped = await operator.deleteBlobCopy(storeOnly, disk?.id ?? "");
+  expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+  expect((await operator.downloadBlob(storeOnly)).status).toBe(200);
+  return { held, storeOnly };
 }
 
 describe("where the server may send", () => {
@@ -528,7 +566,7 @@ describe("where the server may send", () => {
     FRESH_SERVER_TIMEOUT_MS,
   );
   it(
-    "stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on",
+    "keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on",
     async () => {
       const { endpoint, bucket } = runStore();
       const server = await bootFreshServer("switch-off-object-store", {
@@ -547,15 +585,19 @@ describe("where the server may send", () => {
           object_store_path_style: true,
         });
         await storeInUse(server);
-        const held = await heldInStore(server, storeHost);
+        const kept = await keptInStore(server, storeHost);
+        const { id } = await attachedStore(server);
 
         await setFrom(socket, { [SWITCH]: false });
-        await expectStoreOutOfUse(server, storeHost, held);
+        await expectStoreUnusable(server, storeHost, id, kept);
 
         // The witness: with the switch on again, the same store is in use.
         await setFrom(socket, { [SWITCH]: true });
         await storeInUse(server);
-        await heldInStore(server, storeHost);
+        const store = await attachedStore(server);
+        expect(store).toMatchObject({ id, unusable_reason: null });
+        expect((await operator.downloadBlob(kept.storeOnly)).status).toBe(200);
+        await heldInStore(server, storeHost, "kept once the switch is on");
       } finally {
         await server.stop();
       }
@@ -564,16 +606,15 @@ describe("where the server may send", () => {
   );
 
   it(
-    "stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public",
+    "keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed",
     async () => {
       const { endpoint, bucket } = runStore();
-      const server = await bootFreshServer("switch-off-virtual-host", {
+      const server = await bootFreshServer("lookup-private-virtual-host", {
         ...PUBLIC_ONLY,
         MARFA_BACKUP_INTERVAL_SECONDS: "0",
       });
       try {
-        const { operator } = clientsFor(server);
-        const socket = socketOf(server);
+        const { operator, working } = clientsFor(server);
         const named = storeByName(endpoint);
         const storeHost = `${bucket}.${new URL(named).host}`;
         const host = `resolve:${bucket}.${new URL(named).hostname}`;
@@ -584,79 +625,37 @@ describe("where the server may send", () => {
           object_store_path_style: false,
         });
         await storeInUse(server);
-        const held = await heldInStore(server, storeHost);
+        const kept = await keptInStore(server, storeHost);
+        const { id } = await attachedStore(server);
 
-        // Wait for the first change so the second opens a new store client.
-        const reopened = async () => {
-          await setFrom(socket, { [SWITCH]: true });
-          await runJob(operator, "blob-replicate", "either");
-          await setFrom(socket, { [SWITCH]: false });
-        };
+        // The next request to the store, a copy of a new file, meets the private address.
         await server.setFault(`${host}=127.0.0.1`);
-        await reopened();
-        await expectStoreOutOfUse(server, storeHost, held);
+        const met = await working.uploadBlob(
+          bytesOf("met by the private address", 64),
+          "text/plain",
+        );
+        expect(met.status, JSON.stringify(met.error)).toBe(201);
+        await runJob(operator, "blob-replicate", "either");
+        await expectStoreUnusable(server, storeHost, id, kept);
 
-        // The witness: once the same host is judged public, the store is in use.
+        // The witness: once the host is public again, the next run's request is allowed.
         await server.setFault(`${host}=${PUBLIC_ADDRESS}>127.0.0.1`);
-        await reopened();
+        await replicateUntilCaughtUp(operator, "the copies the refusal held back");
         await storeInUse(server);
-        await heldInStore(server, storeHost);
+        expect(await attachedStore(server)).toMatchObject({
+          id,
+          unusable_reason: null,
+        });
+        expect(
+          (await operator.listBlobCopies(met.data.hash)).data.data,
+        ).toHaveLength(2);
+        const link = await working.getBlobUrl(kept.storeOnly);
+        expect(link.status, JSON.stringify(link.error)).toBe(200);
+        expect(new URL(link.data.url).host).toBe(storeHost);
       } finally {
         await server.stop();
       }
     },
     FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it(
-    "starts over an emptied blob folder while the switch is off and the object store's name leads to a private address, and serves the file once the switch is on",
-    async () => {
-      const { endpoint, bucket } = runStore();
-      const server = await bootFreshServer("switch-off-start", {
-        ...PUBLIC_ONLY,
-        MARFA_BACKUP_INTERVAL_SECONDS: "0",
-      });
-      try {
-        const before = clientsFor(server);
-        await setFrom(socketOf(server), { [SWITCH]: true });
-        await setFrom(before.operator, {
-          ...storeSettings(bucket),
-          object_store_endpoint: byName(endpoint),
-          object_store_path_style: true,
-        });
-        await storeInUse(server);
-        const bytes = bytesOf("held by a store on a private address", 100);
-        const upload = await before.working.uploadBlob(bytes, "text/plain");
-        expect(upload.status, JSON.stringify(upload.error)).toBe(201);
-        const hash = upload.data.hash;
-        await whenCopied(before.operator, [hash]);
-        await setFrom(socketOf(server), { [SWITCH]: false });
-
-        await server.restart(() => {
-          rmSync(blobFolder(server), { recursive: true, force: true });
-        });
-        const { operator } = clientsFor(server);
-        // The blob folder is missing, so health answers 503 and still says why.
-        const { status, backups } = await backupsOf(server);
-        expect(status, JSON.stringify(backups)).toBe(503);
-        expect(backups).toMatchObject({
-          destination: "bucket",
-          reason: "destination_unusable",
-        });
-        expect((await operator.downloadBlob(hash)).status).toBe(503);
-
-        await setFrom(socketOf(server), { [SWITCH]: true });
-        const served = await waitFor("the file to be served", async () => {
-          const download = await operator.downloadBlob(hash);
-          return download.status === 200 ? download : undefined;
-        });
-        expect(
-          Buffer.from(served.data as ArrayBuffer).equals(Buffer.from(bytes)),
-        ).toBe(true);
-      } finally {
-        await server.stop();
-      }
-    },
-    2 * FRESH_SERVER_TIMEOUT_MS,
   );
 });

@@ -744,6 +744,7 @@ fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
 
 /// Purges only what an earlier run reported at least the grace ago and nothing names now.
 pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
+    app.blobs.recheck().await;
     if (app.blobs.trouble().is_some() || !app.blobs.settled())
         && let Err(refused) = app.settle_stores(super::Retry::Trouble).await
     {

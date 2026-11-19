@@ -3478,35 +3478,63 @@ Where `allow_private_addresses` is `false`, if the host of `error_webhook_url` i
 
 ### `instance/object-store-private-unusable`
 
-Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`, whether or not the server used that store before.
+Where `allow_private_addresses` is `false`, while the latest request the server sent to the object store was refused because the host the store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, the server MUST answer `GET /health` with `backups.reason` `destination_unusable`.
 
-**Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`).
+**Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`). The lookup is judged again for each request, so a name that comes to lead to a private address is found with no change to the settings.
 
-**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`, `› stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
+**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`, `› keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
 
-### `instance/object-store-private-detached`
+### `instance/object-store-private-identity`
 
-Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST NOT list an object store as attached in `GET /blobs/stores`.
+If a request to the object store it has attached is refused as `instance/object-store-private-unusable` describes, then the server MUST go on listing that store in `GET /blobs/stores` with the same `id` and `detached_at` null.
 
-**Reason:** recorded copies stay in the detached store so the server can use them again when the store returns.
+**Reason:** the refusal says nothing about which store the bucket holds. The copies and backups recorded in the store stay its own, and no other store recorded at the same bucket and prefix takes its place.
 
-**Tests:** `compliance/destination-addresses.test.ts › stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
+
+### `instance/object-store-private-listed`
+
+While the server answers `GET /health` as `instance/object-store-private-unusable` requires, when a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer the attached object store's `unusable_reason` with a sentence that names `allow_private_addresses`.
+
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
 
 ### `instance/object-store-private-backups`
 
-Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /backups` and `POST /backups` from a caller holding `backups.manage` with `503 blob_store_unavailable`.
+While the server answers `GET /health` as `instance/object-store-private-unusable` requires, the server MUST answer `GET /backups` and `POST /backups` from a caller holding `backups.manage` with `503 blob_store_unavailable`.
 
 **Reason:** the settings name the store, so the owner learns that it needs attention rather than that no destination is set.
 
-**Tests:** `compliance/destination-addresses.test.ts › stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
 
-### `instance/object-store-private-start`
+### `instance/object-store-private-untried`
 
-Where `allow_private_addresses` is `false`, when the server starts while the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, the server MUST NOT refuse the start because the blob folder is missing or holds no marker.
+While the server answers `GET /health` as `instance/object-store-private-unusable` requires, the server MUST NOT copy a file to the object store or read one from it.
 
-**Reason:** only a running server can take `allow_private_addresses` through `/config`.
+**Reason:** a file the store holds alone answers `503 blob_store_unavailable` (`stores/unreachable-read`), and a new upload keeps its one copy on the disk until the store can be used.
 
-**Tests:** `compliance/destination-addresses.test.ts › starts over an emptied blob folder while the switch is off and the object store's name leads to a private address, and serves the file once the switch is on`.
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
+
+### `instance/object-store-private-link`
+
+While the server answers `GET /health` as `instance/object-store-private-unusable` requires, when a caller sends `GET /blobs/{hash}/url` for a blob the disk store holds, the server MUST answer a `url` whose host is not the object store's.
+
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
+
+### `instance/object-store-private-link-unavailable`
+
+While the server answers `GET /health` as `instance/object-store-private-unusable` requires, if a caller sends `GET /blobs/{hash}/url` for a blob no attached store but the object store holds, then the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a link the store signs would send the caller to an address the server may not reach, and the instance cannot serve bytes it cannot read.
+
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store it used attached under its id while the switch is off and the store's name leads to a private address, uses it for nothing, and uses it again once the switch is on`, `› keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
+
+### `instance/object-store-private-retried`
+
+While the server answers `GET /health` as `instance/object-store-private-unusable` requires, when a run of `blob-replicate` starts, the server MUST send the object store one request for its marker.
+
+**Reason:** that request, judged again, ends the state once the store's host leads to public addresses, with no restart and no write to `/config`.
+
+**Tests:** `compliance/destination-addresses.test.ts › keeps an object store reached by virtual host attached under its id once the bucket's host leads to a private address with the settings unchanged, and uses it again once a request to it is allowed`.
 
 ## Start-only settings
 

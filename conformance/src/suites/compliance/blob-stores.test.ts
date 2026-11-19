@@ -52,6 +52,7 @@ describe("the stores an instance keeps bytes in", () => {
     for (const store of stores.data.data) {
       expect(store.id).toMatch(/^[0-9a-f-]{36}$/);
       expect(store.detached_at).toBeNull();
+      expect(store.unusable_reason).toBeNull();
       expect(store.locator.length).toBeGreaterThan(0);
     }
     // The locator is the bucket and the prefix the referee booted the store
