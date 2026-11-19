@@ -5341,7 +5341,7 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             detached_at: string | null;
-            /** @description Why Marfa can't use the attached store right now, for a person to read, or `null` while it can. The store stays attached, and Marfa copies no file to it and reads none from it until it can. */
+            /** @description Why the address check refused the attached object store, or `null` when there is no recorded refusal for this store. */
             unusable_reason: string | null;
         };
         /** @description An error response. */

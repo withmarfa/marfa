@@ -640,7 +640,10 @@ describe("where the server may send", () => {
 
         // The witness: once the host is public again, the next run's request is allowed.
         await server.setFault(`${host}=${PUBLIC_ADDRESS}>127.0.0.1`);
-        await replicateUntilCaughtUp(operator, "the copies the refusal held back");
+        await replicateUntilCaughtUp(
+          operator,
+          "the copies the refusal held back",
+        );
         await storeInUse(server);
         expect(await attachedStore(server)).toMatchObject({
           id,
