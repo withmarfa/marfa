@@ -472,6 +472,12 @@ impl Folder {
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
+            if let Some(unwatched) = listening.restore() {
+                touched.distrust();
+                if let Some(said) = unwatchable(&unwatched) {
+                    tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
+                }
+            }
             let scope = touched.scope();
             let passed = self.pass(
                 full,
