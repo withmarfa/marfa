@@ -201,8 +201,8 @@ pub enum DeviceCommand {
     /// copy, and until a hydration has filled it again, the search covers
     /// the items the copy holds and says it is stale. Each is said on
     /// standard error, and under --json as `completeness`, `partial`,
-    /// `stale` or `complete`, beside `data` and `next_cursor`, which holds
-    /// the hits. With `--view`, a copy that is not whole is refused.
+    /// `stale` or `complete`, beside `data`, which holds the hits, and
+    /// `next_cursor`. With `--view`, a copy that is not whole is refused.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -492,7 +492,7 @@ pub enum ItemsCommand {
     /// and until a hydration has filled it again, the list holds the items
     /// the copy holds and says it is stale. Each is said on standard error,
     /// and under --json as `completeness`, `partial`, `stale` or `complete`,
-    /// beside `data` and `next_cursor`, which holds the items. With `--view`,
+    /// beside `data`, which holds the items, and `next_cursor`. With `--view`,
     /// a copy that is not whole is refused.
     List(ListArgs),
     /// One item by id, with its properties and tags.
