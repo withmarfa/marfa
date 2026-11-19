@@ -104,7 +104,7 @@ fn stored_list(row: &Row<'_>, column: &str) -> rusqlite::Result<Vec<String>> {
     Ok(serde_json::from_str(&text).unwrap_or_default())
 }
 
-fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
+fn grants_of(row: &Row<'_>) -> rusqlite::Result<Grants> {
     let mut maps = [const { None }; 5];
     for axis in Axis::ALL {
         maps[axis as usize] = Some(super::access::Map::from_stored(stored_object(
@@ -112,20 +112,24 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
             axis.field(),
         )?));
     }
+    Ok(Grants {
+        permissions: stored_list(row, "permissions")?
+            .iter()
+            .filter_map(|word| Permission::from_word(word))
+            .collect(),
+        maps: maps.map(Option::unwrap_or_default),
+        sources: stored_list(row, "claims")?,
+    })
+}
+
+fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
     Ok(Key {
         id: row.get("id")?,
         label: row.get("label")?,
         source: row.get("source")?,
         default_tier: row.get("default_tier")?,
         oauth_client_id: row.get("oauth_client_id")?,
-        grants: Grants {
-            permissions: stored_list(row, "permissions")?
-                .iter()
-                .filter_map(|word| Permission::from_word(word))
-                .collect(),
-            maps: maps.map(Option::unwrap_or_default),
-            sources: stored_list(row, "claims")?,
-        },
+        grants: grants_of(row)?,
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
         created_at: row.get::<_, Stamp>("created_at")?.text(),
@@ -547,6 +551,36 @@ pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<()>
         }
     }
     Ok(())
+}
+
+/// Ends and counts the app's live keys `beyond` judges too wide. A key's own keys carry its app too.
+pub(crate) fn end_beyond_of_app(
+    unit: &Unit<'_, '_>,
+    client_id: &str,
+    beyond: impl Fn(&Grants) -> bool,
+) -> Result<usize> {
+    let now = Stamp::read(&unit.at)?;
+    let held = unit
+        .tx()
+        .prepare(&format!(
+            "{SELECT} WHERE {UNREVOKED} AND k.oauth_client_id = ?1"
+        ))?
+        .query_map([client_id], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, Option<String>>("expires_at")?,
+                grants_of(row)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut ended = 0;
+    for (id, end_at, grants) in &held {
+        if may_live(end_at.as_deref(), now) && beyond(grants) {
+            end(unit, id)?;
+            ended += 1;
+        }
+    }
+    Ok(ended)
 }
 
 fn may_live(end_at: Option<&str>, now: Stamp) -> bool {

@@ -60,7 +60,15 @@ pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), C
                 .cloned()
                 .unwrap_or(json!([]));
             let answer = remote.json(&narrow_request(&id, &scope, &expected))?;
-            out.report(&answer, |_| format!("narrowed the app {id}"))
+            out.report(&answer, |answer| {
+                match answer.get("revoked_keys").and_then(Value::as_u64) {
+                    None | Some(0) => format!("narrowed the app {id}"),
+                    Some(1) => format!("narrowed the app {id} and revoked 1 key it made"),
+                    Some(count) => {
+                        format!("narrowed the app {id} and revoked {count} keys it made")
+                    }
+                }
+            })
         }
         AppsCommand::Revoke { id, revoke_keys } => {
             let answer = remote.json(&revoke_request(&id, revoke_keys))?;

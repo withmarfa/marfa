@@ -59,10 +59,13 @@ pub async fn narrow(
         scopes: scopes_in(&body, "scopes")?,
         expected: scopes_in(&body, "expected_scopes")?,
     };
-    let scopes = grants::narrow(&app, &caller, id, asked).await?;
+    let narrowed = grants::narrow(&app, &caller, id, asked).await?;
     Ok(json_answer(
         StatusCode::OK,
-        &json!({ "scopes": scopes.literals() }),
+        &json!({
+            "scopes": narrowed.scopes.literals(),
+            "revoked_keys": narrowed.revoked_keys,
+        }),
     ))
 }
 

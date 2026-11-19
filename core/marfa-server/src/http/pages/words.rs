@@ -27,7 +27,9 @@ const POWERS: [(&str, PowerWords); 14] = [
         "keys.mint",
         PowerWords {
             title: "Make, see, edit and revoke keys",
-            note: Some("Keys made this way never hold more than their maker."),
+            note: Some(
+                "Keys made this way start with no more than this app holds. Narrowing its access ends those that hold more.",
+            ),
         },
     ),
     (

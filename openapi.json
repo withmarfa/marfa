@@ -10118,16 +10118,23 @@
               "type": "string"
             },
             "description": "The resulting scope set."
+          },
+          "revoked_keys": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many keys the app made, or those keys made, Marfa revoked because they reached beyond the resulting scope set."
           }
         },
         "required": [
-          "scopes"
+          "scopes",
+          "revoked_keys"
         ],
         "description": "The app's narrowed access.",
         "example": {
           "scopes": [
             "core.note:read"
-          ]
+          ],
+          "revoked_keys": 1
         }
       },
       "GrantNotFoundRefusal": {
@@ -53633,7 +53640,7 @@
           "Apps"
         ],
         "summary": "Narrow an app grant",
-        "description": "Narrows an app's standing access. Requires `grants.manage`. Overbroad tokens, their refresh chains and pending codes end; covered chains keep working. The app may need to reconnect. Minted keys keep working.",
+        "description": "Narrows an app's standing access. Requires `grants.manage`. Tokens, refresh chains and keys the app made that reach beyond the new access end, with pending codes; the rest keep working. The app may need to reconnect.",
         "parameters": [
           {
             "schema": {
@@ -53691,7 +53698,8 @@
                 "example": {
                   "scopes": [
                     "core.note:read"
-                  ]
+                  ],
+                  "revoked_keys": 1
                 }
               }
             },
