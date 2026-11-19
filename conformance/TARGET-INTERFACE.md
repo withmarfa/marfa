@@ -213,9 +213,10 @@ stays because that thing is what it checks.
   wrong_schema, whichever log mode it is in", sets a store's log mode and
   schema version, and "refuses an open storage_full when the volume has no
   room for the store's index file, and store when it has" puts a link that
-  leads nowhere at the name of the store's index file. No door or fault makes
-  a store of another build's version, and a fixture cannot fill the volume its
-  runner writes to.
+  leads nowhere at the name of the store's index file and names the debug
+  fault `volume-full`, which stands for the volume a device finds full when
+  it tries to make a file there. No door or fault makes a store of another
+  build's version, and a fixture cannot fill the volume its runner writes to.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 

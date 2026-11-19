@@ -370,22 +370,19 @@ pub(crate) fn read_volume(place: Place<'_>) -> Option<Volume> {
 
 #[cfg(unix)]
 fn statvfs(place: Place<'_>) -> Option<Volume> {
-    let figures = raw_statvfs(place)?;
-    volume_from(figures.f_blocks, figures.f_bavail, figures.f_frsize)
-}
-
-#[cfg(unix)]
-fn raw_statvfs(place: Place<'_>) -> Option<rustix::fs::StatVfs> {
+    let read = |figures: rustix::fs::StatVfs| {
+        volume_from(figures.f_blocks, figures.f_bavail, figures.f_frsize)
+    };
     match place {
-        Place::Held(directory) => rustix::fs::fstatvfs(directory).ok(),
+        Place::Held(directory) => rustix::fs::fstatvfs(directory).ok().and_then(read),
         Place::Named(path) => path.ancestors().find_map(|ancestor| {
             let ancestor = if ancestor.as_os_str().is_empty() {
                 Path::new(".")
             } else {
                 ancestor
             };
-            rustix::fs::statvfs(ancestor).ok()
-        }),
+            rustix::fs::statvfs(ancestor).ok().map(read)
+        })?,
     }
 }
 
@@ -396,29 +393,77 @@ fn statvfs(_place: Place<'_>) -> Option<Volume> {
     None
 }
 
-/// Too little room to make the log and the index SQLite keeps beside a store
-/// in write-ahead mode, whose index alone is 32 KiB.
-const STORE_LOG_ROOM: u64 = 64 * 1024;
-
-/// Whether the volume at `place` has no room left to write, which is not
-/// the same as a volume that is mounted read-only, however full it is.
+/// Whether the folder at `place` has no room for the files SQLite keeps beside
+/// a store, which is not the same as a volume mounted read-only or a folder
+/// that refuses the account. APFS reports free space long after it refuses
+/// to make a file or to grow one, so only making one and filling a page of
+/// the index it keeps says.
 ///
-/// A debug build also answers true where the calling thread's test has made
-/// `volume-full` fail, since a unit test cannot choose its runner's disk.
+/// A debug build also answers true where `MARFA_TEST_FAULT` names
+/// `volume-full`, or where the calling thread's test has made it fail, since
+/// no fixture can choose its runner's disk.
 pub(crate) fn volume_is_full(place: Place<'_>) -> bool {
     #[cfg(debug_assertions)]
-    if crate::fault::fails(|| "volume-full") {
+    if crate::fault::fails(|| "volume-full") || crate::fault::named("volume-full").is_some() {
         return true;
     }
     #[cfg(unix)]
-    if raw_statvfs(place).is_some_and(|figures| {
-        figures
-            .f_flag
-            .contains(rustix::fs::StatVfsMountFlags::RDONLY)
-    }) {
-        return false;
+    return probe(place).is_err_and(|error| out_of_room(&error));
+    #[cfg(not(unix))]
+    {
+        let _ = place;
+        false
     }
-    read_volume(place).is_some_and(|volume| volume.free < STORE_LOG_ROOM)
+}
+
+#[cfg(unix)]
+fn out_of_room(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    )
+}
+
+/// The size of one page of the index SQLite keeps beside a store in
+/// write-ahead mode.
+#[cfg(unix)]
+const INDEX_PAGE: usize = 32 * 1024;
+
+/// Makes a file of a name no other has in the folder at `place`, fills a page
+/// of an index in it, and removes it.
+#[cfg(unix)]
+fn probe(place: Place<'_>) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        ".marfa-room-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    );
+    match place {
+        Place::Held(folder) => probe_at(folder, Path::new(&name)),
+        Place::Named(path) => {
+            let folder = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            probe_at(rustix::fs::CWD, &folder.join(name))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn probe_at(base: impl std::os::fd::AsFd, name: &Path) -> io::Result<()> {
+    use rustix::fs::{AtFlags, Mode, OFlags, openat, unlinkat};
+    use std::io::Write;
+
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
+    let mut file = File::from(openat(&base, name, flags, Mode::RUSR | Mode::WUSR)?);
+    let written = file.write_all(&[0; INDEX_PAGE]);
+    let removed = unlinkat(&base, name, AtFlags::empty());
+    written?;
+    Ok(removed?)
 }
 
 /// Some FUSE and network mounts answer a size of zero, which says nothing
@@ -503,6 +548,35 @@ pub(crate) fn exclude_from_backups(_file: &File) -> io::Result<()> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_volume_with_no_room_is_full() {
+        let error = io::Error::from_raw_os_error;
+        for full in [libc::ENOSPC, libc::EDQUOT] {
+            assert!(out_of_room(&error(full)), "{full}");
+        }
+        for other in [libc::EROFS, libc::EACCES, libc::ENOENT, libc::EIO] {
+            assert!(!out_of_room(&error(other)), "{other}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_leaves_nothing_in_the_folder_it_tries() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = File::open(dir.path()).unwrap();
+        for place in [Place::Held(&held), Place::Named(&dir.path().join("store"))] {
+            probe(place).unwrap();
+            assert!(!volume_is_full(place));
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        // The witness: a folder that is not there fails the probe, so a probe
+        // that never made a file would not pass above.
+        let missing = dir.path().join("none/store");
+        assert!(probe(Place::Named(&missing)).is_err());
+        assert!(!volume_is_full(Place::Named(&missing)));
+    }
 
     const TB: u64 = 1_000_000_000_000;
 

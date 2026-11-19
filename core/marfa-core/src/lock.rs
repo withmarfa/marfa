@@ -586,6 +586,46 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_lock_file_that_cannot_be_made_for_want_of_room_is_storage_full() {
+        let refused =
+            |code| crate::not_made(Path::new("lock"), &std::io::Error::from_raw_os_error(code));
+        for full in [libc::ENOSPC, libc::EDQUOT] {
+            assert!(matches!(refused(full), CoreError::StorageFull(_)), "{full}");
+        }
+        for other in [libc::EROFS, libc::EACCES, libc::EIO] {
+            assert!(matches!(refused(other), CoreError::Store(_)), "{other}");
+        }
+    }
+
+    #[cfg(all(unix, debug_assertions))]
+    #[test]
+    fn a_folder_lock_that_cannot_be_made_on_a_full_volume_is_storage_full() {
+        let (temp, state) = state();
+        let vfs = crate::directory_vfs::DirectoryVfs::new(state.file()).unwrap();
+        std::os::unix::fs::symlink(
+            temp.path().join("nowhere/lock"),
+            temp.path().join(DIRECTORY_LOCK),
+        )
+        .unwrap();
+        // The witness: the claim fails with room on the volume, and is a
+        // store failure, since nothing says the volume is the cause.
+        let claim = WriterLock::claim_directory(&vfs);
+        assert!(
+            matches!(claim, Err(CoreError::Store(_))),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
+        let _full = crate::fault::fail_on_this_thread("volume-full");
+        let claim = WriterLock::claim_directory(&vfs);
+        assert!(
+            matches!(claim, Err(CoreError::StorageFull(_))),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_failed_claim_on_a_name_that_is_still_there_is_returned_not_retried() {
         let dir = tempfile::tempdir().unwrap();
         let path = lock_path(&dir.path().join("core.sqlite"));

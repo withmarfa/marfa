@@ -769,7 +769,7 @@ pub fn open_in_memory() -> Result<Connection, CoreError> {
 }
 
 /// `StorageFull` where SQLite could not make the files beside the store
-/// because its volume has no room. A read-only volume is never full.
+/// because its volume has no room.
 pub(crate) fn on_volume(error: rusqlite::Error, place: Option<Place<'_>>) -> CoreError {
     if matches!(
         error.sqlite_error_code(),
@@ -908,6 +908,9 @@ pub(crate) fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
 
 /// The refusal of a store at version `found`, with what it holds.
 pub(crate) fn refused(conn: &Connection, found: i64) -> CoreError {
+    // A writer's connection checkpoints the log into the store as it closes,
+    // which would change a store this build refuses.
+    let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true);
     CoreError::WrongSchema {
         path: String::new(),
         reason: format!(

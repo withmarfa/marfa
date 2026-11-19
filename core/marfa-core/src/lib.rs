@@ -212,17 +212,27 @@ pub(crate) fn owner_only(path: &Path) -> Result<()> {
         {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => {
-                return Err(CoreError::Store(format!(
-                    "{} cannot be made: {error}",
-                    path.display()
-                )));
-            }
+            Err(error) => return Err(not_made(path, &error)),
         }
     }
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+/// A file that cannot be made is a full volume where the volume has no room
+/// for it, and a store failure otherwise.
+#[cfg(unix)]
+fn not_made(path: &Path, error: &std::io::Error) -> CoreError {
+    let message = format!("{} cannot be made: {error}", path.display());
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
+    ) {
+        CoreError::StorageFull(message)
+    } else {
+        CoreError::Store(message)
+    }
 }
 
 /// Removes the file, folder or symbolic link at `name`, following no link,

@@ -61,7 +61,13 @@ impl DirectoryVfs {
     }
 
     pub(crate) fn open(&self, name: &str, flags: OpenFlags) -> Result<Connection> {
-        let conn = Connection::open_with_flags_and_vfs(name, flags, self.name.to_str().unwrap())?;
+        let conn = Connection::open_with_flags_and_vfs(name, flags, self.name.to_str().unwrap())
+            .map_err(|error| {
+                crate::store::on_volume(
+                    error,
+                    Some(crate::file_cache::Place::Held(&self.directory)),
+                )
+            })?;
         // SAFETY: `conn` holds the open handle, and `single_store` matches the callback SQLite expects and reads nothing else.
         unsafe {
             rusqlite::ffi::sqlite3_set_authorizer(

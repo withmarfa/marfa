@@ -2786,7 +2786,7 @@ If a device refuses a fetch `no_room`, then a device MUST leave no file of that 
 
 If a device cannot open a store, as the writer or to read, because the volume that holds it has no room for the files SQLite makes beside it, then a device MUST refuse the open `storage_full`.
 
-**Reason:** the person frees space and tries again, which a `store` refusal does not say. A store on a volume mounted read-only is not on a full one, however little room it shows.
+**Reason:** the person frees space and tries again, which a `store` refusal does not say.
 
 **Tests:** `device/working-copy.test.ts › refuses an open storage_full when the volume has no room for the store's index file, and store when it has`.
 
@@ -4118,9 +4118,9 @@ If a store was made at another schema version than the one this build makes, the
 
 ### `device/wrong-schema-changes-nothing`
 
-If a device refuses a store `wrong_schema`, then a device MUST change no byte of the store file.
+If a device refuses a store `wrong_schema`, then a device MUST change no byte of the store file and no frame of its log beyond what SQLite's own recovery of an interrupted write changes.
 
-**Reason:** a store records its log mode in its header, and a writer that set the mode before it read the version would leave a store it cannot read changed for the build that can.
+**Reason:** a store records its log mode in its header, and a writer that set the mode before it read the version, or that checkpointed the log as it closed, would leave a store it cannot read changed for the build that can.
 
 **Tests:** `device/working-copy.test.ts › changes no byte of a store it refuses wrong_schema, whichever log mode it is in`.
 

@@ -283,12 +283,17 @@ fn a_store_at_another_version_is_refused_with_its_writes_kept() {
     }
 }
 
-/// The bytes of the store file and of each log beside it, `None` where a
-/// log is absent.
+/// The bytes of the store file and of each log beside it, `None` where a log
+/// is absent or empty. The index file SQLite keeps beside a store in
+/// write-ahead mode holds nothing of the store, so it is left out.
 fn every_byte_of(path: &Path) -> Vec<Option<Vec<u8>>> {
-    STORE_FILES
+    ["", "-journal", "-wal"]
         .iter()
-        .map(|suffix| std::fs::read(suffixed(path, suffix)).ok())
+        .map(|suffix| {
+            std::fs::read(suffixed(path, suffix))
+                .ok()
+                .filter(|bytes| !bytes.is_empty())
+        })
         .collect()
 }
 
@@ -353,9 +358,67 @@ fn a_writer_that_refuses_a_store_changes_no_byte_of_it() {
     }
 }
 
+/// Records `found` as the store's version through a connection that leaves
+/// its log as it is when it closes, so the log holds frames the store does not.
+fn leaving_frames_at(path: &Path, found: i64) {
+    let conn = Connection::open(path).unwrap();
+    conn.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+        true,
+    )
+    .unwrap();
+    conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    conn.pragma_update(None, "user_version", found).unwrap();
+}
+
+#[test]
+fn a_writer_that_refuses_a_store_leaves_the_store_and_the_log_holding_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    left_at(&path, SCHEMA_VERSION, "WAL");
+    leaving_frames_at(&path, SCHEMA_VERSION + 1);
+    let held = |path: &Path| {
+        [
+            std::fs::read(path).unwrap(),
+            std::fs::read(suffixed(path, "-wal")).unwrap_or_default(),
+        ]
+    };
+    let before = held(&path);
+    assert!(!before[1].is_empty(), "the log holds no frames");
+
+    assert!(matches!(open(&path), Err(CoreError::WrongSchema { .. })));
+    assert_eq!(
+        held(&path),
+        before,
+        "the writer's refusal changed the store"
+    );
+    assert!(matches!(
+        open_to_read(&path),
+        Err(CoreError::WrongSchema { .. })
+    ));
+    assert_eq!(
+        held(&path),
+        before,
+        "the reader's refusal changed the store"
+    );
+
+    // The witness: at this version, closing a writer checkpoints the log into
+    // the store and deletes it.
+    leaving_frames_at(&path, SCHEMA_VERSION);
+    let before = held(&path);
+    assert!(!before[1].is_empty());
+    drop(open(&path).unwrap());
+    assert_ne!(
+        held(&path),
+        before,
+        "an allowed open left the store as it was"
+    );
+}
+
 /// A store in WAL mode with no log beside it, whose index file cannot be made
 /// because its name leads nowhere, as SQLite fails where the volume has no
 /// room for it. `with_log` leaves an empty log beside it.
+#[cfg(debug_assertions)]
 fn whose_index_cannot_be_made(dir: &Path, with_log: bool) -> std::path::PathBuf {
     let path = dir.join("core.sqlite");
     drop(open(&path).unwrap());
@@ -367,13 +430,13 @@ fn whose_index_cannot_be_made(dir: &Path, with_log: bool) -> std::path::PathBuf 
     path
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, debug_assertions))]
 fn hold_index_name(path: &Path) {
     std::os::unix::fs::symlink(path.with_file_name("nowhere/index"), suffixed(path, "-shm"))
         .unwrap();
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), debug_assertions))]
 fn hold_index_name(path: &Path) {
     std::fs::create_dir(suffixed(path, "-shm")).unwrap();
 }
