@@ -343,6 +343,9 @@ pub async fn replicate_one(
 
 /// Why the object store failed, in words that name no address or key; the log has the rest.
 pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
+    if crate::app::outbound::store::refused_as_private(error) {
+        return "the object store's address is not public, and allow_private_addresses is false";
+    }
     match error.kind() {
         io::ErrorKind::TimedOut => "the object store did not answer in time",
         io::ErrorKind::NotFound => "the bucket or the file was not found",

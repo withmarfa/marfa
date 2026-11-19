@@ -475,10 +475,17 @@ describe("a destination set through /config", () => {
         const long = `${["b", "c", "d"].map((letter) => letter.repeat(63)).join(".")}.${"e".repeat(50)}.localhost`;
         expect(long).toHaveLength(252);
         expect(`marfa.${long}`.length).toBeGreaterThan(253);
+        // Within 253 once its dots at the end are dropped, as no resolver drops them.
+        const dotted = `${["b", "c", "d"].map((letter) => letter.repeat(63)).join(".")}.${"e".repeat(40)}.localhost.......`;
+        expect(`marfa.${dotted}`.length).toBeGreaterThan(253);
         for (const endpoint of [
           "http://127.0.0.1:9",
           "http://[::1]:9",
           `http://${long}:9`,
+          `http://${dotted}:9`,
+          "http://s3.localhost..:9",
+          "http://s3..localhost:9",
+          `http://${"s".repeat(64)}.localhost:9`,
         ]) {
           const refused = await local.patchConfig({
             object_store_bucket: "marfa",
@@ -497,9 +504,13 @@ describe("a destination set through /config", () => {
           await set({ object_store_bucket: null });
           await set({ object_store_path_style: false });
         }
+        // With "marfa." before it, a host of 253 characters and the dot that names the root.
+        const longest = `${["b", "c", "d"].map((letter) => letter.repeat(63)).join(".")}.${"e".repeat(45)}.localhost.`;
+        expect(`marfa.${longest}`.length).toBe(254);
         for (const [bucket, endpoint] of [
           ["my.marfa-bucket", "http://s3.localhost:9"],
           ["s3", "http://s3.localhost:9"],
+          ["marfa", `http://${longest}:9`],
         ]) {
           await set({
             object_store_bucket: bucket,
@@ -1144,6 +1155,63 @@ describe("a stored store setting that does not read", () => {
       }
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "attaches no object store over a stored endpoint whose host holds an empty label or ends in more than one dot, and takes the longest host with one dot at its end",
+    async () => {
+      const server = await bootFreshServer("destination-host-dots", DISK);
+      try {
+        const labels = ["c", "d", "e"].map((letter) => letter.repeat(63));
+        // With "b." before it, 253 characters and the dot that names the root.
+        const longest = `${labels.join(".")}.${"f".repeat(51)}.invalid.`;
+        expect(`b.${longest}`.length).toBe(254);
+        const short = `${labels.join(".")}.${"f".repeat(40)}.invalid`;
+        const stored = async (endpoint: string) => {
+          await server.restart(() => {
+            storeSettingRow(server.sqlitePath, "object_store_bucket", "b");
+            storeSettingRow(
+              server.sqlitePath,
+              "object_store_endpoint",
+              endpoint,
+            );
+            storeSettingRow(
+              server.sqlitePath,
+              "object_store_path_style",
+              "false",
+            );
+          });
+          const told = await storeConcerns(server);
+          expect(told, endpoint).toHaveLength(1);
+          expect(told[0]!.description).not.toContain("f".repeat(40));
+          expect(await backups(server)).toMatchObject({
+            destination: "bucket",
+            reason: "destination_unusable",
+          });
+          return told[0]!.description;
+        };
+        for (const endpoint of [
+          `http://${short}..:9`,
+          `http://${short}........:9`,
+          "http://s3..invalid:9",
+          `http://${longest.replace(".invalid.", "x.invalid.")}:9`,
+        ]) {
+          expect(await stored(endpoint), endpoint).toContain(
+            "object_store_path_style",
+          );
+        }
+        // The witness: these hosts can be made, so the store is tried and
+        // does not answer.
+        for (const endpoint of [`http://${longest}:9`, `http://${short}:9`]) {
+          expect(await stored(endpoint), endpoint).not.toContain(
+            "object_store_path_style",
+          );
+        }
+      } finally {
+        await server.stop();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
   );
 });
 

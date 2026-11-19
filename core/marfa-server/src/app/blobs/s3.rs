@@ -25,7 +25,7 @@ use uuid::Uuid;
 use super::hash::Hash;
 use super::store::Answer;
 use crate::app::faults::Faults;
-use crate::app::outbound::store::PublicOnly;
+use crate::app::outbound::store::{PublicOnly, refused_as_private};
 use crate::settings::Snapshot;
 use crate::settings::registry::{
     ALLOW_PRIVATE_ADDRESSES, OBJECT_STORE_ACCESS_KEY_ID, OBJECT_STORE_BUCKET,
@@ -250,6 +250,9 @@ pub enum Marker {
     None,
     /// No connection, or no answer in time.
     Silent(io::Error),
+    /// The store's address is not public while `allow_private_addresses` is false, so it was
+    /// never asked.
+    Private(io::Error),
     /// An answer that names no store: a refusal, an error or a marker that does not read.
     Refused(io::Error),
 }
@@ -276,6 +279,8 @@ pub enum Unaddressable {
     Bucket,
     /// The endpoint's host is an IP address.
     Address,
+    /// The endpoint's host has an empty label or one longer than a label may be.
+    Host,
     /// The bucket and the endpoint's host are longer together than a host name may be.
     Long,
 }
@@ -285,7 +290,9 @@ impl Unaddressable {
     pub fn key(self) -> &'static str {
         match self {
             Unaddressable::Bucket => OBJECT_STORE_BUCKET.entry.key,
-            Unaddressable::Address | Unaddressable::Long => OBJECT_STORE_ENDPOINT.entry.key,
+            Unaddressable::Address | Unaddressable::Host | Unaddressable::Long => {
+                OBJECT_STORE_ENDPOINT.entry.key
+            }
         }
     }
 
@@ -303,10 +310,15 @@ impl Unaddressable {
                  object_store_endpoint, which must then be a name, not an IP address; set \
                  object_store_path_style to true to reach the store at an address"
             }
+            Unaddressable::Host => {
+                "object_store_path_style is false, so the bucket goes before the host of \
+                 object_store_endpoint, which must then be labels of 1 to 63 characters joined \
+                 by dots, with at most one dot at its end"
+            }
             Unaddressable::Long => {
                 "object_store_path_style is false, so the bucket goes before the host of \
-                 object_store_endpoint, and the two together are longer than the 253 characters \
-                 a host name may be"
+                 object_store_endpoint, and the two together, without a dot at the end, are \
+                 longer than the 253 characters a host name may be"
             }
         }
     }
@@ -335,7 +347,15 @@ pub fn virtual_host(bucket: &str, endpoint: &str) -> Result<String, Unaddressabl
         return Err(Unaddressable::Address);
     };
     let named = format!("{bucket}.{host}");
-    if named.trim_end_matches('.').len() > HOST_LONGEST {
+    // One dot at the end names the root, which a resolver does not count.
+    let counted = named.strip_suffix('.').unwrap_or(&named);
+    if !counted
+        .split('.')
+        .all(|label| (1..=LABEL_LONGEST).contains(&label.len()))
+    {
+        return Err(Unaddressable::Host);
+    }
+    if counted.len() > HOST_LONGEST {
         return Err(Unaddressable::Long);
     }
     url.set_host(Some(&named))
@@ -424,6 +444,7 @@ impl S3 {
                 )),
             },
             Err(error) if is_missing(&error) => Marker::None,
+            Err(error) if refused_as_private(&error) => Marker::Private(failed(error)),
             Err(error) if is_silent(&error) => Marker::Silent(failed(error)),
             Err(error) => Marker::Refused(failed(error)),
         }
@@ -447,7 +468,7 @@ impl S3 {
             Marker::Id(id) if id == self.id => Ok(()),
             Marker::Id(_) => Err(io::Error::other("the store's marker names another store")),
             Marker::None => Err(io::Error::other("the store holds no marker")),
-            Marker::Silent(error) | Marker::Refused(error) => Err(error),
+            Marker::Silent(error) | Marker::Private(error) | Marker::Refused(error) => Err(error),
         }
     }
 
@@ -908,6 +929,49 @@ mod tests {
     }
 
     #[test]
+    fn a_host_is_counted_as_a_resolver_counts_it() {
+        let host = ["a", "b", "c"].map(|letter| letter.repeat(63)).join(".");
+        let at_limit = format!("{host}.{}", "e".repeat(59));
+        assert_eq!(
+            virtual_host("d", &format!("https://{at_limit}.")).map(|url| url.len()),
+            Ok(8 + 253 + 1),
+            "one dot at the end names the root"
+        );
+        assert_eq!(
+            virtual_host("dd", &format!("https://{at_limit}.")),
+            Err(Unaddressable::Long)
+        );
+        let short = format!("{host}.{}", "e".repeat(50));
+        for dots in ["..", "...", "........"] {
+            assert_eq!(
+                virtual_host("d", &format!("https://{short}{dots}")),
+                Err(Unaddressable::Host),
+                "{dots}"
+            );
+        }
+        for endpoint in [
+            "https://s3..store.example",
+            "https://.store.example",
+            "https://store..example.",
+            &format!("https://{}.example", "s".repeat(64)),
+        ] {
+            assert_eq!(
+                virtual_host("marfa", endpoint),
+                Err(Unaddressable::Host),
+                "{endpoint}"
+            );
+        }
+        assert_eq!(
+            virtual_host("marfa", &format!("https://{}.example", "s".repeat(63))),
+            Ok(format!("https://marfa.{}.example", "s".repeat(63)))
+        );
+        assert_eq!(
+            virtual_host("marfa", "https://store.example."),
+            Ok("https://marfa.store.example.".to_string())
+        );
+    }
+
+    #[test]
     fn the_endpoint_is_taken_as_the_bare_service_host() {
         assert_eq!(
             virtual_host("s3", "https://s3.store.example"),
@@ -993,10 +1057,7 @@ mod tests {
             .unwrap();
         let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
         let marker = s3.marker().await;
-        assert!(
-            matches!(marker, Marker::Silent(_) | Marker::Refused(_)),
-            "{marker:?}"
-        );
+        assert!(matches!(marker, Marker::Private(_)), "{marker:?}");
         assert!(asked.lock().unwrap().is_empty());
 
         faults
@@ -1005,6 +1066,33 @@ mod tests {
         let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
         assert!(matches!(s3.marker().await, Marker::None));
         assert_eq!(*asked.lock().unwrap(), [format!("marfa.store.test:{port}")]);
+    }
+
+    #[tokio::test]
+    async fn a_store_by_path_is_reached_only_where_its_addresses_are_public() {
+        let (port, asked) = hosts_asked().await;
+        let faults = Arc::new(Faults::default());
+        let guarded = settings(&format!("http://store.test:{port}"), true);
+        faults.set("resolve:store.test", Some("127.0.0.1")).unwrap();
+        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
+        let marker = s3.marker().await;
+        assert!(matches!(marker, Marker::Private(_)), "{marker:?}");
+        assert!(asked.lock().unwrap().is_empty());
+
+        faults
+            .set("resolve:store.test", Some("93.184.216.34>127.0.0.1"))
+            .unwrap();
+        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
+        assert!(matches!(s3.marker().await, Marker::None));
+        assert_eq!(*asked.lock().unwrap(), [format!("store.test:{port}")]);
+    }
+
+    #[tokio::test]
+    async fn a_store_whose_name_finds_no_address_is_silent() {
+        let guarded = settings("http://store.invalid:9", true);
+        let s3 = S3::new(&guarded, String::new(), &Arc::default()).unwrap();
+        let marker = s3.marker().await;
+        assert!(matches!(marker, Marker::Silent(_)), "{marker:?}");
     }
 
     /// Credentials that never arrive, as from an instance metadata endpoint that stopped

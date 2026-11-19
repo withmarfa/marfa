@@ -278,12 +278,33 @@ fn folder_missing(root: &Path, why: &str) -> Failure {
     ))
 }
 
+/// Why the object store was not taken.
+enum Untaken {
+    Failed(Failure),
+    /// The private-address guard refused its address, which only a running server can allow.
+    Private(Failure),
+}
+
+impl From<Failure> for Untaken {
+    fn from(failure: Failure) -> Untaken {
+        Untaken::Failed(failure)
+    }
+}
+
+impl Untaken {
+    fn failure(self) -> Failure {
+        match self {
+            Untaken::Failed(failure) | Untaken::Private(failure) => failure,
+        }
+    }
+}
+
 /// With `unfilled`, only a store the server kept copies in may refill the folder.
 async fn object_store(
     db: &Db,
     settings: &ObjectStoreSettings,
     unfilled: Option<&Path>,
-) -> std::result::Result<S3, Failure> {
+) -> std::result::Result<S3, Untaken> {
     let refused =
         |what: String| Failure::start(format!("The object store {} {what}", settings.locator()));
     let bucket = S3::new(settings, String::new(), db.faults()).map_err(started)?;
@@ -293,6 +314,13 @@ async fn object_store(
     };
     let unknown = ", and the object store is not one the server has kept copies in";
     match marker {
+        Marker::Private(error) => {
+            tracing::warn!(%error, "The object store's address is not public");
+            Err(Untaken::Private(refused(
+                "is at an address that is not public, and allow_private_addresses is false"
+                    .to_string(),
+            )))
+        }
         Marker::Id(id) => {
             if let Some(root) = unfilled {
                 let named = id.clone();
@@ -301,14 +329,14 @@ async fn object_store(
                     .await
                     .map_err(started)?;
                 if !kept_copies {
-                    return Err(folder_missing(root, unknown));
+                    return Err(folder_missing(root, unknown).into());
                 }
             }
-            S3::new(settings, id, db.faults()).map_err(started)
+            Ok(S3::new(settings, id, db.faults()).map_err(started)?)
         }
         Marker::None => {
             if let Some(root) = unfilled {
-                return Err(folder_missing(root, unknown));
+                return Err(folder_missing(root, unknown).into());
             }
             let s3 = S3::new(settings, Uuid::now_v7().to_string(), db.faults()).map_err(started)?;
             match tokio::time::timeout(CHECK_DEADLINE, s3.mark()).await {
@@ -316,18 +344,16 @@ async fn object_store(
                 Ok(Err(error)) => Err(refused(format!(
                     "holds no store marker and took none: {}",
                     upkeep::object_store_said(&error)
-                ))),
-                Err(_) => Err(refused(
-                    "holds no store marker and took none in time".to_string(),
-                )),
+                ))
+                .into()),
+                Err(_) => {
+                    Err(refused("holds no store marker and took none in time".to_string()).into())
+                }
             }
         }
         Marker::Silent(error) => {
             if let Some(root) = unfilled {
-                return Err(folder_missing(
-                    root,
-                    ", and the object store did not answer",
-                ));
+                return Err(folder_missing(root, ", and the object store did not answer").into());
             }
             let locator = settings.locator();
             let recorded = db
@@ -337,12 +363,13 @@ async fn object_store(
             match recorded {
                 Some(id) => {
                     tracing::warn!(%error, "The object store did not answer; its copies wait");
-                    S3::new(settings, id, db.faults()).map_err(started)
+                    Ok(S3::new(settings, id, db.faults()).map_err(started)?)
                 }
                 None => Err(refused(format!(
                     "did not answer: {}",
                     upkeep::object_store_said(&error)
-                ))),
+                ))
+                .into()),
             }
         }
         Marker::Refused(error) => {
@@ -350,7 +377,8 @@ async fn object_store(
             Err(refused(format!(
                 "did not say which store it is: {}",
                 upkeep::object_store_said(&error)
-            )))
+            ))
+            .into())
         }
     }
 }
@@ -423,7 +451,7 @@ async fn taking(
                 folder: None,
                 trouble: None,
             },
-            Err(failure) => Attached::troubled(wanted, failure),
+            Err(untaken) => Attached::troubled(wanted, untaken.failure()),
         },
         Wanted::Folder(root) => {
             let (checked, kept) = (root.clone(), kept.to_vec());
@@ -459,8 +487,9 @@ async fn taking(
     }
 }
 
-/// A store setting that does not read or cannot make the store's host does not refuse the start:
-/// only a running server can correct it.
+/// A store setting that does not read or cannot make the store's host, or a store at an address
+/// the private-address guard refuses, does not refuse the start: only a running server can
+/// correct it.
 async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<Attached, Failure> {
     let failure = match &wanted {
         Wanted::Bucket(settings) => match caught(object_store(db, settings, Some(root))).await {
@@ -472,7 +501,8 @@ async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<
                     trouble: None,
                 });
             }
-            Ok(Err(refused)) => return Err(refused),
+            Ok(Err(Untaken::Private(failure))) => failure,
+            Ok(Err(Untaken::Failed(refused))) => return Err(refused),
             Err(_) => client_failed(),
         },
         Wanted::Unreadable(keys) => does_not_read(keys),

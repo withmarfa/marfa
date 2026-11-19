@@ -51,11 +51,39 @@ fn client(connect_timeout: Duration, names: Arc<dyn Resolve>) -> reqwest::Result
         .build()
 }
 
+/// The guard's refusal, which no store sent.
+#[derive(Debug)]
+struct NotPublic;
+
+impl std::fmt::Display for NotPublic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "the object store's address is not public, and allow_private_addresses is false",
+        )
+    }
+}
+
+impl std::error::Error for NotPublic {}
+
 fn not_public() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "the object store's address is not public, and allow_private_addresses is false",
-    )
+    io::Error::new(io::ErrorKind::PermissionDenied, NotPublic)
+}
+
+/// Whether the guard refused the connection somewhere in `error`'s causes.
+pub fn refused_as_private(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cause = Some(error);
+    while let Some(error) = cause {
+        // An `io::Error` passes over the error it wraps when asked for its source.
+        let wrapped = error
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::get_ref)
+            .is_some_and(|inner| inner.is::<NotPublic>());
+        if wrapped || error.is::<NotPublic>() {
+            return true;
+        }
+        cause = error.source();
+    }
+    false
 }
 
 /// Holds each request to the destination address rules.

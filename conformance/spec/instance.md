@@ -3382,9 +3382,9 @@ Where `object_store_endpoint` is set and `object_store_path_style` is `false`, t
 
 ### `instance/object-store-virtual-host-refused`
 
-If a write to `/config` that sets `object_store_bucket`, `object_store_endpoint` or `object_store_path_style` leaves `object_store_path_style` `false` with both `object_store_bucket` and `object_store_endpoint` set, and the bucket is not labels of 1 to 63 lowercase ASCII letters, digits and hyphens joined by dots with no label starting or ending with a hyphen, the endpoint's host is an IP address, or the bucket, a dot and the endpoint's host are longer than 253 characters, then the server MUST answer `400 validation_error` naming a setting the write sets, with no part of the endpoint in the refusal.
+If a write to `/config` that sets `object_store_bucket`, `object_store_endpoint` or `object_store_path_style` leaves `object_store_path_style` `false` with both `object_store_bucket` and `object_store_endpoint` set, and the bucket is not labels of 1 to 63 lowercase ASCII letters, digits and hyphens joined by dots with no label starting or ending with a hyphen, the endpoint's host is an IP address, the endpoint's host holds an empty label or a label longer than 63 characters apart from one dot at its end, or the bucket, a dot and the endpoint's host, without one dot at its end, are longer than 253 characters, then the server MUST answer `400 validation_error` naming a setting the write sets, with no part of the endpoint in the refusal.
 
-**Reason:** by virtual host the bucket is a part of a host name, which holds only such labels, carries no case and cannot go before an address. The endpoint is the store's own host, without the bucket: a host that begins with the bucket can be a store's own, as the bucket `s3` before `s3.store.example`.
+**Reason:** by virtual host the bucket is a part of a host name, which holds only such labels, carries no case and cannot go before an address. The endpoint is the store's own host, without the bucket: a host that begins with the bucket can be a store's own, as the bucket `s3` before `s3.store.example`. A resolver counts a host without the one dot at its end that names the root, and no other empty label.
 
 **Tests:** `compliance/destination-settings.test.ts › refuses object store settings addressed by virtual host that cannot make the store's host, and takes the same values by path`.
 
@@ -3392,7 +3392,7 @@ If a write to `/config` that sets `object_store_bucket`, `object_store_endpoint`
 
 While the stored `object_store_path_style` is `false` and the stored `object_store_bucket` and `object_store_endpoint` are values `instance/object-store-virtual-host-refused` refuses together, the server MUST NOT attach an object store.
 
-**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`.
+**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`, `› attaches no object store over a stored endpoint whose host holds an empty label or ends in more than one dot, and takes the longest host with one dot at its end`.
 
 ### `instance/object-store-virtual-host-start`
 
@@ -3406,7 +3406,7 @@ While the stored `object_store_path_style` is `false` and the stored `object_sto
 
 While `instance/object-store-virtual-host-unusable` keeps an object store from being attached, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` and reference `store` that names `object_store_path_style` and holds no part of the endpoint.
 
-**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`.
+**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`, `› attaches no object store over a stored endpoint whose host holds an empty label or ends in more than one dot, and takes the longest host with one dot at its end`.
 
 ### `instance/store-setting-unreadable-start`
 
@@ -3478,11 +3478,35 @@ Where `allow_private_addresses` is `false`, if the host of `error_webhook_url` i
 
 ### `instance/object-store-private-unusable`
 
-Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`.
+Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`, whether or not the server used that store before.
 
 **Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`).
 
-**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
+**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`, `› stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
+
+### `instance/object-store-private-detached`
+
+Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST NOT list an object store as attached in `GET /blobs/stores`.
+
+**Reason:** the server keeps no copy in a store it may not reach, whatever it recorded of that store before.
+
+**Tests:** `compliance/destination-addresses.test.ts › stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
+
+### `instance/object-store-private-backups`
+
+Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /backups` and `POST /backups` from a caller holding `backups.manage` with `503 blob_store_unavailable`.
+
+**Reason:** the settings name the store, so the owner learns that it needs attention rather than that no destination is set.
+
+**Tests:** `compliance/destination-addresses.test.ts › stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
+
+### `instance/object-store-private-start`
+
+Where `allow_private_addresses` is `false`, when the server starts while the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, the server MUST NOT refuse the start because the blob folder is missing or holds no marker.
+
+**Reason:** only a running server can take `allow_private_addresses` through `/config`.
+
+**Tests:** `compliance/destination-addresses.test.ts › starts over an emptied blob folder while the switch is off and the object store's name leads to a private address, and serves the file once the switch is on`.
 
 ## Start-only settings
 
