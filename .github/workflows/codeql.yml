@@ -34,12 +34,14 @@ on:
   schedule:
     - cron: "41 4 * * 1"
 
-# Even with cancellation disabled, a shared group replaces older pending
-# runs; non-PR runs need their own groups. A pull request's draft and ready
-# runs have separate groups: a push to a draft and marking it ready start two
-# runs at once, and in one group the later-queued run cancels the other.
+# Every push to `main` shares one group and none is cancelled while it runs:
+# GitHub lets the running run finish, keeps only the newest waiting one and
+# cancels the older waiting ones. The weekly run gets its own group. A pull
+# request's draft and ready runs have separate groups: a push to a draft and
+# marking it ready start two runs at once, and in one group the later-queued
+# run cancels the other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.ref, github.event.pull_request.draft && 'draft' || 'ready') || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.ref, github.event.pull_request.draft && 'draft' || 'ready') || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
