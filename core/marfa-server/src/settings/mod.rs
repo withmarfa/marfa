@@ -106,7 +106,7 @@ fn warn_of_ignored(environment: &Environment) {
 pub(crate) fn report_unreadable(key: &str) {
     tracing::error!(
         setting = key,
-        "A stored setting does not read; its row is kept and its default is in use"
+        "A stored setting does not read; its row is kept until it is set again"
     );
 }
 
@@ -161,8 +161,8 @@ impl Settings {
         })
     }
 
-    /// A row that no longer reads stays in the table and its setting falls back, since a stop
-    /// here could not be mended through the API.
+    /// A row that no longer reads stays in the table and is reported, since a stop here could
+    /// not be mended through the API.
     pub fn apply_stored(&self, stored: &[(String, String)]) {
         let snapshot = Snapshot::resolve(&self.seeds, Some(&self.sealer), stored, 0);
         for key in snapshot.unreadable() {

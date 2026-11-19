@@ -58,25 +58,25 @@ When the server starts over a disk folder that holds the marker of a store, the 
 
 ### `stores/fresh-folder-fresh-store`
 
-When the server starts over a disk folder that holds no marker, and neither `stores/missing-folder-refused` nor `stores/missing-folder-unknown-bucket` refuses the start, the server MUST list a new store and claim no copies in it.
+When the server starts over a disk folder that holds no marker, and neither `stores/missing-folder-refused` nor `stores/missing-folder-unknown-bucket` refuses the start and `stores/unread-setting-folder-untouched` does not apply, the server MUST list a new store and claim no copies in it.
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/missing-folder-refused`
 
-Where no object store is configured, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
+Where `object_store_bucket` is not set, and neither it nor `backup_path` has a stored value that does not read, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
 
 **Reason:** a folder or marker missing where the copy record names copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store the server kept copies in is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
 
-**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`.
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`, `compliance/destination-settings.test.ts › refuses to start over an emptied blob folder while the setting that does not read is not one that names the store`, `› refuses the next start over that folder once the setting reads again, and starts once the folder returns`.
 
 ### `stores/missing-folder-unknown-bucket`
 
-Where an object store is configured, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, and the object store does not answer with the marker of an object store the copy record records, then the server MUST refuse to start, naming the folder.
+Where `object_store_bucket` is set and every stored setting whose key begins `object_store_` reads, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, and the object store does not answer with the marker of an object store in which the copy record records a copy, then the server MUST refuse to start, naming the folder.
 
 **Reason:** an empty bucket, another bucket or one that does not answer holds none of the copies the folder held, so a start over it would answer every saved file `503 blob_store_unavailable` and take new uploads into a folder the drive hides once it is mounted again.
 
-**Tests:** `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`.
+**Tests:** `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`, `compliance/destination-settings.test.ts › refuses to start over an emptied blob folder while the setting that does not read is not one that names the store`, `› refuses the next start over that folder when the store named since holds none of its copies, and rebuilds it from the store that does`.
 
 ### `stores/missing-folder-untouched`
 
@@ -84,7 +84,91 @@ If `stores/missing-folder-refused` or `stores/missing-folder-unknown-bucket` ref
 
 **Reason:** a marker written there would make the next start take the folder as a new store.
 
-**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`, `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`.
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`, `compliance/blob-store-rebuild.test.ts › refuses to start over a missing folder beside a bucket the server never kept copies in, and rebuilds the folder from the bucket it did`, `compliance/destination-settings.test.ts › refuses to start over an emptied blob folder while the setting that does not read is not one that names the store`, `› refuses the next start over that folder once the setting reads again, and starts once the folder returns`, `› refuses the next start over that folder when the store named since holds none of its copies, and rebuilds it from the store that does`.
+
+### `stores/unread-setting-folder-untouched`
+
+If the server starts under `instance/store-setting-unreadable-start` over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST NOT create the folder or write in it.
+
+**Reason:** the folder may be a mount point whose drive is not mounted, and the next start judges it by `stores/missing-folder-refused` and `stores/missing-folder-unknown-bucket`.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`, `› starts over an emptied blob folder while a stored object store setting does not read, answers 503 for the file it held, and serves it once the setting is set again`.
+
+### `stores/unread-setting-store-kept`
+
+If the server starts under `instance/store-setting-unreadable-start` over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST go on listing that store with `detached_at` null.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`, `› starts over an emptied blob folder while a stored object store setting does not read, answers 503 for the file it held, and serves it once the setting is set again`.
+
+### `stores/unread-setting-upload-refused`
+
+While the disk store that `stores/unread-setting-store-kept` keeps listed has no folder holding its marker, when a credential that may upload sends `POST /blobs`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** every upload lands on the disk store, and this one cannot take it.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`.
+
+### `stores/returned-folder-locked`
+
+If another running server has written to a disk folder since that folder returned to it holding the store's marker, and the server starts on that folder, then the server MUST refuse to start.
+
+**Reason:** a blob folder belongs to one running server at a time.
+
+**Tests:** `compliance/one-server.test.ts › refuses a second server on a returned folder while an upload is in progress there, and the upload lands`.
+
+### `stores/returned-folder-locked-health`
+
+If another running server has answered `GET /health` since a disk folder it started without returned holding the store's marker, no server having that folder open at that answer, and the server starts on that folder, then the server MUST refuse to start.
+
+**Reason:** a server that has reported the folder as its store keeps it until it ends.
+
+**Tests:** `compliance/one-server.test.ts › refuses a second server on a returned folder once it has answered GET /health, and not after it has only served a read`.
+
+### `stores/returned-folder-taken`
+
+While a disk folder that the server started without has returned holding the store's marker, and another running server has it open or it cannot be locked, when a credential that may upload sends `POST /blobs`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a folder the server cannot keep to itself may be another server's.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/returned-folder-taken-export`
+
+While a disk folder is as `stores/returned-folder-taken` describes, when a credential that may export sends `GET /export?format=archive`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** an archive export writes its working files in the folder.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/returned-folder-taken-backup`
+
+While a disk folder is as `stores/returned-folder-taken` describes and the settings name a backup destination, when a credential that may run a backup sends `POST /backups`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a backup writes its working files in the folder.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`.
+
+### `stores/returned-folder-taken-read`
+
+While a disk folder is as `stores/returned-folder-taken` describes, when a credential that may read a file the folder holds requests it, the server MUST serve the file.
+
+**Reason:** a read changes nothing in the folder.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/returned-folder-taken-health`
+
+While a disk folder is as `stores/returned-folder-taken` describes, the server MUST answer the `blob_storage` component of `GET /health` as `down`.
+
+**Reason:** nothing can be stored until the folder is the server's own.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
+
+### `stores/unread-setting-folder-returns`
+
+When the folder of the disk store that `stores/unread-setting-store-kept` keeps listed holds that store's marker again and `stores/returned-folder-taken` does not describe it, the server MUST serve and store blobs through that store, without a restart.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`.
 
 ### `stores/attached-follows-settings`
 
@@ -109,6 +193,14 @@ If a run of `blob-replicate` cannot read the settings again after a write to `/c
 **Reason:** until the server reads its settings again, it does not know which settings it acts on, so a run that succeeded would tell the owner that the change took effect.
 
 **Tests:** `compliance/store-follows-settings.test.ts › ends blob-replicate as failed while the settings cannot be read again after a write to /config of unknown outcome, and as succeeded once they can`.
+
+### `stores/attached-unconfirmed-no-purge`
+
+While a run of `blob-replicate` would end with the outcome `failed` under `stores/attached-follows-settings-failed` or `stores/attached-follows-settings-unread`, the server MUST NOT purge a blob.
+
+**Reason:** the server decides what to purge from what the stores in use hold and what their backups name, and until the record of those stores and the settings are confirmed it does not know which stores they are.
+
+**Tests:** `compliance/store-follows-settings.test.ts › purges nothing while the record of the folder in use cannot be written, and purges the same file once it can`, `› purges nothing while the settings cannot be read again after a write to /config of unknown outcome, and purges the same file once they can`.
 
 ### `stores/detached-listed`
 
@@ -644,7 +736,7 @@ When `GET /blobs/{hash}` or a link the instance serves reads the bytes of a blob
 
 **Reason:** a store that cannot answer says nothing of the bytes, so `404 blob_not_found` would claim they are gone.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable when no store opens the bytes, and serves them from a store that does`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable when no store opens the bytes, and serves them from a store that does`, `compliance/destination-settings.test.ts › starts over a missing or empty blob folder while a stored backup_path does not read, leaves the folder and its store alone, and serves the files once the folder returns`.
 
 ### `stores/read-no-answer`
 

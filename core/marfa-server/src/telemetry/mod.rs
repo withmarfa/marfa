@@ -21,7 +21,7 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, Span};
 
 pub use config::Config;
-pub use fault::{Fault, Kind, install_panic_hook};
+pub use fault::{Fault, Kind, caught, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
 
 use lane::Lane;

@@ -1502,12 +1502,7 @@ impl App {
         let mut health = serde_json::Map::new();
         // While a follow is still running, the store in use is reported until it ends.
         let named = self.named_destination().ok();
-        let kind = named.as_ref().and_then(|wanted| match wanted {
-            Wanted::Bucket(_) => Some("bucket"),
-            Wanted::Folder(_) => Some("folder"),
-            Wanted::Disk => None,
-        });
-        if let Some(kind) = kind {
+        if let Some(kind) = named.as_ref().and_then(Wanted::destination_kind) {
             health.insert("destination".into(), kind.into());
         }
         let attachment = named
@@ -1941,7 +1936,8 @@ async fn back_up(app: &Arc<App>, forced: bool, asker: Option<Caller>) -> Result<
                 gone.is_some() && matches!(refused.code, Code::Unauthorized | Code::Forbidden);
             if !theirs {
                 let (message, at) = (refused.message.to_string(), app.clock.instant());
-                let in_store = refused.code == Code::BlobStoreUnavailable;
+                let in_store = refused.code == Code::BlobStoreUnavailable
+                    && refused.message != super::blobs::WORKING_FILES_REFUSED;
                 if let Err(error) = app
                     .db
                     .write(Write::own(), move |tx| {

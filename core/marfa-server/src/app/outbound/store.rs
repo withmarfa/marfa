@@ -27,7 +27,7 @@ impl HttpConnector for PublicOnly {
                 source: Box::new(error),
             }
         })?;
-        Ok(HttpClient::new(LiteralsJudged(client)))
+        Ok(HttpClient::new(RequestsJudged(client)))
     }
 }
 
@@ -54,22 +54,31 @@ fn not_public() -> io::Error {
     )
 }
 
-/// The resolver is never asked about a host written as an address.
+/// Holds each request to the destination address rules.
 #[derive(Debug)]
-struct LiteralsJudged(reqwest::Client);
+struct RequestsJudged(reqwest::Client);
+
+fn judged(uri: &http::Uri) -> Result<(), io::Error> {
+    let url = url::Url::parse(&uri.to_string()).map_err(|_| not_public())?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(not_public());
+    }
+    let literal = match url.host() {
+        Some(url::Host::Ipv4(ip)) => Some(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => Some(IpAddr::V6(ip)),
+        Some(url::Host::Domain(_)) => None,
+        None => return Err(not_public()),
+    };
+    if literal.is_some_and(|ip| !is_public(ip)) {
+        return Err(not_public());
+    }
+    Ok(())
+}
 
 #[async_trait]
-impl HttpService for LiteralsJudged {
+impl HttpService for RequestsJudged {
     async fn call(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
-        let literal = request.uri().host().and_then(|host| {
-            host.trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<IpAddr>()
-                .ok()
-        });
-        if literal.is_some_and(|ip| !is_public(ip)) {
-            return Err(HttpError::new(HttpErrorKind::Unknown, not_public()));
-        }
+        judged(request.uri()).map_err(|error| HttpError::new(HttpErrorKind::Unknown, error))?;
         self.0.call(request).await
     }
 }
@@ -159,5 +168,138 @@ mod tests {
             .unwrap();
         assert_eq!(redirected.status(), 302);
         assert_eq!(private_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// Counts each connection made to a loopback listener, and answers none.
+    async fn counted_listener() -> (SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let seen = connections.clone();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                seen.fetch_add(1, Ordering::SeqCst);
+                drop(socket);
+            }
+        });
+        (at, connections)
+    }
+
+    fn get(url: &str) -> HttpRequest {
+        http::Request::get(url)
+            .body(object_store::client::HttpRequestBody::empty())
+            .unwrap()
+    }
+
+    /// Every valid host of up to `longest` characters over `alphabet`, as a URL to `port`.
+    fn hosts(alphabet: &str, longest: u32, port: u16) -> Vec<(String, Option<url::Host>)> {
+        let mut grown = vec![String::new()];
+        let mut found = Vec::new();
+        for _ in 0..longest {
+            grown = grown
+                .iter()
+                .flat_map(|host| alphabet.chars().map(move |c| format!("{host}{c}")))
+                .collect();
+            for host in &grown {
+                let url = format!("http://{host}:{port}/b/k");
+                if url.parse::<http::Uri>().is_ok() {
+                    let read = url::Url::parse(&url)
+                        .ok()
+                        .and_then(|url| url.host().map(|host| host.to_owned()));
+                    found.push((url, read));
+                }
+            }
+        }
+        found
+    }
+
+    fn is_loopback(read: &Option<url::Host>) -> bool {
+        match read {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            _ => false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_to_a_loopback_host_is_refused_before_any_connection() {
+        let (at, connections) = counted_listener().await;
+        let port = at.port();
+        let service =
+            RequestsJudged(client(Duration::from_secs(2), Arc::new(PublicNames)).unwrap());
+        // The witness: the listener does take a connection when nothing refuses it.
+        let _ = service
+            .0
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(connections.swap(0, Ordering::SeqCst), 1);
+        let loopback: Vec<String> = hosts("0127fx.", 6, port)
+            .into_iter()
+            .filter(|(_, read)| is_loopback(read))
+            .map(|(url, _)| url)
+            .chain([
+                format!("http://127.0.0.1:{port}/b/k"),
+                format!("http://[::1]:{port}/b/k"),
+                format!("http://localhost:{port}/b/k"),
+            ])
+            .collect();
+        assert!(loopback.len() > 3, "{loopback:?}");
+        for url in loopback {
+            assert!(service.call(get(&url)).await.is_err(), "{url}");
+        }
+        for url in [
+            format!("http://user@127.0.0.1:{port}/b"),
+            format!("http://user:pass@store.example.com:{port}/b"),
+            format!("http://user@store.example.com:{port}/b"),
+        ] {
+            assert!(service.call(get(&url)).await.is_err(), "{url}");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(connections.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_host_is_judged_by_its_address() {
+        let (mut fit, mut refused) = (0, 0);
+        for (url, read) in hosts("0127fx.", 6, 9000) {
+            let public = match read {
+                Some(url::Host::Ipv4(ip)) => is_public(IpAddr::V4(ip)),
+                Some(url::Host::Ipv6(ip)) => is_public(IpAddr::V6(ip)),
+                Some(url::Host::Domain(_)) => true,
+                None => false,
+            };
+            let judged = judged(&url.parse().unwrap()).is_ok();
+            assert_eq!(judged, public, "{url}");
+            if judged {
+                fit += 1;
+            } else {
+                refused += 1;
+            }
+        }
+        assert!(fit > 0 && refused > 0, "{fit} fit, {refused} refused");
+    }
+
+    #[test]
+    fn a_public_name_and_a_public_address_are_judged_fit() {
+        for url in [
+            "https://s3.us-east-1.amazonaws.com/bucket/key",
+            "https://bucket.s3.eu-west-2.amazonaws.com/key",
+            "https://abc.r2.cloudflarestorage.com/bucket",
+            "https://8.8.8.8/bucket",
+            "https://[2606:4700:4700::1111]/bucket",
+            "http://store.example.com:9000/bucket",
+        ] {
+            assert!(judged(&url.parse().unwrap()).is_ok(), "{url}");
+        }
+        for url in [
+            "http://10.0.0.1/b",
+            "http://169.254.169.254/b",
+            "http://192.168.1.1/b",
+            "http://[fe80::1]/b",
+        ] {
+            assert!(judged(&url.parse().unwrap()).is_err(), "{url}");
+        }
     }
 }

@@ -351,15 +351,23 @@ fn judge_disk(volumes: [Measured; 2], reserve: u64) -> Component {
 
 async fn blob_storage(app: &Arc<App>) -> Component {
     let app = app.clone();
-    let present = bounded(move || {
+    let looked = bounded(move || {
         app.faults.hold_blocking(HOLD_DISK_PROBE);
         let folder = &app.settings.start.blob_path;
-        !app.faults.refusing(REFUSE_BLOB_STORE) && folder.is_dir() && folder.join(MARKER).is_file()
+        if app.faults.refusing(REFUSE_BLOB_STORE)
+            || !folder.is_dir()
+            || !folder.join(MARKER).is_file()
+        {
+            return Some("the blob folder or its marker is missing");
+        }
+        app.blobs
+            .folder_unlockable()
+            .then_some("the blob folder could not be locked, so no file can be stored")
     })
     .await;
-    match present {
-        Some(true) => Component::ok(None),
-        Some(false) => Component::not_ok(Status::Down, "the blob folder or its marker is missing"),
+    match looked {
+        Some(None) => Component::ok(None),
+        Some(Some(fault)) => Component::not_ok(Status::Down, fault),
         None => Component::silent("blob folder answer"),
     }
 }

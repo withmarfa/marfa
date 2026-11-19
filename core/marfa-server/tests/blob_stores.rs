@@ -764,6 +764,49 @@ fn marker_key(prefix: &str) -> String {
 }
 
 impl Instance {
+    /// Names the bucket under `prefix` through `/config`.
+    async fn name_bucket(&self, s3: &FakeS3, prefix: &str) {
+        let settings: serde_json::Map<String, Value> = s3
+            .settings(BUCKET, prefix)
+            .into_iter()
+            .filter(|(name, _)| name != "MARFA_ALLOW_PRIVATE_ADDRESSES")
+            .map(|(name, value)| {
+                let key = name.strip_prefix("MARFA_").unwrap().to_lowercase();
+                (key, Value::String(value))
+            })
+            .collect();
+        let named = self
+            .call(Method::PATCH, "/config", Some(Value::Object(settings)))
+            .await;
+        assert_eq!(named.status, StatusCode::OK, "{}", named.body);
+    }
+
+    /// Returns once `fault` has fired and the stores are in doubt.
+    async fn until_doubted_after(&self, fault: &str) {
+        let began = Instant::now();
+        loop {
+            let fired = self
+                .app
+                .faults
+                .list()
+                .iter()
+                .any(|listed| listed.name == fault && listed.fired > 0);
+            if fired && !self.app.blobs.settled() {
+                return;
+            }
+            assert!(began.elapsed() < Duration::from_secs(10), "{fault}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn until_trouble_is(&self, trouble: bool) {
+        let began = Instant::now();
+        while self.app.blobs.trouble().is_some() != trouble {
+            assert!(began.elapsed() < Duration::from_secs(20), "{trouble}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     /// Stores the bytes and copies them into the object store.
     async fn replicated(&self, s3: &FakeS3, bytes: &[u8]) -> String {
         let hash = self.stored(bytes).await;
@@ -1806,4 +1849,666 @@ async fn a_file_whose_grace_ends_while_a_sweep_waits_to_choose_keeps_its_object_
     assert_eq!(next["purged"], 1, "{next}");
     assert_eq!(instance.fetch(&hash).await.status, StatusCode::NOT_FOUND);
     assert!(s3.objects_under(&objects_of("blobs", &hash)).is_empty());
+}
+
+/// A stored value that each object store setting's rule refuses.
+fn unreadable_store_rows() -> [(&'static str, String); 7] {
+    [
+        ("object_store_bucket", "not a bucket".to_string()),
+        ("object_store_region", "not a region".to_string()),
+        ("object_store_endpoint", "not an endpoint".to_string()),
+        ("object_store_path_style", "sometimes".to_string()),
+        ("object_store_prefix", "not//a/prefix".to_string()),
+        ("object_store_access_key_id", "k".repeat(257)),
+        (
+            "object_store_secret_access_key",
+            "sealed elsewhere".to_string(),
+        ),
+    ]
+}
+
+async fn store_concerns(app: &Arc<App>) -> Vec<Value> {
+    let attention = send(
+        &control(app.clone()),
+        Request::builder()
+            .method(Method::GET)
+            .uri("/attention")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    attention.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|concern| concern["kind"] == "backup" && concern["reference"] == "store")
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn any_stored_object_store_setting_that_does_not_read_attaches_no_store_and_is_told() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    for (key, value) in unreadable_store_rows() {
+        let instance = Instance::start(&pairs(&env)).await;
+        assert!(instance.app.blobs.s3().is_some(), "the witness: {key}");
+        commit_unpublished(&instance.app, key, &value).await;
+        instance.app.close().await;
+
+        let restarted = App::start(settings(instance.dir.path(), &pairs(&env)))
+            .await
+            .map_err(|failure| failure.to_string())
+            .unwrap();
+        assert!(restarted.blobs.s3().is_none(), "{key}");
+        let told = store_concerns(&restarted).await;
+        assert_eq!(told.len(), 1, "{key}: {told:?}");
+        let description = told[0]["description"].as_str().unwrap();
+        assert!(description.contains(key), "{key}: {description}");
+        assert!(!description.contains(&value), "{key}: {description}");
+    }
+}
+
+#[tokio::test]
+async fn every_stored_object_store_setting_that_does_not_read_is_named_together() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    commit_unpublished(&instance.app, "object_store_prefix", "not//a/prefix").await;
+    commit_unpublished(&instance.app, "object_store_endpoint", "not an endpoint").await;
+    instance.app.close().await;
+    let restarted = App::start(settings(instance.dir.path(), &pairs(&env)))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    let trouble = restarted.blobs.trouble().unwrap();
+    assert!(trouble.contains("object_store_prefix"), "{trouble}");
+    assert!(trouble.contains("object_store_endpoint"), "{trouble}");
+}
+
+#[tokio::test]
+async fn a_store_setting_that_does_not_read_is_no_trouble_while_no_bucket_is_named() {
+    let instance = Instance::start(&[]).await;
+    commit_unpublished(&instance.app, "object_store_endpoint", "not an endpoint").await;
+    instance.app.close().await;
+    let restarted = App::start(settings(instance.dir.path(), &[]))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    assert_eq!(restarted.blobs.trouble(), None);
+    assert!(store_concerns(&restarted).await.is_empty());
+}
+
+/// A server started on `instance`'s folder with `env`, its clock held.
+async fn restarted(instance: &Instance, env: &[(&str, &str)]) -> Restarted {
+    let app = App::start(settings(instance.dir.path(), env))
+        .await
+        .map_err(|failure| failure.to_string())
+        .unwrap();
+    app.clock.pause(true);
+    Restarted {
+        control: control(app.clone()),
+        app,
+    }
+}
+
+/// The server a test started again over an `Instance`'s files.
+struct Restarted {
+    app: Arc<App>,
+    control: Router,
+}
+
+impl Restarted {
+    async fn call(&self, method: Method, path: &str, body: Option<Value>) -> Reply {
+        let request = Request::builder().method(method).uri(path);
+        let request = match body {
+            Some(body) => request
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string())),
+            None => request.body(Body::empty()),
+        };
+        send(&self.control, request.unwrap()).await
+    }
+
+    async fn sweep(&self) -> Value {
+        let run = self
+            .call(
+                Method::POST,
+                "/housekeeping/blob-orphans/run",
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(run.body["outcome"], "succeeded", "{}", run.body);
+        run.body["result"].clone()
+    }
+
+    async fn fetch(&self, hash: &str) -> Reply {
+        self.call(Method::GET, &format!("/blobs/{hash}"), None)
+            .await
+    }
+
+    async fn put(&self, bytes: &[u8]) -> Reply {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/blobs")
+            .body(Body::from(bytes.to_vec()))
+            .unwrap();
+        send(&self.control, request).await
+    }
+
+    async fn attached_stores(&self) -> Vec<(String, String)> {
+        let listed = self.call(Method::GET, "/blobs/stores", None).await;
+        listed.body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|store| store["detached_at"].is_null())
+            .map(|store| {
+                (
+                    store["kind"].as_str().unwrap().to_string(),
+                    store["id"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    async fn until_no_trouble(&self) {
+        let began = Instant::now();
+        while let Some(trouble) = self.app.blobs.trouble() {
+            assert!(began.elapsed() < Duration::from_secs(10), "{trouble}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn set(&self, change: Value) {
+        let set = self.call(Method::PATCH, "/config", Some(change)).await;
+        assert_eq!(set.status, StatusCode::OK, "{}", set.body);
+    }
+
+    async fn until_the_store_is_in_use(&self) {
+        let began = Instant::now();
+        while self.app.blobs.s3().is_none() {
+            assert!(
+                began.elapsed() < Duration::from_secs(10),
+                "{:?}",
+                self.app.blobs.trouble()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn nothing_is_purged_while_a_store_setting_does_not_read_and_the_sweep_goes_on_after() {
+    for (key, value) in unreadable_store_rows() {
+        let s3 = FakeS3::start().await;
+        let mut env = s3.settings(BUCKET, "blobs");
+        env.push((
+            "MARFA_BLOB_CLEANUP_GRACE_SECONDS".to_string(),
+            "0".to_string(),
+        ));
+        let instance = Instance::start(&pairs(&env)).await;
+        let orphan = instance.replicated(&s3, b"nothing names this").await;
+        let object = object_key(&s3, "blobs", &orphan);
+        assert_eq!(instance.run("blob-orphans").await["purged"], 0, "{key}");
+        commit_unpublished(&instance.app, key, &value).await;
+        instance.app.close().await;
+
+        let troubled = restarted(&instance, &pairs(&env)).await;
+        assert!(troubled.app.blobs.trouble().is_some(), "{key}");
+        assert_eq!(troubled.sweep().await["purged"], 0, "{key}");
+        assert!(instance.file(&orphan).is_file(), "{key}");
+        assert_eq!(
+            troubled.fetch(&orphan).await.status,
+            StatusCode::OK,
+            "{key}"
+        );
+        assert!(s3.object(&object).is_some(), "{key}");
+
+        remove_unpublished(&troubled.app, key).await;
+        troubled.app.close().await;
+        let mended = restarted(&instance, &pairs(&env)).await;
+        assert!(mended.app.blobs.s3().is_some(), "{key}");
+        let copies = mended
+            .call(Method::GET, &format!("/blobs/{orphan}/copies"), None)
+            .await;
+        assert_eq!(copies.body["data"].as_array().unwrap().len(), 2, "{key}");
+        // The witness: with the store back, the same sweep purges the file and its object.
+        assert_eq!(mended.sweep().await["purged"], 1, "{key}");
+        assert!(!instance.file(&orphan).exists(), "{key}");
+        assert!(s3.object(&object).is_none(), "{key}");
+    }
+}
+
+#[tokio::test]
+async fn nothing_is_purged_while_the_named_store_cannot_be_reached_or_refuses() {
+    let s3 = FakeS3::start().await;
+    s3.set_mode(Mode::AllNotFound);
+    for (what, endpoint) in [
+        ("unreachable", closed_endpoint().await),
+        ("refusing", s3.settings(BUCKET, "refusing")[2].1.clone()),
+    ] {
+        let instance = Instance::start(&[
+            ("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0"),
+            ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
+        ])
+        .await;
+        let named = instance
+            .call(
+                Method::PATCH,
+                "/config",
+                Some(json!({
+                    "object_store_bucket": BUCKET,
+                    "object_store_endpoint": endpoint,
+                    "object_store_access_key_id": "test-key",
+                    "object_store_secret_access_key": "test-secret",
+                })),
+            )
+            .await;
+        assert_eq!(named.status, StatusCode::OK, "{}", named.body);
+        instance.until_trouble_is(true).await;
+        let orphan = instance.stored(b"nothing names this").await;
+        assert_eq!(instance.run("blob-orphans").await["purged"], 0, "{what}");
+        assert_eq!(instance.run("blob-orphans").await["purged"], 0, "{what}");
+        assert!(instance.file(&orphan).is_file(), "{what}");
+
+        // The witness: once no store is named, the same sweep purges the file.
+        let cleared = instance
+            .call(
+                Method::PATCH,
+                "/config",
+                Some(json!({ "object_store_bucket": "" })),
+            )
+            .await;
+        assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.body);
+        instance.until_trouble_is(false).await;
+        assert_eq!(instance.run("blob-orphans").await["purged"], 1, "{what}");
+        assert!(!instance.file(&orphan).exists(), "{what}");
+    }
+}
+
+#[tokio::test]
+async fn nothing_is_purged_while_the_record_of_the_stores_is_in_doubt() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start(&[
+        ("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0"),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
+    ])
+    .await;
+    instance.name_bucket(&s3, "a").await;
+    instance.run("blob-replicate").await;
+    assert!(instance.app.blobs.s3().is_some());
+    let orphan = instance.stored(b"nothing names this").await;
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+
+    // The record then names b while a is both named and in use.
+    instance.arm("fail:stores-record-lost", None);
+    instance.name_bucket(&s3, "b").await;
+    instance
+        .until_doubted_after("fail:stores-record-lost")
+        .await;
+    instance.arm("fail:stores-record", None);
+    instance.name_bucket(&s3, "a").await;
+    instance.until_doubted_after("fail:stores-record").await;
+    assert_eq!(instance.app.blobs.trouble(), None);
+
+    instance.arm("fail:stores-record", None);
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+    assert!(!instance.app.blobs.settled());
+    assert!(instance.file(&orphan).is_file());
+
+    // The witness: the same sweep writes the record, and purges the file.
+    instance.app.faults.clear(None);
+    assert_eq!(instance.run("blob-orphans").await["purged"], 1);
+    assert!(instance.app.blobs.settled());
+    assert!(!instance.file(&orphan).exists());
+}
+
+#[tokio::test]
+async fn nothing_is_purged_while_the_stored_backup_folder_does_not_read() {
+    let backups = TempDir::new().unwrap();
+    let path = backups.path().to_str().unwrap();
+    let env = [
+        ("MARFA_BACKUP_PATH", path),
+        ("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0"),
+    ];
+    let instance = Instance::start(&env).await;
+    assert_eq!(instance.app.blobs.trouble(), None);
+    let orphan = instance.stored(b"nothing names this").await;
+    instance.run("blob-replicate").await;
+    assert_eq!(instance.copies(&orphan).await.len(), 2);
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+    commit_unpublished(&instance.app, "backup_path", "not/absolute").await;
+    instance.app.close().await;
+
+    let troubled = restarted(&instance, &env).await;
+    let trouble = troubled.app.blobs.trouble().unwrap();
+    assert!(trouble.contains("backup_path"), "{trouble}");
+    assert!(trouble.contains("backup folder"), "{trouble}");
+    assert!(!trouble.contains("not/absolute"), "{trouble}");
+    assert_eq!(troubled.sweep().await["purged"], 0);
+    assert!(instance.file(&orphan).is_file());
+
+    remove_unpublished(&troubled.app, "backup_path").await;
+    troubled.app.close().await;
+    let mended = restarted(&instance, &env).await;
+    assert_eq!(mended.app.blobs.trouble(), None);
+    // The witness: with the folder back, the same sweep purges the file.
+    assert_eq!(mended.sweep().await["purged"], 1);
+    assert!(!instance.file(&orphan).exists());
+}
+
+#[tokio::test]
+async fn nothing_is_purged_while_the_store_in_use_is_not_the_one_the_settings_now_name() {
+    let s3 = FakeS3::start().await;
+    let mut env = s3.settings(BUCKET, "blobs");
+    env.push((
+        "MARFA_BLOB_CLEANUP_GRACE_SECONDS".to_string(),
+        "0".to_string(),
+    ));
+    let instance = Instance::start(&pairs(&env)).await;
+    let orphan = instance.replicated(&s3, b"nothing names this").await;
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+    commit_unpublished(&instance.app, "object_store_prefix", "elsewhere").await;
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+    assert!(instance.file(&orphan).is_file());
+    remove_unpublished(&instance.app, "object_store_prefix").await;
+    assert_eq!(instance.run("blob-orphans").await["purged"], 1);
+    assert!(!instance.file(&orphan).exists());
+}
+
+#[tokio::test]
+async fn a_start_over_an_empty_folder_with_a_store_setting_that_does_not_read_is_mended_by_config()
+{
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance.replicated(&s3, b"held by the bucket too").await;
+    commit_unpublished(&instance.app, "object_store_region", "not a region").await;
+    instance.app.close().await;
+    std::fs::remove_dir_all(instance.folder()).unwrap();
+
+    let troubled = restarted(&instance, &pairs(&env)).await;
+    assert!(troubled.app.blobs.s3().is_none());
+    let trouble = troubled.app.blobs.trouble().unwrap();
+    assert!(trouble.contains("object_store_region"), "{trouble}");
+    assert!(!trouble.contains("not a region"), "{trouble}");
+    let told = store_concerns(&troubled.app).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("object_store_region"),
+        "{told:?}"
+    );
+    let absent = troubled.fetch(&hash).await;
+    assert_eq!(
+        absent.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        absent.body
+    );
+    assert_eq!(absent.code(), "blob_store_unavailable");
+
+    troubled.set(json!({ "object_store_region": "auto" })).await;
+    troubled.until_the_store_is_in_use().await;
+    assert_eq!(troubled.app.blobs.trouble(), None);
+    let served = troubled.fetch(&hash).await;
+    assert_eq!(served.status, StatusCode::OK, "{}", served.body);
+    assert_eq!(served.bytes, b"held by the bucket too");
+
+    // The witness: the bucket that holds the copies may refill the folder at the next start.
+    troubled.app.close().await;
+    let rebuilt = restarted(&instance, &pairs(&env)).await;
+    assert_eq!(rebuilt.fetch(&hash).await.status, StatusCode::OK);
+}
+
+/// Stops `instance` with `key` stored as `value` and its blob folder moved aside, an empty folder
+/// standing in its place where `mount_point`; answers where the folder went.
+async fn stopped_without_its_folder(
+    instance: &Instance,
+    (key, value): (&str, &str),
+    mount_point: bool,
+) -> PathBuf {
+    commit_unpublished(&instance.app, key, value).await;
+    instance.app.close().await;
+    let away = instance.dir.path().join("away");
+    std::fs::rename(instance.folder(), &away).unwrap();
+    if mount_point {
+        std::fs::create_dir(instance.folder()).unwrap();
+    }
+    away
+}
+
+fn assert_left_alone(instance: &Instance, mount_point: bool) {
+    if mount_point {
+        let held: Vec<_> = std::fs::read_dir(instance.folder())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(held.is_empty(), "{held:?}");
+    } else {
+        assert!(!instance.folder().exists());
+    }
+}
+
+fn mount_back(instance: &Instance, away: &Path) {
+    if instance.folder().exists() {
+        std::fs::remove_dir(instance.folder()).unwrap();
+    }
+    std::fs::rename(away, instance.folder()).unwrap();
+}
+
+#[tokio::test]
+async fn a_start_that_cannot_name_its_store_leaves_an_empty_folder_alone_until_the_disk_returns() {
+    let grace = [("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")];
+    for mount_point in [false, true] {
+        let instance = Instance::start(&grace).await;
+        let orphan = instance.stored(b"saved before the drive went away").await;
+        assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+        let disk = instance.disk().await;
+        let away =
+            stopped_without_its_folder(&instance, ("backup_path", "not/absolute"), mount_point)
+                .await;
+
+        let troubled = restarted(&instance, &grace).await;
+        assert_left_alone(&instance, mount_point);
+        assert_eq!(
+            troubled.attached_stores().await,
+            [("disk".to_string(), disk.clone())]
+        );
+        let absent = troubled.fetch(&orphan).await;
+        assert_eq!(absent.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(absent.code(), "blob_store_unavailable");
+        let refused = troubled.put(b"sent while the drive is away").await;
+        assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(refused.code(), "blob_store_unavailable");
+        assert_eq!(troubled.sweep().await["purged"], 0);
+        assert_left_alone(&instance, mount_point);
+        let trouble = troubled.app.blobs.trouble().unwrap();
+        assert!(trouble.contains("backup_path"), "{trouble}");
+        assert!(trouble.contains("no file is purged"), "{trouble}");
+
+        mount_back(&instance, &away);
+        let served = troubled.fetch(&orphan).await;
+        assert_eq!(served.status, StatusCode::OK, "{}", served.body);
+        assert_eq!(served.bytes, b"saved before the drive went away");
+        assert_eq!(troubled.sweep().await["purged"], 0);
+        let stored = troubled.put(b"sent once the drive is back").await;
+        assert_eq!(stored.status, StatusCode::CREATED, "{}", stored.body);
+
+        // The witness: with the setting corrected, the same sweep purges the file.
+        troubled.set(json!({ "backup_path": null })).await;
+        troubled.until_no_trouble().await;
+        assert_eq!(troubled.sweep().await["purged"], 1);
+        assert!(!instance.file(&orphan).exists());
+        assert_eq!(
+            troubled.attached_stores().await,
+            [("disk".to_string(), disk)]
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_empty_folder_left_alone_is_judged_again_at_the_next_start() {
+    let instance = Instance::start(&[]).await;
+    let hash = instance.stored(b"saved before the drive went away").await;
+    let away = stopped_without_its_folder(&instance, ("backup_path", "not/absolute"), true).await;
+
+    let troubled = restarted(&instance, &[]).await;
+    troubled.set(json!({ "backup_path": null })).await;
+    troubled.until_no_trouble().await;
+    assert_eq!(
+        troubled.fetch(&hash).await.status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    troubled.app.close().await;
+
+    let refused = App::start(settings(instance.dir.path(), &[])).await;
+    let message = refused.err().map(|failure| failure.to_string()).unwrap();
+    assert!(
+        message.contains(instance.folder().to_str().unwrap()),
+        "{message}"
+    );
+    assert_left_alone(&instance, true);
+
+    mount_back(&instance, &away);
+    let back = restarted(&instance, &[]).await;
+    assert_eq!(back.fetch(&hash).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_empty_bucket_named_while_the_folder_is_away_does_not_refill_it() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance.replicated(&s3, b"held by the bucket too").await;
+    let away =
+        stopped_without_its_folder(&instance, ("object_store_region", "not a region"), true).await;
+
+    let troubled = restarted(&instance, &pairs(&env)).await;
+    assert_left_alone(&instance, true);
+    let refused = troubled.put(b"sent while the drive is away").await;
+    assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE);
+    troubled
+        .set(json!({ "object_store_region": "auto", "object_store_prefix": "another" }))
+        .await;
+    troubled.until_the_store_is_in_use().await;
+    assert!(s3.object(&marker_key("another")).is_some());
+    assert_eq!(
+        troubled.fetch(&hash).await.status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    troubled.app.close().await;
+
+    let refused = App::start(settings(instance.dir.path(), &pairs(&env))).await;
+    let message = refused.err().map(|failure| failure.to_string()).unwrap();
+    assert!(
+        message.contains(instance.folder().to_str().unwrap()),
+        "{message}"
+    );
+    assert_left_alone(&instance, true);
+
+    // The witness: with the drive back, the same settings start and the file is there.
+    mount_back(&instance, &away);
+    let back = restarted(&instance, &pairs(&env)).await;
+    assert_eq!(back.fetch(&hash).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_empty_folder_refuses_a_start_whose_unreadable_setting_does_not_name_the_store() {
+    let no_store = Instance::start(&[]).await;
+    no_store.stored(b"saved on the disk").await;
+    let s3 = FakeS3::start().await;
+    let mut closed = s3.settings(BUCKET, "blobs");
+    closed[2].1 = closed_endpoint().await;
+    let silent_store = Instance::start(&pairs(&closed)).await;
+    silent_store.stored(b"saved on the disk").await;
+    let no_env: Vec<(String, String)> = Vec::new();
+    for (instance, env, key, value) in [
+        (&no_store, &no_env, "object_store_region", "not a region"),
+        (&silent_store, &closed, "backup_path", "not/absolute"),
+    ] {
+        commit_unpublished(&instance.app, key, value).await;
+        instance.app.close().await;
+        std::fs::remove_dir_all(instance.folder()).unwrap();
+        let refused = App::start(settings(instance.dir.path(), &pairs(env))).await;
+        let message = refused.err().map(|failure| failure.to_string()).unwrap();
+        assert!(
+            message.contains(instance.folder().to_str().unwrap()),
+            "{key}: {message}"
+        );
+        assert!(!instance.folder().exists(), "{key}");
+    }
+}
+
+#[tokio::test]
+async fn a_sweep_takes_back_a_store_that_recovered_and_purges_with_no_restart() {
+    let s3 = FakeS3::start().await;
+    let mut env = s3.settings(BUCKET, "blobs");
+    env.push((
+        "MARFA_BLOB_CLEANUP_GRACE_SECONDS".to_string(),
+        "0".to_string(),
+    ));
+    let instance = Instance::start(&pairs(&env)).await;
+    let orphan = instance.replicated(&s3, b"nothing names this").await;
+    let object = object_key(&s3, "blobs", &orphan);
+    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
+    instance.app.close().await;
+
+    s3.set_mode(Mode::AllNotFound);
+    let troubled = restarted(&instance, &pairs(&env)).await;
+    let trouble = troubled.app.blobs.trouble().unwrap();
+    assert!(trouble.contains("no file is purged"), "{trouble}");
+    assert_eq!(troubled.sweep().await["purged"], 0);
+    assert!(instance.file(&orphan).is_file());
+    assert!(s3.object(&object).is_some());
+
+    s3.set_mode(Mode::Normal);
+    assert_eq!(troubled.sweep().await["purged"], 1);
+    assert_eq!(troubled.app.blobs.trouble(), None);
+    assert!(!instance.file(&orphan).exists());
+    assert!(s3.object(&object).is_none());
+}
+
+#[tokio::test]
+async fn a_start_over_an_empty_folder_still_refuses_a_readable_store_it_never_used() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    instance.replicated(&s3, b"held by the bucket too").await;
+    instance.app.close().await;
+    let folder = instance.folder();
+    std::fs::remove_dir_all(&folder).unwrap();
+    let other = s3.settings(BUCKET, "another");
+    let refused = App::start(settings(instance.dir.path(), &pairs(&other))).await;
+    let message = refused.err().map(|failure| failure.to_string()).unwrap();
+    assert!(message.contains(folder.to_str().unwrap()), "{message}");
+    assert!(!folder.exists());
+}
+
+#[tokio::test]
+async fn a_bucket_with_a_tenant_is_reached_under_its_name_with_the_colon_escaped() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings("tenant:bucket", "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    assert_eq!(instance.app.blobs.trouble(), None);
+    assert!(
+        s3.object("/tenant:bucket/blobs/blobs/.marfa-store")
+            .is_some()
+    );
+    let hash = instance.stored(b"kept under the tenant").await;
+    instance.run("blob-replicate").await;
+    let hex = hash.strip_prefix("sha256:").unwrap();
+    let kept = s3.objects_under(&format!("/tenant:bucket/blobs/blobs/{hex}"));
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    // The signature covers the path as sent, and SigV4 signs a colon escaped.
+    let sent = s3.paths_as_sent();
+    assert!(!sent.is_empty());
+    assert!(
+        sent.iter()
+            .all(|path| path == "/tenant%3Abucket" || path.starts_with("/tenant%3Abucket/")),
+        "{sent:?}"
+    );
 }

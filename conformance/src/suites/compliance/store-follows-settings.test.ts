@@ -8,7 +8,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { clientsFor, runJob } from "../../utils/own-blob-server.js";
+import { bytesOf, clientsFor, runJob } from "../../utils/own-blob-server.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 // A separate server keeps object-store settings from overriding the backup folder.
@@ -19,6 +19,7 @@ let instance: string;
 beforeAll(async () => {
   server = await bootFreshServer("store-follows-settings", {
     MARFA_OBJECT_STORE_BUCKET: "",
+    MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
   });
   instance = await instanceIdOf(server);
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -147,4 +148,83 @@ it("ends blob-replicate as failed while the settings cannot be read again after 
   }
 
   await runJob(operator, "blob-replicate");
+});
+
+/** Uploads a file nothing names and has `blob-orphans` report it, as the only one reported. */
+async function reportedOrphan(): Promise<string> {
+  const { operator, working } = clientsFor(server!);
+  // A run purges only what an earlier run reported, so two clear what a failed try left.
+  await runJob(operator, "blob-orphans");
+  await runJob(operator, "blob-orphans");
+  const upload = await working.uploadBlob(
+    bytesOf(randomUUID(), 100),
+    "text/plain",
+  );
+  expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+  const reported = await runJob(operator, "blob-orphans");
+  expect(reported.result).toMatchObject({ purged: 0 });
+  return upload.data.hash;
+}
+
+it("purges nothing while the record of the folder in use cannot be written, and purges the same file once it can", async () => {
+  const { operator } = clientsFor(server!);
+  const first = folder("first");
+  await name(first);
+  await runJob(operator, "blob-replicate");
+  const hash = await reportedOrphan();
+
+  try {
+    // The record then names another folder while the first stays named and in use.
+    await server!.setFault("fail:stores-record-lost");
+    await name(folder("passed"));
+    await firedOnce("fail:stores-record-lost");
+    await server!.setFault("fail:stores-record");
+    await name(first);
+    await firedOnce("fail:stores-record");
+    // The fault fires only once, and the run tries the record again.
+    await server!.setFault("fail:stores-record");
+    const held = await runJob(operator, "blob-orphans");
+    expect(held.result).toMatchObject({ purged: 0 });
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  } finally {
+    await server!.clearFault("fail:stores-record");
+    await server!.clearFault("fail:stores-record-lost");
+  }
+
+  // The witness: the same run purges the file once the record can be written.
+  const purged = await runJob(operator, "blob-orphans");
+  expect(purged.result).toMatchObject({ purged: 1 });
+  expect((await operator.downloadBlob(hash)).status).toBe(404);
+  expect((await stores()).attached).toEqual([filesOf(first)]);
+});
+
+it("purges nothing while the settings cannot be read again after a write to /config of unknown outcome, and purges the same file once they can", async () => {
+  const { operator } = clientsFor(server!);
+  await name(folder("reloaded"));
+  await runJob(operator, "blob-replicate");
+  const hash = await reportedOrphan();
+
+  try {
+    await server!.setFault("fail:commit=config.update");
+    await server!.setFault("fail:settings-reload");
+    const unknown = await operator.patchConfig({
+      backup_interval_seconds: 3600,
+    });
+    expect(unknown.status, JSON.stringify(unknown.error)).toBe(500);
+    await firedOnce("fail:settings-reload");
+    await server!.clearFault("fail:commit");
+    // The fault fires only once, and the run reads the settings again.
+    await server!.setFault("fail:settings-reload");
+    const held = await runJob(operator, "blob-orphans");
+    expect(held.result).toMatchObject({ purged: 0 });
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  } finally {
+    await server!.clearFault("fail:settings-reload");
+    await server!.clearFault("fail:commit");
+  }
+
+  // The witness: the same run purges the file once the settings read.
+  const purged = await runJob(operator, "blob-orphans");
+  expect(purged.result).toMatchObject({ purged: 1 });
+  expect((await operator.downloadBlob(hash)).status).toBe(404);
 });

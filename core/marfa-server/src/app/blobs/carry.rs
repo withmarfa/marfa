@@ -262,17 +262,13 @@ impl App {
         tokio::task::spawn_blocking(move || disk.scratch())
             .await
             .map_err(|_| Refusal::internal("a scratch file was not made"))?
-            .map_err(|error| Refusal::internal(&format!("a scratch file was not made: {error}")))
+            .map_err(super::no_working_file)
     }
 
     /// Makes scratch files as `scratch` does, from blocking work.
     pub fn scratches(&self) -> impl Fn() -> Result<Scratch> + Send + 'static {
         let disk = self.blobs.disk.clone();
-        move || {
-            disk.scratch().map_err(|error| {
-                Refusal::internal(&format!("a scratch file was not made: {error}"))
-            })
-        }
+        move || disk.scratch().map_err(super::no_working_file)
     }
 }
 

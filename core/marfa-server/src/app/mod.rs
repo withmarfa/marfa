@@ -212,7 +212,9 @@ impl App {
             at.clone(),
         )
         .await?;
-        blocking(move || kept.blobs_opened()).await?;
+        if blobs.folder_opened() {
+            blocking(move || kept.blobs_opened()).await?;
+        }
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;

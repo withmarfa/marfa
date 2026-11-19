@@ -418,14 +418,18 @@ pub fn detach_others(tx: &Transaction<'_>, kept: &[&str], at: &str) -> Result<()
     Ok(())
 }
 
-/// Whether an attached disk store recorded at this folder holds a copy.
-pub fn copies_at_folder(tx: &Transaction<'_>, locator: &str) -> Result<bool> {
-    Ok(tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM stores s JOIN blob_copies c ON c.store_id = s.id \
-         WHERE s.kind = 'disk' AND s.locator = ?1 AND s.detached_at IS NULL)",
-        [locator],
-        |row| row.get(0),
-    )?)
+/// The attached disk store recorded at this folder that holds a copy, where one does.
+pub fn disk_with_copies_at(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> {
+    Ok(tx
+        .query_row(
+            "SELECT s.id FROM stores s WHERE s.kind = 'disk' AND s.locator = ?1 \
+             AND s.detached_at IS NULL \
+             AND EXISTS (SELECT 1 FROM blob_copies c WHERE c.store_id = s.id) \
+             ORDER BY s.attached_at DESC, s.id LIMIT 1",
+            [locator],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 /// The object store recorded at this locator: an attached one first, then the latest attached.
@@ -465,10 +469,11 @@ pub fn attached_folder(tx: &Transaction<'_>) -> Result<Option<String>> {
         .optional()?)
 }
 
-/// Whether the server has recorded an object store with this id, attached or not.
-pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
+/// Whether the copy record names a copy in the object store with this id, attached or not.
+pub fn object_store_kept_copies(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     Ok(tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM stores WHERE id = ?1 AND kind = 's3')",
+        "SELECT EXISTS (SELECT 1 FROM stores s JOIN blob_copies c ON c.store_id = s.id \
+         WHERE s.id = ?1 AND s.kind = 's3')",
         [id],
         |row| row.get(0),
     )?)

@@ -143,6 +143,12 @@ stays because that thing is what it checks.
   the `version-thinning` job cannot age.
 - `compliance/health.test.ts`, "names a stored setting that no longer reads",
   writes one such `settings` row before a restart, for the same reason.
+- `compliance/destination-settings.test.ts`, the fixtures of "a stored store
+  setting that does not read", write an `object_store_region` or `backup_path`
+  row that does not read before a start, for the same reason. Those that start
+  or refuse over an emptied blob folder also remove, move or empty that folder
+  while the server is stopped, and one moves it back while the server runs,
+  because only a disk that goes away and returns does that.
 - `compliance/restore-says.test.ts`, "refuses an export while the enforcement
   settings do not read, and a backup holds the items and names them", writes the `settings`
   table's `enforcement` row to a value that does not read before a restart.
@@ -180,6 +186,11 @@ stays because that thing is what it checks.
   opens the lock files beside the database and in the disk store's folder to
   the server's group before a restart. No door or fault links the database or
   changes a file's mode, and the files' links and modes are the subject.
+  Its fixtures of "a blob folder that returns to a server started without it"
+  write a `backup_path` row that does not read before a start, move the blob
+  folder away while the server is stopped and move it back while it runs,
+  because only a disk that goes away and returns does that. One gives the
+  folder's lock file a second name, which no door or fault does.
 - `device/binding-reading-handle-writes-nothing.test.ts` compares the store
   file and its write-ahead log before and after the last connection closes.
   It opens a writable SQLite connection as a control. The binding exposes
