@@ -781,9 +781,7 @@ fn a_read_started_for_work_at_utility_runs_at_utility_and_one_for_other_work_doe
     assert_eq!(read(true), UTILITY);
 }
 
-/// Drains on a thread of its own, raises the stop while the first request to
-/// `path` waits for `ready`, and answers how the drain ended and how long it
-/// took after the stop.
+/// Raises the stop while the first request to `path` waits; returns how the drain ended and how long it took.
 fn stopped_while_waiting_on(
     server: &Scripted,
     core: &Arc<Core>,
@@ -808,8 +806,7 @@ fn stopped_while_waiting_on(
 
 #[test]
 fn a_stop_ends_a_drain_waiting_on_a_lookup_or_the_credentials_own_source() {
-    // A create naming a source is looked up by its natural key; one naming
-    // none first learns the credential's own source.
+    // A create naming a source asks a lookup; one naming none asks the credential's own source.
     for (source, path) in [(Some("notes"), "/items/lookup"), (None, "/keys/current")] {
         let server = Scripted::start();
         let core = copy(&server);

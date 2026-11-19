@@ -1979,8 +1979,7 @@ mod tests {
         }
     }
 
-    /// The host of `edges`, whose first page of edges holds the first and
-    /// names a cursor, and the door of the rest of the listing.
+    /// The host that serves the listing of `edges`.
     fn host_of(server: &Scripted, edges: &[QueuedWrite]) -> String {
         let host = edges[0].body["from_id"].as_str().unwrap().to_string();
         server.on(
@@ -2027,8 +2026,7 @@ mod tests {
         ))
     }
 
-    /// A stop ends the read while a page of the listing waits, rather than
-    /// leaving the edge to the walk as a refused listing does.
+    /// A stop ends the read while a page of the listing waits.
     #[test]
     fn a_stop_ends_the_read_of_a_listing_while_a_page_of_it_waits() {
         let server = Scripted::start();
