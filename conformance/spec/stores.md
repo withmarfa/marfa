@@ -126,11 +126,11 @@ If another running server has answered `GET /health` since a disk folder it star
 
 ### `stores/returned-folder-taken`
 
-While a disk folder that the server started without has returned holding the store's marker, or the file `.server-lock` the server locked in its blob folder has been removed or replaced, and another running server has the folder open or it cannot be locked, when a credential that may upload sends `POST /blobs`, the server MUST answer `503 blob_store_unavailable`.
+While a disk folder that the server started without has returned holding the store's marker, and another running server has it open or it cannot be locked, when a credential that may upload sends `POST /blobs`, the server MUST answer `503 blob_store_unavailable`.
 
 **Reason:** a folder the server cannot keep to itself may be another server's.
 
-**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`, `› stores nothing once another server took the lock it lost, still serves its files and reports it, and stores again once that server ends`.
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
 
 ### `stores/returned-folder-taken-export`
 
@@ -138,7 +138,7 @@ While a disk folder is as `stores/returned-folder-taken` describes, when a crede
 
 **Reason:** an archive export writes its working files in the folder.
 
-**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`, `› stores nothing once another server took the lock it lost, still serves its files and reports it, and stores again once that server ends`.
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
 
 ### `stores/returned-folder-taken-backup`
 
@@ -154,7 +154,7 @@ While a disk folder is as `stores/returned-folder-taken` describes, when a crede
 
 **Reason:** a read changes nothing in the folder.
 
-**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`, `› stores nothing once another server took the lock it lost, still serves its files and reports it, and stores again once that server ends`.
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
 
 ### `stores/returned-folder-taken-health`
 
@@ -162,15 +162,7 @@ While a disk folder is as `stores/returned-folder-taken` describes, the server M
 
 **Reason:** nothing can be stored until the folder is the server's own.
 
-**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`, `› stores nothing once another server took the lock it lost, still serves its files and reports it, and stores again once that server ends`.
-
-### `stores/returned-folder-private`
-
-When a disk folder that the server started without returns holding the store's marker and another account could read or enter it, the server MUST make it private to its own account before it stores a file there.
-
-**Reason:** the server keeps its blob folder private while it runs (`instance/files-private`), and a folder that returns keeps the mode it was left with.
-
-**Tests:** `compliance/one-server.test.ts › makes a returned folder that others could read private before it stores a file there`.
+**Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
 
 ### `stores/unread-setting-folder-returns`
 

@@ -991,6 +991,60 @@ async fn an_adopt_whose_folder_does_not_answer_refuses_and_lets_a_later_settings
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_adopt_whose_record_lands_unconfirmed_keeps_its_marker_until_a_follow_reads_the_record()
+{
+    let parent = TempDir::new().unwrap();
+    let instance = Instance::start().await;
+    let (folder, old) = replaced(&instance, &parent).await;
+    let area = instance.area(&folder);
+    fs::create_dir_all(&area).unwrap();
+    let marker = area.join(MARKER);
+
+    instance.app.faults.set("hold:stores-record", None).unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .send(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    instance.reached("hold:stores-record").await;
+    let faults = &instance.app.faults;
+    faults.set("fail:stores-record-lost", None).unwrap();
+    faults.set("refuse:read", None).unwrap();
+    faults.clear(Some("hold:stores-record"));
+    let adopted = adopting.await.unwrap();
+    assert_ne!(adopted.status, StatusCode::OK, "{}", adopted.body);
+    assert!(!instance.app.blobs.settled());
+    let current = instance.app.blobs.folder().unwrap();
+    assert_eq!(current.files().id(), old);
+    let kept = fs::read_to_string(&marker)
+        .expect("the adopt removed its marker though its record may have landed")
+        .trim()
+        .to_string();
+    assert_ne!(kept, old);
+
+    instance.app.faults.clear(None);
+    let attached: Vec<String> = folder_ids(&instance, &area)
+        .await
+        .into_iter()
+        .filter_map(|(id, attached)| attached.then_some(id))
+        .collect();
+    assert_eq!(
+        attached,
+        std::slice::from_ref(&kept),
+        "the record did not land"
+    );
+    instance.settle().await;
+    assert!(instance.app.blobs.settled());
+    assert!(!current.claim_unended());
+    assert!(current.reachable());
+    assert_eq!(current.files().id(), kept);
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), kept);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_adopt_whose_claim_does_not_answer_refuses_forgets_nothing_and_its_late_claim_is_undone()
 {
     let parent = TempDir::new().unwrap();

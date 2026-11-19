@@ -32,7 +32,8 @@ use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
 use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
-    HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
+    FAIL_STORES_RECORD_LOST, HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE,
+    HOLD_STORES_RECORD, HOLD_STORES_SWAP,
 };
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
@@ -1446,11 +1447,20 @@ impl App {
                 housekeeping::bring_forward(tx, REPLICATION, &at)?;
                 Ok((copies, backups))
             })
-            .await;
+            .await
+            .and_then(
+                |counted| match self.faults.fail(FAIL_STORES_RECORD_LOST, None) {
+                    true => Err(Refusal {
+                        commit_failed: true,
+                        ..crate::db::io_refusal()
+                    }),
+                    false => Ok(counted),
+                },
+            );
         let (copies, backups) = match written {
             Ok(counted) => counted,
             Err(refusal) => {
-                self.settle_claim(folder, claimed, id, refusal.commit_failed)
+                self.settle_claim(folder, claimed, refusal.commit_failed)
                     .await;
                 return Err(refusal);
             }
@@ -1466,9 +1476,8 @@ impl App {
         }))
     }
 
-    /// Whether the folder's disk is there and its lock held, taking the lock back where it can, or
-    /// `None` when a look at it has not answered.
-    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<Looked> {
+    /// Whether the folder's disk is there, or `None` when a look at it has not answered.
+    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<bool> {
         let looking = self.backups.looking.clone();
         if looking.swap(true, Ordering::AcqRel) {
             return None;
@@ -1476,14 +1485,7 @@ impl App {
         let (folder, faults) = (folder.clone(), self.faults.clone());
         let answered = super::health::bounded(move || {
             faults.hold_blocking(HOLD_DISK_PROBE);
-            let files = folder.files();
-            let there = match files.reachable() {
-                false => Looked::Gone,
-                true => match files.lost() {
-                    Some((_, why)) => Looked::Unlocked(why),
-                    None => Looked::There,
-                },
-            };
+            let there = folder.reachable();
             looking.store(false, Ordering::Release);
             there
         })
@@ -1730,21 +1732,11 @@ impl Assembly {
     }
 }
 
-/// What a look at the backup folder found.
-enum Looked {
-    There,
-    Gone,
-    /// Its files area is there, and the server could not lock it, for this reason.
-    Unlocked(String),
-}
-
 /// How the destination fails to take the copies that wait for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreFault {
     /// The disk of the backup folder is not there.
     FolderGone,
-    /// The files area of the backup folder could not be locked, as when another server holds it.
-    FolderUnlocked,
     /// A look at the backup folder did not answer in time.
     FolderSilent,
     /// The last run of `blob-replicate` copied nothing because the destination refused.
@@ -1771,15 +1763,12 @@ fn refused_by(result: &Value, destination: &str) -> Option<String> {
 /// found. A failure copying to another store is not the destination's.
 fn store_trouble(
     destination: &Destination,
-    look: Option<Option<Looked>>,
+    look: Option<Option<bool>>,
     refused: Option<String>,
 ) -> Option<(StoreFault, String)> {
     if let Destination::Folder(folder) = destination {
         match look {
-            Some(Some(Looked::Gone)) => {
-                return Some((StoreFault::FolderGone, folder_not_there(folder)));
-            }
-            Some(Some(Looked::Unlocked(why))) => return Some((StoreFault::FolderUnlocked, why)),
+            Some(Some(false)) => return Some((StoreFault::FolderGone, folder_not_there(folder))),
             Some(None) => {
                 let error = format!(
                     "The backup folder {} did not answer in time.",

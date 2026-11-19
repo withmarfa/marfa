@@ -1,7 +1,5 @@
 import {
-  chmodSync,
   existsSync,
-  linkSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -675,33 +673,6 @@ describe("a backup folder that lacks a file or its disk", () => {
     },
   );
 
-  it("says in health and attention that the backup folder could not be locked once its lock file is replaced by one it refuses, and clears once it can lock it", async () => {
-    await withFolder("backup-folder-unlocked", async (server, root) => {
-      const id = await instanceIdOf(server);
-      const lock = join(root, "files", id, ".server-lock");
-      const secondLink = `${root}-second-link`;
-      rmSync(lock);
-      writeFileSync(lock, "");
-      // The server refuses a lock file with a second name, as it does at a start.
-      linkSync(lock, secondLink);
-      try {
-        const detail = await healthDetail(server);
-        expect(detail.backups.status).toBe("failing");
-        expect(detail.backups.store_error).toEqual(
-          expect.stringContaining("could not be locked"),
-        );
-        const told = await backupConcerns(server);
-        expect(told.map((concern) => concern.reference)).toEqual(["store"]);
-        expect(told[0]!.title).toBe("The backup folder could not be locked");
-      } finally {
-        rmSync(secondLink);
-      }
-      // The witness: once the lock file can be locked, the same folder is quiet.
-      expect((await healthDetail(server)).backups.store_error).toBeNull();
-      expect(await attentionOf(server)).toEqual([]);
-    });
-  });
-
   it("lists in attention a backup run by hand that failed, until a later one is put", async () => {
     await withFolder("backup-folder-hand", async (server, root) => {
       const gone = `${root}-gone`;
@@ -1016,46 +987,6 @@ describe("a backup folder that lacks a file or its disk", () => {
       expect(refused.error?.error.message).toContain(foreign);
       expect(readFileSync(marker, "utf8")).toBe(foreign);
       writeFileSync(marker, before);
-    });
-  });
-
-  it("adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder", async () => {
-    await withFolder("backup-folder-adopt-own-lock", async (server, root) => {
-      const id = await instanceIdOf(server);
-      const owner = ownerOf(server);
-      const { operator } = clientsFor(server);
-      await fileItem(server, bytesOf("a file the folder held", 2048));
-      expect((await owner.runBackup()).status).toBe(200);
-      const area = join(root, "files", id);
-      const marker = join(area, ".marfa-store");
-      const stores = async () =>
-        (await operator.listBlobStores()).data.data.map((store) => ({
-          id: store.id,
-          detached_at: store.detached_at,
-        }));
-      const before = await stores();
-      const old = (await operator.listBlobStores()).data.data.find(
-        (store) => store.kind === "folder",
-      )!;
-      rmSync(marker);
-
-      chmodSync(area, 0o555);
-      const refused = await owner
-        .adoptBackupFolder()
-        .finally(() => chmodSync(area, 0o755));
-      expect(refused.status, JSON.stringify(refused.data)).toBe(503);
-      expect(refused.error?.error.code).toBe("blob_store_unavailable");
-      expect(refused.error?.error.message).toContain("nothing was adopted");
-      expect(await stores()).toEqual(before);
-      expect(existsSync(marker)).toBe(false);
-
-      const adopted = await owner.adoptBackupFolder();
-      expect(adopted.status, JSON.stringify(adopted.error)).toBe(200);
-      expect(adopted.data.replaced_store_id).toBe(old.id);
-      expect(adopted.data.backups_forgotten).toBeGreaterThan(0);
-      expect(readFileSync(marker, "utf8").trim()).toBe(adopted.data.store_id);
-      const next = await owner.runBackup();
-      expect(next.status, JSON.stringify(next.error)).toBe(200);
     });
   });
 

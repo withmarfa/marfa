@@ -9,6 +9,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::App;
+use marfa_server::app::blobs::MARKER;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Accepted, Environment, Settings};
 use serde_json::{Value, json};
@@ -1030,6 +1031,46 @@ async fn an_adopt_that_cannot_mark_the_folder_forgets_nothing_and_adopts_once_it
         .await;
     assert_eq!(status, StatusCode::OK, "{adopted}");
     assert_eq!(adopted["backups_forgotten"], 1, "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn an_adopt_whose_working_folder_cannot_be_made_leaves_no_marker_and_adopts_once_it_can() {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Instance::start(&folder).await;
+    let (file, _) = instance.file(b"a file the folder held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let area = folder.join("files").join(instance.id());
+    let (marker, tmp) = (area.join(MARKER), area.join("tmp"));
+    fs::remove_file(&marker).unwrap();
+    fs::remove_dir_all(&tmp).unwrap();
+    fs::write(&tmp, b"not a folder").unwrap();
+
+    let (status, refused) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "blob_store_unavailable",
+        "{refused}"
+    );
+    assert!(!marker.exists(), "the refused adopt left its marker");
+
+    fs::remove_file(&tmp).unwrap();
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    assert_eq!(adopted["backups_forgotten"], 1, "{adopted}");
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap().trim(),
+        adopted["store_id"].as_str().unwrap()
+    );
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(copy_of(&folder, &instance.id(), &file).is_file());

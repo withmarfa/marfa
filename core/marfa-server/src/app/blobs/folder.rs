@@ -53,6 +53,8 @@ pub struct Folder {
     claim_key: PathBuf,
     /// A temporary file staged before this is a leftover of a process that ended.
     started: SystemTime,
+    /// An adopt's claim whose record did not read after a commit of unknown outcome.
+    unsettled: Mutex<Option<Claimed>>,
 }
 
 /// A timed-out claim outlives its caller and may share its area with a reopened folder.
@@ -83,6 +85,10 @@ pub struct Claimed {
 }
 
 impl Claimed {
+    pub fn id(&self) -> &str {
+        self.disk.id()
+    }
+
     /// Leaves the area as the claim found it, but for its lock file and `tmp`. It blocks.
     pub fn undo(self) -> io::Result<()> {
         if self.fresh && self.disk.reachable() {
@@ -178,7 +184,7 @@ impl Folder {
                          backups fail until its disk is mounted, or `marfa backups folder adopt` \
                          takes a disk that replaced it"
                     );
-                    Disk::unmounted(id, area, Place::BackupFiles)
+                    Disk::unmounted(id, area)
                 }
                 None => {
                     let (made, opened) = (root.to_path_buf(), area.clone());
@@ -214,6 +220,7 @@ impl Folder {
                 reason = "compared with files' modification times, which are the host's time"
             )]
             started: SystemTime::now(),
+            unsettled: Mutex::default(),
         })
     }
 
@@ -312,8 +319,25 @@ impl Folder {
 
     /// Waits for the store `id`, recorded at the files area, as one not mounted.
     pub fn await_store(&self, id: String) {
-        let disk = Disk::unmounted(id, self.area(), Place::BackupFiles);
+        let disk = Disk::unmounted(id, self.area());
         *self.files.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(disk);
+    }
+
+    /// Keeps a claim, with its marker and the area's claim, until the record says which store
+    /// landed.
+    pub fn keep_unsettled(&self, claimed: Claimed) {
+        *self
+            .unsettled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(claimed);
+    }
+
+    /// The claim `keep_unsettled` kept, taken out to be settled.
+    pub fn unsettled(&self) -> Option<Claimed> {
+        self.unsettled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     fn checked(&self) -> io::Result<()> {
@@ -324,12 +348,6 @@ impl Folder {
             io::ErrorKind::NotFound,
             "the backup folder is not there, or does not hold this instance's files",
         ))
-    }
-
-    /// `checked`, for a write, with the files area's lock held. It blocks.
-    fn writable(&self) -> io::Result<()> {
-        self.checked()?;
-        self.files().writable()
     }
 
     fn folder_of(&self, area: Area, instance: &str) -> PathBuf {
@@ -411,7 +429,7 @@ impl Folder {
     /// Deletes `name` from this instance's folder of `area`; one not there is already gone. It
     /// blocks.
     pub fn delete(&self, area: Area, name: &str) -> io::Result<()> {
-        self.writable()?;
+        self.checked()?;
         let own = self.folder_of(area, &self.instance);
         match fs::remove_file(own.join(name)) {
             Ok(()) => File::open(&own)?.sync_all(),
@@ -423,7 +441,7 @@ impl Folder {
     /// Removes what a backup or a copy left half written when its process ended. Only one backup
     /// runs at a time, so every partial file in this instance's folders is a leftover. It blocks.
     pub fn clear_leftovers(&self) -> io::Result<usize> {
-        self.writable()?;
+        self.checked()?;
         let mut cleared = self.files().clear_tmp_before(self.started)?;
         for area in [Area::Backups, Area::Parts] {
             cleared += clear_partials(&self.folder_of(area, &self.instance))?;
@@ -434,7 +452,7 @@ impl Folder {
     /// A temporary file beside `name` in this instance's folder of `area`, made with the folders
     /// above it inside the named folder. It blocks.
     fn partial(&self, area: Area, name: &str) -> io::Result<Partial> {
-        self.writable()?;
+        self.checked()?;
         let above = self.root.join(area.name());
         make_inside(&above)?;
         let own = above.join(&self.instance);
@@ -660,6 +678,7 @@ mod tests {
             )),
             claim_key: resolved(&area),
             started: SystemTime::now(),
+            unsettled: Mutex::default(),
         }
     }
 
@@ -843,13 +862,10 @@ mod tests {
         Arc::new(Folder {
             root: root.to_path_buf(),
             instance: "instance".into(),
-            files: RwLock::new(Arc::new(Disk::unmounted(
-                "old".into(),
-                area.clone(),
-                Place::BackupFiles,
-            ))),
+            files: RwLock::new(Arc::new(Disk::unmounted("old".into(), area.clone()))),
             claim_key: resolved(&area),
             started: SystemTime::now(),
+            unsettled: Mutex::default(),
         })
     }
 
@@ -1000,31 +1016,6 @@ mod tests {
                 .await,
             Some(Ok(_))
         ));
-    }
-
-    #[tokio::test]
-    async fn a_returned_files_area_is_locked_by_its_first_write() {
-        let dir = TempDir::new().unwrap();
-        let area = dir.path().join(FILES).join("instance");
-        let id = opened(dir.path()).files().id().to_string();
-        let folder = Folder {
-            root: dir.path().to_path_buf(),
-            instance: "instance".into(),
-            files: RwLock::new(Arc::new(Disk::unmounted(
-                id,
-                area.clone(),
-                Place::BackupFiles,
-            ))),
-            claim_key: resolved(&area),
-            started: SystemTime::now(),
-        };
-        assert!(folder.reachable());
-        assert!(
-            Disk::open(&area, Place::BackupFiles, None).is_ok(),
-            "the witness: nothing locked the area before a write"
-        );
-        assert!(folder.partial(Area::Backups, "a.json").is_ok());
-        assert!(Disk::open(&area, Place::BackupFiles, None).is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

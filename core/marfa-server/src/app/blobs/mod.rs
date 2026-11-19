@@ -555,7 +555,7 @@ impl Blobs {
         }
         let folder_opened = away.is_none();
         let disk = Arc::new(match away {
-            Some(id) => Disk::unmounted(id, root.to_path_buf(), Place::Blobs),
+            Some(id) => Disk::awaiting_blob_folder(id, root.to_path_buf()),
             None => {
                 let folder = root.to_path_buf();
                 tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
@@ -588,10 +588,9 @@ impl Blobs {
         self.folder_opened
     }
 
-    /// Why the blob folder is there and takes no write; takes its lock back where it can. It
-    /// blocks.
+    /// Why the blob folder returned after the start and takes no write now. It blocks.
     pub fn folder_lost(&self) -> Option<Lost> {
-        self.disk.lost().map(|(lost, _)| lost)
+        self.disk.returned_unusable()
     }
 
     /// Whether the store in use is the usable one `wanted` names.
@@ -1144,6 +1143,17 @@ fn joined<T>(outcome: std::result::Result<T, tokio::task::JoinError>) -> Result<
     outcome.map_err(|error| Refusal::internal(&format!("a blob task did not finish: {error}")))
 }
 
+/// Leaves a files area as a claim that did not land found it.
+async fn undo(claimed: folder::Claimed) {
+    match tokio::task::spawn_blocking(move || claimed.undo()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::error!(%error, "An adopt that did not land left its marker in the backup folder");
+        }
+        Err(error) => tracing::error!(%error, "An adopt that did not land was not undone"),
+    }
+}
+
 /// A disconnected caller abandons its wait without cancelling the work.
 async fn owned<T: Send + 'static>(
     work: impl Future<Output = Result<T>> + Send + 'static,
@@ -1318,6 +1328,9 @@ impl App {
                 ),
             )
         };
+        if let Some(claimed) = folder.unsettled() {
+            self.settle_by_record(folder, claimed).await?;
+        }
         if folder.claim_unended() {
             return Err(late());
         }
@@ -1355,32 +1368,39 @@ impl App {
     }
 
     /// Puts an adopt's claim in use where its record landed, and undoes it otherwise. Where the
-    /// outcome of the record is not known, the record is read, and doubted if it does not read.
+    /// outcome of the record is not known and the record does not read, the claim is kept, with
+    /// its marker, until a follow reads which store the record names.
     pub(crate) async fn settle_claim(
         &self,
         folder: &Arc<Folder>,
         claimed: folder::Claimed,
-        id: String,
         unknown: bool,
     ) {
-        if unknown {
-            let locator = folder.files().root().display().to_string();
-            match self.db.read(move |tx| rows::folder_at(tx, &locator)).await {
-                Ok(Some(recorded)) if recorded == id => return folder.take(claimed),
-                Ok(_) => {}
-                Err(refused) => {
-                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
-                    self.blobs.doubt_record();
-                }
-            }
+        if !unknown {
+            return undo(claimed).await;
         }
-        match tokio::task::spawn_blocking(move || claimed.undo()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                tracing::error!(%error, "An adopt that did not land left its marker in the backup folder");
+        if let Err(refused) = self.settle_by_record(folder, claimed).await {
+            tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
+            self.blobs.doubt_record();
+        }
+    }
+
+    /// Takes `claimed` where the record names its store, and undoes it otherwise; where the
+    /// record does not read, keeps it for the next look.
+    async fn settle_by_record(&self, folder: &Arc<Folder>, claimed: folder::Claimed) -> Result<()> {
+        let locator = folder.files().root().display().to_string();
+        match self.db.read(move |tx| rows::folder_at(tx, &locator)).await {
+            Ok(Some(recorded)) if recorded == claimed.id() => {
+                folder.take(claimed);
+                Ok(())
             }
-            Err(error) => {
-                tracing::error!(%error, "An adopt that did not land was not undone");
+            Ok(_) => {
+                undo(claimed).await;
+                Ok(())
+            }
+            Err(refused) => {
+                folder.keep_unsettled(claimed);
+                Err(refused)
             }
         }
     }
