@@ -784,7 +784,7 @@ pub(crate) fn on_volume(error: rusqlite::Error, place: Option<Place<'_>>) -> Cor
 /// Reads the store's version before anything that writes to it, so a store
 /// this build refuses is left as it was found. `place` is where the store
 /// is, for a failure to open it, and `None` for a store in memory.
-fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError> {
+pub(super) fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let found = version(conn).map_err(|error| on_volume(error, place))?;
@@ -794,8 +794,21 @@ fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError>
         found if upgraded(found) => Step::Upgrade,
         found => return Err(refused(conn, found)),
     };
-    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
+    // SQLite keeps the mode a store had when it cannot use WAL, and says so
+    // only in the answer: an in-memory store answers `memory`.
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
         .map_err(|error| on_volume(error, place))?;
+    let mode = if crate::fault::named("wal-unavailable").is_some() {
+        "delete".into()
+    } else {
+        mode
+    };
+    if mode != "wal" && mode != "memory" {
+        return Err(CoreError::Store(format!(
+            "the store could not be put in write-ahead mode and stays in {mode} mode, so it cannot be kept here"
+        )));
+    }
     // `NORMAL` leaves commits unsynced; Apple's `fsync` lets a checkpoint land out of order.
     conn.execute_batch("PRAGMA synchronous = FULL; PRAGMA checkpoint_fullfsync = ON;")?;
     tune(conn)?;
@@ -852,8 +865,21 @@ pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), Cor
     if version(&conn).map_err(|error| on_volume(error, place))? != 0 || holds_tables(&conn)? {
         return Err(not_empty());
     }
-    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
+    // SQLite keeps the mode a store had when it cannot use WAL, and says so
+    // only in the answer: an in-memory store answers `memory`.
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
         .map_err(|error| on_volume(error, place))?;
+    let mode = if crate::fault::named("wal-unavailable").is_some() {
+        "delete".into()
+    } else {
+        mode
+    };
+    if mode != "wal" && mode != "memory" {
+        return Err(CoreError::Store(format!(
+            "the store could not be put in write-ahead mode and stays in {mode} mode, so it cannot be kept here"
+        )));
+    }
     let tx = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)?;
     if version(&tx)? != 0 || holds_tables(&tx)? {
         return Err(not_empty());

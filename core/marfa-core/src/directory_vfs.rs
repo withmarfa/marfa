@@ -22,9 +22,15 @@ impl DirectoryVfs {
     pub(crate) fn supported(directory: &File) -> Result<()> {
         // SAFETY: the descriptor belongs to `directory`, which is open for the call.
         let result = unsafe { marfa_directory_vfs_supported(directory.as_raw_fd()) };
+        #[cfg(debug_assertions)]
+        let result = if crate::fault::fails(|| "unlocked-filesystem") {
+            rusqlite::ffi::SQLITE_NOTFOUND
+        } else {
+            result
+        };
         if result != rusqlite::ffi::SQLITE_OK {
             return Err(CoreError::Invalid(
-                "folder storage is unavailable on this platform or filesystem".into(),
+                "a store cannot be kept on this platform or filesystem: it must lock files".into(),
             ));
         }
         Ok(())
