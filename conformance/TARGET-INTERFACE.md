@@ -195,6 +195,11 @@ stays because that thing is what it checks.
   folder away while the server is stopped and move it back while it runs,
   because only a disk that goes away and returns does that. One gives the
   folder's lock file a second name, which no door or fault does.
+  Other fixtures replace or remove the blob folder's lock file and change
+  the permissions on a returning folder. These changes require filesystem access.
+- `compliance/backup-folder.test.ts` inspects backup files and changes a test
+  folder's marker, lock file, and permissions. The API lists backups, but only
+  the filesystem exposes their layout and controls the folder's permissions.
 - `device/binding-reading-handle-writes-nothing.test.ts` compares the store
   file and its write-ahead log before and after the last connection closes.
   It opens a writable SQLite connection as a control. The binding exposes
