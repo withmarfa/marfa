@@ -1,5 +1,6 @@
 //! Laying the writes still waiting over a row the server gave, and putting a refused write back.
 
+use super::Cached;
 use super::dead::{
     EditField, dead_effect, is_tag_write, remaining_dead_fields, tag_field, tag_targets,
 };
@@ -85,7 +86,7 @@ pub fn readdress_edge_writes(
             body["version"] = Value::from(1);
             payload = body.to_string();
         }
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET edge_id = ?2, base_version = ?3, payload = ?4 WHERE id = ?1",
             params![row.id, to, base, payload],
         )?;
@@ -508,7 +509,7 @@ pub fn move_edit(
                 record_read(conn, id, &serde_json::json!({ "properties": onto }))?;
             }
         }
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET payload = ?2 WHERE id = ?1",
             params![id, body.to_string()],
         )?;
@@ -566,7 +567,7 @@ pub fn merge_properties(conn: &Connection, id: &str) -> Result<(), CoreError> {
     if let Some(body) = body.as_object_mut()
         && body.shift_remove("properties_mode").is_some()
     {
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET payload = ?2 WHERE id = ?1",
             params![id, Value::Object(body.clone()).to_string()],
         )?;
@@ -580,7 +581,7 @@ pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError
     if let Some(body) = payload.as_object_mut() {
         body.insert("version".into(), Value::from(version));
     }
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET payload = ?2, base_version = ?3 WHERE id = ?1",
         params![id, payload.to_string(), version],
     )?;

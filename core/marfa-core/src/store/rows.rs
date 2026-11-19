@@ -1,5 +1,6 @@
 //! Writing the rows the copy holds, and taking them out.
 
+use super::Cached;
 use super::attachments::{attachments_before, attachments_changed};
 use super::index::{index_row, reindex_item};
 use super::laying::{readdress_edge_writes, record_refusal};
@@ -86,12 +87,12 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     }
     let before = attachments_before(conn, &[local, answered])?;
     rename_shown_edges(conn, local, answered)?;
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [local],
     )?;
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [local])?;
-    conn.execute("DELETE FROM items WHERE id = ?1", [local])?;
+    conn.execute_cached("DELETE FROM tags WHERE item_id = ?1", [local])?;
+    conn.execute_cached("DELETE FROM items WHERE id = ?1", [local])?;
     for statement in [
         "UPDATE edges SET from_id = ?2 WHERE from_id = ?1",
         "UPDATE edges SET to_id = ?2 WHERE to_id = ?1",
@@ -111,19 +112,19 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     crate::tables::drop_item(conn, local)?;
     // The names the create's body carries are the row's now; the landing
     // drops any its answered body does not carry.
-    if conn.query_row(
+    if conn.query_row_cached(
         "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)",
         [local],
         |row| row.get(0),
     )? {
-        conn.execute("DELETE FROM body_names WHERE item_id = ?1", [answered])?;
-        conn.execute(
+        conn.execute_cached("DELETE FROM body_names WHERE item_id = ?1", [answered])?;
+        conn.execute_cached(
             "UPDATE body_names SET item_id = ?2 WHERE item_id = ?1",
             params![local, answered],
         )?;
     }
     let carried = pinned(conn, local)?;
-    if conn.execute(
+    if conn.execute_cached(
         "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
         params![local, answered],
     )? > 0
@@ -136,7 +137,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     // release of a pin the body rule or a folder line made there must not
     // take it.
     if carried {
-        conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [answered])?;
+        conn.execute_cached("DELETE FROM body_pins WHERE item_id = ?1", [answered])?;
         crate::folder::state::disown_edge_end(conn, answered)?;
     }
     drop_beneath(conn, Subject::Item, local)?;
@@ -166,7 +167,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
             }
         }
         if moved {
-            conn.execute(
+            conn.execute_cached(
                 "UPDATE queue SET payload = ?2 WHERE id = ?1",
                 params![id, body.to_string()],
             )?;
@@ -190,7 +191,7 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
             }
         }
         if moved {
-            conn.execute(
+            conn.execute_cached(
                 "UPDATE queue SET payload = ?2 WHERE id = ?1",
                 params![row.id, body.to_string()],
             )?;
@@ -305,7 +306,7 @@ pub fn land_on_held_row(
             .iter()
             .filter(|held| **held != create.id)
             .collect();
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET depends_on = ?2 WHERE id = ?1",
             params![
                 row.id,
@@ -331,7 +332,7 @@ pub fn untake_latest_save(
     item_id: &str,
     version: i64,
 ) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE folder_files SET content_hash = ?2
           WHERE item_id = ?1
             AND NOT EXISTS (
@@ -427,11 +428,11 @@ pub(super) fn remove_item(
     let before = attachments_before(conn, &[id])?;
     crate::reach::forget_listed(conn, id)?;
     drop_beneath(conn, Subject::Item, id)?;
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
     )?;
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
+    conn.execute_cached("DELETE FROM tags WHERE item_id = ?1", [id])?;
     // An edge hidden behind this device's own waiting delete is in
     // `beneath` alone, and leaves with the row all the same. An edge still in
     // `edges` is matched by its ends there, which a waiting write may have
@@ -457,7 +458,7 @@ pub(super) fn remove_item(
     for edge in leaving {
         changed |= forget_edge(conn, &edge)?;
     }
-    let removed = conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0;
+    let removed = conn.execute_cached("DELETE FROM items WHERE id = ?1", [id])? > 0;
     crate::tables::drop_item(conn, id)?;
     attachments_changed(conn, &[id], before)?;
     Ok(removed || changed)
@@ -542,7 +543,7 @@ pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let ends = edge_sources(conn, id)?;
     let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
     let before = attachments_before(conn, &ends)?;
-    let deleted = conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0;
+    let deleted = conn.execute_cached("DELETE FROM edges WHERE id = ?1", [id])? > 0;
     attachments_changed(conn, &ends, before)?;
     Ok(deleted)
 }
@@ -567,7 +568,7 @@ pub fn add_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(),
 }
 
 pub fn tag_count(conn: &Connection, item_id: &str) -> Result<usize, CoreError> {
-    let count: i64 = conn.query_row(
+    let count: i64 = conn.query_row_cached(
         "SELECT COUNT(*) FROM tags WHERE item_id = ?1",
         [item_id],
         |row| row.get(0),
@@ -576,7 +577,7 @@ pub fn tag_count(conn: &Connection, item_id: &str) -> Result<usize, CoreError> {
 }
 
 pub fn remove_tag(conn: &Connection, item_id: &str, tag: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM tags WHERE item_id = ?1 AND tag = ?2",
         params![item_id, tag],
     )?;
@@ -584,7 +585,7 @@ pub fn remove_tag(conn: &Connection, item_id: &str, tag: &str) -> Result<(), Cor
 }
 
 pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(), CoreError> {
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [item_id])?;
+    conn.execute_cached("DELETE FROM tags WHERE item_id = ?1", [item_id])?;
     add_tags(conn, item_id, tags)
 }
 
@@ -601,7 +602,7 @@ pub fn set_item_state(
     crate::body::rule::rows_changed(conn)?;
     crate::body::rule::item_changing(conn, id, None)?;
     let before = attachments_before(conn, &[id])?;
-    let changed = conn.execute(
+    let changed = conn.execute_cached(
         "UPDATE items SET state = ?2,
            trashed_at = CASE
              WHEN ?2 = 'trashed' THEN CASE WHEN state = 'trashed' THEN trashed_at ELSE ?3 END

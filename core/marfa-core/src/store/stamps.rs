@@ -1,5 +1,6 @@
 //! How a server row comes into the copy: stamps, the rows held beneath writes and the reads owed back.
 
+use super::Cached;
 use super::completeness::refilling;
 use super::meta::meta_set;
 use super::queue::{
@@ -300,7 +301,7 @@ pub fn moves(body: &Value) -> bool {
 }
 
 pub fn owe_read_back(conn: &Connection, owed: &Owed) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "INSERT INTO read_backs (subject, id, from_id, edge_type, moved)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (subject, id) DO UPDATE SET
@@ -355,7 +356,7 @@ pub fn settle_read_back(conn: &Connection, subject: Subject, id: &str) -> Result
 
 pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreError> {
     Ok(conn
-        .query_row("SELECT version FROM items WHERE id = ?1", [id], |row| {
+        .query_row_cached("SELECT version FROM items WHERE id = ?1", [id], |row| {
             row.get(0)
         })
         .optional()?)

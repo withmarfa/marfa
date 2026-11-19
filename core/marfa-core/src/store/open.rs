@@ -3,7 +3,7 @@
 use super::meta::{META_STORE_ID, meta_get, meta_set};
 use super::unsent::{folder_unsent, unsendable, untaken, untaken_count};
 use crate::error::CoreError;
-use rusqlite::Connection;
+use rusqlite::{Connection, config::DbConfig};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -657,7 +657,9 @@ pub(crate) fn read_directory(
 /// hydration runs for each row it writes.
 fn tune(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch("PRAGMA cache_size = -32768;")?;
-    conn.set_prepared_statement_cache_capacity(64);
+    conn.set_prepared_statement_cache_capacity(256);
+    // A plan that depends on a bound value is made again each time a statement is reused from the cache.
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true)?;
     Ok(())
 }
 

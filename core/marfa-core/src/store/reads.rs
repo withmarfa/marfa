@@ -1,5 +1,6 @@
 //! Reading the items and edges the copy holds.
 
+use super::Cached;
 use crate::error::CoreError;
 use crate::model::{Edge, Item, ItemState, Tier};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -218,7 +219,7 @@ pub(super) fn tags_for(
     // by id, so where the copy holds at most four tags for each row asked,
     // as for a listing of most of it, every tag is read once instead.
     if ids.len() > 1000
-        && conn.query_row("SELECT count(*) FROM tags", [], |row| row.get::<_, i64>(0))?
+        && conn.query_row_cached("SELECT count(*) FROM tags", [], |row| row.get::<_, i64>(0))?
             <= i64::try_from(ids.len())
                 .unwrap_or(i64::MAX)
                 .saturating_mul(4)
@@ -441,7 +442,7 @@ pub fn edge_by_id_with(
     unreadable: &mut Unreadable,
 ) -> Result<Option<Edge>, CoreError> {
     let read = conn
-        .query_row(
+        .query_row_cached(
             "SELECT id, from_id, to_id, edge_type, properties, version, created_at, updated_at
                FROM edges WHERE id = ?1",
             [id],

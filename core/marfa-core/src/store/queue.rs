@@ -1,5 +1,6 @@
 //! The write queue: adding a write, finding the write ahead of it and reading what waits.
 
+use super::Cached;
 use super::dead::remaining_dead_fields;
 use super::reads::{edge_by_id, item_by_id};
 use super::time::now_iso;
@@ -87,7 +88,7 @@ fn insert(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreEr
         Some(serde_json::to_string(write.depends_on)?)
     };
     let follows = write_ahead(conn, write)?;
-    conn.execute(
+    conn.execute_cached(
         "INSERT INTO queue (
              id, kind, item_id, to_id, edge_id, namespace, tag, blob,
              base_version, idempotency_key, payload, depends_on, queued_at,
@@ -131,7 +132,7 @@ fn write_ahead(conn: &Connection, write: &NewWrite<'_>) -> Result<Option<String>
     // A create carrying this row's natural key lands on this row, so it is a
     // write to it too.
     let keyed: Option<(String, i64)> = conn
-        .query_row(
+        .query_row_cached(
             "SELECT queue.id, queue.seq FROM queue, items
               WHERE items.id = ?1 AND items.source_id IS NOT NULL
                 AND queue.kind = ?2 AND queue.item_id != ?1
@@ -154,7 +155,7 @@ fn write_ahead(conn: &Connection, write: &NewWrite<'_>) -> Result<Option<String>
     };
     let direct_seq: Option<i64> = match &direct {
         Some(id) => conn
-            .query_row("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
+            .query_row_cached("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
                 row.get(0)
             })
             .optional()?,
@@ -204,7 +205,7 @@ pub fn item_under_key(
     source: &str,
     source_id: &str,
 ) -> Result<Option<Item>, CoreError> {
-    let id: Option<String> = conn.query_row(
+    let id: Option<String> = conn.query_row_cached(
         "SELECT id FROM items WHERE source = ?1 AND source_id = ?2 ORDER BY version DESC, id LIMIT 1",
         params![source, source_id], |row| row.get(0),
     ).optional()?;
@@ -222,7 +223,7 @@ pub fn follow_row_under_key(
     source_id: &str,
 ) -> Result<(), CoreError> {
     let held: Option<String> = conn
-        .query_row(
+        .query_row_cached(
             "SELECT id FROM items WHERE source = ?1 AND source_id = ?2 AND id != ?3",
             params![source, source_id, create.item_id],
             |row| row.get(0),
@@ -232,7 +233,7 @@ pub fn follow_row_under_key(
         return Ok(());
     };
     if let Some(ahead) = last_write_to(conn, Subject::Item, &held)? {
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET follows = ?2 WHERE id = ?1",
             params![create.id, ahead],
         )?;
@@ -269,7 +270,7 @@ pub fn refollow(conn: &Connection, item_id: &str, answered: &str) -> Result<(), 
         .collect::<Result<_, _>>()?;
     let mut ahead: Option<String> = None;
     for id in ids {
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET follows = ?2 WHERE id = ?1",
             params![id, ahead],
         )?;

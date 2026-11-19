@@ -177,13 +177,37 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
 /// The entries of the last few type sets read, by the stamp each was read
 /// under. A stamp names one set of types in any store, so a copy whose stamp
 /// is here holds the entries kept under it.
-static READ: Mutex<Vec<(String, Arc<HashMap<String, CatalogEntry>>)>> = Mutex::new(Vec::new());
+static READ: Mutex<Vec<(String, Entries)>> = Mutex::new(Vec::new());
+
+type Entries = Arc<HashMap<String, CatalogEntry>>;
 
 const KEPT: usize = 8;
+
+#[cfg(test)]
+thread_local! {
+    static UNCACHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Until it is dropped, this thread reads every catalog from the rows, for a test that watches those reads.
+#[cfg(test)]
+pub(crate) fn uncached() -> impl Drop {
+    struct Reads;
+    impl Drop for Reads {
+        fn drop(&mut self) {
+            UNCACHED.set(false);
+        }
+    }
+    UNCACHED.set(true);
+    Reads
+}
 
 /// The catalog the copy holds, with the request limit the server last said.
 pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
     let limit = crate::store::request_limit(conn)?;
+    #[cfg(test)]
+    if UNCACHED.get() {
+        return Ok(Catalog::new(read_entries(conn)?, limit));
+    }
     let Some(stamp) = store::types_stamp(conn)? else {
         return Ok(Catalog::new(read_entries(conn)?, limit));
     };
@@ -731,6 +755,7 @@ mod tests {
 
     #[test]
     fn public_item_type_reads_keep_fields_and_hints_in_one_snapshot() {
+        let _reads = uncached();
         use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
         use std::sync::{
             Arc,
@@ -1191,10 +1216,10 @@ mod tests {
         conn.trace_v2(
             TraceEventCodes::SQLITE_TRACE_STMT,
             Some(|event: TraceEvent<'_>| {
-                if let TraceEvent::Stmt(_, sql) = event {
-                    if sql.contains("FROM types") {
-                        READS.fetch_add(1, Ordering::SeqCst);
-                    }
+                if let TraceEvent::Stmt(_, sql) = event
+                    && sql.contains("FROM types")
+                {
+                    READS.fetch_add(1, Ordering::SeqCst);
                 }
             }),
         )

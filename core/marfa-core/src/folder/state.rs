@@ -1,3 +1,4 @@
+use crate::store::Cached;
 use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -279,7 +280,7 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
-    conn.execute(
+    conn.execute_cached(
         "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, seen_at, embeds)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT (path) DO UPDATE SET
@@ -326,7 +327,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
 
 pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
     let before = bound_at(conn, path)?;
-    conn.execute("DELETE FROM folder_files WHERE path = ?1", [path])?;
+    conn.execute_cached("DELETE FROM folder_files WHERE path = ?1", [path])?;
     if let Some(before) = before {
         unpin_if_unheld(conn, &before.item_id)?;
     }
@@ -482,7 +483,7 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
 /// Whether a file is held, or holds a refused change: the scan judges such a
 /// file again, though its bytes are as they were, which a pull does not.
 pub fn any_held_or_refused(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(conn.query_row(
+    Ok(conn.query_row_cached(
         "SELECT EXISTS (SELECT 1 FROM folder_files WHERE held IS NOT NULL
            OR (json_valid(writes) AND json_array_length(writes, '$.refused') > 0))",
         [],
@@ -502,7 +503,7 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
 
 /// Whether a file other than the one at `path` is bound to the item.
 pub fn bound_beside(conn: &Connection, item_id: &str, path: &str) -> Result<bool, CoreError> {
-    Ok(conn.query_row(
+    Ok(conn.query_row_cached(
         "SELECT EXISTS (SELECT 1 FROM folder_files WHERE item_id = ?1 AND path <> ?2)",
         [item_id, path],
         |row| row.get(0),
@@ -682,7 +683,7 @@ pub fn copy_moment(conn: &Connection) -> Result<String, CoreError> {
 /// `OR IGNORE` keeps the first sighting, so a folder scanning every second
 /// still reaches the grace.
 pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
          VALUES (?1, ?2, ?3)",
         params![
@@ -696,12 +697,12 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
 
 /// A row that outlives its question becomes a delete nobody asked for.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
-    conn.execute("DELETE FROM folder_journal WHERE path = ?1", [path])?;
+    conn.execute_cached("DELETE FROM folder_journal WHERE path = ?1", [path])?;
     Ok(())
 }
 
 pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
         [path, item_id],
     )?;
@@ -741,7 +742,7 @@ pub fn journal_keep(
         Some(Kept::Unsure(reason)) => (Some("unsure"), Some(reason.as_str())),
         None => (None, None),
     };
-    conn.execute(
+    conn.execute_cached(
         "UPDATE folder_journal SET kept = ?3, reason = ?4 WHERE path = ?1 AND item_id = ?2",
         params![path, item_id, kind, reason],
     )?;
@@ -823,7 +824,8 @@ pub fn record_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
 }
 
 pub fn bound_count(conn: &Connection) -> Result<usize, CoreError> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
+    let count: i64 =
+        conn.query_row_cached("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
     Ok(usize::try_from(count).unwrap_or(0))
 }
 
@@ -972,7 +974,7 @@ pub fn gate_additions(conn: &Connection) -> Result<(), CoreError> {
 /// The file metadata last recorded by a scan or pull.
 pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreError> {
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT stat FROM folder_stats WHERE path = ?1",
             [path],
             |row| row.get(0),
@@ -990,10 +992,10 @@ pub fn set_stats(
     // One commit, not one per file of a large folder.
     let tx = conn.unchecked_transaction()?;
     if whole {
-        tx.execute("DELETE FROM folder_stats", [])?;
+        tx.execute_cached("DELETE FROM folder_stats", [])?;
     }
     for (path, stat) in stats {
-        tx.execute(
+        tx.execute_cached(
             "INSERT INTO folder_stats (path, stat) VALUES (?1, ?2)
              ON CONFLICT (path) DO UPDATE SET stat = excluded.stat",
             [path, stat],
@@ -1029,7 +1031,7 @@ pub fn set_unheld(
             .map(|(item_id, hash)| (item_id.as_str(), hash.as_str()));
         match answered.get(path) {
             Some(&now) if was != Some(now) => {
-                tx.execute(
+                tx.execute_cached(
                     "INSERT INTO folder_unheld (path, item_id, content_hash) VALUES (?1, ?2, ?3)
                      ON CONFLICT (path) DO UPDATE SET
                        item_id = excluded.item_id, content_hash = excluded.content_hash",
@@ -1037,7 +1039,7 @@ pub fn set_unheld(
                 )?;
             }
             None if was.is_some() => {
-                tx.execute("DELETE FROM folder_unheld WHERE path = ?1", [path])?;
+                tx.execute_cached("DELETE FROM folder_unheld WHERE path = ?1", [path])?;
             }
             _ => {}
         }
@@ -1053,7 +1055,7 @@ pub fn prune_unheld(
 ) -> Result<(), CoreError> {
     for path in unheld(conn)?.into_keys() {
         if !found.contains(&path) {
-            conn.execute("DELETE FROM folder_unheld WHERE path = ?1", [path])?;
+            conn.execute_cached("DELETE FROM folder_unheld WHERE path = ?1", [path])?;
         }
     }
     Ok(())

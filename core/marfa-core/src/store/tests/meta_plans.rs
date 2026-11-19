@@ -193,3 +193,40 @@ fn a_copy_that_is_current_is_judged_on_a_few_reads() {
     assert!(asked > 0, "the trace saw no statement");
     assert!(asked <= 3, "judging a current copy took {asked} statements");
 }
+
+/// Times SQLite prepared the statement again over the three runs from the cache after its first.
+fn reprepares(conn: &Connection, sql: &str) -> i32 {
+    let mut count = 0;
+    let mut first = 0;
+    for run in 0..4 {
+        let mut statement = conn.prepare_cached(sql).unwrap();
+        let values: Vec<&str> = vec!["a"; statement.parameter_count()];
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(values), |_| Ok(()))
+            .unwrap();
+        assert_eq!(rows.count(), 0);
+        count = statement.get_status(rusqlite::StatementStatus::RePrepare);
+        if run == 0 {
+            first = count;
+        }
+    }
+    count - first
+}
+
+#[test]
+fn a_cached_statement_is_prepared_once_however_often_it_is_run() {
+    let statements = [
+        "SELECT id FROM edges WHERE from_id = ?1 ORDER BY created_at, id",
+        "SELECT id FROM queue WHERE item_id = ?1 AND kind = ?2",
+        "SELECT id FROM items WHERE id = ?1 AND source IS NOT ?2",
+    ];
+    let conn = conn();
+    for sql in statements {
+        assert_eq!(reprepares(&conn, sql), 0, "{sql}");
+    }
+
+    // The witness: without the setting, each run from the cache plans again.
+    let plain = Connection::open_in_memory().unwrap();
+    plain.execute_batch(crate::store::SCHEMA).unwrap();
+    assert_eq!(reprepares(&plain, statements[0]), 3);
+}

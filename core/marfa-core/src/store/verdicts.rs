@@ -1,5 +1,6 @@
 //! A write's sending and verdict: marking it sent, the streaks that set it aside and releasing it.
 
+use super::Cached;
 use super::attachments::forget_bytes_sent_again;
 use super::catalog::catalog_scope;
 use super::dead::{
@@ -26,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 pub const CEILING: i64 = 5;
 
 pub fn payload_of(conn: &Connection, id: &str) -> Result<String, CoreError> {
-    conn.query_row("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
+    conn.query_row_cached("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
         row.get(0)
     })
     .optional()?
@@ -44,7 +45,7 @@ pub struct Answered<'a> {
 /// write holds, in the one statement. The order of sends is a number rather
 /// than a time so a clock set back cannot reorder it.
 pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue
             SET sent = 1,
                 last_sent_seq = (SELECT COALESCE(MAX(last_sent_seq), 0) + 1 FROM queue)
@@ -58,7 +59,7 @@ pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
 /// lower number is the earlier send.
 pub fn last_sent_seq(conn: &Connection, id: &str) -> Result<Option<i64>, CoreError> {
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT last_sent_seq FROM queue WHERE id = ?1",
             [id],
             |row| row.get(0),
@@ -69,7 +70,7 @@ pub fn last_sent_seq(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErr
 
 /// Only on an answer that proves the attempt was not applied anywhere.
 pub fn mark_unsent(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    conn.execute("UPDATE queue SET sent = 0 WHERE id = ?1", [id])?;
+    conn.execute_cached("UPDATE queue SET sent = 0 WHERE id = ?1", [id])?;
     Ok(())
 }
 
@@ -89,7 +90,7 @@ fn record_verdict_inner(
     let already_accepted =
         queued_write(conn, id)?.is_some_and(|row| row.verdict == Some(Verdict::Accepted));
     let ends = edge_write_ends(conn, id)?;
-    let changed = conn.execute(
+    let changed = conn.execute_cached(
         "UPDATE queue
             SET verdict = ?2, reason = ?3, answer = ?4,
                 conflicted_copy_id = ?5, answered_at = ?6,
@@ -128,7 +129,7 @@ fn record_verdict_inner(
     if (answered.verdict == Verdict::Accepted
         || answered.verdict == Verdict::Refused && answered.reason == Some("edge_not_found"))
         && let Some(edge) = conn
-            .query_row(
+            .query_row_cached(
                 "SELECT edge_id FROM queue WHERE id = ?1 AND kind = ?2",
                 params![id, WriteKind::DeleteEdge.as_str()],
                 |row| row.get::<_, Option<String>>(0),
@@ -190,7 +191,7 @@ pub fn count_environmental(
     id: &str,
     failure: &crate::model::LastFailure,
 ) -> Result<Streak, CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue
             SET environmental_since = CASE WHEN environmental_streak = 0
                                                 OR environmental_since IS NULL
@@ -216,7 +217,7 @@ pub fn count_environmental(
             RUN_GAP_MILLIS
         ],
     )?;
-    conn.query_row(
+    conn.query_row_cached(
         "SELECT environmental_streak, environmental_since FROM queue WHERE id = ?1",
         [id],
         |row| {
@@ -238,7 +239,7 @@ pub fn note_last_failure(
     id: &str,
     failure: &crate::model::LastFailure,
 ) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET last_failure = ?2 WHERE id = ?1",
         params![id, serde_json::to_string(failure)?],
     )?;
@@ -248,7 +249,7 @@ pub fn note_last_failure(
 /// Sets a write's run of environmental failures back to nothing: it was
 /// answered, or released.
 pub fn clear_environmental(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue
             SET environmental_streak = 0, environmental_since = NULL,
                 environmental_last = NULL, last_failure = NULL
@@ -262,11 +263,11 @@ pub fn clear_environmental(conn: &Connection, id: &str) -> Result<(), CoreError>
 
 pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
     clear_environmental(conn, id)?;
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET refusals = MIN(refusals + 1, ?2) WHERE id = ?1",
         params![id, CEILING],
     )?;
-    conn.query_row("SELECT refusals FROM queue WHERE id = ?1", [id], |row| {
+    conn.query_row_cached("SELECT refusals FROM queue WHERE id = ?1", [id], |row| {
         row.get(0)
     })
     .optional()?
@@ -274,7 +275,7 @@ pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
 }
 
 pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usize, CoreError> {
-    Ok(conn.execute(
+    Ok(conn.execute_cached(
         "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
           WHERE verdict IS NULL",
         params![Verdict::Blocked.as_str(), reason.as_str(), now_iso()],
@@ -318,7 +319,7 @@ fn hold_for_instance(conn: &Connection, batch: &[String]) -> Result<bool, CoreEr
     if !made_for.is_empty() && meta_get(conn, META_INSTANCE_ID)?.as_ref() == Some(&made_for) {
         return Ok(false);
     }
-    Ok(conn.execute(
+    Ok(conn.execute_cached(
         "UPDATE queue SET reason = ?2, answered_at = ?3
           WHERE id IN (SELECT value FROM json_each(?1)) AND verdict = ?4 AND reason = ?5",
         params![
@@ -355,7 +356,7 @@ pub(crate) fn hold_record_unread(conn: &Connection, ids: &[String]) -> Result<us
 /// is the last drain's finding rather than a state that sticks.
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
     let [credential_refused, awaiting] = SELF_CLEARING;
-    Ok(conn.execute(
+    Ok(conn.execute_cached(
         "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
           WHERE verdict = ?1 AND reason IN (?2, ?3)",
         params![Verdict::Blocked.as_str(), credential_refused, awaiting],
@@ -366,7 +367,7 @@ pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
 /// (`unblock_self_clearing`).
 pub fn any_self_clearing(conn: &Connection) -> Result<bool, CoreError> {
     let [credential_refused, awaiting] = SELF_CLEARING;
-    Ok(conn.query_row(
+    Ok(conn.query_row_cached(
         "SELECT EXISTS (SELECT 1 FROM queue WHERE verdict = ?1 AND reason IN (?2, ?3))",
         params![Verdict::Blocked.as_str(), credential_refused, awaiting],
         |row| row.get(0),
@@ -397,7 +398,7 @@ fn refuse_released_while_removing(conn: &Connection, id: &str) -> Result<(), Cor
 /// A spent key is retained so a late answer cannot settle a new attempt.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, reason, kind, sent)) = conn
-        .query_row(
+        .query_row_cached(
             "SELECT verdict, reason, kind, sent FROM queue WHERE id = ?1",
             [id],
             |row| {
@@ -447,7 +448,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     }
     for write in &batch {
         forget_bytes_sent_again(conn, write)?;
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue
                 SET verdict = NULL, reason = NULL, answer = NULL,
                     conflicted_copy_id = NULL, answered_at = NULL,
@@ -562,7 +563,7 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// one the queue no longer holds. Clearing keeps every row such a row waits
 /// for, so a missing one was withdrawn.
 pub(super) fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    Ok(conn.query_row(
+    Ok(conn.query_row_cached(
         "WITH RECURSIVE chain(id) AS (
            SELECT ?1
            UNION
@@ -608,7 +609,7 @@ pub fn stop_waiting_on(conn: &Connection, id: &str) -> Result<(), CoreError> {
         [id],
     )? {
         let still: Vec<&String> = row.depends_on.iter().filter(|held| *held != id).collect();
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET depends_on = ?2 WHERE id = ?1",
             params![
                 row.id,
@@ -643,7 +644,7 @@ pub(super) fn take_out(
         record_refusal(conn, dependant, &reason, None, false)?;
     }
     let ends = edge_write_ends(conn, &row.id)?;
-    conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
+    conn.execute_cached("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
     meta_delete(conn, &chosen_tier_key(&row.id))?;
     meta_delete(conn, &cleared_time_key(&row.id))?;
@@ -652,7 +653,7 @@ pub(super) fn take_out(
 }
 
 pub fn record_read(conn: &Connection, id: &str, read: &Value) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET read = ?2 WHERE id = ?1",
         params![id, read.to_string()],
     )?;
@@ -661,7 +662,7 @@ pub fn record_read(conn: &Connection, id: &str, read: &Value) -> Result<(), Core
 
 pub fn read_of(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
     Ok(conn
-        .query_row("SELECT read FROM queue WHERE id = ?1", [id], |row| {
+        .query_row_cached("SELECT read FROM queue WHERE id = ?1", [id], |row| {
             row.get::<_, Option<String>>(0)
         })
         .optional()?
