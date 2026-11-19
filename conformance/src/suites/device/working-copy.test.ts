@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -1869,6 +1877,134 @@ describe("the working copy belongs to one server", () => {
     if (!written.ok) {
       expect(written.refusal.code).toBe("wrong_schema");
       expect(written.refusal.raw).toContain(harness.device.store);
+    }
+  });
+
+  it("changes no byte of a store it refuses wrong_schema, whichever log mode it is in", async () => {
+    harness = await hydratedHarness("schema-untouched", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const store = harness.device.store;
+    const log = `${store}-wal`;
+    // An empty log holds nothing of the store, so it counts as no log.
+    const held = () => ({
+      store: readFileSync(store).toString("hex"),
+      log: existsSync(log) ? readFileSync(log).toString("hex") || null : null,
+    });
+    const recorded = (mode: "delete" | "wal", version: number) => {
+      const db = new DatabaseSync(store);
+      try {
+        db.exec(
+          `PRAGMA journal_mode = ${mode}; PRAGMA user_version = ${version}`,
+        );
+      } finally {
+        db.close();
+      }
+    };
+    // A store whose log holds the version and frames the store file does not:
+    // SQLite checkpoints a log into its store as the last connection closes,
+    // so the pair is copied while a connection holds the log.
+    const leavingFrames = (version: number) => {
+      const db = new DatabaseSync(store);
+      const copy = `${store}.frames`;
+      try {
+        db.exec(
+          `PRAGMA journal_mode = wal; PRAGMA wal_autocheckpoint = 0; CREATE TABLE IF NOT EXISTS frames (x); INSERT INTO frames VALUES (randomblob(12000)); PRAGMA user_version = ${version}`,
+        );
+        copyFileSync(store, copy);
+        copyFileSync(log, `${copy}-wal`);
+      } finally {
+        db.close();
+      }
+      rmSync(log, { force: true });
+      rmSync(`${store}-shm`, { force: true });
+      copyFileSync(copy, store);
+      copyFileSync(`${copy}-wal`, log);
+      rmSync(copy);
+      rmSync(`${copy}-wal`);
+      expect(
+        statSync(log).size,
+        "the log holds no frames for the writer to checkpoint",
+      ).toBeGreaterThan(10_000);
+    };
+    const db = new DatabaseSync(store);
+    const { user_version: own } = db.prepare("PRAGMA user_version").get() as {
+      user_version: number;
+    };
+    db.close();
+
+    const refusedUntouched = async (what: string) => {
+      const before = held();
+      const written = await harness?.device.get("n1");
+      expect(written?.ok, "a writer opened a store of another version").toBe(
+        false,
+      );
+      if (written && !written.ok)
+        expect(written.refusal.code).toBe("wrong_schema");
+      const read = await harness?.device.reopen({ reader: true }).get("n1");
+      expect(read?.ok, "a reader opened a store of another version").toBe(
+        false,
+      );
+      if (read && !read.ok) expect(read.refusal.code).toBe("wrong_schema");
+      expect(held(), `refusing ${what} changed it`).toEqual(before);
+    };
+
+    for (const mode of ["delete", "wal"] as const) {
+      recorded(mode, own + 1);
+      await refusedUntouched(`a store in ${mode} mode`);
+    }
+    leavingFrames(own + 1);
+    await refusedUntouched("a store whose log holds frames");
+
+    // The witness: at its own version, the same store with frames in its log
+    // is opened by a writer, which checkpoints them into the store as it
+    // closes.
+    leavingFrames(own);
+    const before = held();
+    expect((await harness.device.get("n1")).ok).toBe(true);
+    expect(
+      held(),
+      "an open that is allowed left the store as it was",
+    ).not.toEqual(before);
+
+    // The witness: at its own version, the same store in delete mode is
+    // opened by a writer, which puts it in write-ahead mode in its header.
+    recorded("delete", own);
+    const header = () => readFileSync(store).subarray(18, 20).toString("hex");
+    expect(header()).toBe("0101");
+    expect((await harness.device.get("n1")).ok).toBe(true);
+    expect(header(), "an open that is allowed left the header as it was").toBe(
+      "0202",
+    );
+  });
+
+  it("refuses an open storage_full when the volume has no room for the store's index file, and store when it has", async () => {
+    harness = await hydratedHarness("open-full", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const store = harness.device.store;
+    // A store in write-ahead mode needs an index file beside it to be read. A
+    // name that leads nowhere stands for the file the volume has no room for.
+    symlinkSync(join(dirname(store), "nowhere", "index"), `${store}-shm`);
+    const opens = () => [
+      harness?.device.get("n1"),
+      harness?.device.reopen({ reader: true }).get("n1"),
+    ];
+    // The witness: with room on the volume, the same failure is a store one.
+    for (const refused of await Promise.all(opens())) {
+      expect(refused?.ok).toBe(false);
+      if (refused && !refused.ok) expect(refused.refusal.code).toBe("store");
+    }
+    process.env.MARFA_TEST_FAULT = "volume-full";
+    try {
+      for (const refused of await Promise.all(opens())) {
+        expect(refused?.ok).toBe(false);
+        if (refused && !refused.ok) {
+          expect(refused.refusal.code).toBe("storage_full");
+        }
+      }
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
     }
   });
 

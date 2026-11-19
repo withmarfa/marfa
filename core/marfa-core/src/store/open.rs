@@ -3,6 +3,7 @@
 use super::meta::{META_STORE_ID, meta_get, meta_set};
 use super::unsent::{folder_unsent, unsendable, untaken, untaken_count};
 use crate::error::CoreError;
+use crate::file_cache::{Place, volume_is_full};
 use rusqlite::{Connection, config::DbConfig};
 use std::collections::HashMap;
 use std::path::Path;
@@ -28,7 +29,7 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
     // The store may have been named by an environment variable rather than
     // typed, so the refusal names its path.
-    prepare(&conn).map_err(|error| {
+    prepare(&conn, Some(Place::Named(path))).map_err(|error| {
         crate::damage::keep_log_if_met(&conn, seen);
         crate::damage::at_path(at_path(error, path), path)
     })?;
@@ -47,7 +48,7 @@ pub(crate) fn open_directory(
             | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    prepare(&conn).map_err(|error| {
+    prepare(&conn, Some(Place::Held(vfs.directory()))).map_err(|error| {
         crate::damage::keep_log_if_met(&conn, seen);
         in_folder(error, label, &conn)
     })?;
@@ -161,7 +162,8 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
             path.display()
         ))
     })?;
-    read_checked(&conn, path).inspect_err(|_| crate::damage::keep_log_if_met(&conn, seen))?;
+    read_checked(&conn, path, Place::Named(path))
+        .inspect_err(|_| crate::damage::keep_log_if_met(&conn, seen))?;
     Ok(conn)
 }
 
@@ -557,7 +559,7 @@ pub(crate) fn replace_folder_store(
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
                 | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        prepare(&conn)?;
+        prepare(&conn, Some(Place::Held(vfs.directory())))?;
         let tx = conn.unchecked_transaction()?;
         for (key, value) in &kept {
             meta_set(&tx, key, value)?;
@@ -643,7 +645,7 @@ pub(crate) fn read_directory(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    read_checked(&conn, label).map_err(|error| {
+    read_checked(&conn, label, Place::Held(vfs.directory())).map_err(|error| {
         crate::damage::keep_log_if_met(&conn, seen);
         in_folder(error, label, &conn)
     })?;
@@ -728,7 +730,7 @@ pub(crate) fn with_journals_in_memory<T>(
     Ok(written)
 }
 
-fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
+fn read_checked(conn: &Connection, path: &Path, place: Place<'_>) -> Result<(), CoreError> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let no_schema = || {
         CoreError::Invalid(format!(
@@ -736,8 +738,8 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
             path.display()
         ))
     };
-    let found =
-        version(conn).map_err(|error| crate::damage::at_path(CoreError::from(error), path))?;
+    let found = version(conn)
+        .map_err(|error| crate::damage::at_path(on_volume(error, Some(place)), path))?;
     if found != SCHEMA_VERSION {
         let has_meta: bool = conn
             .query_row(
@@ -762,23 +764,44 @@ pub fn data_version(conn: &Connection) -> Result<i64, CoreError> {
 
 pub fn open_in_memory() -> Result<Connection, CoreError> {
     let conn = Connection::open_in_memory()?;
-    prepare(&conn)?;
+    prepare(&conn, None)?;
     Ok(conn)
 }
 
-fn prepare(conn: &Connection) -> Result<(), CoreError> {
-    conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         PRAGMA foreign_keys = ON;",
-    )?;
+/// `StorageFull` where SQLite could not make the files beside the store
+/// because its volume has no room.
+pub(crate) fn on_volume(error: rusqlite::Error, place: Option<Place<'_>>) -> CoreError {
+    if matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::CannotOpen | rusqlite::ErrorCode::SystemIoFailure)
+    ) && place.is_some_and(volume_is_full)
+    {
+        return CoreError::StorageFull(error.to_string());
+    }
+    error.into()
+}
+
+/// Reads the store's version before anything that writes to it, so a store
+/// this build refuses is left as it was found. `place` is where the store
+/// is, for a failure to open it, and `None` for a store in memory.
+fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError> {
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    tune(conn)?;
-    match version(conn)? {
-        SCHEMA_VERSION => {}
-        0 if !holds_tables(conn)? => make(conn)?,
-        found if upgraded(found) => upgrade(conn, OLDEST_UPGRADED, UPGRADES)?,
+    let found = version(conn).map_err(|error| on_volume(error, place))?;
+    let step = match found {
+        SCHEMA_VERSION => Step::None,
+        0 if !holds_tables(conn)? => Step::Make,
+        found if upgraded(found) => Step::Upgrade,
         found => return Err(refused(conn, found)),
+    };
+    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
+        .map_err(|error| on_volume(error, place))?;
+    conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
+    tune(conn)?;
+    match step {
+        Step::None => {}
+        Step::Make => make(conn)?,
+        Step::Upgrade => upgrade(conn, OLDEST_UPGRADED, UPGRADES)?,
     }
     if meta_get(conn, META_STORE_ID)?.is_none() {
         meta_set(
@@ -788,6 +811,12 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
         )?;
     }
     Ok(())
+}
+
+enum Step {
+    None,
+    Make,
+    Upgrade,
 }
 
 /// Makes this build's schema in an empty store, in one transaction, so a
@@ -811,13 +840,22 @@ pub(super) fn make(conn: &Connection) -> Result<(), CoreError> {
 pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), CoreError> {
     let conn = Connection::open(path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
-    let tx = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)?;
-    if version(&tx)? != 0 || holds_tables(&tx)? {
-        return Err(CoreError::Store(format!(
+    let not_empty = || {
+        CoreError::Store(format!(
             "{} is not empty, so no store is made there",
             path.display()
-        )));
+        ))
+    };
+    // Before the log mode is set, which writes to a file that holds a store.
+    let place = Some(Place::Named(path));
+    if version(&conn).map_err(|error| on_volume(error, place))? != 0 || holds_tables(&conn)? {
+        return Err(not_empty());
+    }
+    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
+        .map_err(|error| on_volume(error, place))?;
+    let tx = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)?;
+    if version(&tx)? != 0 || holds_tables(&tx)? {
+        return Err(not_empty());
     }
     tx.execute_batch(SCHEMA)?;
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -870,6 +908,8 @@ pub(crate) fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
 
 /// The refusal of a store at version `found`, with what it holds.
 pub(crate) fn refused(conn: &Connection, found: i64) -> CoreError {
+    // Closing would otherwise checkpoint the log into a store this build refuses.
+    let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true);
     CoreError::WrongSchema {
         path: String::new(),
         reason: format!(

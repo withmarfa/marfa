@@ -283,6 +283,229 @@ fn a_store_at_another_version_is_refused_with_its_writes_kept() {
     }
 }
 
+/// The bytes of the store file and of each log beside it, `None` where a log
+/// is absent or empty. The index file SQLite keeps beside a store in
+/// write-ahead mode holds nothing of the store, so it is left out.
+fn every_byte_of(path: &Path) -> Vec<Option<Vec<u8>>> {
+    ["", "-journal", "-wal"]
+        .iter()
+        .map(|suffix| {
+            std::fs::read(suffixed(path, suffix))
+                .ok()
+                .filter(|bytes| !bytes.is_empty())
+        })
+        .collect()
+}
+
+/// A store this build made at `found`, closed, in the journal mode named.
+fn left_at(path: &Path, found: i64, mode: &str) {
+    {
+        let conn = open(path).unwrap();
+        queue_one(&conn);
+        let kept: String = conn
+            .query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(kept.eq_ignore_ascii_case(mode), "{kept}");
+        conn.pragma_update(None, "user_version", found).unwrap();
+    }
+    for log in ["-wal", "-shm"] {
+        if mode.eq_ignore_ascii_case("delete") {
+            assert!(!suffixed(path, log).exists(), "{log} was left");
+        }
+    }
+}
+
+#[test]
+fn a_writer_that_refuses_a_store_changes_no_byte_of_it() {
+    for (mode, header_mode) in [("DELETE", 1u8), ("WAL", 2u8)] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        left_at(&path, SCHEMA_VERSION + 1, mode);
+        let before = every_byte_of(&path);
+        let header = before[0].as_ref().unwrap();
+        assert_eq!(
+            [header[18], header[19]],
+            [header_mode; 2],
+            "the store was not left in {mode} mode"
+        );
+
+        assert!(matches!(
+            open(&path),
+            Err(CoreError::WrongSchema {
+                unsent: Some(1),
+                ..
+            })
+        ));
+        assert_eq!(
+            every_byte_of(&path),
+            before,
+            "refusing a store in {mode} mode changed it"
+        );
+
+        // The witness: at this version, the same store in DELETE mode is
+        // opened and put in WAL mode, which is a change the refusal skipped.
+        at_version(&path, SCHEMA_VERSION);
+        let after_version = every_byte_of(&path);
+        drop(open(&path).unwrap());
+        let opened = every_byte_of(&path);
+        let header = opened[0].as_ref().unwrap();
+        assert_eq!([header[18], header[19]], [2, 2], "{mode}");
+        if mode == "DELETE" {
+            assert_ne!(opened, after_version, "opening changed nothing to refuse");
+        }
+    }
+}
+
+/// Records `found` as the store's version through a connection that leaves
+/// its log as it is when it closes, so the log holds frames the store does not.
+fn leaving_frames_at(path: &Path, found: i64) {
+    let conn = Connection::open(path).unwrap();
+    conn.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+        true,
+    )
+    .unwrap();
+    conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    conn.pragma_update(None, "user_version", found).unwrap();
+}
+
+#[test]
+fn a_writer_that_refuses_a_store_leaves_the_store_and_the_log_holding_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    left_at(&path, SCHEMA_VERSION, "WAL");
+    leaving_frames_at(&path, SCHEMA_VERSION + 1);
+    let held = |path: &Path| {
+        [
+            std::fs::read(path).unwrap(),
+            std::fs::read(suffixed(path, "-wal")).unwrap_or_default(),
+        ]
+    };
+    let before = held(&path);
+    assert!(!before[1].is_empty(), "the log holds no frames");
+
+    assert!(matches!(open(&path), Err(CoreError::WrongSchema { .. })));
+    assert_eq!(
+        held(&path),
+        before,
+        "the writer's refusal changed the store"
+    );
+    assert!(matches!(
+        open_to_read(&path),
+        Err(CoreError::WrongSchema { .. })
+    ));
+    assert_eq!(
+        held(&path),
+        before,
+        "the reader's refusal changed the store"
+    );
+
+    // The witness: at this version, closing a writer checkpoints the log into
+    // the store and deletes it.
+    leaving_frames_at(&path, SCHEMA_VERSION);
+    let before = held(&path);
+    assert!(!before[1].is_empty());
+    drop(open(&path).unwrap());
+    assert_ne!(
+        held(&path),
+        before,
+        "an allowed open left the store as it was"
+    );
+}
+
+/// A store in WAL mode with no log beside it, whose index file cannot be made
+/// because its name leads nowhere, as SQLite fails where the volume has no
+/// room for it. `with_log` leaves an empty log beside it.
+#[cfg(debug_assertions)]
+fn whose_index_cannot_be_made(dir: &Path, with_log: bool) -> std::path::PathBuf {
+    let path = dir.join("core.sqlite");
+    drop(open(&path).unwrap());
+    assert!(!suffixed(&path, "-wal").exists());
+    hold_index_name(&path);
+    if with_log {
+        std::fs::write(suffixed(&path, "-wal"), b"").unwrap();
+    }
+    path
+}
+
+#[cfg(all(unix, debug_assertions))]
+fn hold_index_name(path: &Path) {
+    std::os::unix::fs::symlink(path.with_file_name("nowhere/index"), suffixed(path, "-shm"))
+        .unwrap();
+}
+
+#[cfg(all(not(unix), debug_assertions))]
+fn hold_index_name(path: &Path) {
+    std::fs::create_dir(suffixed(path, "-shm")).unwrap();
+}
+
+#[cfg(debug_assertions)]
+type Opener<'a> = &'a dyn Fn() -> Result<Connection, CoreError>;
+
+#[cfg(debug_assertions)]
+#[test]
+fn an_open_that_cannot_make_its_logs_on_a_full_volume_is_storage_full() {
+    for with_log in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = whose_index_cannot_be_made(dir.path(), with_log);
+        let opens: [(&str, Opener); 2] = [
+            ("the writer", &|| open(&path)),
+            ("a reading handle", &|| open_to_read(&path)),
+        ];
+        for (who, open_it) in opens {
+            // The witness: the failure is there with room on the volume, and
+            // is a store failure, since nothing says the volume is the cause.
+            let error = open_it().expect_err("the index file was made");
+            assert!(
+                matches!(error, CoreError::Store(_)),
+                "{who}, log {with_log}: {error:?}"
+            );
+            let _full = crate::fault::fail_on_this_thread("volume-full");
+            let error = open_it().expect_err("the index file was made");
+            assert!(
+                matches!(error, CoreError::StorageFull(_)),
+                "{who}, log {with_log}: {error:?}"
+            );
+        }
+    }
+}
+
+#[cfg(all(unix, debug_assertions))]
+#[test]
+fn a_folder_store_that_cannot_make_its_logs_on_a_full_volume_is_storage_full() {
+    use crate::directory_vfs::DirectoryVfs;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = std::fs::File::open(dir.path()).unwrap();
+    let vfs = DirectoryVfs::new(&folder).unwrap();
+    let label = dir.path().join(FOLDER_STORE);
+    drop(open_directory(&vfs, &label).unwrap());
+    hold_index_name(&dir.path().join(FOLDER_STORE));
+    let opens: [(&str, Opener); 2] = [
+        ("the writer", &|| open_directory(&vfs, &label)),
+        ("a reading handle", &|| read_directory(&vfs, &label)),
+    ];
+    for (who, open_it) in opens {
+        let error = open_it().expect_err("the index file was made");
+        assert!(matches!(error, CoreError::Store(_)), "{who}: {error:?}");
+        let _full = crate::fault::fail_on_this_thread("volume-full");
+        let error = open_it().expect_err("the index file was made");
+        assert!(
+            matches!(error, CoreError::StorageFull(_)),
+            "{who}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_volume_with_room_is_not_full() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(!crate::file_cache::volume_is_full(
+        crate::file_cache::Place::Named(&dir.path().join("core.sqlite"))
+    ));
+}
+
 #[test]
 fn a_store_the_previous_shape_made_is_refused_with_its_writes_kept() {
     let dir = tempfile::tempdir().unwrap();

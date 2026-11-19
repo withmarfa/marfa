@@ -342,6 +342,7 @@ pub(crate) fn in_force(setting: FileBudget, volume: Option<Volume>, held: u64) -
 }
 
 /// Where the cache is, for reading its volume.
+#[derive(Clone, Copy)]
 pub(crate) enum Place<'a> {
     /// A directory held open: the cache's own folder, or the folder it is
     /// made in before the first fetch makes it.
@@ -390,6 +391,121 @@ fn statvfs(place: Place<'_>) -> Option<Volume> {
 #[cfg(not(unix))]
 fn statvfs(_place: Place<'_>) -> Option<Volume> {
     None
+}
+
+/// Whether the folder at `place` has no room for the files SQLite keeps beside
+/// a store, which is not the same as a volume mounted read-only or a folder
+/// that refuses the account. APFS reports free space long after it refuses to
+/// make a file or to grow one, and it grows a file by a single byte at the end
+/// of a page more readily than by a run of zeros, so only making a file and
+/// growing it the way SQLite grows the index it keeps says.
+///
+/// A debug build also answers true where `MARFA_TEST_FAULT` names
+/// `volume-full`, or where the calling thread's test has made it fail, since
+/// no fixture can choose its runner's disk.
+pub(crate) fn volume_is_full(place: Place<'_>) -> bool {
+    #[cfg(debug_assertions)]
+    if crate::fault::fails(|| "volume-full") || crate::fault::named("volume-full").is_some() {
+        return true;
+    }
+    #[cfg(unix)]
+    return probe(place).is_err_and(|error| out_of_room(&error));
+    #[cfg(not(unix))]
+    {
+        let _ = place;
+        false
+    }
+}
+
+#[cfg(unix)]
+fn out_of_room(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    )
+}
+
+/// SQLite's own size of a page of the index it keeps beside a store in
+/// write-ahead mode, and the number of them in one region of it.
+#[cfg(unix)]
+const INDEX_PAGE: u64 = 4096;
+#[cfg(unix)]
+const INDEX_PAGES: u64 = 8;
+
+/// The names tried before the probe gives up on finding one no file has.
+#[cfg(unix)]
+const NAMES: u32 = 16;
+
+#[cfg(test)]
+thread_local! {
+    /// The folders the calling thread's probes made their file in: empty for
+    /// a folder held open.
+    pub(crate) static PROBED: std::cell::RefCell<Vec<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Makes a file of a name no other has in the folder `place` is in, grows it
+/// the way SQLite grows an index, and lets it go. A store reached through a
+/// link has its files beside the file the link leads to, so that is the folder
+/// probed.
+#[cfg(unix)]
+fn probe(place: Place<'_>) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let name = || {
+        format!(
+            ".marfa-room-{}-{}",
+            std::process::id(),
+            COUNT.fetch_add(1, Ordering::Relaxed)
+        )
+    };
+    match place {
+        Place::Held(folder) => {
+            #[cfg(test)]
+            PROBED.with_borrow_mut(|probed| probed.push(Default::default()));
+            probe_at(folder, || name().into())
+        }
+        Place::Named(path) => {
+            let reached = crate::lock::linked(path).unwrap_or_else(|_| path.to_path_buf());
+            let folder = reached
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
+                .to_path_buf();
+            #[cfg(test)]
+            PROBED.with_borrow_mut(|probed| probed.push(folder.clone()));
+            probe_at(rustix::fs::CWD, || folder.join(name()))
+        }
+    }
+}
+
+/// The name goes as soon as the file is made, since the descriptor keeps the
+/// space until it is closed, so no failure after it can leave the file behind.
+/// A name that is taken is another's, so another is tried.
+#[cfg(unix)]
+fn probe_at(
+    base: impl std::os::fd::AsFd,
+    mut name: impl FnMut() -> std::path::PathBuf,
+) -> io::Result<()> {
+    use rustix::fs::{AtFlags, Mode, OFlags, openat, unlinkat};
+    use std::os::unix::fs::FileExt;
+
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC;
+    let mut tried = 0;
+    let (file, made) = loop {
+        let made = name();
+        match openat(&base, &made, flags, Mode::RUSR | Mode::WUSR) {
+            Ok(file) => break (File::from(file), made),
+            Err(rustix::io::Errno::EXIST) if tried + 1 < NAMES => tried += 1,
+            Err(error) => return Err(error.into()),
+        }
+    };
+    unlinkat(&base, &made, AtFlags::empty())?;
+    for page in 0..INDEX_PAGES {
+        file.write_all_at(&[0xff], page * INDEX_PAGE + INDEX_PAGE - 1)?;
+    }
+    Ok(())
 }
 
 /// Some FUSE and network mounts answer a size of zero, which says nothing
@@ -474,6 +590,68 @@ pub(crate) fn exclude_from_backups(_file: &File) -> io::Result<()> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_volume_with_no_room_is_full() {
+        let error = io::Error::from_raw_os_error;
+        for full in [libc::ENOSPC, libc::EDQUOT] {
+            assert!(out_of_room(&error(full)), "{full}");
+        }
+        for other in [libc::EROFS, libc::EACCES, libc::ENOENT, libc::EIO] {
+            assert!(!out_of_room(&error(other)), "{other}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_leaves_nothing_in_the_folder_it_tries() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = File::open(dir.path()).unwrap();
+        for place in [Place::Held(&held), Place::Named(&dir.path().join("store"))] {
+            probe(place).unwrap();
+            assert!(!volume_is_full(place));
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        // The witness: a folder that is not there fails the probe, so a probe
+        // that never made a file would not pass above.
+        let missing = dir.path().join("none/store");
+        assert!(probe(Place::Named(&missing)).is_err());
+        assert!(!volume_is_full(Place::Named(&missing)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_store_reached_by_a_link_is_probed_beside_the_file_it_leads_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let (here, there) = (dir.path().join("here"), dir.path().join("there"));
+        std::fs::create_dir(&here).unwrap();
+        std::fs::create_dir(&there).unwrap();
+        std::os::unix::fs::symlink(there.join("real.sqlite"), here.join("store")).unwrap();
+        PROBED.with_borrow_mut(Vec::clear);
+        assert!(!volume_is_full(Place::Named(&here.join("store"))));
+        assert_eq!(PROBED.with_borrow(Clone::clone), vec![there]);
+        // The witness: a store that is no link is probed in its own folder.
+        PROBED.with_borrow_mut(Vec::clear);
+        assert!(!volume_is_full(Place::Named(&here.join("plain"))));
+        assert_eq!(PROBED.with_borrow(Clone::clone), vec![here]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_tries_another_name_where_one_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = File::open(dir.path()).unwrap();
+        std::fs::write(dir.path().join("taken"), "").unwrap();
+        let names = ["taken", "taken", "free"];
+        let mut next = names.iter();
+        probe_at(&held, || next.next().unwrap().into()).unwrap();
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        // The witness: a name that stays taken is not answered as room.
+        let error = probe_at(&held, || "taken".into()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(!out_of_room(&error));
+    }
 
     const TB: u64 = 1_000_000_000_000;
 
