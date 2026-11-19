@@ -910,3 +910,26 @@ fn a_stop_ends_a_drain_waiting_on_a_read_back_and_leaves_the_read_owed() {
     assert_eq!(server.seen("/items").len(), 1, "the create was sent again");
     assert_eq!(server.seen(&path).len(), 2);
 }
+
+#[test]
+fn a_stop_ends_the_catch_up_a_drain_makes_before_it_sends_while_the_event_stream_is_asked_for() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on("/events", vec![Answer::Stall]);
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done, result) = mpsc::channel();
+    {
+        let (core, stop) = (core.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let _ = done.send(core.catch_up_before_rows(&stop));
+        });
+    }
+    server.wait_for("/events", 1, WAIT);
+    let raised = Instant::now();
+    stop.store(true, Ordering::Relaxed);
+    let ended = result
+        .recv_timeout(WAIT)
+        .expect("a stopped call still waited on the event stream");
+    assert_eq!(ended.unwrap_err(), CoreError::Canceled);
+    assert!(raised.elapsed() < Duration::from_secs(1));
+}

@@ -997,6 +997,8 @@ impl Http {
         self.refuse_if_let_go()?;
         if let Some(before) = before {
             before(Stage::Attempt)?;
+            // The check can wait on a request of its own.
+            self.refuse_if_let_go()?;
         }
         let sent = self.authorization();
         let response = run(&sent)?;
@@ -1013,6 +1015,7 @@ impl Http {
                 self.refuse_if_let_go()?;
                 if let Some(before) = before {
                     before(Stage::Attempt)?;
+                    self.refuse_if_let_go()?;
                 }
                 return run(&fresh);
             }

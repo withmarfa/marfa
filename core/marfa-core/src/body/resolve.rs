@@ -288,10 +288,7 @@ impl<'a> Resolver<'a> {
             return Ok(Resolved::Waiting);
         }
         let http = self.core.http()?;
-        let confirm = crate::catch_up::confirm_each_attempt(self.core, http, self.stop);
-        crate::catch_up::refuse_if_stopped(self.stop)?;
-        let asked = http.item_checked(id, Some(&confirm));
-        crate::catch_up::refuse_if_stopped(self.stop)?;
+        let asked = crate::catch_up::item_checked_unless_stopped(self.core, http, self.stop, id);
         Ok(match asked {
             Ok(Some(row)) => Resolved::Found {
                 id: row.item.id,
@@ -894,6 +891,45 @@ mod tests {
         });
         assert_eq!(ended, Err(crate::error::CoreError::Canceled));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_stop_ends_the_read_of_a_link_by_id_while_the_item_waits() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        let id = "01a00000-0000-7000-8000-0000000000bb";
+        let path = format!("/items/{id}");
+        let late = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            &path,
+            vec![
+                crate::scripted::Answer::WaitFor {
+                    ready: late.clone(),
+                    answer: Box::new(crate::scripted::refusal(404, "item_not_found")),
+                },
+                crate::scripted::refusal(404, "item_not_found"),
+            ],
+        );
+        let stop = AtomicBool::new(false);
+        let mut held_up = Resolver::new(&core, &catalog, &crate::body::rule::Placements, &stop);
+        let started = std::time::Instant::now();
+        let ended = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                server.wait_for(&path, 1, std::time::Duration::from_secs(2));
+                stop.store(true, Ordering::Relaxed);
+            });
+            held_up.resolve(id)
+        });
+        assert!(matches!(ended, Err(crate::error::CoreError::Canceled)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+
+        // The witness: held no longer, the same read is answered.
+        late.store(true, Ordering::Relaxed);
+        let mut resolver = resolver(&core, &catalog);
+        assert!(matches!(resolver.resolve(id).unwrap(), Resolved::Unmatched));
     }
 
     #[test]

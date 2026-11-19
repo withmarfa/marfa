@@ -338,14 +338,12 @@ fn settled_while_the_root_is_read(
             answer: Box::new(scripted::root(scripted::INSTANCE)),
         }],
     );
-    let error = std::thread::scope(|scope| {
+    std::thread::scope(|scope| {
         let settling = scope.spawn(|| core.settle_bodies(&crate::NEVER_STOPPED));
         server.wait_for("/", 1, std::time::Duration::from_secs(2));
         meanwhile(core);
         settling.join().unwrap().unwrap_err()
-    });
-    assert!(server.seen(&format!("/items/{ITEM}")).is_empty());
-    error
+    })
 }
 
 #[test]
@@ -852,7 +850,7 @@ fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped
 }
 
 #[test]
-fn a_stop_raised_while_the_instance_check_waits_for_the_store_sends_no_item_request() {
+fn a_stop_raised_while_the_instance_check_reads_the_root_sends_no_item_request() {
     for retried in [false, true] {
         let server = Scripted::start();
         answers(&server);
@@ -873,12 +871,12 @@ fn a_stop_raised_while_the_instance_check_waits_for_the_store_sends_no_item_requ
                 server.wait_for(&path, 1, std::time::Duration::from_secs(2));
             }
             server.wait_for("/", roots, std::time::Duration::from_secs(2));
-            let held = core.conn().unwrap();
-            std::thread::sleep(SLOW + std::time::Duration::from_millis(200));
             stop.store(true, std::sync::atomic::Ordering::SeqCst);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            drop(held);
-            looking.join().unwrap().unwrap_err()
+            let raised = std::time::Instant::now();
+            let ended = looking.join().unwrap().unwrap_err();
+            assert!(raised.elapsed() < SLOW, "{retried}: waited on the root");
+            std::thread::sleep(SLOW + std::time::Duration::from_millis(200));
+            ended
         });
         assert!(matches!(error, CoreError::Canceled), "{retried}: {error:?}");
         assert_eq!(

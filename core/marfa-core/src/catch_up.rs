@@ -590,11 +590,10 @@ pub(crate) fn last_carried(
             store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or_else(reach::invalid)?;
         (context, cursor)
     };
-    let frames = open(
-        &context.http(http),
-        &cursor,
-        deadline.saturating_duration_since(Instant::now()),
-    )?;
+    let bound = deadline.saturating_duration_since(Instant::now());
+    let frames = ask_unless_stopped(stop, &context.http(http), move |http| {
+        open(http, &cursor, bound)
+    })?;
     let unended = |reason: &str| CoreError::StreamIncomplete {
         reason: reason.into(),
         server: None,
@@ -1036,6 +1035,54 @@ pub(crate) fn confirm_each_attempt<'a>(
             Stage::Renewal => Ok(()),
         }
     }
+}
+
+/// `GET /items/<id>`, ended with `Canceled` as soon as `stop` is raised, that
+/// confirms the instance before each attempt, as `confirm_each_attempt` does.
+/// The root is read beside the request and compared with the instance the copy
+/// named when the call began, so no request reaches another instance; the copy
+/// is checked and expired on the calling thread, which holds the store, once
+/// the request returns.
+pub(crate) fn item_checked_unless_stopped(
+    core: &Core,
+    http: &Http,
+    stop: &AtomicBool,
+    id: &str,
+) -> Result<Option<crate::wire::WireItemWithMetadata>> {
+    let id = id.to_string();
+    let Some(generation) = held_generation(core)? else {
+        return ask_unless_stopped(stop, http, move |http| http.item_checked(&id, None));
+    };
+    let held = store::meta_get(&*core.conn()?, store::META_INSTANCE_ID)?.unwrap_or_default();
+    let last = Arc::new(Mutex::new(None));
+    let seen = Arc::clone(&last);
+    let asked = ask_unless_stopped(stop, http, move |http| {
+        let before = |stage: Stage| match stage {
+            Stage::Attempt => {
+                let served = http.served()?;
+                let same = served.instance_id == held;
+                let reason = format!("the server's instance is {}", served.instance_id);
+                if let Ok(mut last) = seen.lock() {
+                    *last = Some(served);
+                }
+                if same {
+                    Ok(())
+                } else {
+                    Err(CoreError::expired(reason))
+                }
+            }
+            Stage::Renewal => Ok(()),
+        };
+        http.item_checked(&id, Some(&before))
+    });
+    if matches!(asked, Err(CoreError::Canceled)) {
+        return asked;
+    }
+    let served = last.lock().ok().and_then(|mut last| last.take());
+    if let Some(served) = served {
+        confirm_served(core, &served, generation)?;
+    }
+    asked
 }
 
 /// Ended with `Canceled` as soon as `stop` is raised, even while the root is
