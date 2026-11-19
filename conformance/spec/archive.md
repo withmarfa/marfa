@@ -404,15 +404,15 @@ If an app's access token that `keys-and-oauth/step-up-recent` admits to `POST /r
 
 When the server refuses a restore under `archive/restore-settings-permission`, the server MUST write none of the archive's items, files and settings.
 
-**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› judges a restore's settings after every write admitted before it, and places no file when it refuses`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
+**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› judges a restore's settings after every write accepted before it began, and places no file when it refuses`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
 
-### `archive/restore-settings-permission-admitted`
+### `archive/restore-settings-judged-after-accepted-writes`
 
-When the server judges a restore under `archive/restore-settings-permission`, the server MUST judge it on the settings that every write it admitted before the restore leaves.
+When the server judges whether a restore would store a setting under `archive/restore-settings-permission`, the server MUST judge it on the stored settings after every write the server accepted before the restore began has committed.
 
-**Reason:** a change at `/config` that the server accepted before the restore began lands before the restore is judged, so a refusal comes before the restore places any file.
+**Reason:** a change at `/config` that the server accepted before the restore began counts, even when it had not yet committed when the restore began.
 
-**Tests:** `compliance/restore-settings-permission.test.ts › judges a restore's settings after every write admitted before it, and places no file when it refuses`.
+**Tests:** `compliance/restore-settings-permission.test.ts › judges a restore's settings after every write accepted before it began, and places no file when it refuses`.
 
 ### `archive/restore-settings-permission-none`
 

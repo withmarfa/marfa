@@ -3693,7 +3693,9 @@ Four acts restore a whole archive or backup, move where people sign in or change
 
 ### `keys-and-oauth/step-up-recent`
 
-When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 300 seconds before the request, sends that act, the server MUST make the act as it would for the private local command.
+When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 300 seconds before the request, sends that act, the server MUST accept the token's sign-in as recent for that act.
+
+**Reason:** the act's other conditions still apply. A restore that would add a setting also needs `config.manage` (`archive/restore-settings-permission`), which the private local command always holds.
 
 **Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
 
