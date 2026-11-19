@@ -82,7 +82,7 @@ const TELEMETRY_SECRETS: [&str; 8] = [
     registry::POSTHOG_PROJECT_TOKEN.entry.key,
 ];
 
-/// Where the restore left telemetry secrets to set again, what that means for what is sent.
+/// The note naming the telemetry secrets a restore left to set again.
 fn telemetry_note(secrets_to_set: &Value) -> Option<Value> {
     let keys: Vec<&str> = secrets_to_set
         .as_array()?

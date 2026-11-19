@@ -9,8 +9,7 @@ use super::start_only::DECLARED;
 
 const PREFIXES: [&str; 1] = ["MARFA_"];
 
-/// OpenTelemetry's standard names, which the server reads none of: its telemetry is stored
-/// settings, so a platform's variable never overrides the owner.
+/// OpenTelemetry's standard names, which the server warns of and never acts on.
 const OTEL_PREFIX: &str = "OTEL_";
 
 /// Naming one of these wrongly makes the server generate a replacement, which ends every key

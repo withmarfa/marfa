@@ -40,9 +40,7 @@ const BATCH: usize = 512;
 const SPAN_DELAY: Duration = Duration::from_secs(5);
 const LOG_DELAY: Duration = Duration::from_secs(1);
 
-/// Exporters call it from threads of their own, so a blocking call holds up no request. It
-/// sends only the headers the settings name, whatever the exporter read from the environment,
-/// and judges the address as it sends.
+/// Sends only the stored headers: the exporter adds `OTEL_EXPORTER_OTLP_*HEADERS` on its own.
 #[derive(Debug)]
 struct Blocking {
     url: String,
@@ -145,8 +143,8 @@ pub fn resource(pairs: &[(String, String)]) -> Resource {
         .build()
 }
 
-/// The one provider the process traces through. The sampler and the limits are set here, since
-/// the defaults read `OTEL_TRACES_SAMPLER` and `OTEL_SPAN_*_LIMIT`; the ratio is the tail's.
+/// The sampler and limits are set, since the defaults read `OTEL_TRACES_SAMPLER` and
+/// `OTEL_SPAN_*_LIMIT`.
 pub fn relay_provider(relay: Relay) -> SdkTracerProvider {
     SdkTracerProvider::builder()
         .with_sampler(trace::Sampler::ParentBased(Box::new(
@@ -220,9 +218,8 @@ impl Leg {
     }
 }
 
-/// Hands each span that ends to the leg in place when it ends, so a span started before a
-/// change is sent as the settings now say, and a removed endpoint or header is never used
-/// again.
+/// A span goes to the leg in place when it ends, so one started before a change is sent as the
+/// settings now say.
 #[derive(Debug, Clone, Default)]
 pub struct Relay(pub Arc<ArcSwapOption<Leg>>);
 

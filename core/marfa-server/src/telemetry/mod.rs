@@ -89,8 +89,7 @@ struct Inner {
     pairs: ArcSwap<Vec<(String, String)>>,
 }
 
-/// Traces, log records and exception reports, sent as the stored settings say and rebuilt
-/// when they change.
+/// Traces, log records and exception reports, rebuilt when their settings change.
 #[derive(Clone, Default)]
 pub struct Telemetry {
     inner: Arc<Inner>,
@@ -165,9 +164,7 @@ impl Telemetry {
         }
     }
 
-    /// Takes the settings as they stand once it holds the lock, so the last change applied is
-    /// the newest whichever caller gets here last. Building an exporter reads nothing and sends
-    /// nothing; the one it replaces is shut down on the retire thread.
+    /// Reads the settings under the lock, so the newest change wins whichever caller is last.
     pub fn follow(&self, settings: &Settings) {
         let Some(started) = self.inner.started.get() else {
             return;
