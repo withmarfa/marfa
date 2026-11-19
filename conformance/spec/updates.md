@@ -112,15 +112,15 @@ While an update runs, the server MUST answer another `POST /update` with the upd
 
 ### `updates/swap-checked`
 
-When the server is to replace its programs with a release's, the server MUST first check the downloaded archive against the release's checksum file, check that each new program runs and reports the release, and ask the new server program whether it accepts this instance's settings and opens its database.
+When the server is to replace its programs with a release's, the server MUST first check the downloaded archive against the release's checksum file, check that each new program runs and reports the release, check that the new `marfa` accepts the install with `marfa server run --dir <dir> --check`, and ask the new server program whether it accepts this instance's settings and opens its database.
 
-**Reason:** a release that cannot start on the instance's settings or open its database would leave the instance down.
+**Reason:** a release that cannot start on the instance's settings or open its database would leave the instance down, and a new `marfa` that cannot run the install would leave the service unable to start once it takes the old one's place.
 
 **Tests:** waiting on #3177.
 
 ### `updates/swap-refused-unchanged`
 
-If a download fails, its checksum does not match, a new program will not run or reports another release, the new server will not accept the settings or open the database, or the disk has too little room, then the server MUST leave the running programs as they were and report why in the last update.
+If a download fails, its checksum does not match, a new program will not run or reports another release, the new `marfa` will not run the install, the new server will not accept the settings or open the database, or the disk has too little room, then the server MUST leave the running programs as they were and report why in the last update.
 
 **Tests:** waiting on #3177.
 
@@ -134,14 +134,104 @@ When the server downloads a release's archive or checksum file, the server MUST 
 
 ### `updates/swap-keeps-old`
 
-When the server replaces its programs with a release's, the server MUST keep the old programs beside the new ones to put back.
+When the server replaces its programs with a release's, the server MUST keep the old `marfa-server` beside the new one, as `.marfa-server.previous`, to put back.
+
+**Tests:** waiting on #3177.
+
+### `updates/swap-server-first`
+
+When the server replaces its programs with a release's, the server MUST leave the running `marfa` in place and put the new one beside it as `.marfa.next` until the update settles.
+
+**Reason:** the service runs `marfa server run`, so the running release's `marfa` watches the new server's first starts and can put the old server back.
+
+**Tests:** waiting on #3177.
+
+### `updates/swap-waits-for-settle`
+
+If an update starts while an earlier update of the same programs has not settled, then the server MUST leave the programs as they are and report why in the last update.
+
+**Reason:** two installs can share one folder of programs, and a second swap would leave neither able to put its old release back.
+
+**Tests:** waiting on #3177.
+
+## Trying the new release
+
+The service runs `marfa server run`, the CLI of the release that ran before the update, until the new release settles: once the new server has stayed up for 20 seconds, with its health not `down`, it settles the update. Until then the CLI counts each start of the new release.
+
+### `updates/start-counted-before-run`
+
+When `marfa server run` starts the new release of an update that has not settled, the CLI MUST count the start in the update's record before the new server program runs.
+
+**Reason:** a release that ends before any of its own code runs is still counted.
+
+**Tests:** waiting on #3177.
+
+### `updates/failed-start-restarts`
+
+If a start of the new release ends before its update settles and no stop was asked of the service, then the CLI MUST end `marfa server run` with status 75, whatever status the server ended with.
+
+**Reason:** launchd and systemd start a service again only after a failed exit, so a new release that exits with status 0 would otherwise leave the server down.
+
+**Tests:** waiting on #3177.
+
+### `updates/clean-stop-not-counted`
+
+If a stop asked of the service ends a start of the new release before its update settles, then the CLI MUST NOT count that start toward putting the old release back.
+
+**Reason:** a stop, or the machine shutting down, is not the new release failing.
 
 **Tests:** waiting on #3177.
 
 ### `updates/rollback`
 
-If the new release does not stay up through its second start and the database is as it was before the swap, then the server MUST put the old programs back and report the update as rolled back.
+If two starts of the new release have ended before its update settled and the old server opens the database with the schema it had before the swap, then the CLI MUST put the old programs back at the next start of `marfa server run` and report the update as `rolled_back`.
 
 **Reason:** a new release that cannot come up should not leave the owner with a server that is down.
+
+**Tests:** waiting on #3177.
+
+### `updates/rollback-refused-at-once`
+
+If the new release ends with status 78 before its update settles and the old server opens the database with the schema it had before the swap, then the CLI MUST put the old programs back before the service starts again and report the update as `rolled_back`.
+
+**Reason:** status 78 says the release refused the database or the settings, which another start does not change.
+
+**Tests:** waiting on #3177.
+
+### `updates/rollback-impossible`
+
+If the new release is to be put back and the old server will not open the database or the database's schema has changed since the swap, then the CLI MUST report the update as `failed`, saying why the old release cannot be put back.
+
+**Tests:** waiting on #3177.
+
+### `updates/rollback-impossible-whole`
+
+If the new release is to be put back and the old server will not open the database or the database's schema has changed since the swap, then the CLI MUST put the new `marfa` in place beside the new `marfa-server`.
+
+**Reason:** `marfa server run` refuses to start a `marfa-server` of another release, so a half-swapped install would not start again.
+
+**Tests:** waiting on #3177.
+
+## Settling
+
+### `updates/settle-both-programs`
+
+When the new release has stayed up for 20 seconds, the server MUST put the new `marfa` in place and report the update as `succeeded` only once both `marfa` and `marfa-server` in its programs folder report the new release.
+
+**Reason:** the server's own release proves only that the server program was swapped.
+
+**Tests:** waiting on #3177.
+
+### `updates/settle-half-put-back`
+
+If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the database's schema is as it was before the swap, then the server MUST put the old programs back and report the update as `rolled_back`, naming what each program reports.
+
+**Tests:** waiting on #3177.
+
+### `updates/settle-half-failed`
+
+If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the database's schema has changed since the swap, then the server MUST report the update as `failed` with the step to install the new release on the host.
+
+**Reason:** the old release cannot open a database the new one has changed, so the new release keeps running.
 
 **Tests:** waiting on #3177.
