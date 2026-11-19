@@ -1,6 +1,9 @@
 use rusqlite::Connection;
 
-use crate::{Core, Result, error::CoreError, http::Http, store};
+use std::sync::Arc;
+
+use crate::http::{Confirmation, Http};
+use crate::{Core, Result, error::CoreError, store};
 
 pub(crate) const FENCE: &str = "reach";
 const GENERATION: &str = "copy_generation";
@@ -124,6 +127,8 @@ pub(crate) struct Context {
     pub(crate) instance: String,
     declaration: [Option<String>; 3],
     building: bool,
+    /// Shared by every request of the operation that captured it.
+    confirmation: Arc<Confirmation>,
 }
 
 impl Context {
@@ -143,6 +148,7 @@ impl Context {
             generation: revision(conn, GENERATION)?,
             pins: revision(conn, PINS)?,
             fence,
+            confirmation: Confirmation::new(&instance),
             instance,
             declaration: [
                 store::meta_get(conn, store::META_SLICE_TYPES)?,
@@ -153,8 +159,20 @@ impl Context {
         })
     }
 
+    /// Sends each request only once the server's root names the copy's
+    /// instance, confirmed once for the operation and again after a renewal.
     pub(crate) fn http(&self, http: &Http) -> Http {
-        http.for_reach(&self.fence)
+        http.for_reach(&self.fence).confirming(&self.confirmation)
+    }
+
+    /// The copy as it is now, for a step of this operation, whose requests
+    /// need no confirmation of their own.
+    pub(crate) fn within(&self, conn: &Connection) -> Result<Self> {
+        self.same_copy(conn)?;
+        Ok(Self {
+            confirmation: Arc::clone(&self.confirmation),
+            ..Self::capture_build(conn)?
+        })
     }
 
     pub(crate) fn same_copy(&self, conn: &Connection) -> Result<()> {

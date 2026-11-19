@@ -518,7 +518,9 @@ impl Core {
             .conn()
             .ok()
             .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
-        let fetched = self.fetch_blob(cache, http, &hash, stated)?;
+        let fetched = catch_up::read_confirming(self, http, |http| {
+            self.fetch_blob(cache, http, &hash, stated)
+        })?;
         self.trim_blobs();
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("blob-answered:{hash}"));
@@ -555,7 +557,9 @@ impl Core {
             .conn()
             .ok()
             .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
-        self.fetch_blob(cache, http, &hash, stated)?;
+        catch_up::read_confirming(self, http, |http| {
+            self.fetch_blob(cache, http, &hash, stated)
+        })?;
         let file = cache
             .open_held(&hash)
             .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
@@ -777,7 +781,9 @@ impl Core {
             fetched_bytes: 0,
             attachments: None,
         };
-        let ended = self.fetch_wanted(cache, http, &wanted, stop, &mut report, &mut notes);
+        let ended = catch_up::read_confirming(self, http, |http| {
+            self.fetch_wanted(cache, http, &wanted, stop, &mut report, &mut notes)
+        });
         {
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;

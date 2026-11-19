@@ -934,3 +934,113 @@ fn a_core_dropped_after_a_stopped_root_read_leaves_the_copy_to_open_as_the_write
     .unwrap();
     assert_eq!(reopened.handle(), Handle::Writer);
 }
+
+fn bin_answers(server: &Scripted) {
+    server.on(
+        "/items",
+        vec![scripted::json(200, r#"{"data":[],"next_cursor":null}"#)],
+    );
+}
+
+fn instance_changed(refusal: &CoreError) {
+    match refusal {
+        CoreError::CopyExpired { reason, .. } => {
+            assert_eq!(reason, crate::http::INSTANCE_CHANGED, "{refusal:?}");
+        }
+        other => panic!("not expired: {other:?}"),
+    }
+}
+
+#[test]
+fn the_bin_is_read_of_no_other_instance_at_the_copys_origin() {
+    let server = Scripted::start();
+    bin_answers(&server);
+    let (dir, writer, reader) = writer_and_reader(&server);
+
+    // The witness: both handles read the bin of the copy's own instance.
+    writer.bin(None, None, 50).unwrap();
+    reader.bin(None, None, 50).unwrap();
+    assert_eq!(server.seen("/items").len(), 2);
+    let before = store_bytes(&dir);
+
+    server.on("/", vec![scripted::root(OTHER)]);
+    instance_changed(&reader.bin(None, None, 50).unwrap_err());
+    assert!(!expired(&writer), "the reader expired the copy");
+    assert!(store_bytes(&dir) == before, "the reader changed the store");
+    instance_changed(&writer.bin(None, None, 50).unwrap_err());
+    assert!(expired(&writer));
+    assert_eq!(
+        server.seen("/items").len(),
+        2,
+        "another instance's bin was read"
+    );
+}
+
+#[test]
+fn the_bin_read_again_after_a_renewal_confirms_the_instance_again() {
+    for replaced in [false, true] {
+        let server = Scripted::start();
+        renewed_once(
+            &server,
+            "/items",
+            scripted::json(200, r#"{"data":[],"next_cursor":null}"#),
+        );
+        if replaced {
+            server.on(
+                "/",
+                vec![scripted::root(scripted::INSTANCE), scripted::root(OTHER)],
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+        renew(&core);
+        let read = core.bin(None, None, 50);
+        assert_eq!(server.seen("/").len(), 2, "replaced {replaced}");
+        if !replaced {
+            read.unwrap();
+            assert_eq!(server.seen("/items").len(), 2, "the witness did not retry");
+            continue;
+        }
+        instance_changed(&read.unwrap_err());
+        assert_eq!(
+            server.seen("/items").len(),
+            1,
+            "the retry reached the instance that replaced the first"
+        );
+        assert!(expired(&core));
+    }
+}
+
+#[test]
+fn a_pin_sends_no_item_id_to_another_instance_at_the_copys_origin() {
+    for replaced in [false, true] {
+        let server = Scripted::start();
+        server.on(
+            &format!("/items/{ITEM}"),
+            vec![scripted::certified(scripted::refusal(404, "not_found"))],
+        );
+        server.on(
+            "/items",
+            vec![scripted::certified(scripted::json(
+                200,
+                r#"{"data":[],"next_cursor":null}"#,
+            ))],
+        );
+        if replaced {
+            server.on("/", vec![scripted::root(OTHER)]);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+        let pinned = core.pin(ITEM);
+        if !replaced {
+            // The witness: the copy's own instance is asked for the item.
+            assert_eq!(pinned.unwrap_err().code(), "not_found");
+            assert_eq!(server.seen(&format!("/items/{ITEM}")).len(), 1);
+            continue;
+        }
+        instance_changed(&pinned.unwrap_err());
+        assert!(server.seen(&format!("/items/{ITEM}")).is_empty());
+        assert!(server.seen("/items").is_empty());
+        assert!(expired(&core));
+    }
+}

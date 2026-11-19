@@ -829,15 +829,15 @@ impl Folder {
             ),
         };
         let http = self.core.http()?;
-        let read =
-            crate::hydrate::read_with_edges_answered(http, &self.folder).map_err(|error| {
-                match error {
-                    CoreError::Forbidden { code, server, .. } if code == "type_not_permitted" => {
-                        cannot_read(server)
-                    }
-                    other => other,
-                }
-            })?;
+        let read = crate::catch_up::read_confirming(&self.core, http, |http| {
+            crate::hydrate::read_with_edges_answered(http, &self.folder)
+        })
+        .map_err(|error| match error {
+            CoreError::Forbidden { code, server, .. } if code == "type_not_permitted" => {
+                cannot_read(server)
+            }
+            other => other,
+        })?;
         let (row, _) = match read {
             crate::http::ByIdRead::Row(read) => read,
             crate::http::ByIdRead::Absent(gone) => {
