@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use rusqlite::Connection;
 
 use crate::error::CoreError;
+use crate::file_cache::Place;
 
 /// The lock's file in a folder's state directory, beside the store.
 pub(crate) const DIRECTORY_LOCK: &str = "core.sqlite.writer-lock";
@@ -45,6 +46,7 @@ impl WriterLock {
         crate::owner_only(&path)?;
         Self::claim_opened(
             &path.display().to_string(),
+            Some(Place::Named(&path)),
             || Ok(Connection::open(&path)?),
             || std::fs::symlink_metadata(&path).map(drop),
         )
@@ -70,7 +72,12 @@ impl WriterLock {
         if create {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
         }
-        Self::claim_opened(name, || vfs.open(name, flags), || vfs.stat(name))
+        Self::claim_opened(
+            name,
+            Some(Place::Held(vfs.directory())),
+            || vfs.open(name, flags),
+            || vfs.stat(name),
+        )
     }
 
     /// The lock on the file `open` opens, named `file` in an error, with
@@ -90,6 +97,7 @@ impl WriterLock {
     /// and the name opened again.
     fn claim_opened(
         file: &str,
+        place: Option<Place<'_>>,
         mut open: impl FnMut() -> Result<Connection, CoreError>,
         stat: impl Fn() -> std::io::Result<()>,
     ) -> Result<Self, CoreError> {
@@ -99,7 +107,7 @@ impl WriterLock {
             if claim.is_readonly("main")? {
                 continue;
             }
-            match Self::claim_connection(claim, &stat)? {
+            match Self::claim_connection(claim, place, &stat)? {
                 Some(lock) => return Ok(lock),
                 None => replaced = true,
             }
@@ -140,6 +148,7 @@ impl WriterLock {
     /// `None` where the name the claim opened no longer reaches its file.
     fn claim_connection(
         claim: Connection,
+        place: Option<Place<'_>>,
         stat: &dyn Fn() -> std::io::Result<()>,
     ) -> Result<Option<Self>, CoreError> {
         // Zero: waiting would make a second opener hang instead of being told
@@ -158,7 +167,7 @@ impl WriterLock {
             // absence does not explain is the claim's own.
             Err(error) => match name_moved(&claim, stat) {
                 Ok(true) => Ok(None),
-                Ok(false) | Err(_) => Err(error.into()),
+                Ok(false) | Err(_) => Err(crate::store::on_volume(error, place)),
             },
         }
     }
@@ -417,6 +426,7 @@ mod tests {
         let mut opens = 0;
         WriterLock::claim_opened(
             "lock",
+            None,
             || {
                 opens += 1;
                 let opened = Connection::open(&path)?;
@@ -474,6 +484,7 @@ mod tests {
         let path = lock_path(&store);
         let claim = WriterLock::claim_opened(
             "lock",
+            None,
             || {
                 let opened = Connection::open(&path)?;
                 std::fs::remove_file(&path).unwrap();
@@ -500,6 +511,7 @@ mod tests {
         let mut opens = 0;
         let claim = WriterLock::claim_opened(
             name,
+            None,
             || {
                 opens += 1;
                 let opened = vfs.open(name, flags)?;
@@ -544,6 +556,34 @@ mod tests {
         Ok(connection)
     }
 
+    #[cfg(all(unix, debug_assertions))]
+    #[test]
+    fn a_claim_that_cannot_make_its_journal_on_a_full_volume_is_storage_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("core.sqlite");
+        let path = lock_path(&store);
+        std::os::unix::fs::symlink(
+            dir.path().join("nowhere/journal"),
+            crate::store::suffixed(&path, "-journal"),
+        )
+        .unwrap();
+        // The witness: the claim fails with room on the volume, and is a
+        // store failure, since nothing says the volume is the cause.
+        let claim = WriterLock::claim(Some(&store));
+        assert!(
+            matches!(claim, Err(CoreError::Store(_))),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
+        let _full = crate::fault::fail_on_this_thread("volume-full");
+        let claim = WriterLock::claim(Some(&store));
+        assert!(
+            matches!(claim, Err(CoreError::StorageFull(_))),
+            "{:?}",
+            claim.map(|lock| lock.handle())
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_failed_claim_on_a_name_that_is_still_there_is_returned_not_retried() {
@@ -552,6 +592,7 @@ mod tests {
         let mut opens = 0;
         let claim = WriterLock::claim_opened(
             "lock",
+            None,
             || {
                 opens += 1;
                 refusing(&path)
@@ -569,6 +610,7 @@ mod tests {
         let mut opens = 0;
         let claim = WriterLock::claim_opened(
             "lock",
+            None,
             || {
                 opens += 1;
                 let connection = refusing(&path)?;
@@ -589,6 +631,7 @@ mod tests {
         let mut opens = 0;
         let claim = WriterLock::claim_opened(
             "lock",
+            None,
             || {
                 opens += 1;
                 let connection = refusing(&path)?;
@@ -612,6 +655,7 @@ mod tests {
         let path = lock_path(&dir.path().join("core.sqlite"));
         let claim = WriterLock::claim_opened(
             "lock",
+            None,
             || Ok(Connection::open(&path)?),
             || Err(std::io::Error::from_raw_os_error(libc::EIO)),
         );

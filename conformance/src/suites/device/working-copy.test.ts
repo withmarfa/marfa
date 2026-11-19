@@ -1,4 +1,10 @@
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -1869,6 +1875,86 @@ describe("the working copy belongs to one server", () => {
     if (!written.ok) {
       expect(written.refusal.code).toBe("wrong_schema");
       expect(written.refusal.raw).toContain(harness.device.store);
+    }
+  });
+
+  it("changes no byte of a store it refuses wrong_schema, whichever log mode it is in", async () => {
+    harness = await hydratedHarness("schema-untouched", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const store = harness.device.store;
+    const bytes = () => readFileSync(store).toString("hex");
+    const recorded = (mode: "delete" | "wal", version: number) => {
+      const db = new DatabaseSync(store);
+      try {
+        db.exec(
+          `PRAGMA journal_mode = ${mode}; PRAGMA user_version = ${version}`,
+        );
+      } finally {
+        db.close();
+      }
+    };
+    const db = new DatabaseSync(store);
+    const { user_version: own } = db.prepare("PRAGMA user_version").get() as {
+      user_version: number;
+    };
+    db.close();
+
+    for (const mode of ["delete", "wal"] as const) {
+      recorded(mode, own + 1);
+      const before = bytes();
+      const written = await harness.device.get("n1");
+      expect(written.ok, "a writer opened a store of another version").toBe(
+        false,
+      );
+      if (!written.ok) expect(written.refusal.code).toBe("wrong_schema");
+      const read = await harness.device.reopen({ reader: true }).get("n1");
+      expect(read.ok, "a reader opened a store of another version").toBe(false);
+      if (!read.ok) expect(read.refusal.code).toBe("wrong_schema");
+      expect(
+        bytes(),
+        `refusing a store in ${mode} mode changed the file`,
+      ).toEqual(before);
+    }
+
+    // The witness: at its own version, the same store in delete mode is
+    // opened by a writer, which puts it in write-ahead mode in its header.
+    recorded("delete", own);
+    const header = () => readFileSync(store).subarray(18, 20).toString("hex");
+    expect(header()).toBe("0101");
+    expect((await harness.device.get("n1")).ok).toBe(true);
+    expect(header(), "an open that is allowed left the header as it was").toBe(
+      "0202",
+    );
+  });
+
+  it("refuses an open storage_full when the volume has no room for the store's index file, and store when it has", async () => {
+    harness = await hydratedHarness("open-full", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const store = harness.device.store;
+    // A store in write-ahead mode needs an index file beside it to be read. A
+    // name that leads nowhere stands for the file the volume has no room for.
+    symlinkSync(join(dirname(store), "nowhere", "index"), `${store}-shm`);
+    const opens = () => [
+      harness?.device.get("n1"),
+      harness?.device.reopen({ reader: true }).get("n1"),
+    ];
+    // The witness: with room on the volume, the same failure is a store one.
+    for (const refused of await Promise.all(opens())) {
+      expect(refused?.ok).toBe(false);
+      if (refused && !refused.ok) expect(refused.refusal.code).toBe("store");
+    }
+    process.env.MARFA_TEST_FAULT = "volume=1000000:0";
+    try {
+      for (const refused of await Promise.all(opens())) {
+        expect(refused?.ok).toBe(false);
+        if (refused && !refused.ok) {
+          expect(refused.refusal.code).toBe("storage_full");
+        }
+      }
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
     }
   });
 

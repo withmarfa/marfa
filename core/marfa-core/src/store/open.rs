@@ -772,7 +772,7 @@ pub fn open_in_memory() -> Result<Connection, CoreError> {
 /// where it could not make the log files beside the store because the volume
 /// holding it has no room, and as it always was otherwise. A store on a
 /// volume mounted read-only is no store on a full one.
-fn on_volume(error: rusqlite::Error, place: Option<Place<'_>>) -> CoreError {
+pub(crate) fn on_volume(error: rusqlite::Error, place: Option<Place<'_>>) -> CoreError {
     if matches!(
         error.sqlite_error_code(),
         Some(rusqlite::ErrorCode::CannotOpen | rusqlite::ErrorCode::SystemIoFailure)

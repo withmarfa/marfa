@@ -379,12 +379,15 @@ fn hold_index_name(path: &Path) {
 }
 
 #[cfg(debug_assertions)]
+type Opener<'a> = &'a dyn Fn() -> Result<Connection, CoreError>;
+
+#[cfg(debug_assertions)]
 #[test]
 fn an_open_that_cannot_make_its_logs_on_a_full_volume_is_storage_full() {
     for with_log in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let path = whose_index_cannot_be_made(dir.path(), with_log);
-        let opens: [(&str, &dyn Fn() -> Result<Connection, CoreError>); 2] = [
+        let opens: [(&str, Opener); 2] = [
             ("the writer", &|| open(&path)),
             ("a reading handle", &|| open_to_read(&path)),
         ];
@@ -416,7 +419,7 @@ fn a_folder_store_that_cannot_make_its_logs_on_a_full_volume_is_storage_full() {
     let label = dir.path().join(FOLDER_STORE);
     drop(open_directory(&vfs, &label).unwrap());
     hold_index_name(&dir.path().join(FOLDER_STORE));
-    let opens: [(&str, &dyn Fn() -> Result<Connection, CoreError>); 2] = [
+    let opens: [(&str, Opener); 2] = [
         ("the writer", &|| open_directory(&vfs, &label)),
         ("a reading handle", &|| read_directory(&vfs, &label)),
     ];
