@@ -2129,7 +2129,15 @@ When the server refuses a replayed refresh token, the server MUST end every acce
 
 **Reason:** A replay means two parties hold one chain, and the server cannot tell which of them is the app.
 
-**Tests:** `compliance/oauth-tokens.test.ts › refuse a replayed refresh token invalid_grant, and end every token of its chain`.
+**Tests:** `compliance/oauth-tokens.test.ts › refuse a replayed refresh token invalid_grant, and end every token of its chain`, `compliance/credential-cleanup.test.ts › keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay`.
+
+### `keys-and-oauth/refresh-rotated-kept`
+
+While a refresh token's chain has not ended and the chain's newest refresh token has not expired, the server MUST hold every refresh token that a refresh of the chain rotated as a token of the chain, past that token's own expiry and across runs of the `credential-cleanup` job.
+
+**Reason:** Each refresh gives the newest token a lifetime of its own, so a chain outlives its earlier tokens, and `keys-and-oauth/revoke-rotated-refresh-token` and `keys-and-oauth/refresh-replay-chain` hold for as long as it lives.
+
+**Tests:** `compliance/credential-cleanup.test.ts › keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay`.
 
 ### `keys-and-oauth/refresh-unknown`
 
@@ -2269,7 +2277,7 @@ When an app revokes at `POST /oauth/revoke` a refresh token that an earlier refr
 
 **Reason:** An app signs out with the refresh token it last stored, which need not be the newest one its chain holds.
 
-**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token a refresh already rotated ends the app's grant and its newest refresh token`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token a refresh already rotated ends the app's grant and its newest refresh token`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`, `compliance/credential-cleanup.test.ts › keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay`.
 
 ### `keys-and-oauth/revoke-ended-chain`
 
@@ -2287,7 +2295,7 @@ When a revocation names a token the server does not hold, never issued, already 
 
 ### `keys-and-oauth/revoke-other-client-token`
 
-When an app revokes at `POST /oauth/revoke` a refresh token the server issued to another client, the server MUST leave that token and the grant it belongs to working.
+When an app revokes at `POST /oauth/revoke` a refresh token the server issued to another client, the server MUST leave that token and its grant unchanged.
 
 **Tests:** `compliance/oauth-tokens.test.ts › of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
 

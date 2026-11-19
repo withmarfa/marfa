@@ -813,25 +813,31 @@ CREATE TABLE IF NOT EXISTS oauth_access_tokens (
 CREATE INDEX IF NOT EXISTS oauth_access_tokens_chain ON oauth_access_tokens (chain_id);
 CREATE INDEX IF NOT EXISTS oauth_access_tokens_grant ON oauth_access_tokens (client_id, owner_id);
 
--- A rotated token stays until it would have expired, so that its replay is
--- told from a token nobody issued.
+-- A chain's newest refresh token; a refresh replaces it in place.
 CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
-    id TEXT PRIMARY KEY NOT NULL,
+    chain_id TEXT PRIMARY KEY NOT NULL,
     digest TEXT NOT NULL UNIQUE,
     client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
     owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
-    chain_id TEXT NOT NULL,
     authenticated_at TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    rotated_at TEXT,
     ended_at TEXT
-) STRICT;
+) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_chain ON oauth_refresh_tokens (chain_id);
 CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_grant ON oauth_refresh_tokens (client_id, owner_id);
+
+-- The tokens a chain's refreshes replaced, kept as long as the chain's own
+-- row, so that revoking or replaying one still reaches the chain.
+CREATE TABLE IF NOT EXISTS oauth_rotated_refresh_tokens (
+    digest TEXT PRIMARY KEY NOT NULL,
+    chain_id TEXT NOT NULL REFERENCES oauth_refresh_tokens (chain_id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS oauth_rotated_refresh_tokens_chain
+    ON oauth_rotated_refresh_tokens (chain_id);
 
 -- The owner's passkeys. `credential` is the verifier's record of one, as JSON,
 -- and `host` the relying party it was made for, which is the only one it can

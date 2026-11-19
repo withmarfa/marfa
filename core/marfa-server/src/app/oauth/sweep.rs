@@ -306,7 +306,64 @@ async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
         .await
 }
 
-/// A rotated refresh token stays until then, so a replay of it is still recognized.
+/// A chain that ended, or whose newest refresh token expired.
+fn finished_chain() -> String {
+    format!(
+        "(t.ended_at IS NOT NULL OR ({} AND t.expires_at <= ?1))",
+        readable("t.expires_at")
+    )
+}
+
+/// Before their chain's row, so that no one write removes a long chain whole.
+async fn rotated_of_finished_chains(app: &Arc<App>) -> Result<i64> {
+    chain_rows(
+        app,
+        format!(
+            "DELETE FROM oauth_rotated_refresh_tokens WHERE digest IN ( \
+             SELECT r.digest FROM oauth_refresh_tokens AS t \
+             JOIN oauth_rotated_refresh_tokens AS r ON r.chain_id = t.chain_id \
+             WHERE {} LIMIT ?2)",
+            finished_chain()
+        ),
+    )
+    .await
+}
+
+async fn finished_chains(app: &Arc<App>) -> Result<i64> {
+    chain_rows(
+        app,
+        format!(
+            "DELETE FROM oauth_refresh_tokens WHERE chain_id IN ( \
+             SELECT t.chain_id FROM oauth_refresh_tokens AS t WHERE {} \
+             AND NOT EXISTS (SELECT 1 FROM oauth_rotated_refresh_tokens AS r \
+                             WHERE r.chain_id = t.chain_id) \
+             LIMIT ?2)",
+            finished_chain()
+        ),
+    )
+    .await
+}
+
+async fn chain_rows(app: &Arc<App>, delete: String) -> Result<i64> {
+    let Some(now) = app.clock.judging() else {
+        return Ok(0);
+    };
+    app.db
+        .write(Write::own(), move |tx| {
+            let count = tx.execute(&delete, params![now, BATCH])?;
+            Ok(i64::try_from(count).unwrap_or(i64::MAX))
+        })
+        .await
+}
+
+const CHAINS_UNREAD: Unread<'static> = Unread {
+    table: "oauth_refresh_tokens",
+    time: "expires_at",
+    scope: "ended_at IS NULL",
+};
+
+/// A refresh token a refresh rotated stays as long as its chain, so revoking or replaying it
+/// still reaches the chain.
 pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (mut deleted, mut done) = drain(run, BATCH, || expired_sessions(app)).await?;
     if done {
@@ -323,7 +380,6 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
             DEVICE_CODE_SECONDS * MS_PER_SECOND,
         ),
         ("oauth_access_tokens", "id", 0),
-        ("oauth_refresh_tokens", "id", 0),
         ("setup_proof", "digest", 0),
     ] {
         if !done {
@@ -341,6 +397,19 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
             };
             report_kept(app, run, Cutoff::At(before), [unread]).await?;
         }
+    }
+    if done {
+        let (taken, finished) = drain(run, BATCH, || rotated_of_finished_chains(app)).await?;
+        deleted += taken;
+        done = finished;
+    }
+    if done {
+        let (taken, finished) = drain(run, BATCH, || finished_chains(app)).await?;
+        deleted += taken;
+        done = finished;
+    }
+    if let (true, Some(now)) = (done, app.clock.judging()) {
+        report_kept(app, run, Cutoff::At(now), [CHAINS_UNREAD]).await?;
     }
     Ok((deleted, done))
 }

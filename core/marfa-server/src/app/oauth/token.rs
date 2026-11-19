@@ -198,20 +198,18 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
     answer.insert("scope".to_string(), json!(issue.scopes.to_text()));
     if issue.refresh {
         let refresh = new_refresh_token()?;
-        store::insert_refresh_token(
+        store::hold_refresh_token(
             tx,
             &RefreshToken {
-                id: Uuid::now_v7().to_string(),
+                chain_id: issue.chain_id.to_string(),
                 digest: digest_of(salt, &refresh)?,
                 client_id: issue.client.id.clone(),
                 owner_id: issue.owner_id.to_string(),
-                chain_id: issue.chain_id.to_string(),
                 authenticated_at: issue.authenticated_at,
                 scopes: issue.keeps.clone(),
                 audience: issue.audience.map(str::to_string),
                 created_at: now,
                 expires_at: now.plus_ms(REFRESH_TOKEN_SECONDS * MS_PER_SECOND)?,
-                rotated_at: None,
                 ended_at: None,
             },
         )?;
@@ -347,12 +345,13 @@ async fn by_refresh(
         let now = unit.instant;
         let digest = digest_of(&shared.settings.start.key_salt, &token)?;
         let dead = || invalid_grant("This refresh token cannot be used.");
-        let Some(old) = store::refresh_token_by_digest(tx, &digest)?
-            .filter(|old| old.client_id == client.id && old.ended_at.is_none())
-        else {
+        let Some(presented) = store::refresh_token_by_digest(tx, &digest)?.filter(|presented| {
+            presented.chain.client_id == client.id && presented.chain.ended_at.is_none()
+        }) else {
             return Ok(Err(dead()));
         };
-        if old.rotated_at.is_some() {
+        let old = presented.chain;
+        if presented.rotated {
             store::end_chain(tx, &old.chain_id, now)?;
             audit::record_from(
                 tx,
@@ -385,7 +384,7 @@ async fn by_refresh(
                 "A refresh cannot widen what was granted.",
             )));
         }
-        store::rotate_refresh_token(tx, &old.id, now)?;
+        store::rotate_refresh_token(tx, &old)?;
         let audience = audience.or_else(|| old.audience.clone());
         issue(
             &shared,

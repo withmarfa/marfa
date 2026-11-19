@@ -743,6 +743,7 @@ describe("revocation", () => {
     const first = await connect(server, origin, cookie, app, scope);
     const rotated = await refresh(app, first.refresh_token!);
     expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+    const grantId = await grantIdOf(app);
 
     for (const held of [first.refresh_token!, rotated.body.refresh_token!]) {
       expect((await revokeRefresh(otherApp, held)).status).toBe(200);
@@ -751,11 +752,14 @@ describe("revocation", () => {
       (await revokeRefresh(app, `marfa_rt_${"0".repeat(64)}`)).status,
     ).toBe(200);
     expect((await revokeRefresh(app, "not a token")).status).toBe(200);
-    expect(await grantedClients()).toContain(app.clientId);
+    expect(await grantIdOf(app)).toBe(grantId);
     expect(await itemsStatus(server, rotated.body.access_token!)).toBe(200);
+    const renewed = await refresh(app, rotated.body.refresh_token!);
+    expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
 
-    // The witness: the app's own rotated token ends the grant.
+    // The witness: the app's own rotated token still ends the grant.
     expect((await revokeRefresh(app, first.refresh_token!)).status).toBe(200);
-    expect(await itemsStatus(server, rotated.body.access_token!)).toBe(401);
+    expect(await itemsStatus(server, renewed.body.access_token!)).toBe(401);
+    expect(await grantedClients()).not.toContain(app.clientId);
   });
 });
