@@ -15,12 +15,12 @@ pub async fn read(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     Ok(json_answer(StatusCode::OK, &updates::status(&app).await?))
 }
 
-/// The update is the server's once admitted, so revoking the key does not stop it.
+/// The update is the server's once admitted, so revoking the key afterwards does not stop it.
 pub async fn start(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require(Permission::InstanceMaintain)?;
     query::only(&uri, &[])?;
     Ok(json_answer(
         StatusCode::ACCEPTED,
-        &updates::start(&app).await?,
+        &updates::start(&app, &caller).await?,
     ))
 }

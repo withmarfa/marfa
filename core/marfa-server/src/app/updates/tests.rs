@@ -132,6 +132,15 @@ struct Case {
     faults: Arc<Faults>,
 }
 
+const SUMS: &str = "/withmarfa/marfa/releases/download/v0.0.75/marfa-0.0.75-checksums.txt";
+
+fn archive_path() -> String {
+    format!(
+        "/withmarfa/marfa/releases/download/v0.0.75/{}",
+        archive_name("0.0.75", "linux-x86_64")
+    )
+}
+
 impl Case {
     fn new(name: &str) -> Case {
         let root = std::env::temp_dir().join(format!("marfa-apply-{}-{name}", std::process::id()));
@@ -143,13 +152,14 @@ impl Case {
             fs::write(&path, program(program_name, "0.0.74", OPENS)).unwrap();
             apply_mode(&path);
         }
+        let stand = Stand::start();
         let faults = Arc::new(Faults::default());
         faults
-            .set("release-feed", Some("http://127.0.0.1:9/latest"))
+            .set("release-feed", Some(&stand.url("/latest")))
             .unwrap();
         Case {
             root,
-            stand: Stand::start(),
+            stand,
             faults,
         }
     }
@@ -175,18 +185,18 @@ impl Case {
             sum.map_or_else(|| hex_of(&packed), str::to_string)
         );
         let claimed = bytes.unwrap_or(packed.len() as u64);
-        self.stand.serve("/archive", packed);
-        self.stand.serve("/sums", line.into_bytes());
+        self.stand.serve(&archive_path(), packed);
+        self.stand.serve(SUMS, line.into_bytes());
         Job {
             from: "0.0.74".into(),
             version: "0.0.75".into(),
             archive_name: name,
             archive: Asset {
-                url: self.stand.url("/archive"),
+                url: self.stand.url(&archive_path()),
                 bytes: claimed,
             },
             checksums: Asset {
-                url: self.stand.url("/sums"),
+                url: self.stand.url(SUMS),
                 bytes: 100,
             },
             programs: self.bin(),
@@ -291,13 +301,12 @@ async fn a_checksum_file_with_no_line_or_two_lines_for_the_archive_is_refused() 
     let job = case.release(&good(OPENS), None, None);
     let name = job.archive_name.clone();
     case.stand
-        .serve("/sums", b"abc  marfa-0.0.75-other.tar.gz\n".to_vec());
+        .serve(SUMS, b"abc  marfa-0.0.75-other.tar.gz\n".to_vec());
     let refused = case.run(job).await.unwrap_err();
     assert!(refused.contains("no line"), "{refused}");
     let job = case.release(&good(OPENS), None, None);
     let line = format!("{}  {name}\n", "1".repeat(64));
-    case.stand
-        .serve("/sums", format!("{line}{line}").into_bytes());
+    case.stand.serve(SUMS, format!("{line}{line}").into_bytes());
     let refused = case.run(job).await.unwrap_err();
     assert!(refused.contains("more than once"), "{refused}");
     case.untouched();
@@ -350,11 +359,99 @@ async fn a_release_that_will_not_open_this_database_changes_nothing_and_says_the
 #[tokio::test(flavor = "multi_thread")]
 async fn a_download_that_is_missing_leaves_the_running_release_as_it_was() {
     let case = Case::new("missing");
-    let mut job = case.release(&good(OPENS), None, None);
-    job.archive.url = case.stand.url("/nowhere");
+    let job = case.release(&good(OPENS), None, None);
+    case.stand.routes.lock().unwrap().remove(&archive_path());
     let refused = case.run(job).await.unwrap_err();
     assert!(refused.contains("404"), "{refused}");
     case.untouched();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_kept_at_an_address_but_marfas_own_is_never_fetched() {
+    let case = Case::new("elsewhere");
+    for elsewhere in [
+        "/other/marfa/releases/download/v0.0.75/NAME",
+        "/withmarfa/other/releases/download/v0.0.75/NAME",
+        "/withmarfa/marfa/releases/download/v0.0.74/NAME",
+        "/withmarfa/marfa/releases/download/v0.0.75/marfa-0.0.75-darwin-arm64.tar.gz",
+    ] {
+        for checksums in [false, true] {
+            let mut job = case.release(&good(OPENS), None, None);
+            let asset = if checksums {
+                &mut job.checksums
+            } else {
+                &mut job.archive
+            };
+            let name = asset.url.rsplit('/').next().unwrap().to_string();
+            let path = elsewhere.replace("NAME", &name);
+            case.stand.serve(&path, b"elsewhere".to_vec());
+            asset.url = case.stand.url(&path);
+            let before = case.stand.asked();
+            let refused = case.run(job).await.unwrap_err();
+            assert!(refused.contains("not Marfa's own"), "{path}: {refused}");
+            assert_eq!(case.stand.asked(), before, "{path}: nothing was asked");
+            case.untouched();
+        }
+    }
+    let before = case.stand.asked();
+    case.run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap();
+    assert!(
+        case.stand.asked() > before,
+        "the witness: at Marfa's own address the same release is fetched"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn staging_folders_left_by_earlier_updates_go_and_links_or_files_under_that_name_stay() {
+    use std::os::unix::fs::symlink;
+    let case = Case::new("leftovers");
+    let outside = case.root.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("kept"), "not the server's").unwrap();
+    for version in ["0.0.73", "0.0.75", "0.0.76"] {
+        let left = case.bin().join(format!(".marfa-update-{version}"));
+        fs::create_dir_all(left.join("nested")).unwrap();
+        fs::write(left.join("archive.tar.gz"), "left over").unwrap();
+        symlink(&outside, left.join("nested/out")).unwrap();
+    }
+    symlink(&outside, case.bin().join(".marfa-update-0.0.1")).unwrap();
+    fs::write(case.bin().join(".marfa-update-notes"), "a file").unwrap();
+    fs::create_dir(case.bin().join(".marfa-other")).unwrap();
+
+    case.run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap();
+    for version in ["0.0.73", "0.0.75", "0.0.76"] {
+        assert!(
+            !case.bin().join(format!(".marfa-update-{version}")).exists(),
+            "{version}"
+        );
+    }
+    assert!(case.bin().join(".marfa-update-0.0.1").is_symlink());
+    assert!(case.bin().join(".marfa-update-notes").is_file());
+    assert!(case.bin().join(".marfa-other").is_dir());
+    assert_eq!(
+        fs::read_to_string(outside.join("kept")).unwrap(),
+        "not the server's"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_under_the_releases_own_staging_name_refuses_the_update_and_is_not_followed() {
+    use std::os::unix::fs::symlink;
+    let case = Case::new("staging-link");
+    let outside = case.root.join("outside");
+    fs::create_dir(&outside).unwrap();
+    symlink(&outside, case.bin().join(".marfa-update-0.0.75")).unwrap();
+    let refused = case.run(case.release(&good(OPENS), None, None)).await;
+    assert!(refused.unwrap_err().contains("beside the programs"));
+    assert!(case.bin().join(".marfa-update-0.0.75").is_symlink());
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    for name in PROGRAMS {
+        assert_eq!(case.text(name), program(name, "0.0.74", OPENS), "{name}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

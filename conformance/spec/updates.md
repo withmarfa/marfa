@@ -44,6 +44,30 @@ Where test hooks are on, the server MUST make no request for a release until a `
 
 **Tests:** `compliance/updates.test.ts › asks nobody for a release until a fault names an address, and reads no release before a check has found one`.
 
+### `updates/check-host`
+
+When the `release-check` housekeeping job asks for the newest release, the server MUST ask only `https://api.github.com/repos/withmarfa/marfa/releases/latest` and follow a redirect only to another address on `https://api.github.com`.
+
+**Reason:** the answer names the programs the server may later run, so only GitHub's answer for Marfa's own repository counts.
+
+**Tests:** `compliance/updates.test.ts › follows a redirect of the release check only on the address it asks, and asks no other host`.
+
+### `updates/check-download-address`
+
+If the newest release names its archive or its checksum file at any address but `https://github.com/withmarfa/marfa/releases/download/v<version>/<name>`, then the server MUST treat the check as failed and fetch nothing from that address.
+
+**Reason:** a release is offered only when the files it names are Marfa's own release files, so the reading of the update never offers one the swap would refuse.
+
+**Tests:** `compliance/updates.test.ts › refuses a release that names its files anywhere but Marfa's release address, and asks nothing of that address`.
+
+### `updates/check-public-only`
+
+When the server asks GitHub for a release or downloads a release's files, the server MUST connect only to a public address, whatever `allow_private_addresses` says.
+
+**Reason:** `allow_private_addresses` lets an owner reach receivers on their own network, and gives no reason to fetch a program from one.
+
+**Tests:** waiting on #3321.
+
 ## Reading the update
 
 ### `updates/read`
@@ -100,6 +124,14 @@ If a newer release is available and the server cannot update itself, then the se
 
 **Tests:** `compliance/updates.test.ts › refuses an update on a server that cannot update itself with the step to take on its host, and changes nothing`.
 
+### `updates/start-current-access`
+
+If the credential that sent `POST /update` no longer holds `instance.maintain` when the server decides whether the update starts, then the server MUST answer `403 forbidden` and start no update.
+
+**Reason:** an update replaces the programs the server runs, so a key revoked or narrowed while the request waits must not start one.
+
+**Tests:** `compliance/updates.test.ts › decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain`.
+
 ### `updates/start-once`
 
 While an update runs, the server MUST answer another `POST /update` with the update that runs, and start no second one.
@@ -126,9 +158,25 @@ If a download fails, its checksum does not match, a new program will not run or 
 
 ### `updates/swap-hosts`
 
-When the server downloads a release's archive or checksum file, the server MUST fetch it over HTTPS from `github.com` or the host GitHub redirects release files to, and from no other host.
+When the server downloads a release's archive or checksum file, the server MUST fetch it only from `https://github.com/withmarfa/marfa/releases/download/v<version>/<name>`, where `<version>` is the release's and `<name>` is the file's.
 
-**Reason:** a release that points elsewhere must not make the server fetch and run a program from there.
+**Reason:** a release that points elsewhere, even at another repository or another release on GitHub, must not make the server fetch and run a program from there.
+
+**Tests:** `compliance/updates.test.ts › refuses a release that names its files anywhere but Marfa's release address, and asks nothing of that address`.
+
+### `updates/swap-redirect-host`
+
+When a download of a release's file is redirected, the server MUST follow the redirect only over HTTPS to `release-assets.githubusercontent.com`.
+
+**Reason:** GitHub serves release files from that host, and from no other.
+
+**Tests:** waiting on #3177.
+
+### `updates/swap-staging-cleared`
+
+When the server starts an update, the server MUST first remove each folder beside its programs whose name starts with `.marfa-update-`, and leave a link or a file under such a name as it is.
+
+**Reason:** an update that stopped part way leaves its unpacked release behind, and nothing else would remove it.
 
 **Tests:** waiting on #3177.
 

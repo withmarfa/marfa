@@ -35,6 +35,7 @@ macro_rules! point_list {
         HOLD_JOB_IN_CHUNK = Hold "bulk-job:in-chunk" None;
         HOLD_JOB_BETWEEN_CHUNKS = Hold "bulk-job:between-chunks" Nth;
         HOLD_JOB_FINISHING = Hold "bulk-job:finishing" None;
+        HOLD_UPDATE_START = Hold "update-start" None;
         FAIL_STREAM_HEAD = Fail "stream-head" Nth;
         FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
         FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;

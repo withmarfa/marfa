@@ -15,7 +15,7 @@ use super::feed::{Feed, RELEASE_HOSTS};
 use super::pending::{
     self, ASK_LIMIT, Folder, MARFA, PROGRAMS, Pending, SERVER, run_within, sync_folder,
 };
-use super::release::Asset;
+use super::release::{self, Asset};
 use crate::db::volume;
 
 const MAX_ARCHIVE_BYTES: u64 = 512 << 20;
@@ -45,8 +45,18 @@ pub const FETCHING: &str = "fetching";
 pub const CHECKING: &str = "checking";
 pub const SWAPPING: &str = "swapping";
 
-fn address(asset: &Asset) -> Result<Url, String> {
-    Url::parse(&asset.url)
+/// What staging folders are called, each followed by its release.
+const STAGING: &str = ".marfa-update-";
+
+/// The file's one address on Marfa's releases, which the release must have named.
+fn address(feed: &Feed, version: &str, name: &str, asset: &Asset) -> Result<Url, String> {
+    let wanted = release::download_url(&feed.downloads(), version, name);
+    if asset.url != wanted {
+        return Err(format!(
+            "The release names {name} at an address that is not Marfa's own, so nothing was fetched."
+        ));
+    }
+    Url::parse(&wanted)
         .map_err(|_| "The release names a download address that does not read.".to_string())
 }
 
@@ -280,11 +290,38 @@ pub(super) fn claim(job: &Job) -> Result<File, String> {
     Ok(lock)
 }
 
-/// Blocks. On `Ok` the new programs are in place; on `Err` the running release is as it was.
+/// Removes the folders earlier updates left beside the programs, whatever release each was for.
+/// A link or a file under such a name is left alone.
+fn clear_staging(programs: &Path) -> Result<(), String> {
+    let unreadable = |error: std::io::Error| {
+        format!("The folder holding the programs could not be read: {error}.")
+    };
+    for entry in fs::read_dir(programs).map_err(unreadable)? {
+        let name = entry.map_err(unreadable)?.file_name();
+        if !name.to_str().is_some_and(|name| name.starts_with(STAGING)) {
+            continue;
+        }
+        let left = programs.join(&name);
+        let is_folder = fs::symlink_metadata(&left).is_ok_and(|met| met.file_type().is_dir());
+        if !is_folder {
+            continue;
+        }
+        fs::remove_dir_all(&left).map_err(|error| {
+            format!(
+                "A folder an earlier update left beside the programs, {}, could not be removed: {error}.",
+                name.to_string_lossy()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Blocks, and runs only while the update holds `Updates::begin`. On `Ok` the new programs are in
+/// place; on `Err` the running release is as it was.
 pub fn run(feed: &Feed, job: &Job, stage: &dyn Fn(&'static str)) -> Result<(), String> {
     let _claim = claim(job)?;
-    let staging = job.programs.join(format!(".marfa-update-{}", job.version));
-    let _ = fs::remove_dir_all(&staging);
+    clear_staging(&job.programs)?;
+    let staging = job.programs.join(format!("{STAGING}{}", job.version));
     fs::create_dir(&staging).map_err(|error| {
         format!(
             "A folder to unpack release {} in could not be made beside the programs: {error}.",
@@ -326,12 +363,15 @@ fn prepare(
     }
     stage(FETCHING);
     let archive = staging.join("archive.tar.gz");
+    let sums_name = release::checksums_name(&job.version);
+    let sums_at = address(feed, &job.version, &sums_name, &job.checksums)?;
+    let archive_at = address(feed, &job.version, &job.archive_name, &job.archive)?;
     let sums = feed
         .document(
-            &address(&job.checksums)?,
+            &sums_at,
             MAX_CHECKSUMS_BYTES,
             Duration::from_secs(60),
-            Some(RELEASE_HOSTS),
+            &RELEASE_HOSTS,
         )
         .map_err(|failed| {
             format!(
@@ -340,12 +380,7 @@ fn prepare(
             )
         })?;
     let downloaded = feed
-        .file(
-            &address(&job.archive)?,
-            &archive,
-            job.archive.bytes,
-            DOWNLOAD_TIME,
-        )
+        .file(&archive_at, &archive, job.archive.bytes, DOWNLOAD_TIME)
         .map_err(|failed| {
             format!(
                 "Release {} could not be downloaded: {}.",

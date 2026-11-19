@@ -18,9 +18,11 @@ use tokio::sync::Notify;
 
 pub use check::{JOB as CHECK_JOB, enabled as checking, job as check};
 
+use super::access::{Caller, Permission};
+use super::faults::HOLD_UPDATE_START;
 use super::refusal::{Code, Refusal, Result};
 use super::{App, health};
-use crate::db::{self, migrate::MIGRATIONS};
+use crate::db::{self, Write, migrate::MIGRATIONS};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
 use feed::Feed;
@@ -291,12 +293,41 @@ pub async fn status(app: &App) -> Result<Value> {
     }))
 }
 
-pub async fn start(app: &Arc<App>) -> Result<Value> {
-    let kept = if check::enabled(app) {
-        check::kept(app).await?
-    } else {
-        check::Kept::default()
-    };
+/// Decided as the writer admits it, so no change to the caller's access commits between the
+/// decision and the start.
+pub async fn start(app: &Arc<App>, caller: &Caller) -> Result<Value> {
+    app.faults.hold(HOLD_UPDATE_START, None).await;
+    let (deciding, caller) = (app.clone(), caller.clone());
+    let begun: Arc<Mutex<Option<apply::Job>>> = Arc::default();
+    let slot = begun.clone();
+    let decided = app
+        .db
+        .write(Write::own().unsynced(), move |tx| {
+            caller
+                .current(tx, &deciding.clock.stamp())?
+                .require(Permission::InstanceMaintain)?;
+            let kept = if check::enabled(&deciding) {
+                check::kept_in(tx)?
+            } else {
+                check::Kept::default()
+            };
+            let job = decide(&deciding, kept)?;
+            if deciding.updates.begin(&job.version) {
+                *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(job);
+            }
+            Ok(())
+        })
+        .await;
+    // Once begun, the update runs even if the empty commit after the decision failed.
+    let job = begun.lock().unwrap_or_else(PoisonError::into_inner).take();
+    match job {
+        Some(job) => run(app.clone(), job),
+        None => decided?,
+    }
+    status(app).await
+}
+
+fn decide(app: &App, kept: check::Kept) -> Result<apply::Job> {
     let Some(latest) = latest_newer(kept.latest()) else {
         return Err(Refusal::new(
             Code::UpdateNotReady,
@@ -330,22 +361,18 @@ pub async fn start(app: &Arc<App>) -> Result<Value> {
             "an installed service has no record folder",
         ));
     };
-    if app.updates.begin(&latest.version) {
-        let job = apply::Job {
-            from: Version::running().to_string(),
-            archive_name: release::archive_name(&latest.version, platform),
-            version: latest.version,
-            archive,
-            checksums,
-            programs: programs.clone(),
-            dir: dir.clone(),
-            database: file,
-            record,
-            attempt: uuid::Uuid::now_v7().to_string(),
-        };
-        run(app.clone(), job);
-    }
-    status(app).await
+    Ok(apply::Job {
+        from: Version::running().to_string(),
+        archive_name: release::archive_name(&latest.version, platform),
+        version: latest.version,
+        archive,
+        checksums,
+        programs: programs.clone(),
+        dir: dir.clone(),
+        database: file,
+        record,
+        attempt: uuid::Uuid::now_v7().to_string(),
+    })
 }
 
 fn run(app: Arc<App>, job: apply::Job) {

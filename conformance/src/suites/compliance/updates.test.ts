@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -13,8 +14,9 @@ import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 /**
  * The release check and the update operations. The check asks a stand-in for
  * GitHub that the fixture serves, which a `release-feed` fault names: a server
- * with test hooks asks nobody else. No fixture can make a server that is a
- * service with programs it may replace, so the swap itself is not asserted here.
+ * with test hooks asks nobody else, and takes the stand-in's origin for
+ * GitHub's. No fixture can make a server that is a service with programs it
+ * may replace, so the swap itself is not asserted here.
  */
 
 let server: FreshServer;
@@ -24,37 +26,44 @@ let maintainer: MarfaClient;
 let working: MarfaClient;
 let feed: Server;
 let asked = 0;
-let reply = { status: 200, body: "" };
+let paths: string[] = [];
+type Reply = { status: number; body: string; location?: string };
+let reply: Reply = { status: 200, body: "" };
+/** What the stand-in answers at `/moved`, where a fixture redirects the check. */
+let moved: Reply = { status: 404, body: "" };
+
+function origin(): string {
+  const { port } = feed.address() as AddressInfo;
+  return `http://127.0.0.1:${port}`;
+}
+
+/** Where a release's file is, on the stand-in that takes GitHub's place. */
+function marfas(version: string, name: string): string {
+  return `${origin()}/withmarfa/marfa/releases/download/v${version}/${name}`;
+}
 
 /** The latest-release answer GitHub gives, for a release this server runs or one past it. */
-function release(version: string, extra: Record<string, unknown> = {}): string {
+function release(
+  version: string,
+  extra: Record<string, unknown> = {},
+  at: (version: string, name: string) => string = marfas,
+): string {
+  const names = [
+    `marfa-${version}-linux-x86_64.tar.gz`,
+    `marfa-${version}-darwin-arm64.tar.gz`,
+    `marfa-${version}-linux-aarch64.tar.gz`,
+    `marfa-${version}-checksums.txt`,
+  ];
   return JSON.stringify({
     tag_name: `v${version}`,
     draft: false,
     prerelease: false,
     published_at: "2026-11-16T09:30:00Z",
-    assets: [
-      {
-        name: `marfa-${version}-linux-x86_64.tar.gz`,
-        browser_download_url: "http://127.0.0.1:9/archive",
-        size: 10,
-      },
-      {
-        name: `marfa-${version}-darwin-arm64.tar.gz`,
-        browser_download_url: "http://127.0.0.1:9/archive",
-        size: 10,
-      },
-      {
-        name: `marfa-${version}-linux-aarch64.tar.gz`,
-        browser_download_url: "http://127.0.0.1:9/archive",
-        size: 10,
-      },
-      {
-        name: `marfa-${version}-checksums.txt`,
-        browser_download_url: "http://127.0.0.1:9/sums",
-        size: 10,
-      },
-    ],
+    assets: names.map((name) => ({
+      name,
+      browser_download_url: at(version, name),
+      size: 10,
+    })),
     ...extra,
   });
 }
@@ -93,10 +102,15 @@ async function check(): Promise<void> {
 }
 
 beforeAll(async () => {
-  feed = createServer((_request, response) => {
+  feed = createServer((request, response) => {
     asked += 1;
-    response.writeHead(reply.status, { "content-type": "application/json" });
-    response.end(reply.body);
+    paths.push(request.url ?? "");
+    const answer = request.url === "/moved" ? moved : reply;
+    response.writeHead(answer.status, {
+      "content-type": "application/json",
+      ...(answer.location ? { location: answer.location } : {}),
+    });
+    response.end(answer.body);
   });
   await new Promise<void>((resolve) => feed.listen(0, "127.0.0.1", resolve));
   server = await bootFreshServer("updates", QUIET_SCHEDULE);
@@ -292,4 +306,128 @@ it("makes no request for a release while update_check_enabled is false, and list
   expect(back.status, JSON.stringify(back.error)).toBe(200);
   await check();
   expect(asked).toBe(before + 1);
+});
+
+it("refuses a release that names its files anywhere but Marfa's release address, and asks nothing of that address", async () => {
+  const found = await newer();
+  reply = { status: 200, body: release(found) };
+  await pointAtFeed();
+  await check();
+  const before = await operator.getUpdate();
+  expect(before.data.check_error).toBeNull();
+
+  const next = await newer();
+  const elsewhere: Record<string, (version: string, name: string) => string> = {
+    owner: (version, name) =>
+      `${origin()}/other/marfa/releases/download/v${version}/${name}`,
+    repository: (version, name) =>
+      `${origin()}/withmarfa/other/releases/download/v${version}/${name}`,
+    tag: (_version, name) =>
+      `${origin()}/withmarfa/marfa/releases/download/v0.0.1/${name}`,
+    name: (version) =>
+      `${origin()}/withmarfa/marfa/releases/download/v${version}/marfa-${version}-other.tar.gz`,
+    host: (version, name) =>
+      marfas(version, name).replace("127.0.0.1", "localhost"),
+  };
+  for (const [what, at] of Object.entries(elsewhere)) {
+    paths = [];
+    reply = { status: 200, body: release(next, {}, at) };
+    await check();
+    const read = await operator.getUpdate();
+    expect(read.data.latest?.release, what).toBe(found);
+    expect(read.data.checked_at, what).toBe(before.data.checked_at);
+    expect(read.data.check_error?.message, what).toMatch(/not Marfa's own/);
+    expect(paths, what).toEqual(["/latest"]);
+  }
+
+  // The witness: the same release, naming Marfa's own address, is found.
+  reply = { status: 200, body: release(next) };
+  await check();
+  const read = await operator.getUpdate();
+  expect(read.data.latest?.release).toBe(next);
+  expect(read.data.check_error).toBeNull();
+});
+
+it("follows a redirect of the release check only on the address it asks, and asks no other host", async () => {
+  const found = await newer();
+  reply = { status: 200, body: release(found) };
+  await pointAtFeed();
+  await check();
+  const checkedAt = (await operator.getUpdate()).data.checked_at;
+
+  const next = await newer();
+  moved = { status: 200, body: release(next) };
+  paths = [];
+  reply = {
+    status: 302,
+    body: "",
+    location: `${origin().replace("127.0.0.1", "localhost")}/moved`,
+  };
+  await check();
+  const refused = await operator.getUpdate();
+  expect(refused.data.latest?.release).toBe(found);
+  expect(refused.data.checked_at).toBe(checkedAt);
+  expect(refused.data.check_error?.message).toEqual(expect.any(String));
+  expect(paths).toEqual(["/latest"]);
+
+  // The witness: the same redirect on the address the check asks is followed.
+  paths = [];
+  reply = { status: 302, body: "", location: `${origin()}/moved` };
+  await check();
+  const followed = await operator.getUpdate();
+  expect(paths).toEqual(["/latest", "/moved"]);
+  expect(followed.data.latest?.release).toBe(next);
+  expect(followed.data.check_error).toBeNull();
+  reply = { status: 200, body: release(next) };
+  moved = { status: 404, body: "" };
+});
+
+it("decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain", async () => {
+  reply = { status: 200, body: release(await newer()) };
+  await pointAtFeed();
+  await check();
+  const owner = new MarfaClient({
+    baseUrl: server.apiUrl,
+    controlSocket: server.controlSocket,
+  });
+  const started = async (narrowed: boolean) => {
+    const minted = await owner.createKey({
+      label: "maintain-held",
+      source: `updates-held-${randomUUID()}`,
+      permissions: ["instance.maintain"],
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const caller = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    });
+    await server.setFault("hold:update-start");
+    const pending = caller.startUpdate();
+    await server.waitForHold("hold:update-start");
+    if (narrowed) {
+      const narrow = await owner.updateKey(minted.data.id, {
+        permissions: ["instance.read"],
+      });
+      expect(narrow.status, JSON.stringify(narrow.error)).toBe(200);
+    }
+    await server.clearFault("hold:update-start");
+    return pending;
+  };
+
+  // The witness: held the same way and left alone, the key's start is decided past its access.
+  const kept = await started(false);
+  expect(kept.status).toBe(409);
+  expect(kept.error?.error.code).toBe("update_unavailable");
+
+  const lost = await started(true);
+  expect(lost.status).toBe(403);
+  expect(lost.error?.error.code).toBe("forbidden");
+  const after = await operator.getUpdate();
+  expect(after.data.progress).toEqual({ state: "idle", release: null });
+  expect(after.data.last).toBeNull();
 });
