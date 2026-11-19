@@ -1037,12 +1037,9 @@ pub(crate) fn confirm_each_attempt<'a>(
     }
 }
 
-/// `GET /items/<id>`, ended with `Canceled` as soon as `stop` is raised, that
-/// confirms the instance before each attempt, as `confirm_each_attempt` does.
-/// The root is read beside the request and compared with the instance the copy
-/// named when the call began, so no request reaches another instance; the copy
-/// is checked and expired on the calling thread, which holds the store, once
-/// the request returns.
+/// `GET /items/<id>` through the stop, refused before an attempt when the root
+/// names another instance. The copy's generation and instance are checked, and
+/// any expiry written, on the calling thread once the request returns.
 pub(crate) fn item_checked_unless_stopped(
     core: &Core,
     http: &Http,
