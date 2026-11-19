@@ -26,7 +26,7 @@ pub enum AppsCommand {
         /// The app grant's ID.
         id: String,
         /// Also revoke every key the app minted, and every key those keys
-        /// minted.
+        /// minted, but an owner's key.
         #[arg(long)]
         revoke_keys: bool,
     },
