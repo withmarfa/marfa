@@ -5206,7 +5206,7 @@ export interface components {
             };
         };
         /**
-         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` lists and empties the trash and purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`, which holds the stored settings; secret settings are never read back; `audit.read` reads the audit log; `grants.manage` lists, narrows and revokes other apps' access; `instance.read` reads health, what needs attention, metrics, housekeeping, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, cancels bulk jobs, updates the server and confirms the clock; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; `blobs.manage` manages every blob; `backups.manage` lists, takes and adopts backups and restores a backup or an archive; and `sign_ins.manage` lists, renames and ends sign-ins, manages the owner's passkeys and changes the owner's password.
+         * @description A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key, changes one without widening it, and grants any source a key may claim; `items.purge` lists and empties the trash and purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`, which holds the stored settings; secret settings are never read back; `audit.read` reads the audit log; `grants.manage` lists, narrows and revokes other apps' access; `instance.read` reads health, what needs attention, metrics, housekeeping, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, cancels bulk jobs, updates the server and confirms the clock; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; `blobs.manage` manages every blob; `backups.manage` lists, takes and adopts backups and restores a backup or an archive; and `sign_ins.manage` lists, renames and ends sign-ins, manages the owner's passkeys and changes the owner's password.
          * @enum {string}
          */
         Permission: "webhooks.manage" | "schema.write" | "config.manage" | "audit.read" | "items.purge" | "keys.mint" | "grants.manage" | "instance.read" | "instance.maintain" | "connectors.manage" | "blobs.manage" | "backups.manage" | "sign_ins.manage" | "keys.manage";
@@ -6184,7 +6184,7 @@ export interface components {
             /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
             /**
-             * @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin.
+             * @description The app origin client ID, inherited by every descendant key but an owner's key (`owner_key`). Absent when no app is in the key's origin, and on an owner's key.
              * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
              */
             oauth_client_id?: string;
@@ -6251,7 +6251,7 @@ export interface components {
             /** @description The permissions the key holds, such as `audit.read`. Empty if it holds none. */
             permissions: components["schemas"]["Permission"][];
             /**
-             * @description The app origin client ID, inherited by every descendant key. Absent when no app is in the key's origin.
+             * @description The app origin client ID, inherited by every descendant key but an owner's key (`owner_key`). Absent when no app is in the key's origin, and on an owner's key.
              * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
              */
             oauth_client_id?: string;
@@ -6782,7 +6782,7 @@ export interface components {
             client_ip: string | null;
             /** @description The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none. */
             user_agent: string | null;
-            /** @description For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, any other key, and a key whose app has ended. */
+            /** @description For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, an owner's key (`owner_key`), any other key, and a key whose app has ended. */
             minted_by: string | null;
         };
         /** @description An error response. */
@@ -30191,7 +30191,7 @@ export interface operations {
                     label: string;
                     /** @description The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later. */
                     source: string;
-                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant your own `source` and your claims, or with `keys.manage` any source; the local command can grant any. */
                     sources?: string[];
                     /** @description The permissions to give the key, such as `audit.read`. */
                     permissions?: components["schemas"]["Permission"][];
@@ -30219,6 +30219,11 @@ export interface operations {
                      * @example 2027-01-01T00:00:00.000Z
                      */
                     expires_at?: string;
+                    /**
+                     * @description `true` if the key is the owner's, not the app's you act for: it carries no `oauth_client_id`, and disconnecting or narrowing that app leaves it working. From an app, it needs `keys.manage`.
+                     * @default false
+                     */
+                    owner_key?: boolean;
                 };
             };
         };
@@ -30259,7 +30264,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `label` or `source` is missing, or a lever in `enforcement_override` lacks `types` or `sources`.
-             *     - `validation_error`: a field is invalid, such as a permission level that doesn't exist, more than 1,000 `sources`, or an `expires_at` that isn't a time or isn't in the future, or `source` or a claimed source starts with `oauth:`.
+             *     - `validation_error`: a field is invalid, such as an unknown permission level, more than 1,000 `sources`, an `expires_at` that isn't a future time, an `owner_key` that isn't `true` or `false`, or a `source` or claim starting `oauth:` or `restored:`.
              */
             400: {
                 headers: {
@@ -30284,7 +30289,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you lack `keys.mint` and aren't the local command; the body names a permission, map entry or source you don't hold, a `source` another key claims that you can't grant, an own `source` a connector holds without `keys.manage`, an `expires_at` past your key's, or `enforcement_override` without `config.manage`. `details.required_scope` and `details.source` name what you lack. */
+            /** @description - `forbidden`: you lack `keys.mint` and aren't the local command; the body names a permission or map entry you don't hold, a claim, or another key's claim as `source`, that you can't grant, an own `source` a connector holds without `keys.manage`, an `expires_at` past your key's, `owner_key` from an app without `keys.manage`, or `enforcement_override` without `config.manage`. `details` names it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30760,7 +30765,7 @@ export interface operations {
                     /** @description A name for the key, to tell it apart from your other keys. */
                     label?: string;
                     default_tier?: components["schemas"]["Tier"] & unknown;
-                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any. */
+                    /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant your own `source` and your claims, or with `keys.manage` any source; the local command can grant any. */
                     sources?: string[];
                     /** @description Item types the key may `read` or `write`, by type ID or a wildcard such as `core.*` or `*`. `none` denies a type a wildcard covers. */
                     type_permissions?: {
@@ -30784,7 +30789,7 @@ export interface operations {
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
                     /**
-                     * @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made, through `keys.manage` or with `narrow_only`.
+                     * @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made, with `narrow_only`, or without `keys.mint`.
                      * @example 2027-01-01T00:00:00.000Z
                      */
                     expires_at?: string | null;
@@ -30856,7 +30861,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, or any key through `keys.manage` or with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, a key with `narrow_only`, which also refuses a changed `enforcement_override`, or any key through `keys.manage` alone; or it names `enforcement_override` without `config.manage`. `details` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -31342,7 +31347,7 @@ export interface operations {
     revokeAppGrant: {
         parameters: {
             query?: {
-                /** @description Also revoke every key the app minted, and every key those keys minted. Omitting it, or `false`, leaves them working. */
+                /** @description Also revoke every key the app minted, and every key those keys minted, but an owner's key (`owner_key`). Omitting it, or `false`, leaves them working. */
                 revoke_keys?: boolean;
             };
             header?: never;
@@ -33297,7 +33302,7 @@ export interface operations {
     endSignIn: {
         parameters: {
             query?: {
-                /** @description For an app, also revoke every key it minted, as its `minted_by` entries show. Only an app takes it. */
+                /** @description For an app, also revoke every key it minted but an owner's key (`owner_key`), as its `minted_by` entries show. Only an app takes it. */
                 revoke_keys?: boolean;
             };
             header?: {
