@@ -2536,7 +2536,7 @@ describe("offline, reconnect and re-hydration", () => {
     ).toBe(false);
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("copy_expired");
-      expect(refused.refusal.raw).toContain(replaced);
+      expect(refused.refusal.raw).toContain("instance_changed");
     }
     expect(creates(harness), "a write reached the other instance").toEqual([]);
     expect((await queueOf(device)).map((row) => row.id)).toEqual([

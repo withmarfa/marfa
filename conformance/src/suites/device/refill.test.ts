@@ -74,6 +74,11 @@ async function agedOut(
   const head = { now: "10" };
   const refuse: { head?: Answer; types?: Answer } = {};
   let aging = false;
+  const instance = options.instance;
+  if (instance !== undefined)
+    h.server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance()),
+    );
   scriptHydration(h.server, {
     head: () => head.now,
     catalog: () => refuse.types ?? typeCatalog(),

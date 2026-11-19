@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   SCRIPTED_INSTANCE,
   answers,
+  bulkGetOf,
   certifiedRead,
+  copyLiveReplay,
   refusal,
   typeCatalog,
   wireItem,
@@ -109,7 +112,7 @@ async function refusesAnotherInstance([args, body]: [string[], unknown]) {
   ).toBe(false);
   if (!refused.ok) {
     expect(refused.refusal.code).toBe("copy_expired");
-    expect(refused.refusal.raw).toContain(REPLACED);
+    expect(refused.refusal.raw).toContain("instance_changed");
   }
   expect(reached(), "an item id reached the other instance").toBe(1);
   const status = await device.status();
@@ -391,6 +394,92 @@ describe("an operation that sends what the copy holds", () => {
     refusesHeldToAnother("a catch-up"));
   it("sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed", () =>
     refusesHeldToAnother("a file fetched by its hash"));
+});
+
+/** What a follow owing a look at `read_only` sent, the root naming another
+ *  instance from the moment its stream opened where `replaced`. */
+async function lookedUnder(replaced: boolean) {
+  harness = await startHarness("server-reads-look");
+  const { server, device } = harness;
+  let streamed = false;
+  let following = false;
+  server.copyAnswer("GET", "/", () =>
+    answers.root(
+      Number(BUILT_FOR),
+      replaced && streamed ? REPLACED : SCRIPTED_INSTANCE,
+    ),
+  );
+  scriptHydration(server, {
+    head: "10",
+    items: {
+      "core.note": [{ item: { id: ITEM, source: "connector.calendar" } }],
+    },
+    replay: (cursor) => {
+      if (following) streamed = true;
+      return copyLiveReplay(cursor, []);
+    },
+  });
+  server.answer("POST", "/items/bulk-get", () =>
+    bulkGetOf(
+      [
+        certifiedRead(
+          answers.updated(
+            wireItem({ id: ITEM, source: "connector.calendar", read_only: true }),
+          ),
+          BUILT_FOR,
+        ),
+      ],
+      { withReach: true, system: false },
+    ),
+  );
+  value(await device.hydrate(["core.note"], "library"));
+  // The copy last looked at read_only well over the interval ago.
+  const store = new DatabaseSync(device.store);
+  try {
+    store
+      .prepare("UPDATE meta SET value = '0' WHERE key = 'read_only_read_at'")
+      .run();
+  } finally {
+    store.close();
+  }
+  following = true;
+  const outcome = await device.follow(3);
+  const looks = server.requests.filter(
+    (request) =>
+      request.method === "POST" && request.pathname === "/items/bulk-get",
+  ).length;
+  const status = await device.status();
+  return {
+    outcome,
+    streamed,
+    looks,
+    hydration: status.ok ? status.value.hydration : status,
+  };
+}
+
+describe("a look at read_only while a stream is held", () => {
+  it("reads the root again and sends no item id to another instance that took the copy's address while the stream was held", async () => {
+    const witness = await lookedUnder(false);
+    expect(witness.outcome.ok, JSON.stringify(witness.outcome)).toBe(true);
+    expect(
+      witness.looks,
+      "the follow looked at nothing for its own instance, so the check below proves nothing",
+    ).toBeGreaterThan(0);
+    await harness?.stop();
+    harness = undefined;
+
+    const replaced = await lookedUnder(true);
+    expect(replaced.streamed, "the follow never held a stream").toBe(true);
+    expect(replaced.outcome.ok, "the look went on at another instance").toBe(
+      false,
+    );
+    if (!replaced.outcome.ok) {
+      expect(replaced.outcome.refusal.code).toBe("copy_expired");
+      expect(replaced.outcome.refusal.raw).toContain("instance_changed");
+    }
+    expect(replaced.looks, "an item id reached the other instance").toBe(0);
+    expect(replaced.hydration).toBe("expired");
+  });
 });
 
 // This fixture uses a macOS keychain file for the renewable credential.

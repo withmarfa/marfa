@@ -2588,11 +2588,27 @@ Where a copy names the instance it was hydrated from, while a device holds the c
 
 ### `device/server-reads-instance-each-request`
 
-Where a copy names the instance it was hydrated from, a device MUST confirm that the server's root names that instance before each server request for a direct table read (rows, one row or totals) or a link lookup by item ID, including a retry after credential renewal.
+Where a copy names the instance it was hydrated from, a device MUST confirm that the server's root names that instance before the first request of each operation that sends the server an item ID, a file hash or an event cursor the copy holds, and again before such a request that follows a credential renewal.
 
-**Reason:** the instance at an address can change between requests, including while a device renews its credential. Hydration and catch-up confirm the instance once per pass for table fills and row rereads under a reach.
+**Reason:** the instance at an address can change between two operations and while a device renews its credential, and each such request tells the server what the copy holds. A pin, a table hold, a read of the bin, a catch-up, each opening of a held stream, each look at `read_only` and each fetch of files by their hashes is one operation, and so is each direct table read and each link lookup. The root read and the request after it are two requests, so this cannot keep what the copy holds from a server that takes the address between them; a write names the instance, and such a server refuses it (`instance/write-names-other`).
 
-**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it repeats a table read after a credential renewal`, `› sends no second link id to an instance that replaced the first between two lookups`.
+**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it repeats a table read after a credential renewal`, `› sends no second link id to an instance that replaced the first between two lookups`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold`, `› reads no other instance's bin as the copy's own, and expires the copy instance_changed`, `› sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up`, `› sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed`, `› reads the root again and sends no item id to another instance that took the copy's address while the stream was held`.
+
+### `device/server-reads-instance-reason`
+
+If the server's root names another instance when a device confirms the instance under `device/server-reads-instance-each-request`, then a device MUST end the operation `copy_expired` with the reason `instance_changed`.
+
+**Reason:** the copy is no longer the server's, and `reach_changed` would say the server's reach changed while the instance stayed.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold`, `› reads no other instance's bin as the copy's own, and expires the copy instance_changed`, `› sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up`, `› sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed`, `› reads the root again and sends no item id to another instance that took the copy's address while the stream was held`, `device/catch-up.test.ts › hydrates again when another instance answers at the same address`.
+
+### `device/server-reads-instance-expires`
+
+While a device holds the copy as its writer, if the server's root names another instance when the device confirms the instance under `device/server-reads-instance-each-request`, then a device MUST expire the copy.
+
+**Reason:** a reading handle changes nothing in the store (`device/reader-writes-nothing`), so the writer alone records that the copy was built from another instance.
+
+**Tests:** `device/server-reads-instance.test.ts › sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold`, `› reads no other instance's bin as the copy's own, and expires the copy instance_changed`, `› sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up`, `› sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed`, `› reads the root again and sends no item id to another instance that took the copy's address while the stream was held`.
 
 ### `device/counts-from-server-groups`
 
