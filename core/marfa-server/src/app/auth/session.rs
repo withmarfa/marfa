@@ -17,7 +17,9 @@ const TOKEN_BYTES: usize = 32;
 /// A week and a minute, since a use is recorded at most once a minute.
 const IDLE_MS: i64 = (7 * 24 * 3600 + 60) * 1000;
 const USE_EVERY_MS: i64 = 60 * 1000;
-const RECENT_MS: i64 = 5 * 60 * 1000;
+/// How long after signing in the owner's sign-in counts as recent, for a browser session and
+/// an app's sign-in alike.
+pub const RECENT_SECONDS: i64 = 15 * 60;
 pub(super) const ENDED: &str = "auth.sign_in.ended";
 /// Bookkeeping, named so a fault can reach it. It leaves no audit entry.
 const USE: Write = Write {
@@ -25,6 +27,11 @@ const USE: Write = Write {
     for_caller: false,
     sync: true,
 };
+
+/// Whether a sign-in made at `signed_in` still counts as recent at `now`.
+pub fn recent(signed_in: Stamp, now: Stamp) -> bool {
+    (0..=RECENT_SECONDS * 1_000).contains(&(now.ms() - signed_in.ms()))
+}
 
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -40,7 +47,7 @@ pub struct Session {
 
 impl Session {
     pub fn is_recent(&self, now: Stamp) -> bool {
-        (0..=RECENT_MS).contains(&(now.ms() - self.created_at.ms()))
+        recent(self.created_at, now)
     }
 
     /// What a sign-in is called where it wrote something.
@@ -473,13 +480,14 @@ mod tests {
     }
 
     #[test]
-    fn a_session_is_recent_from_its_start_to_five_minutes_after_and_never_before() {
+    fn a_session_is_recent_from_its_start_to_fifteen_minutes_after_and_never_before() {
         let session = created(NOW);
+        const FIFTEEN_MINUTES_MS: i64 = 900_000;
         for (now, recent) in [
             (NOW - 1, false),
             (NOW, true),
-            (NOW + RECENT_MS, true),
-            (NOW + RECENT_MS + 1, false),
+            (NOW + FIFTEEN_MINUTES_MS, true),
+            (NOW + FIFTEEN_MINUTES_MS + 1, false),
         ] {
             assert_eq!(session.is_recent(at(now)), recent, "{}", now - NOW);
         }

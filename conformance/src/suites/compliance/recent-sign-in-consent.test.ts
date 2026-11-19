@@ -21,7 +21,7 @@ import { visibleText } from "../../utils/page-html.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
- * What a browser session that signed in more than five minutes ago may and
+ * What a browser session that signed in more than fifteen minutes ago may and
  * may not approve on either consent screen. A session's age is the server's clock
  * moved forward, and the clock only goes forward, so each case signs the stale
  * session in first, lets six minutes pass, and signs the fresh one in after.
@@ -75,10 +75,10 @@ async function pass(ms: number): Promise<void> {
 }
 
 /**
- * A browser session more than five minutes old, and one made just now. The
- * time passed is longer than the fifteen minutes the device code lookups of
- * one owner are counted over, so a case never spends the lookups of the one
- * before it.
+ * A browser session more than fifteen minutes old, and one made just now. The
+ * time passed is longer than the fifteen minutes that sign-in stays recent
+ * and the device code lookups of one owner are counted over, so a case never
+ * spends the lookups of the one before it.
  */
 async function staleAndFresh(): Promise<{ stale: string; fresh: string }> {
   const stale = await signIn();
@@ -225,7 +225,7 @@ function scopesOf(scope: string | undefined): string[] {
 }
 
 describe("approving a device", () => {
-  it("refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code", async () => {
+  it("refuses a session that signed in more than fifteen minutes ago 403 for a permission, and a fresh session approves the same code", async () => {
     const { stale, fresh } = await staleAndFresh();
     const device = await deviceCode("core.note:read keys.manage");
     await refused(
@@ -244,7 +244,7 @@ describe("approving a device", () => {
     expect(scopesOf(polled.scope)).toEqual(["core.note:read", "keys.manage"]);
   });
 
-  it("refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code", async () => {
+  it("refuses a session that signed in more than fifteen minutes ago 403 for a write, and a fresh session approves the same code", async () => {
     const { stale, fresh } = await staleAndFresh();
     for (const write of ["core.note:write", "*:write", "content:write"]) {
       const device = await deviceCode(`core.note:read ${write}`);
@@ -265,7 +265,7 @@ describe("approving a device", () => {
     }
   });
 
-  it("approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off", async () => {
+  it("approves from a session that signed in more than fifteen minutes ago the scopes that only read, and not the ones left off", async () => {
     const { stale } = await staleAndFresh();
     const device = await deviceCode(
       "core.note:read edge.parent-of:read metadata:read profile.name:read keys.manage core.note:write",
@@ -290,7 +290,7 @@ describe("approving a device", () => {
     );
   });
 
-  it("approves from a session that signed in more than five minutes ago a permission the app was approved for before", async () => {
+  it("approves from a session that signed in more than fifteen minutes ago a permission the app was approved for before", async () => {
     const stale = await signIn();
     const client = await registerDeviceClient();
     const first = await deviceCode("core.note:read keys.manage", client);
@@ -301,7 +301,7 @@ describe("approving a device", () => {
     expect(approvedFirst.status).toBe(200);
     await approvedFirst.body?.cancel();
     expect((await devicePoll(first)).status).toBe(200);
-    await pass(6 * MINUTE);
+    await pass(16 * MINUTE);
     const again = await deviceCode("core.note:read keys.manage", client);
     const approved = await deviceApproval(again, stale, [
       "core.note:read",
@@ -323,7 +323,7 @@ describe("approving a device", () => {
     );
   });
 
-  it("refuses a browser that approves a device code for a permission or a write on a screen left open past five minutes 403, whatever it asks for, and leaves the code pending", async () => {
+  it("refuses a browser that approves a device code for a permission or a write on a screen left open past fifteen minutes 403, whatever it asks for, and leaves the code pending", async () => {
     const { stale, fresh } = await staleAndFresh();
     for (const scope of ["keys.manage", "core.note:write"]) {
       const device = await deviceCode(`core.note:read ${scope}`);
@@ -344,7 +344,7 @@ describe("approving a device", () => {
 });
 
 describe("the device screen", () => {
-  it("shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them", async () => {
+  it("shows a session that signed in more than fifteen minutes ago the request for a permission or a write, with the way to confirm it's them", async () => {
     const { stale, fresh } = await staleAndFresh();
     for (const scope of ["core.note:read keys.manage", "core.note:write"]) {
       const device = await deviceCode(scope);
@@ -353,10 +353,10 @@ describe("the device screen", () => {
       const text = visibleText(await screen.text());
       expect(text, scope).toContain("Confirm it's you");
       expect(text, scope).toContain(
-        "Changes like this need a sign-in from the last 5 minutes.",
+        "Changes like this need a sign-in from the last 15 minutes.",
       );
       // The same request is shown to a session that signed in just now, so a
-      // screen left open can ask when its five minutes run out.
+      // screen left open can ask when its fifteen minutes run out.
       const shown = await deviceScreen(device, fresh);
       expect(shown.status, scope).toBe(200);
       expect(visibleText(await shown.text()), scope).toContain(
@@ -365,7 +365,7 @@ describe("the device screen", () => {
     }
   });
 
-  it("shows a session that signed in more than five minutes ago a request that only reads, with no question", async () => {
+  it("shows a session that signed in more than fifteen minutes ago a request that only reads, with no question", async () => {
     const { stale } = await staleAndFresh();
     const reading = await deviceCode("core.note:read profile.name:read");
     const shown = await deviceScreen(reading, stale);
@@ -423,7 +423,7 @@ async function codeOf(response: Response): Promise<string | null | undefined> {
 }
 
 describe("approving an app", () => {
-  it("refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request", async () => {
+  it("refuses a session that signed in more than fifteen minutes ago 403 for a permission or a write, and a fresh session approves the same request", async () => {
     const { stale, fresh } = await staleAndFresh();
     for (const gated of ["keys.manage", "core.note:write", "content:write"]) {
       const scope = `core.note:read ${gated}`;
@@ -435,7 +435,7 @@ describe("approving an app", () => {
     }
   });
 
-  it("approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off", async () => {
+  it("approves from a session that signed in more than fifteen minutes ago the scopes that only read, and the scopes left off", async () => {
     const { stale } = await staleAndFresh();
     const reads = [
       "core.note:read",
@@ -460,12 +460,12 @@ describe("approving an app", () => {
     expect(scopesOf(exchanged.body.scope)).toEqual([...reads].sort());
   });
 
-  it("approves from a session that signed in more than five minutes ago a permission the app was approved for before, and refuses a second one", async () => {
+  it("approves from a session that signed in more than fifteen minutes ago a permission the app was approved for before, and refuses a second one", async () => {
     const first = await signIn();
     const scope = "core.note:read keys.manage";
     const app = await registerApp(server, `${scope} blobs.manage`);
     await codeFor(server, origin, first, app, scope);
-    await pass(6 * MINUTE);
+    await pass(16 * MINUTE);
     // The witness: the same session is refused a permission the app does not
     // hold, in the same request.
     const wider = `${scope} blobs.manage`;
@@ -477,7 +477,7 @@ describe("approving an app", () => {
     ).toBeTruthy();
   });
 
-  it("refuses a browser that approves a request for a permission or a write on a screen left open past five minutes 403, whatever it asks for, and issues no code", async () => {
+  it("refuses a browser that approves a request for a permission or a write on a screen left open past fifteen minutes 403, whatever it asks for, and issues no code", async () => {
     const { stale, fresh } = await staleAndFresh();
     for (const gated of ["keys.manage", "core.note:write"]) {
       const scope = `core.note:read ${gated}`;
@@ -495,7 +495,7 @@ describe("approving an app", () => {
 });
 
 describe("the authorization screen", () => {
-  it("shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them", async () => {
+  it("shows a session that signed in more than fifteen minutes ago the request for a permission or a write, with the way to confirm it's them", async () => {
     const { stale, fresh } = await staleAndFresh();
     for (const scope of ["core.note:read keys.manage", "core.note:write"]) {
       const app = await registerApp(server, scope);
@@ -505,10 +505,10 @@ describe("the authorization screen", () => {
       const text = visibleText(await screen.text());
       expect(text, scope).toContain("Confirm it's you");
       expect(text, scope).toContain(
-        "Changes like this need a sign-in from the last 5 minutes.",
+        "Changes like this need a sign-in from the last 15 minutes.",
       );
       // The same request is shown to a session that signed in just now, so a
-      // screen left open can ask when its five minutes run out.
+      // screen left open can ask when its fifteen minutes run out.
       const shown = await ownerGet(`${url.pathname}${url.search}`, fresh);
       expect(shown.status, scope).toBe(200);
       expect(visibleText(await shown.text()), scope).toContain(
@@ -517,7 +517,7 @@ describe("the authorization screen", () => {
     }
   });
 
-  it("shows a session that signed in more than five minutes ago a request that only reads, with no question", async () => {
+  it("shows a session that signed in more than fifteen minutes ago a request that only reads, with no question", async () => {
     const { stale } = await staleAndFresh();
     const scope = "core.note:read edge.parent-of:read profile:read";
     const app = await registerApp(server, scope);
@@ -532,7 +532,7 @@ describe("the authorization screen", () => {
     const scope = "core.note:read keys.manage";
     const app = await registerApp(server, scope);
     await codeFor(server, origin, first, app, scope);
-    await pass(6 * MINUTE);
+    await pass(16 * MINUTE);
     const { silent } = await codeFor(server, origin, first, app, scope);
     expect(silent).toBe(true);
   });

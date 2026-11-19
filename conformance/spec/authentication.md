@@ -4,7 +4,7 @@
 
 ### `authentication/passkey-register`
 
-When the owner submits a valid WebAuthn registration with user verification from the instance's origin with a browser session authenticated within five minutes, the server MUST register the passkey for that owner.
+When the owner submits a valid WebAuthn registration with user verification from the instance's origin with a browser session authenticated within fifteen minutes, the server MUST register the passkey for that owner.
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
@@ -144,9 +144,9 @@ When a foreign origin asks to remove an owner passkey, the server MUST refuse it
 
 ### `authentication/passkey-recent-management`
 
-When an owner browser session renames or removes a passkey through `PATCH` or `DELETE /owner/passkeys/{id}`, the server MUST require that the session signed in within five minutes.
+When an owner browser session renames or removes a passkey through `PATCH` or `DELETE /owner/passkeys/{id}`, the server MUST require that the session signed in within fifteen minutes.
 
-**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/confirm-sign-in.test.ts › refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both`.
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`, `compliance/confirm-sign-in.test.ts › refuses a rename and a removal from a session created more than fifteen minutes ago, and a recent session makes both`, `› lets a rename ten minutes after the sign-in pass without asking to sign in again`, `› lets a rename through at exactly fifteen minutes after the sign-in and refuses it one millisecond later`.
 
 ### `authentication/passkey-rename`
 
@@ -180,13 +180,13 @@ When a caller holding `sign_ins.manage` requests `GET /owner/passkeys/add-url`, 
 
 ## Confirming a stale sign-in
 
-A change that needs a sign-in from the last five minutes is refused to an older browser session, and the page asks the owner to confirm it's them in a dialog and then sends the change once more. `POST /auth/confirm` is the one door that answers the dialog. It takes the owner's password or a passkey assertion and nothing else, because the account is the signed-in session's owner. It renews recency by replacing the session: the new session is created now, so a session is recent exactly when it was created in the last five minutes.
+A change that needs a sign-in from the last fifteen minutes is refused to an older browser session, and the page asks the owner to confirm it's them in a dialog and then sends the change once more. `POST /auth/confirm` is the one door that answers the dialog. It takes the owner's password or a passkey assertion and nothing else, because the account is the signed-in session's owner. It renews recency by replacing the session: the new session is created now, so a session is recent exactly when it was created in the last fifteen minutes.
 
 ### `authentication/recent-refusal`
 
-If a change that needs a sign-in from the last five minutes comes from an owner browser session created more than five minutes ago, or dated later than the server's clock, then the server MUST answer `403 forbidden` with `needs` set to `recent_sign_in` in the `error` object's `details`.
+If a change that needs a sign-in from the last fifteen minutes comes from an owner browser session created more than fifteen minutes ago, or dated later than the server's clock, then the server MUST answer `403 forbidden` with `needs` set to `recent_sign_in` in the `error` object's `details`.
 
-**Reason:** A page recognizes this refusal by its detail to open the dialog, so every door that needs a recent sign-in refuses alike, and its message is free to change. A session dated later than the clock, which a clock set back leaves, is no evidence that the owner signed in within five minutes, and `POST /auth/confirm` gives the owner a session dated now.
+**Reason:** A page recognizes this refusal by its detail to open the dialog, so every door that needs a recent sign-in refuses alike, and its message is free to change. A session dated later than the clock, which a clock set back leaves, is no evidence that the owner signed in within fifteen minutes, and `POST /auth/confirm` gives the owner a session dated now.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`, `› refuses a session dated later than the clock until the owner confirms, and then lets the change run`.
 
@@ -196,7 +196,7 @@ When a signed-in owner's browser session sends `POST /auth/confirm` with the own
 
 **Reason:** Recency is the age of the session, so renewing it is making a new one. There is no second timestamp to disagree with the first.
 
-**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› dates the new session from the confirmation, so it goes stale five minutes after it`, `› replaces a stale session when the owner's passkey signs`.
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› dates the new session from the confirmation, so it goes stale fifteen minutes after it`, `› replaces a stale session when the owner's passkey signs`.
 
 ### `authentication/confirm-ends-old`
 
@@ -312,7 +312,7 @@ If a request to `POST /auth/confirm` carries a live owner browser session and co
 
 ### `authentication/passkey-register-recent`
 
-If a browser session created more than five minutes ago asks for passkey registration options or submits a registration, then the server MUST answer `403 forbidden`.
+If a browser session created more than fifteen minutes ago asks for passkey registration options or submits a registration, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › refuses a passkey registration from a stale session`.
 

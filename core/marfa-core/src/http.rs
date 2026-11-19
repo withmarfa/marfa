@@ -3227,7 +3227,7 @@ mod tests {
         if let crate::scripted::Answer::Json { headers, .. } = &mut challenged {
             headers.push((
                 "WWW-Authenticate".into(),
-                "Bearer error=\"insufficient_user_authentication\", max_age=\"300\"".into(),
+                "Bearer error=\"insufficient_user_authentication\", max_age=\"900\"".into(),
             ));
         }
         server.on("/items/x", vec![challenged]);
