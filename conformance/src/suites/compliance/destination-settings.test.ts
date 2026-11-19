@@ -1232,8 +1232,7 @@ describe("a stored store setting that does not read", () => {
           );
         });
         await server.setFault(`resolve:${bucket}.${named}=127.0.0.1`);
-        const { operator } = clientsFor(server);
-        const set = await operator.patchConfig({
+        const set = await clientsFor(server).local.patchConfig({
           object_store_prefix: `fixture-${randomUUID()}`,
         });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
