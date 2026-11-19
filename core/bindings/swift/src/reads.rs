@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::guard::guarded;
 use crate::tables::ChangedTable;
 use crate::{BodyLinks, Core, Edge, Listing, MarfaError, edge, listing};
 
@@ -39,58 +40,60 @@ impl From<marfa_core::CopyChanges> for CopyChanges {
     }
 }
 
-#[uniffi::export]
-impl Core {
-    /// `get` for each id, under one snapshot: each item the copy holds, once
-    /// each, in the order named. An id the copy does not hold is left out,
-    /// and so is an item in the bin unless `include_bin`.
-    pub fn get_items(&self, ids: Vec<String>, include_bin: bool) -> Result<Listing, MarfaError> {
-        Ok(listing(self.inner.get_items_kept(&ids, include_bin)?))
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        /// `get` for each id, under one snapshot: each item the copy holds, once
+        /// each, in the order named. An id the copy does not hold is left out,
+        /// and so is an item in the bin unless `include_bin`.
+        pub fn get_items(&self, ids: Vec<String>, include_bin: bool) -> Result<Listing, MarfaError> {
+            Ok(listing(self.inner.get_items_kept(&ids, include_bin)?))
+        }
 
-    /// The edge the copy holds by `id`, or `nil`.
-    pub fn edge(&self, id: String) -> Result<Option<Edge>, MarfaError> {
-        Ok(self
-            .inner
-            .get_edge_kept(&id)?
-            .map(|(held, why)| edge(held, why)))
-    }
+        /// The edge the copy holds by `id`, or `nil`.
+        pub fn edge(&self, id: String) -> Result<Option<Edge>, MarfaError> {
+            Ok(self
+                .inner
+                .get_edge_kept(&id)?
+                .map(|(held, why)| edge(held, why)))
+        }
 
-    /// Each edge the copy holds of `ids`, once each, in the order named.
-    pub fn get_edges(&self, ids: Vec<String>) -> Result<Vec<Edge>, MarfaError> {
-        Ok(self
-            .inner
-            .get_edges_kept(&ids)?
-            .into_iter()
-            .map(|(held, why)| edge(held, why))
-            .collect())
-    }
+        /// Each edge the copy holds of `ids`, once each, in the order named.
+        pub fn get_edges(&self, ids: Vec<String>) -> Result<Vec<Edge>, MarfaError> {
+            Ok(self
+                .inner
+                .get_edges_kept(&ids)?
+                .into_iter()
+                .map(|(held, why)| edge(held, why))
+                .collect())
+        }
 
-    /// `body_links` for each item the copy holds outside the bin and can
-    /// read, by id; any other id is left out.
-    pub fn body_links_of(
-        &self,
-        ids: Vec<String>,
-    ) -> Result<HashMap<String, BodyLinks>, MarfaError> {
-        Ok(self
-            .inner
-            .body_links_of(&ids)?
-            .into_iter()
-            .map(|(id, links)| (id, links.into()))
-            .collect())
-    }
+        /// `body_links` for each item the copy holds outside the bin and can
+        /// read, by id; any other id is left out.
+        pub fn body_links_of(
+            &self,
+            ids: Vec<String>,
+        ) -> Result<HashMap<String, BodyLinks>, MarfaError> {
+            Ok(self
+                .inner
+                .body_links_of(&ids)?
+                .into_iter()
+                .map(|(id, links)| (id, links.into()))
+                .collect())
+        }
 
-    /// The items and edges changed since `cursor`, or `everything` where
-    /// they cannot be named one by one, such as with no cursor or more than
-    /// `most` changed. Throws `HydrationIncomplete` where the copy is not
-    /// whole, as every read of edges does. Take the cursor before reading
-    /// what it covers, and keep the earlier cursor until that read succeeds.
-    pub fn changes_since(
-        &self,
-        cursor: Option<String>,
-        most: u32,
-    ) -> Result<CopyChanges, MarfaError> {
-        Ok(self.inner.changes_since(cursor.as_deref(), most)?.into())
+        /// The items and edges changed since `cursor`, or `everything` where
+        /// they cannot be named one by one, such as with no cursor or more than
+        /// `most` changed. Throws `HydrationIncomplete` where the copy is not
+        /// whole, as every read of edges does. Take the cursor before reading
+        /// what it covers, and keep the earlier cursor until that read succeeds.
+        pub fn changes_since(
+            &self,
+            cursor: Option<String>,
+            most: u32,
+        ) -> Result<CopyChanges, MarfaError> {
+            Ok(self.inner.changes_since(cursor.as_deref(), most)?.into())
+        }
     }
 }
 

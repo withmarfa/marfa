@@ -1,4 +1,5 @@
 use crate::MarfaError;
+use crate::guard::guarded;
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct InstanceDescription {
@@ -9,14 +10,15 @@ pub struct InstanceDescription {
     pub features: Vec<String>,
 }
 
-#[uniffi::export]
-pub fn instance_description(url: String) -> Result<InstanceDescription, MarfaError> {
-    let description = marfa_core::instance_description(&url)?;
-    Ok(InstanceDescription {
-        name: description.name,
-        version: description.version,
-        instance_id: description.instance_id,
-        contract: description.contract,
-        features: description.features,
-    })
+guarded! {
+    pub fn instance_description(url: String) -> Result<InstanceDescription, MarfaError> {
+        let description = marfa_core::instance_description(&url)?;
+        Ok(InstanceDescription {
+            name: description.name,
+            version: description.version,
+            instance_id: description.instance_id,
+            contract: description.contract,
+            features: description.features,
+        })
+    }
 }

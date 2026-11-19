@@ -15,6 +15,7 @@ mod counts;
 mod filters;
 mod folder_settings;
 mod folders;
+mod guard;
 mod instance;
 mod json;
 mod packed;
@@ -25,6 +26,7 @@ mod trash;
 mod views;
 
 pub use counts::{Counted, ItemCount, StatusGroups};
+use guard::guarded;
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
 pub use renewal::{CredentialRenewer, RenewalError, RenewalFailure};
@@ -342,6 +344,7 @@ pub struct Stop {
     flag: Arc<AtomicBool>,
 }
 
+// unguarded: sets a flag.
 #[uniffi::export]
 impl Stop {
     #[uniffi::constructor]
@@ -1665,6 +1668,7 @@ impl MarfaError {
     }
 }
 
+// unguarded: names the variant it is called on.
 #[uniffi::export]
 impl MarfaError {
     /// The classification shared with the command line and Node binding.
@@ -2300,6 +2304,7 @@ pub struct BlobPath {
     inner: marfa_core::BlobPath,
 }
 
+// unguarded: converts a path the object holds.
 #[uniffi::export]
 impl BlobPath {
     pub fn path(&self) -> String {
@@ -2438,6 +2443,7 @@ impl Subscription {
     }
 }
 
+// unguarded: raises a flag or stops a place in a watch, and answers nothing.
 #[uniffi::export]
 impl Subscription {
     pub fn stop(&self) {
@@ -2496,22 +2502,11 @@ impl Core {
     }
 }
 
+// unguarded: `follow` runs on a thread of its own, where the core ends a panic
+// with a fault it hands to `ended`, and `held_handle` matches a value the core
+// holds.
 #[uniffi::export]
 impl Core {
-    /// Opens a store another process writes, to read it only: never the
-    /// writer, never a write, and a path with no store is refused.
-    #[uniffi::constructor]
-    pub fn open_reader(path: String) -> Result<Arc<Self>, MarfaError> {
-        Ok(Arc::new(Core {
-            inner: Arc::new(marfa_core::Core::open_reader(path)?),
-        }))
-    }
-
-    /// A number that moves each time another process saves to the store.
-    pub fn data_version(&self) -> Result<i64, MarfaError> {
-        Ok(self.inner.data_version()?)
-    }
-
     /// Holds the event stream open on a thread of its own and applies each
     /// event as it arrives, telling `listener` of each change. On a copy
     /// never hydrated, or whose hydration was interrupted, it waits, asking
@@ -2541,355 +2536,6 @@ impl Core {
         Subscription::raising(stop)
     }
 
-    /// Adds `listener` to this store's watch, and starts it if it was idle.
-    /// However many listeners there are, one source runs: a writer with a
-    /// server holds the event stream and tells what `follow` tells, and a
-    /// reading handle tells `Saved` each time another process saves. A
-    /// hydration or catch-up takes the stream for its duration and gives it
-    /// back, and no listener is told of the gap.
-    ///
-    /// A listener hears what changes after it joins, and is first told the
-    /// outage or failure that holds then. `told_unreachable` says the app was
-    /// last told `ServerUnreachable` by an earlier watch, so it is told
-    /// `ServerReachable` once the server is reached, and not
-    /// `ServerUnreachable` again before. A request that reaches the server
-    /// tells `ServerReachable` to a listener that was told it did not:
-    /// the follow's, a hydration's or catch-up's that succeeded, or a drain's
-    /// that answered a write. A follow that fails ends no listener: each is
-    /// told `WatchFailed` once, and no stream is held until the next
-    /// hydration or catch-up. The first stream the watch has after the server
-    /// was lost, or after a drain left a write undelivered, is drained to
-    /// once, and the drain is told as `follow` tells it.
-    ///
-    /// Throws `NoServer` for a writer with no server. `changed` must return
-    /// promptly, and a hydration or catch-up called from inside it throws
-    /// `Invalid`.
-    pub fn watch(
-        self: Arc<Self>,
-        told_unreachable: bool,
-        listener: Arc<dyn ChangeListener>,
-    ) -> Result<Arc<Subscription>, MarfaError> {
-        let listening = self
-            .inner
-            .watch(told_unreachable, Arc::new(Telling(listener)))?;
-        Ok(Arc::new(Subscription {
-            ending: Ending::Listening(listening),
-        }))
-    }
-
-    /// Only the writer creates a missing store. Omit both `url` and `key` for offline use.
-    /// With both set, `renewer` can refresh a key the server refuses.
-    #[uniffi::constructor(default(renewer = None))]
-    pub fn open(
-        path: String,
-        url: Option<String>,
-        key: Option<String>,
-        renewer: Option<Arc<dyn CredentialRenewer>>,
-    ) -> Result<Arc<Self>, MarfaError> {
-        let server = server_of(url, key)?;
-        let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
-        Ok(Self::renewing(
-            marfa_core::Core::open(path, server)?,
-            renewal,
-        ))
-    }
-
-    /// Replaces the store at `path` that `open` refuses with `WrongSchema`
-    /// by an empty one, and opens it, taking `url`, `key` and `renewer` as
-    /// `open` does. Refuses with `ReadingHandle` while another process
-    /// writes the store, with `WrongSchema` and its `unsent` count while it
-    /// holds a write the server has not taken, and with `Invalid` where
-    /// `open` would not refuse it, leaving the store as it is. The new store
-    /// keeps only the old store's file budget, so what else only the old store
-    /// held, such as pins, is lost: read it first.
-    #[uniffi::constructor(default(renewer = None))]
-    pub fn replace_refused(
-        path: String,
-        url: Option<String>,
-        key: Option<String>,
-        renewer: Option<Arc<dyn CredentialRenewer>>,
-    ) -> Result<Arc<Self>, MarfaError> {
-        let server = server_of(url, key)?;
-        let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
-        Ok(Self::renewing(
-            marfa_core::Core::replace_refused(path, server)?,
-            renewal,
-        ))
-    }
-
-    /// Replaces the local copy with the declared types at `tier`, one tier or
-    /// `all` for both. `["*"]` alone is every type but `system.*`, hydrated in
-    /// one pass with no need to read the catalog and name its types first;
-    /// beside `system.*` types it adds them, and beside any other type it is
-    /// refused `invalid`.
-    pub fn hydrate(
-        &self,
-        types: Vec<String>,
-        tier: SliceTier,
-        stop: Option<Arc<Stop>>,
-    ) -> Result<HydrateReport, MarfaError> {
-        self.hydrate_with(types, tier, Vec::new(), false, stop)
-    }
-
-    /// A hydration that also holds every edge of `edge_types` the key reads,
-    /// whichever ends the copy holds. `types` reads as in `hydrate`, so
-    /// `["*"]` alone is every type but `system.*`.
-    ///
-    /// With `in_place_only`, it fills only a copy whose cursor aged out, and
-    /// only in place: where the instance, the key's reach or the slice has
-    /// changed, the server was restored to an earlier point, or the copy is
-    /// not stale, it is refused `copy_expired` with the reason
-    /// (`instance_changed`, `reach_changed`, `slice_changed`,
-    /// `head_past_log` or `not_stale`) before it changes anything, and the
-    /// copy, its queue and its files stay as they were. Where the server
-    /// refuses the credential or the reach, the stale copy still ends,
-    /// keeping its queue, which can also carry `reach_changed`: read
-    /// `status().hydration` before offering to keep the copy stale, since a refused
-    /// fill leaves a stale copy `stale` and an ended copy is `expired`.
-    #[uniffi::method(default(in_place_only = false))]
-    pub fn hydrate_with(
-        &self,
-        types: Vec<String>,
-        tier: SliceTier,
-        edge_types: Vec<String>,
-        in_place_only: bool,
-        stop: Option<Arc<Stop>>,
-    ) -> Result<HydrateReport, MarfaError> {
-        let stop = flag_of(stop);
-        Ok(if in_place_only {
-            self.inner
-                .hydrate_in_place_only(&types, tier.into(), &edge_types, &stop)?
-        } else {
-            self.inner
-                .hydrate_until(&types, tier.into(), &edge_types, &stop)?
-        }
-        .into())
-    }
-
-    /// Declares the types this app saves, each an object with its `id`, its
-    /// `fields` and whatever else a type carries. A copy that has never
-    /// reached a server checks what it queues against them and the types
-    /// Marfa ships, and a hydration registers the ones the instance lacks,
-    /// where the key may. The call is the app's whole set and replaces every
-    /// earlier declaration. A set that names one id twice throws `Invalid`.
-    pub fn declare_types(&self, types: Vec<JsonObject>) -> Result<(), MarfaError> {
-        let parsed = types
-            .into_iter()
-            .map(|declaration| declaration.into_map().map(serde_json::Value::Object))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(self.inner.declare_types(&parsed)?)
-    }
-
-    /// The declarations this copy holds, with the empty `fields` and the
-    /// `version` a registration needs filled in where the app left them out.
-    pub fn declared_types(&self) -> Result<Vec<JsonObject>, MarfaError> {
-        self.inner
-            .declared_types()?
-            .into_iter()
-            .map(|declaration| match declaration {
-                serde_json::Value::Object(map) => Ok(map.into()),
-                other => Err(MarfaError::Store {
-                    message: format!("a declared type is not an object: {other}"),
-                }),
-            })
-            .collect()
-    }
-
-    /// Holds one row by id whatever the slice says of it, read now. An item
-    /// in the bin throws `NotFound` with the code `trashed`.
-    pub fn pin(&self, id: String) -> Result<PinReport, MarfaError> {
-        Ok(PinReport {
-            pinned: true,
-            was_pinned: self.inner.pin(&id)?,
-        })
-    }
-
-    /// Stops holding a row by id; one the slice does not take goes, unless
-    /// writes to it still wait.
-    pub fn unpin(&self, id: String) -> Result<PinReport, MarfaError> {
-        Ok(PinReport {
-            pinned: false,
-            was_pinned: self.inner.unpin(&id)?,
-        })
-    }
-
-    pub fn catch_up(&self, stop: Option<Arc<Stop>>) -> Result<CatchUpReport, CatchUpError> {
-        let report = self.inner.catch_up_until(&flag_of(stop))?;
-        Ok(CatchUpReport {
-            applied: report.applied,
-            skipped: report.skipped,
-            read_only_held: report.read_only_held,
-            cursor: report.cursor,
-            catalog_changed: report.catalog_changed,
-            changed_tables: report.changed_tables.into_iter().map(Into::into).collect(),
-        })
-    }
-
-    /// Without a `sort` the list is newest created first, oldest changed
-    /// first where `updated_after` is set, or newest binned first for the bin
-    /// alone.
-    pub fn list(&self, filters: ListFilters, sort: Option<Sort>) -> Result<Listing, MarfaError> {
-        let filters = filters.into();
-        let sort = sort.and_then(|sort| sort.named(&filters));
-        Ok(listing(self.inner.list_kept(&filters, sort)?))
-    }
-
-    pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
-        Ok(self
-            .inner
-            .get_kept(&id)?
-            .map(|(held, shown)| item(held, shown)))
-    }
-
-    pub fn edges_from(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
-        Ok(self
-            .inner
-            .edges_from_kept(&id)?
-            .into_iter()
-            .map(|(held, why)| edge(held, why))
-            .collect())
-    }
-
-    pub fn edges_to(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
-        Ok(self
-            .inner
-            .edges_to_kept(&id)?
-            .into_iter()
-            .map(|(held, why)| edge(held, why))
-            .collect())
-    }
-
-    pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>, MarfaError> {
-        Ok(self
-            .inner
-            .edges_of_type_kept(&edge_type)?
-            .into_iter()
-            .map(|(held, why)| edge(held, why))
-            .collect())
-    }
-
-    /// The ID of the item a conflicted copy was made from, or `nil` where
-    /// `id` is not a held conflicted copy outside the bin.
-    pub fn original_of_conflicted_copy(&self, id: String) -> Result<Option<String>, MarfaError> {
-        Ok(self.inner.original_of_conflicted_copy(&id)?)
-    }
-
-    /// The held conflicted copies made from `id` that are outside the bin,
-    /// oldest link first.
-    pub fn conflicted_copies_of(&self, id: String) -> Result<Vec<Item>, MarfaError> {
-        Ok(self
-            .inner
-            .conflicted_copies_kept(&id)?
-            .into_iter()
-            .map(|(held, shown)| item(held, shown))
-            .collect())
-    }
-
-    pub fn search(
-        &self,
-        query: String,
-        filters: SearchFilters,
-        limit: u32,
-    ) -> Result<Found, MarfaError> {
-        Ok(found(self.inner.search_kept(
-            &query,
-            &filters.into(),
-            limit as usize,
-        )?))
-    }
-
-    pub fn status(&self) -> Result<Status, MarfaError> {
-        let status = self.inner.status()?;
-        Ok(Status {
-            server_origin: status.server_origin,
-            instance_id: status.instance_id,
-            slice_types: status.slice_types,
-            slice_tier: status.slice_tier.map(Into::into),
-            slice_edge_types: status.slice_edge_types,
-            pinned: status.pinned,
-            event_cursor: status.event_cursor,
-            hydration: match status.hydration {
-                marfa_core::Hydration::Never => Hydration::Never,
-                marfa_core::Hydration::InProgress => Hydration::InProgress,
-                marfa_core::Hydration::Complete => Hydration::Complete,
-                marfa_core::Hydration::Expired => Hydration::Expired,
-                marfa_core::Hydration::Stale => Hydration::Stale,
-            },
-            items: status.items,
-            items_expected: status.items_expected,
-            items_listed: status.items_listed,
-            edges: status.edges,
-            catalog_version: status.catalog_version,
-            synced_at: status.synced_at,
-            file_cache: status.file_cache.into(),
-        })
-    }
-
-    /// Every item type the copy holds, by id, read from the copy alone.
-    pub fn item_types(&self) -> Result<Vec<ItemType>, MarfaError> {
-        Ok(self
-            .inner
-            .item_types()?
-            .into_iter()
-            .map(Into::into)
-            .collect())
-    }
-
-    /// `NotFound` where the catalog holds no such type.
-    pub fn item_type(&self, id: String) -> Result<ItemType, MarfaError> {
-        Ok(self.inner.item_type(&id)?.into())
-    }
-
-    /// The name and preview text of each item, in order, by the copy's
-    /// held catalog and rows. An unknown type is named by the fallback fields. An
-    /// item given with its id is named after its host where it is a part
-    /// the copy holds a host for.
-    pub fn item_displays(
-        &self,
-        items: Vec<ItemDisplayInput>,
-    ) -> Result<Vec<ItemDisplay>, MarfaError> {
-        let items = items
-            .into_iter()
-            .map(|item| Ok((item.id, item.r#type, item.properties.into_map()?)))
-            .collect::<Result<Vec<_>, MarfaError>>()?;
-        let items: Vec<_> = items
-            .iter()
-            .map(|(id, item_type, properties)| (id.as_deref(), item_type.as_str(), properties))
-            .collect();
-        Ok(self
-            .inner
-            .item_displays(&items)?
-            .into_iter()
-            .map(Into::into)
-            .collect())
-    }
-
-    /// Every edge type the copy holds, by id, read from the copy alone.
-    pub fn edge_types(&self) -> Result<Vec<EdgeType>, MarfaError> {
-        Ok(self
-            .inner
-            .edge_types()?
-            .into_iter()
-            .map(Into::into)
-            .collect())
-    }
-
-    /// `NotFound` where the catalog holds no such edge type.
-    pub fn edge_type(&self, id: String) -> Result<EdgeType, MarfaError> {
-        Ok(self.inner.edge_type(&id)?.into())
-    }
-
-    /// The server's item types and edge types, read from it now, so an app
-    /// can choose a slice before a first hydration. Nothing in the copy
-    /// changes. `NoServer` for a copy with no server.
-    pub fn server_catalog(&self, stop: Option<Arc<Stop>>) -> Result<ServerCatalog, MarfaError> {
-        let served = self.inner.server_catalog_until(&flag_of(stop))?;
-        Ok(ServerCatalog {
-            item_types: served.item_types.into_iter().map(Into::into).collect(),
-            edge_types: served.edge_types.into_iter().map(Into::into).collect(),
-        })
-    }
-
     /// Which handle this process holds: the one that may write, or a second
     /// opener that reads and refuses every write. Not `handle`, which the
     /// generated Swift object already uses for its own pointer.
@@ -2899,466 +2545,837 @@ impl Core {
             marfa_core::Handle::Reader => Handle::Reader,
         }
     }
+}
 
-    /// Writes a new item into the local copy and queues it for the server.
-    pub fn create_item(&self, draft: Draft) -> Result<QueuedWrite, MarfaError> {
-        let draft = marfa_core::Draft {
-            properties: draft.properties.into_map()?,
-            r#type: draft.r#type,
-            id: draft.id,
-            tags: draft.tags,
-            tier: draft.tier.map(Into::into),
-            state: draft.state.map(Into::into),
-            source: draft.source,
-            source_id: draft.source_id,
-            occurred_at: draft.occurred_at,
-            capture_latitude: draft.capture_latitude,
-            capture_longitude: draft.capture_longitude,
-            edges: draft.edges.into_iter().collect(),
-            base_version: draft.base_version,
-        };
-        queued(self.inner.create_item(&draft)?)
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        /// Opens a store another process writes, to read it only: never the
+        /// writer, never a write, and a path with no store is refused.
+        #[uniffi::constructor]
+        pub fn open_reader(path: String) -> Result<Arc<Self>, MarfaError> {
+            Ok(Arc::new(Core {
+                inner: Arc::new(marfa_core::Core::open_reader(path)?),
+            }))
+        }
 
-    /// Changes an item in the local copy and queues the change.
-    pub fn update_item(&self, id: String, edit: Edit) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.update_item(&id, &edit.core()?)?)
-    }
+        /// A number that moves each time another process saves to the store.
+        pub fn data_version(&self) -> Result<i64, MarfaError> {
+            Ok(self.inner.data_version()?)
+        }
 
-    /// Changes an item in the local copy and queues the change, based on a
-    /// version read before the one the copy holds now, which the server
-    /// merges the change against.
-    pub fn update_item_as_read(&self, id: String, edit: Edit) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.update_item_as_read(&id, &edit.core()?)?)
-    }
+        /// Adds `listener` to this store's watch, and starts it if it was idle.
+        /// However many listeners there are, one source runs: a writer with a
+        /// server holds the event stream and tells what `follow` tells, and a
+        /// reading handle tells `Saved` each time another process saves. A
+        /// hydration or catch-up takes the stream for its duration and gives it
+        /// back, and no listener is told of the gap.
+        ///
+        /// A listener hears what changes after it joins, and is first told the
+        /// outage or failure that holds then. `told_unreachable` says the app was
+        /// last told `ServerUnreachable` by an earlier watch, so it is told
+        /// `ServerReachable` once the server is reached, and not
+        /// `ServerUnreachable` again before. A request that reaches the server
+        /// tells `ServerReachable` to a listener that was told it did not:
+        /// the follow's, a hydration's or catch-up's that succeeded, or a drain's
+        /// that answered a write. A follow that fails ends no listener: each is
+        /// told `WatchFailed` once, and no stream is held until the next
+        /// hydration or catch-up. The first stream the watch has after the server
+        /// was lost, or after a drain left a write undelivered, is drained to
+        /// once, and the drain is told as `follow` tells it.
+        ///
+        /// Throws `NoServer` for a writer with no server. `changed` must return
+        /// promptly, and a hydration or catch-up called from inside it throws
+        /// `Invalid`.
+        pub fn watch(
+            self: Arc<Self>,
+            told_unreachable: bool,
+            listener: Arc<dyn ChangeListener>,
+        ) -> Result<Arc<Subscription>, MarfaError> {
+            let listening = self
+                .inner
+                .watch(told_unreachable, Arc::new(Telling(listener)))?;
+            Ok(Arc::new(Subscription {
+                ending: Ending::Listening(listening),
+            }))
+        }
 
-    /// Moves an item to the bin locally and queues the delete.
-    pub fn delete_item(&self, id: String) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.delete_item(&id)?)
-    }
+        /// Only the writer creates a missing store. Omit both `url` and `key` for offline use.
+        /// With both set, `renewer` can refresh a key the server refuses.
+        #[uniffi::constructor(default(renewer = None))]
+        pub fn open(
+            path: String,
+            url: Option<String>,
+            key: Option<String>,
+            renewer: Option<Arc<dyn CredentialRenewer>>,
+        ) -> Result<Arc<Self>, MarfaError> {
+            let server = server_of(url, key)?;
+            let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
+            Ok(Self::renewing(
+                marfa_core::Core::open(path, server)?,
+                renewal,
+            ))
+        }
 
-    /// Destroys an item in the bin on the server now, never queued, and
-    /// takes it, its edges and its pin out of the copy once the server
-    /// accepts it. Sent at `version`, the one the caller was shown, such as
-    /// a bin entry's, or else the version the copy holds, and only with no
-    /// write to the item waiting. Before anything is sent it throws
-    /// `NotFound` with `not_held` for an item the copy does not hold where no
-    /// version is named, `Validation` with `invalid_transition` for one the
-    /// copy shows outside the bin, and `Invalid` while a write waits.
-    /// Every error leaves the copy and the queue as they were, but
-    /// `CopyExpired` for another instance at the origin. `Network` means the
-    /// server was not reached or did not answer, and in the second case it
-    /// may have purged the item, which its event then shows. The server
-    /// refuses an item it does not hold in the bin `Validation` with
-    /// `invalid_transition`, one that moved since the copy read it `Server`
-    /// with the status 409 and `version_conflict`, and a key without
-    /// `items.purge`, or without write on the item's type, `Forbidden`.
-    pub fn purge_item(&self, id: String, version: Option<i64>) -> Result<(), MarfaError> {
-        Ok(self.inner.purge_item(&id, version)?)
-    }
+        /// Replaces the store at `path` that `open` refuses with `WrongSchema`
+        /// by an empty one, and opens it, taking `url`, `key` and `renewer` as
+        /// `open` does. Refuses with `ReadingHandle` while another process
+        /// writes the store, with `WrongSchema` and its `unsent` count while it
+        /// holds a write the server has not taken, and with `Invalid` where
+        /// `open` would not refuse it, leaving the store as it is. The new store
+        /// keeps only the old store's file budget, so what else only the old store
+        /// held, such as pins, is lost: read it first.
+        #[uniffi::constructor(default(renewer = None))]
+        pub fn replace_refused(
+            path: String,
+            url: Option<String>,
+            key: Option<String>,
+            renewer: Option<Arc<dyn CredentialRenewer>>,
+        ) -> Result<Arc<Self>, MarfaError> {
+            let server = server_of(url, key)?;
+            let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
+            Ok(Self::renewing(
+                marfa_core::Core::replace_refused(path, server)?,
+                renewal,
+            ))
+        }
 
-    /// A page of the server's bin, newest binned first, read online and held
-    /// nowhere in the copy. Offline it throws `Network`, and `NoServer` for a copy with
-    /// none.
-    pub fn bin(
-        &self,
-        r#type: Option<String>,
-        cursor: Option<String>,
-        limit: u32,
-    ) -> Result<BinPage, MarfaError> {
-        let page = self
-            .inner
-            .bin(r#type.as_deref(), cursor.as_deref(), limit)?;
-        Ok(BinPage {
-            items: page
-                .items
+        /// Replaces the local copy with the declared types at `tier`, one tier or
+        /// `all` for both. `["*"]` alone is every type but `system.*`, hydrated in
+        /// one pass with no need to read the catalog and name its types first;
+        /// beside `system.*` types it adds them, and beside any other type it is
+        /// refused `invalid`.
+        pub fn hydrate(
+            &self,
+            types: Vec<String>,
+            tier: SliceTier,
+            stop: Option<Arc<Stop>>,
+        ) -> Result<HydrateReport, MarfaError> {
+            self.hydrate_with(types, tier, Vec::new(), false, stop)
+        }
+
+        /// A hydration that also holds every edge of `edge_types` the key reads,
+        /// whichever ends the copy holds. `types` reads as in `hydrate`, so
+        /// `["*"]` alone is every type but `system.*`.
+        ///
+        /// With `in_place_only`, it fills only a copy whose cursor aged out, and
+        /// only in place: where the instance, the key's reach or the slice has
+        /// changed, the server was restored to an earlier point, or the copy is
+        /// not stale, it is refused `copy_expired` with the reason
+        /// (`instance_changed`, `reach_changed`, `slice_changed`,
+        /// `head_past_log` or `not_stale`) before it changes anything, and the
+        /// copy, its queue and its files stay as they were. Where the server
+        /// refuses the credential or the reach, the stale copy still ends,
+        /// keeping its queue, which can also carry `reach_changed`: read
+        /// `status().hydration` before offering to keep the copy stale, since a refused
+        /// fill leaves a stale copy `stale` and an ended copy is `expired`.
+        #[uniffi::method(default(in_place_only = false))]
+        pub fn hydrate_with(
+            &self,
+            types: Vec<String>,
+            tier: SliceTier,
+            edge_types: Vec<String>,
+            in_place_only: bool,
+            stop: Option<Arc<Stop>>,
+        ) -> Result<HydrateReport, MarfaError> {
+            let stop = flag_of(stop);
+            Ok(if in_place_only {
+                self.inner
+                    .hydrate_in_place_only(&types, tier.into(), &edge_types, &stop)?
+            } else {
+                self.inner
+                    .hydrate_until(&types, tier.into(), &edge_types, &stop)?
+            }
+            .into())
+        }
+
+        /// Declares the types this app saves, each an object with its `id`, its
+        /// `fields` and whatever else a type carries. A copy that has never
+        /// reached a server checks what it queues against them and the types
+        /// Marfa ships, and a hydration registers the ones the instance lacks,
+        /// where the key may. The call is the app's whole set and replaces every
+        /// earlier declaration. A set that names one id twice throws `Invalid`.
+        pub fn declare_types(&self, types: Vec<JsonObject>) -> Result<(), MarfaError> {
+            let parsed = types
+                .into_iter()
+                .map(|declaration| declaration.into_map().map(serde_json::Value::Object))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(self.inner.declare_types(&parsed)?)
+        }
+
+        /// The declarations this copy holds, with the empty `fields` and the
+        /// `version` a registration needs filled in where the app left them out.
+        pub fn declared_types(&self) -> Result<Vec<JsonObject>, MarfaError> {
+            self.inner
+                .declared_types()?
+                .into_iter()
+                .map(|declaration| match declaration {
+                    serde_json::Value::Object(map) => Ok(map.into()),
+                    other => Err(MarfaError::Store {
+                        message: format!("a declared type is not an object: {other}"),
+                    }),
+                })
+                .collect()
+        }
+
+        /// Holds one row by id whatever the slice says of it, read now. An item
+        /// in the bin throws `NotFound` with the code `trashed`.
+        pub fn pin(&self, id: String) -> Result<PinReport, MarfaError> {
+            Ok(PinReport {
+                pinned: true,
+                was_pinned: self.inner.pin(&id)?,
+            })
+        }
+
+        /// Stops holding a row by id; one the slice does not take goes, unless
+        /// writes to it still wait.
+        pub fn unpin(&self, id: String) -> Result<PinReport, MarfaError> {
+            Ok(PinReport {
+                pinned: false,
+                was_pinned: self.inner.unpin(&id)?,
+            })
+        }
+
+        pub fn catch_up(&self, stop: Option<Arc<Stop>>) -> Result<CatchUpReport, CatchUpError> {
+            let report = self.inner.catch_up_until(&flag_of(stop))?;
+            Ok(CatchUpReport {
+                applied: report.applied,
+                skipped: report.skipped,
+                read_only_held: report.read_only_held,
+                cursor: report.cursor,
+                catalog_changed: report.catalog_changed,
+                changed_tables: report.changed_tables.into_iter().map(Into::into).collect(),
+            })
+        }
+
+        /// Without a `sort` the list is newest created first, oldest changed
+        /// first where `updated_after` is set, or newest binned first for the bin
+        /// alone.
+        pub fn list(&self, filters: ListFilters, sort: Option<Sort>) -> Result<Listing, MarfaError> {
+            let filters = filters.into();
+            let sort = sort.and_then(|sort| sort.named(&filters));
+            Ok(listing(self.inner.list_kept(&filters, sort)?))
+        }
+
+        pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
+            Ok(self
+                .inner
+                .get_kept(&id)?
+                .map(|(held, shown)| item(held, shown)))
+        }
+
+        pub fn edges_from(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
+            Ok(self
+                .inner
+                .edges_from_kept(&id)?
+                .into_iter()
+                .map(|(held, why)| edge(held, why))
+                .collect())
+        }
+
+        pub fn edges_to(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
+            Ok(self
+                .inner
+                .edges_to_kept(&id)?
+                .into_iter()
+                .map(|(held, why)| edge(held, why))
+                .collect())
+        }
+
+        pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>, MarfaError> {
+            Ok(self
+                .inner
+                .edges_of_type_kept(&edge_type)?
+                .into_iter()
+                .map(|(held, why)| edge(held, why))
+                .collect())
+        }
+
+        /// The ID of the item a conflicted copy was made from, or `nil` where
+        /// `id` is not a held conflicted copy outside the bin.
+        pub fn original_of_conflicted_copy(&self, id: String) -> Result<Option<String>, MarfaError> {
+            Ok(self.inner.original_of_conflicted_copy(&id)?)
+        }
+
+        /// The held conflicted copies made from `id` that are outside the bin,
+        /// oldest link first.
+        pub fn conflicted_copies_of(&self, id: String) -> Result<Vec<Item>, MarfaError> {
+            Ok(self
+                .inner
+                .conflicted_copies_kept(&id)?
                 .into_iter()
                 .map(|(held, shown)| item(held, shown))
-                .collect(),
-            next_cursor: page.next_cursor,
-        })
-    }
+                .collect())
+        }
 
-    /// Takes an item out of the bin and queues the restore: locally where the
-    /// copy holds it, and by id where it does not, the item arriving once the
-    /// server answers where the slice takes it.
-    pub fn restore_item(&self, id: String) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.restore_item(&id)?)
-    }
+        pub fn search(
+            &self,
+            query: String,
+            filters: SearchFilters,
+            limit: u32,
+        ) -> Result<Found, MarfaError> {
+            Ok(found(self.inner.search_kept(
+                &query,
+                &filters.into(),
+                limit as usize,
+            )?))
+        }
 
-    /// Moves an item to another lifecycle state.
-    pub fn transition_item(&self, id: String, state: ItemState) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.transition_item(&id, state.into())?)
-    }
+        pub fn status(&self) -> Result<Status, MarfaError> {
+            let status = self.inner.status()?;
+            Ok(Status {
+                server_origin: status.server_origin,
+                instance_id: status.instance_id,
+                slice_types: status.slice_types,
+                slice_tier: status.slice_tier.map(Into::into),
+                slice_edge_types: status.slice_edge_types,
+                pinned: status.pinned,
+                event_cursor: status.event_cursor,
+                hydration: match status.hydration {
+                    marfa_core::Hydration::Never => Hydration::Never,
+                    marfa_core::Hydration::InProgress => Hydration::InProgress,
+                    marfa_core::Hydration::Complete => Hydration::Complete,
+                    marfa_core::Hydration::Expired => Hydration::Expired,
+                    marfa_core::Hydration::Stale => Hydration::Stale,
+                },
+                items: status.items,
+                items_expected: status.items_expected,
+                items_listed: status.items_listed,
+                edges: status.edges,
+                catalog_version: status.catalog_version,
+                synced_at: status.synced_at,
+                file_cache: status.file_cache.into(),
+            })
+        }
 
-    /// Throws the error `create_edge` would throw for `draft` now, and
-    /// queues nothing. Returning is not the server's verdict, which a queued
-    /// edge still meets.
-    pub fn check_edge(&self, draft: EdgeDraft) -> Result<(), MarfaError> {
-        let draft = marfa_core::EdgeDraft {
-            properties: draft.properties.into_map()?,
-            from_id: draft.from_id,
-            to_id: draft.to_id,
-            edge_type: draft.edge_type,
-            id: draft.id,
-        };
-        Ok(self.inner.check_edge(&draft)?)
-    }
+        /// Every item type the copy holds, by id, read from the copy alone.
+        pub fn item_types(&self) -> Result<Vec<ItemType>, MarfaError> {
+            Ok(self
+                .inner
+                .item_types()?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        }
 
-    /// Throws the error `update_edge` would throw for a move of edge `id`'s
-    /// end now, whatever version the edit would carry, and queues nothing. A
-    /// move onto the end the edge holds already changes nothing and returns.
-    /// Returning is not the server's verdict, which a queued move still meets.
-    pub fn check_edge_move(&self, id: String, moves: EdgeMove) -> Result<(), MarfaError> {
-        let end = match moves.end {
-            EdgeEnd::From => marfa_core::End::From,
-            EdgeEnd::To => marfa_core::End::To,
-        };
-        Ok(self.inner.check_edge_move(&id, end, &moves.to)?)
-    }
+        /// `NotFound` where the catalog holds no such type.
+        pub fn item_type(&self, id: String) -> Result<ItemType, MarfaError> {
+            Ok(self.inner.item_type(&id)?.into())
+        }
 
-    /// Links two items. An edge is its own write.
-    pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
-        let draft = marfa_core::EdgeDraft {
-            properties: draft.properties.into_map()?,
-            from_id: draft.from_id,
-            to_id: draft.to_id,
-            edge_type: draft.edge_type,
-            id: draft.id,
-        };
-        queued(self.inner.create_edge(&draft)?)
-    }
+        /// The name and preview text of each item, in order, by the copy's
+        /// held catalog and rows. An unknown type is named by the fallback fields. An
+        /// item given with its id is named after its host where it is a part
+        /// the copy holds a host for.
+        pub fn item_displays(
+            &self,
+            items: Vec<ItemDisplayInput>,
+        ) -> Result<Vec<ItemDisplay>, MarfaError> {
+            let items = items
+                .into_iter()
+                .map(|item| Ok((item.id, item.r#type, item.properties.into_map()?)))
+                .collect::<Result<Vec<_>, MarfaError>>()?;
+            let items: Vec<_> = items
+                .iter()
+                .map(|(id, item_type, properties)| (id.as_deref(), item_type.as_str(), properties))
+                .collect();
+            Ok(self
+                .inner
+                .item_displays(&items)?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        }
 
-    /// Answers `nil` for an edit that names no property and no new end, which
-    /// queues no write.
-    pub fn update_edge(
-        &self,
-        id: String,
-        edit: EdgeEdit,
-    ) -> Result<Option<QueuedWrite>, MarfaError> {
-        let (from_id, to_id) = match edit.moves {
-            None => (None, None),
-            Some(EdgeMove {
-                end: EdgeEnd::From,
-                to,
-            }) => (Some(to), None),
-            Some(EdgeMove {
-                end: EdgeEnd::To,
-                to,
-            }) => (None, Some(to)),
-        };
-        let edit = marfa_core::EdgeEdit {
-            properties: edit.properties.into_map()?,
-            base_version: Some(edit.base_version),
-            from_id,
-            to_id,
-        };
-        self.inner.update_edge(&id, &edit)?.map(queued).transpose()
-    }
+        /// Every edge type the copy holds, by id, read from the copy alone.
+        pub fn edge_types(&self) -> Result<Vec<EdgeType>, MarfaError> {
+            Ok(self
+                .inner
+                .edge_types()?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        }
 
-    pub fn delete_edge(&self, id: String) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.delete_edge(&id)?)
-    }
+        /// `NotFound` where the catalog holds no such edge type.
+        pub fn edge_type(&self, id: String) -> Result<EdgeType, MarfaError> {
+            Ok(self.inner.edge_type(&id)?.into())
+        }
 
-    /// Puts one tag on an item, as its own write.
-    pub fn add_tag(&self, id: String, tag: String) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.add_tag(&id, &tag)?)
-    }
+        /// The server's item types and edge types, read from it now, so an app
+        /// can choose a slice before a first hydration. Nothing in the copy
+        /// changes. `NoServer` for a copy with no server.
+        pub fn server_catalog(&self, stop: Option<Arc<Stop>>) -> Result<ServerCatalog, MarfaError> {
+            let served = self.inner.server_catalog_until(&flag_of(stop))?;
+            Ok(ServerCatalog {
+                item_types: served.item_types.into_iter().map(Into::into).collect(),
+                edge_types: served.edge_types.into_iter().map(Into::into).collect(),
+            })
+        }
 
-    pub fn remove_tag(&self, id: String, tag: String) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.remove_tag(&id, &tag)?)
-    }
+        /// Writes a new item into the local copy and queues it for the server.
+        pub fn create_item(&self, draft: Draft) -> Result<QueuedWrite, MarfaError> {
+            let draft = marfa_core::Draft {
+                properties: draft.properties.into_map()?,
+                r#type: draft.r#type,
+                id: draft.id,
+                tags: draft.tags,
+                tier: draft.tier.map(Into::into),
+                state: draft.state.map(Into::into),
+                source: draft.source,
+                source_id: draft.source_id,
+                occurred_at: draft.occurred_at,
+                capture_latitude: draft.capture_latitude,
+                capture_longitude: draft.capture_longitude,
+                edges: draft.edges.into_iter().collect(),
+                base_version: draft.base_version,
+            };
+            queued(self.inner.create_item(&draft)?)
+        }
 
-    /// Writes the item's tags whole, dropping any not named.
-    pub fn replace_tags(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite, MarfaError> {
-        let write = marfa_core::TagsWrite { tags };
-        queued(self.inner.replace_tags(&id, &write)?)
-    }
+        /// Changes an item in the local copy and queues the change.
+        pub fn update_item(&self, id: String, edit: Edit) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.update_item(&id, &edit.core()?)?)
+        }
 
-    /// Writes one extension namespace, as its own write.
-    pub fn write_extension(
-        &self,
-        id: String,
-        namespace: String,
-        body: JsonObject,
-    ) -> Result<QueuedWrite, MarfaError> {
-        let body = serde_json::Value::Object(body.into_map()?).to_string();
-        queued(self.inner.write_extension(&id, &namespace, &body)?)
-    }
+        /// Changes an item in the local copy and queues the change, based on a
+        /// version read before the one the copy holds now, which the server
+        /// merges the change against.
+        pub fn update_item_as_read(&self, id: String, edit: Edit) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.update_item_as_read(&id, &edit.core()?)?)
+        }
 
-    pub fn delete_extension(
-        &self,
-        id: String,
-        namespace: String,
-    ) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.delete_extension(&id, &namespace)?)
-    }
+        /// Moves an item to the bin locally and queues the delete.
+        pub fn delete_item(&self, id: String) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.delete_item(&id)?)
+        }
 
-    /// Every queued write and what became of it.
-    pub fn queue(&self) -> Result<Vec<QueuedWrite>, MarfaError> {
-        self.inner.queue()?.into_iter().map(queued).collect()
-    }
+        /// Destroys an item in the bin on the server now, never queued, and
+        /// takes it, its edges and its pin out of the copy once the server
+        /// accepts it. Sent at `version`, the one the caller was shown, such as
+        /// a bin entry's, or else the version the copy holds, and only with no
+        /// write to the item waiting. Before anything is sent it throws
+        /// `NotFound` with `not_held` for an item the copy does not hold where no
+        /// version is named, `Validation` with `invalid_transition` for one the
+        /// copy shows outside the bin, and `Invalid` while a write waits.
+        /// Every error leaves the copy and the queue as they were, but
+        /// `CopyExpired` for another instance at the origin. `Network` means the
+        /// server was not reached or did not answer, and in the second case it
+        /// may have purged the item, which its event then shows. The server
+        /// refuses an item it does not hold in the bin `Validation` with
+        /// `invalid_transition`, one that moved since the copy read it `Server`
+        /// with the status 409 and `version_conflict`, and a key without
+        /// `items.purge`, or without write on the item's type, `Forbidden`.
+        pub fn purge_item(&self, id: String, version: Option<i64>) -> Result<(), MarfaError> {
+            Ok(self.inner.purge_item(&id, version)?)
+        }
 
-    /// Holds a file's bytes beside the store and queues their upload.
-    pub fn put_blob(
-        &self,
-        path: String,
-        mime_type: Option<String>,
-    ) -> Result<QueuedWrite, MarfaError> {
-        queued(
+        /// A page of the server's bin, newest binned first, read online and held
+        /// nowhere in the copy. Offline it throws `Network`, and `NoServer` for a copy with
+        /// none.
+        pub fn bin(
+            &self,
+            r#type: Option<String>,
+            cursor: Option<String>,
+            limit: u32,
+        ) -> Result<BinPage, MarfaError> {
+            let page = self
+                .inner
+                .bin(r#type.as_deref(), cursor.as_deref(), limit)?;
+            Ok(BinPage {
+                items: page
+                    .items
+                    .into_iter()
+                    .map(|(held, shown)| item(held, shown))
+                    .collect(),
+                next_cursor: page.next_cursor,
+            })
+        }
+
+        /// Takes an item out of the bin and queues the restore: locally where the
+        /// copy holds it, and by id where it does not, the item arriving once the
+        /// server answers where the slice takes it.
+        pub fn restore_item(&self, id: String) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.restore_item(&id)?)
+        }
+
+        /// Moves an item to another lifecycle state.
+        pub fn transition_item(&self, id: String, state: ItemState) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.transition_item(&id, state.into())?)
+        }
+
+        /// Throws the error `create_edge` would throw for `draft` now, and
+        /// queues nothing. Returning is not the server's verdict, which a queued
+        /// edge still meets.
+        pub fn check_edge(&self, draft: EdgeDraft) -> Result<(), MarfaError> {
+            let draft = marfa_core::EdgeDraft {
+                properties: draft.properties.into_map()?,
+                from_id: draft.from_id,
+                to_id: draft.to_id,
+                edge_type: draft.edge_type,
+                id: draft.id,
+            };
+            Ok(self.inner.check_edge(&draft)?)
+        }
+
+        /// Throws the error `update_edge` would throw for a move of edge `id`'s
+        /// end now, whatever version the edit would carry, and queues nothing. A
+        /// move onto the end the edge holds already changes nothing and returns.
+        /// Returning is not the server's verdict, which a queued move still meets.
+        pub fn check_edge_move(&self, id: String, moves: EdgeMove) -> Result<(), MarfaError> {
+            let end = match moves.end {
+                EdgeEnd::From => marfa_core::End::From,
+                EdgeEnd::To => marfa_core::End::To,
+            };
+            Ok(self.inner.check_edge_move(&id, end, &moves.to)?)
+        }
+
+        /// Links two items. An edge is its own write.
+        pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
+            let draft = marfa_core::EdgeDraft {
+                properties: draft.properties.into_map()?,
+                from_id: draft.from_id,
+                to_id: draft.to_id,
+                edge_type: draft.edge_type,
+                id: draft.id,
+            };
+            queued(self.inner.create_edge(&draft)?)
+        }
+
+        /// Answers `nil` for an edit that names no property and no new end, which
+        /// queues no write.
+        pub fn update_edge(
+            &self,
+            id: String,
+            edit: EdgeEdit,
+        ) -> Result<Option<QueuedWrite>, MarfaError> {
+            let (from_id, to_id) = match edit.moves {
+                None => (None, None),
+                Some(EdgeMove {
+                    end: EdgeEnd::From,
+                    to,
+                }) => (Some(to), None),
+                Some(EdgeMove {
+                    end: EdgeEnd::To,
+                    to,
+                }) => (None, Some(to)),
+            };
+            let edit = marfa_core::EdgeEdit {
+                properties: edit.properties.into_map()?,
+                base_version: Some(edit.base_version),
+                from_id,
+                to_id,
+            };
+            self.inner.update_edge(&id, &edit)?.map(queued).transpose()
+        }
+
+        pub fn delete_edge(&self, id: String) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.delete_edge(&id)?)
+        }
+
+        /// Puts one tag on an item, as its own write.
+        pub fn add_tag(&self, id: String, tag: String) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.add_tag(&id, &tag)?)
+        }
+
+        pub fn remove_tag(&self, id: String, tag: String) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.remove_tag(&id, &tag)?)
+        }
+
+        /// Writes the item's tags whole, dropping any not named.
+        pub fn replace_tags(&self, id: String, tags: Vec<String>) -> Result<QueuedWrite, MarfaError> {
+            let write = marfa_core::TagsWrite { tags };
+            queued(self.inner.replace_tags(&id, &write)?)
+        }
+
+        /// Writes one extension namespace, as its own write.
+        pub fn write_extension(
+            &self,
+            id: String,
+            namespace: String,
+            body: JsonObject,
+        ) -> Result<QueuedWrite, MarfaError> {
+            let body = serde_json::Value::Object(body.into_map()?).to_string();
+            queued(self.inner.write_extension(&id, &namespace, &body)?)
+        }
+
+        pub fn delete_extension(
+            &self,
+            id: String,
+            namespace: String,
+        ) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.delete_extension(&id, &namespace)?)
+        }
+
+        /// Every queued write and what became of it.
+        pub fn queue(&self) -> Result<Vec<QueuedWrite>, MarfaError> {
+            self.inner.queue()?.into_iter().map(queued).collect()
+        }
+
+        /// Holds a file's bytes beside the store and queues their upload.
+        pub fn put_blob(
+            &self,
+            path: String,
+            mime_type: Option<String>,
+        ) -> Result<QueuedWrite, MarfaError> {
+            queued(
+                self.inner
+                    .put_blob(std::path::Path::new(&path), mime_type.as_deref())?,
+            )
+        }
+
+        /// Attaches a file to an item: its upload, a file item naming the bytes,
+        /// and an `attached-to` edge, three queued writes.
+        pub fn attach(
+            &self,
+            id: String,
+            path: String,
+            attachment: Attachment,
+        ) -> Result<Attached, MarfaError> {
+            let attached = self.inner.attach(
+                &id,
+                std::path::Path::new(&path),
+                &marfa_core::Attachment {
+                    mime_type: attachment.mime_type,
+                    title: attachment.title,
+                    r#type: attachment.r#type,
+                    tier: attachment.tier.map(Into::into),
+                },
+            )?;
+            Ok(Attached {
+                upload: queued(attached.upload)?,
+                item: queued(attached.item)?,
+                edge: queued(attached.edge)?,
+                embed: attached.embed,
+            })
+        }
+
+        /// Adds a file as an item of its own, attached to nothing: its upload and
+        /// a file item naming the bytes, and a write for each tag.
+        pub fn add_file(
+            &self,
+            path: String,
+            attachment: Attachment,
+            tags: Vec<String>,
+        ) -> Result<Added, MarfaError> {
+            let added = self.inner.add_file(
+                std::path::Path::new(&path),
+                &marfa_core::Attachment {
+                    mime_type: attachment.mime_type,
+                    title: attachment.title,
+                    r#type: attachment.r#type,
+                    tier: attachment.tier.map(Into::into),
+                },
+                &tags,
+            )?;
+            Ok(Added {
+                upload: queued(added.upload)?,
+                item: queued(added.item)?,
+            })
+        }
+
+        /// Each link and each embed of a file in an item's body, with the item it
+        /// names or why it names none yet, from the copy alone. An item the copy
+        /// does not hold throws `NotFound`.
+        pub fn body_links(&self, id: String) -> Result<BodyLinks, MarfaError> {
+            Ok(self.inner.body_links(&id)?.into())
+        }
+
+        /// What each of `targets`, the text between a link's brackets as
+        /// `link_parts` gives it, could name from the copy alone, in order. With
+        /// `item`, each is read as a link in that item's body: `Bound` where
+        /// saving it there would make its edge. An item the copy does not hold
+        /// throws `NotFound`.
+        pub fn link_candidates(
+            &self,
+            item: Option<String>,
+            targets: Vec<String>,
+        ) -> Result<Vec<LinkCandidates>, MarfaError> {
+            Ok(self
+                .inner
+                .link_candidates(item.as_deref(), &targets)?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        }
+
+        /// The text that embeds the file item `file` in the body of `id`, which
+        /// names that file alone; throws `Invalid` where no embed can.
+        pub fn embed_text(&self, id: String, file: String) -> Result<String, MarfaError> {
+            Ok(self.inner.embed_text(&id, &file)?)
+        }
+
+        /// Where a blob's bytes are held, fetching them first where this store
+        /// does not hold them yet. Refused `BytesAbsent` where they can be
+        /// neither read nor fetched. No trim in this process takes the bytes
+        /// until the answer is released; after that a trim may, so open the path
+        /// before releasing it.
+        pub fn blob(&self, hash: String) -> Result<Arc<BlobPath>, MarfaError> {
+            Ok(Arc::new(BlobPath {
+                inner: self.inner.blob(&hash)?,
+            }))
+        }
+
+        /// The cache of fetched files: its setting, the budget in force and the
+        /// bytes held.
+        pub fn file_cache(&self) -> Result<FileCache, MarfaError> {
+            Ok(self.inner.file_cache()?.into())
+        }
+
+        /// Chooses the cache's budget, trims to it at once and answers the bytes
+        /// the trim took. Refused to a reading handle.
+        pub fn set_file_budget(&self, budget: FileBudget) -> Result<u64, MarfaError> {
+            Ok(self.inner.set_file_budget(budget.into())?)
+        }
+
+        /// Trims the cache to its budget now and answers the bytes it took.
+        /// Refused to a reading handle.
+        pub fn trim_files(&self) -> Result<u64, MarfaError> {
+            Ok(self.inner.trim_files()?)
+        }
+
+        /// Removes every file the cache holds that can be fetched again and
+        /// answers the bytes it took, leaving the budget as it was. Keeps the
+        /// files of attachments, queued uploads and reads in progress, and the
+        /// part of a file a fetch is writing. Takes nothing and fails where the
+        /// cache, the queue or the attachments cannot be read. Refused to a
+        /// reading handle.
+        pub fn remove_fetched_files(&self) -> Result<u64, MarfaError> {
+            Ok(self.inner.remove_fetched_files()?)
+        }
+
+        /// Fetches the bytes of every file attached to an item the copy holds
+        /// that the cache does not hold whole, smallest first, and answers what
+        /// it fetched and the attachments after it, resuming the part of one an
+        /// earlier fetch left. Waits out a server that asks for a wait of a
+        /// minute or less, and stops at the first the disk has no room for, once
+        /// the server cannot be reached, or once it asks for a longer wait; one
+        /// that fails otherwise is passed over. Run after a hydration and after
+        /// a catch-up. Refused to a reading handle and for a folder's copy.
+        pub fn fetch_kept(&self, stop: Option<Arc<Stop>>) -> Result<KeptFetch, MarfaError> {
+            let fetched = self.inner.fetch_kept_until(&flag_of(stop))?;
+            Ok(KeptFetch {
+                fetched: fetched.fetched,
+                fetched_bytes: fetched.fetched_bytes,
+                attachments: fetched.attachments.map(Into::into),
+            })
+        }
+
+        /// Whether a blob's bytes are held beside the store, with no request.
+        pub fn blob_held(&self, hash: String) -> Result<bool, MarfaError> {
+            Ok(self.inner.blob_held(&hash)?)
+        }
+
+        /// The thumbnail an item carries, from the copy with no request; none
+        /// where its type declares none or it carries none. An item the copy does
+        /// not hold throws `NotFound` with the code `not_held`, and a held value
+        /// that is not a thumbnail throws `Decoding` naming the item.
+        pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>, MarfaError> {
+            Ok(self.inner.thumbnail(&id)?.map(|thumbnail| Thumbnail {
+                mime_type: thumbnail.mime_type,
+                bytes: thumbnail.bytes,
+            }))
+        }
+
+        /// Sends what the queue holds and records what came back. One pass.
+        pub fn drain(&self, stop: Option<Arc<Stop>>) -> Result<DrainReport, MarfaError> {
+            drained(self.inner.drain_until(&flag_of(stop))?)
+        }
+
+        /// Sends a blocked or dead write again, under a fresh idempotency key but
+        /// for a row write or an undo, which keeps its key unless blocked
+        /// `key_spent`. Answers whether the row was one a release applies to.
+        pub fn release(&self, id: String) -> Result<bool, MarfaError> {
+            Ok(self.inner.release(&id)?)
+        }
+
+        /// Releases every write blocked for one reason, and says how many.
+        pub fn release_reason(&self, reason: BlockedReason) -> Result<u64, MarfaError> {
+            Ok(self.inner.release_reason(reason.into())? as u64)
+        }
+
+        /// Returns every withdrawn ID, including the other writes in a table batch.
+        pub fn withdraw(&self, id: String) -> Result<Vec<String>, MarfaError> {
+            Ok(self.inner.withdraw(&id)?)
+        }
+
+        /// Clears the writes the server has answered, and says how many went. A
+        /// refused write that carried content stays until it is discarded.
+        pub fn forget_answered(&self) -> Result<u64, MarfaError> {
+            Ok(self.inner.forget_answered()? as u64)
+        }
+
+        /// Clears only the named writes, under the rules `forget_answered`
+        /// keeps, and says how many went. Every other answered write stays, so an
+        /// app clears just the answers it has read; an id that names no write, or
+        /// one not answered, is ignored.
+        pub fn forget_answered_ids(&self, ids: Vec<String>) -> Result<u64, MarfaError> {
+            Ok(self.inner.forget_answered_ids(&ids)? as u64)
+        }
+
+        /// Clears what `forget_answered` clears and returns each write it took,
+        /// as `queue` showed it, in one step: two callers taking at once never
+        /// both get one answer, and none is cleared unreturned. A refused write
+        /// that carried content stays until it is discarded.
+        pub fn take_answered(&self) -> Result<Vec<QueuedWrite>, MarfaError> {
             self.inner
-                .put_blob(std::path::Path::new(&path), mime_type.as_deref())?,
-        )
-    }
+                .take_answered()?
+                .into_iter()
+                .map(queued)
+                .collect()
+        }
 
-    /// Attaches a file to an item: its upload, a file item naming the bytes,
-    /// and an `attached-to` edge, three queued writes.
-    pub fn attach(
-        &self,
-        id: String,
-        path: String,
-        attachment: Attachment,
-    ) -> Result<Attached, MarfaError> {
-        let attached = self.inner.attach(
-            &id,
-            std::path::Path::new(&path),
-            &marfa_core::Attachment {
-                mime_type: attachment.mime_type,
-                title: attachment.title,
-                r#type: attachment.r#type,
-                tier: attachment.tier.map(Into::into),
-            },
-        )?;
-        Ok(Attached {
-            upload: queued(attached.upload)?,
-            item: queued(attached.item)?,
-            edge: queued(attached.edge)?,
-            embed: attached.embed,
-        })
-    }
-
-    /// Adds a file as an item of its own, attached to nothing: its upload and
-    /// a file item naming the bytes, and a write for each tag.
-    pub fn add_file(
-        &self,
-        path: String,
-        attachment: Attachment,
-        tags: Vec<String>,
-    ) -> Result<Added, MarfaError> {
-        let added = self.inner.add_file(
-            std::path::Path::new(&path),
-            &marfa_core::Attachment {
-                mime_type: attachment.mime_type,
-                title: attachment.title,
-                r#type: attachment.r#type,
-                tier: attachment.tier.map(Into::into),
-            },
-            &tags,
-        )?;
-        Ok(Added {
-            upload: queued(added.upload)?,
-            item: queued(added.item)?,
-        })
-    }
-
-    /// Each link and each embed of a file in an item's body, with the item it
-    /// names or why it names none yet, from the copy alone. An item the copy
-    /// does not hold throws `NotFound`.
-    pub fn body_links(&self, id: String) -> Result<BodyLinks, MarfaError> {
-        Ok(self.inner.body_links(&id)?.into())
-    }
-
-    /// What each of `targets`, the text between a link's brackets as
-    /// `link_parts` gives it, could name from the copy alone, in order. With
-    /// `item`, each is read as a link in that item's body: `Bound` where
-    /// saving it there would make its edge. An item the copy does not hold
-    /// throws `NotFound`.
-    pub fn link_candidates(
-        &self,
-        item: Option<String>,
-        targets: Vec<String>,
-    ) -> Result<Vec<LinkCandidates>, MarfaError> {
-        Ok(self
-            .inner
-            .link_candidates(item.as_deref(), &targets)?
-            .into_iter()
-            .map(Into::into)
-            .collect())
-    }
-
-    /// The text that embeds the file item `file` in the body of `id`, which
-    /// names that file alone; throws `Invalid` where no embed can.
-    pub fn embed_text(&self, id: String, file: String) -> Result<String, MarfaError> {
-        Ok(self.inner.embed_text(&id, &file)?)
-    }
-
-    /// Where a blob's bytes are held, fetching them first where this store
-    /// does not hold them yet. Refused `BytesAbsent` where they can be
-    /// neither read nor fetched. No trim in this process takes the bytes
-    /// until the answer is released; after that a trim may, so open the path
-    /// before releasing it.
-    pub fn blob(&self, hash: String) -> Result<Arc<BlobPath>, MarfaError> {
-        Ok(Arc::new(BlobPath {
-            inner: self.inner.blob(&hash)?,
-        }))
-    }
-
-    /// The cache of fetched files: its setting, the budget in force and the
-    /// bytes held.
-    pub fn file_cache(&self) -> Result<FileCache, MarfaError> {
-        Ok(self.inner.file_cache()?.into())
-    }
-
-    /// Chooses the cache's budget, trims to it at once and answers the bytes
-    /// the trim took. Refused to a reading handle.
-    pub fn set_file_budget(&self, budget: FileBudget) -> Result<u64, MarfaError> {
-        Ok(self.inner.set_file_budget(budget.into())?)
-    }
-
-    /// Trims the cache to its budget now and answers the bytes it took.
-    /// Refused to a reading handle.
-    pub fn trim_files(&self) -> Result<u64, MarfaError> {
-        Ok(self.inner.trim_files()?)
-    }
-
-    /// Removes every file the cache holds that can be fetched again and
-    /// answers the bytes it took, leaving the budget as it was. Keeps the
-    /// files of attachments, queued uploads and reads in progress, and the
-    /// part of a file a fetch is writing. Takes nothing and fails where the
-    /// cache, the queue or the attachments cannot be read. Refused to a
-    /// reading handle.
-    pub fn remove_fetched_files(&self) -> Result<u64, MarfaError> {
-        Ok(self.inner.remove_fetched_files()?)
-    }
-
-    /// Fetches the bytes of every file attached to an item the copy holds
-    /// that the cache does not hold whole, smallest first, and answers what
-    /// it fetched and the attachments after it, resuming the part of one an
-    /// earlier fetch left. Waits out a server that asks for a wait of a
-    /// minute or less, and stops at the first the disk has no room for, once
-    /// the server cannot be reached, or once it asks for a longer wait; one
-    /// that fails otherwise is passed over. Run after a hydration and after
-    /// a catch-up. Refused to a reading handle and for a folder's copy.
-    pub fn fetch_kept(&self, stop: Option<Arc<Stop>>) -> Result<KeptFetch, MarfaError> {
-        let fetched = self.inner.fetch_kept_until(&flag_of(stop))?;
-        Ok(KeptFetch {
-            fetched: fetched.fetched,
-            fetched_bytes: fetched.fetched_bytes,
-            attachments: fetched.attachments.map(Into::into),
-        })
-    }
-
-    /// Whether a blob's bytes are held beside the store, with no request.
-    pub fn blob_held(&self, hash: String) -> Result<bool, MarfaError> {
-        Ok(self.inner.blob_held(&hash)?)
-    }
-
-    /// The thumbnail an item carries, from the copy with no request; none
-    /// where its type declares none or it carries none. An item the copy does
-    /// not hold throws `NotFound` with the code `not_held`, and a held value
-    /// that is not a thumbnail throws `Decoding` naming the item.
-    pub fn thumbnail(&self, id: String) -> Result<Option<Thumbnail>, MarfaError> {
-        Ok(self.inner.thumbnail(&id)?.map(|thumbnail| Thumbnail {
-            mime_type: thumbnail.mime_type,
-            bytes: thumbnail.bytes,
-        }))
-    }
-
-    /// Sends what the queue holds and records what came back. One pass.
-    pub fn drain(&self, stop: Option<Arc<Stop>>) -> Result<DrainReport, MarfaError> {
-        drained(self.inner.drain_until(&flag_of(stop))?)
-    }
-
-    /// Sends a blocked or dead write again, under a fresh idempotency key but
-    /// for a row write or an undo, which keeps its key unless blocked
-    /// `key_spent`. Answers whether the row was one a release applies to.
-    pub fn release(&self, id: String) -> Result<bool, MarfaError> {
-        Ok(self.inner.release(&id)?)
-    }
-
-    /// Releases every write blocked for one reason, and says how many.
-    pub fn release_reason(&self, reason: BlockedReason) -> Result<u64, MarfaError> {
-        Ok(self.inner.release_reason(reason.into())? as u64)
-    }
-
-    /// Returns every withdrawn ID, including the other writes in a table batch.
-    pub fn withdraw(&self, id: String) -> Result<Vec<String>, MarfaError> {
-        Ok(self.inner.withdraw(&id)?)
-    }
-
-    /// Clears the writes the server has answered, and says how many went. A
-    /// refused write that carried content stays until it is discarded.
-    pub fn forget_answered(&self) -> Result<u64, MarfaError> {
-        Ok(self.inner.forget_answered()? as u64)
-    }
-
-    /// Clears only the named writes, under the rules `forget_answered`
-    /// keeps, and says how many went. Every other answered write stays, so an
-    /// app clears just the answers it has read; an id that names no write, or
-    /// one not answered, is ignored.
-    pub fn forget_answered_ids(&self, ids: Vec<String>) -> Result<u64, MarfaError> {
-        Ok(self.inner.forget_answered_ids(&ids)? as u64)
-    }
-
-    /// Clears what `forget_answered` clears and returns each write it took,
-    /// as `queue` showed it, in one step: two callers taking at once never
-    /// both get one answer, and none is cleared unreturned. A refused write
-    /// that carried content stays until it is discarded.
-    pub fn take_answered(&self) -> Result<Vec<QueuedWrite>, MarfaError> {
-        self.inner
-            .take_answered()?
-            .into_iter()
-            .map(queued)
-            .collect()
-    }
-
-    /// Takes a refused write out of the queue, with the content it carried.
-    /// Answers whether the row was one a discard takes: refused, and with no
-    /// write still waiting on it, or a create refused onto a row its natural
-    /// key names that no read has found, whose waiting writes it refuses
-    /// unsent. A create's discard first waits for a drain already running to
-    /// end.
-    pub fn discard(&self, id: String) -> Result<bool, MarfaError> {
-        Ok(self.inner.discard(&id)?)
+        /// Takes a refused write out of the queue, with the content it carried.
+        /// Answers whether the row was one a discard takes: refused, and with no
+        /// write still waiting on it, or a create refused onto a row its natural
+        /// key names that no read has found, whose waiting writes it refuses
+        /// unsent. A create's discard first waits for a drain already running to
+        /// end.
+        pub fn discard(&self, id: String) -> Result<bool, MarfaError> {
+            Ok(self.inner.discard(&id)?)
+        }
     }
 }
 
-/// Removes the store at `path`: the store, its log, the bytes it fetched and
-/// its writer lock, and nothing else beside it, unlinking a symbolic link at
-/// any of those names rather than what it leads to. A store of any schema is
-/// removed, including one `open` refuses with `WrongSchema`. Drop every `Core`
-/// on the store first.
-///
-/// `confirmation` is the one `readUnsent` gave with the writes the person was
-/// shown and agreed to lose. Throws `UnsentDiffers`, leaving the store as it
-/// was, unless the writes it holds that the server has not taken are those,
-/// with every field `readUnsent` shows unchanged; a store whose writes cannot
-/// be read is never removed. Throws `ReadingHandle` while another process,
-/// or another `Core` in this one, writes the store, and `Invalid` for a
-/// folder's store. With nothing at `path`, `readUnsent` shows no writes, and
-/// removing with its confirmation takes what a removal stopped part way left
-/// there. A process that only reads the store does not stop the removal and
-/// keeps showing the old copy until it reopens.
-#[uniffi::export]
-pub fn remove_store(path: String, confirmation: String) -> Result<(), MarfaError> {
-    Ok(marfa_core::Core::remove_store(path, &confirmation)?)
+guarded! {
+    /// Removes the store at `path`: the store, its log, the bytes it fetched and
+    /// its writer lock, and nothing else beside it, unlinking a symbolic link at
+    /// any of those names rather than what it leads to. A store of any schema is
+    /// removed, including one `open` refuses with `WrongSchema`. Drop every `Core`
+    /// on the store first.
+    ///
+    /// `confirmation` is the one `readUnsent` gave with the writes the person was
+    /// shown and agreed to lose. Throws `UnsentDiffers`, leaving the store as it
+    /// was, unless the writes it holds that the server has not taken are those,
+    /// with every field `readUnsent` shows unchanged; a store whose writes cannot
+    /// be read is never removed. Throws `ReadingHandle` while another process,
+    /// or another `Core` in this one, writes the store, and `Invalid` for a
+    /// folder's store. With nothing at `path`, `readUnsent` shows no writes, and
+    /// removing with its confirmation takes what a removal stopped part way left
+    /// there. A process that only reads the store does not stop the removal and
+    /// keeps showing the old copy until it reopens.
+    pub fn remove_store(path: String, confirmation: String) -> Result<(), MarfaError> {
+        Ok(marfa_core::Core::remove_store(path, &confirmation)?)
+    }
 }
 
-/// Like `removeStore`, but accepts loss without a list only for an unreadable or empty queue.
-#[uniffi::export]
-pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
-    Ok(marfa_core::Core::remove_store_losing_all(path)?)
+guarded! {
+    /// Like `removeStore`, but accepts loss without a list only for an unreadable or empty queue.
+    pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
+        Ok(marfa_core::Core::remove_store_losing_all(path)?)
+    }
 }
 
-/// Reads every page of the store at `path`, and checks each index against its
-/// rows. Throws `StoreDamaged`, naming it and how many writes its queue holds
-/// that the server has not taken, where SQLite cannot read it, `WrongSchema` where another build made it, and
-/// `ReadingHandle` while another process, or another `Core` in this one,
-/// writes it. Changes nothing, and reads the whole file, so it takes longer
-/// the larger the store.
-#[uniffi::export]
-pub fn check_store(path: String) -> Result<(), MarfaError> {
-    Ok(marfa_core::Core::check_store(path)?)
+guarded! {
+    /// Reads every page of the store at `path`, and checks each index against its
+    /// rows. Throws `StoreDamaged`, naming it and how many writes its queue holds
+    /// that the server has not taken, where SQLite cannot read it, `WrongSchema` where another build made it, and
+    /// `ReadingHandle` while another process, or another `Core` in this one,
+    /// writes it. Changes nothing, and reads the whole file, so it takes longer
+    /// the larger the store.
+    pub fn check_store(path: String) -> Result<(), MarfaError> {
+        Ok(marfa_core::Core::check_store(path)?)
+    }
 }
 
 /// An unsent write with the kind and verdict recorded by the store's build.
@@ -3384,25 +3401,26 @@ pub struct UnsentWrites {
     pub confirmation: String,
 }
 
-/// Lists the unsent writes of a store of any build, a refused one included,
-/// with the confirmation `removeStore` takes; see BINDINGS.md for refusals.
-#[uniffi::export]
-pub fn read_unsent(path: String) -> Result<UnsentWrites, MarfaError> {
-    let unsent = marfa_core::Core::read_unsent(path)?;
-    Ok(UnsentWrites {
-        writes: unsent
-            .writes
-            .into_iter()
-            .map(|write| UnsentWrite {
-                id: write.id,
-                kind: write.kind,
-                item_id: write.item_id,
-                body: write.body,
-                verdict: write.verdict,
-            })
-            .collect(),
-        confirmation: unsent.confirmation,
-    })
+guarded! {
+    /// Lists the unsent writes of a store of any build, a refused one included,
+    /// with the confirmation `removeStore` takes; see BINDINGS.md for refusals.
+    pub fn read_unsent(path: String) -> Result<UnsentWrites, MarfaError> {
+        let unsent = marfa_core::Core::read_unsent(path)?;
+        Ok(UnsentWrites {
+            writes: unsent
+                .writes
+                .into_iter()
+                .map(|write| UnsentWrite {
+                    id: write.id,
+                    kind: write.kind,
+                    item_id: write.item_id,
+                    body: write.body,
+                    verdict: write.verdict,
+                })
+                .collect(),
+            confirmation: unsent.confirmation,
+        })
+    }
 }
 
 /// What `setAsideDamaged` did.
@@ -3435,32 +3453,34 @@ pub struct SetAside {
     pub record_unread: u64,
 }
 
-/// Sets aside the store at `path`, which `open` refuses with `StoreDamaged`:
-/// moves it and its logs to `<path>.damaged-<n>` beside it, never deleting
-/// them, and makes a new store at `path` that carries every write its queue
-/// lets be read, under its id and idempotency key, with its body, base
-/// version and verdict, and the server and instance it was built from. Drop
-/// every `Core` on the store first. The new store holds no copy: hydrate it,
-/// then drain, to send what it carries. Throws `Invalid` for a store that
-/// opens as it is or a folder's store, `WrongSchema` for a store another
-/// build made, and `ReadingHandle` while another process writes it. One that
-/// stopped part way is finished by calling again.
-#[uniffi::export]
-pub fn set_aside_damaged(path: String) -> Result<SetAside, MarfaError> {
-    let done = marfa_core::Core::set_aside_damaged(path)?;
-    Ok(SetAside {
-        set_aside: done.set_aside,
-        carried: done.carried,
-        unread: done.unread,
-        unread_ids: done.unread_ids,
-        whole: done.whole,
-        held: done.held,
-        record_unread: done.record_unread,
-    })
+guarded! {
+    /// Sets aside the store at `path`, which `open` refuses with `StoreDamaged`:
+    /// moves it and its logs to `<path>.damaged-<n>` beside it, never deleting
+    /// them, and makes a new store at `path` that carries every write its queue
+    /// lets be read, under its id and idempotency key, with its body, base
+    /// version and verdict, and the server and instance it was built from. Drop
+    /// every `Core` on the store first. The new store holds no copy: hydrate it,
+    /// then drain, to send what it carries. Throws `Invalid` for a store that
+    /// opens as it is or a folder's store, `WrongSchema` for a store another
+    /// build made, and `ReadingHandle` while another process writes it. One that
+    /// stopped part way is finished by calling again.
+    pub fn set_aside_damaged(path: String) -> Result<SetAside, MarfaError> {
+        let done = marfa_core::Core::set_aside_damaged(path)?;
+        Ok(SetAside {
+            set_aside: done.set_aside,
+            carried: done.carried,
+            unread: done.unread,
+            unread_ids: done.unread_ids,
+            whole: done.whole,
+            held: done.held,
+            record_unread: done.record_unread,
+        })
+    }
 }
 
 /// Every link in `text` in order, repeats included, split as Marfa reads
 /// it, with each part's place in the text. Needs no store.
+// unguarded: a pure parse of the text given, with no store to fail and no error in its answer to carry a fault.
 #[uniffi::export]
 pub fn link_parts(text: String) -> Vec<LinkParts> {
     marfa_core::link_parts(&text)

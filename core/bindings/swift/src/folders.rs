@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::guard::guarded;
 use crate::renewal::Renewal;
 use crate::{CredentialRenewer, DrainReport, HydrateReport, MarfaError, Subscription, drained};
 
@@ -398,223 +399,225 @@ fn sending(
     }
 }
 
-#[uniffi::export]
-impl Folders {
-    /// `url` and `key` go together; without them only `list`, `status`,
-    /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
-    /// `renewer` renews `key` when the server refuses it, for every folder
-    /// these calls and watches work, as `CredentialRenewer` describes; it needs
-    /// `url` and `key`.
-    #[uniffi::constructor(default(renewer = None))]
-    pub fn new(
-        url: Option<String>,
-        key: Option<String>,
-        renewer: Option<Arc<dyn CredentialRenewer>>,
-    ) -> Result<Arc<Self>, MarfaError> {
-        let server = crate::server_of(url, key)?;
-        let renewal = Renewal::of(renewer, server.as_ref())?;
-        Ok(Arc::new(Folders { server, renewal }))
-    }
-
-    /// Makes `dir` a folder that follows the `system.folder` `folder`, and
-    /// lists it in the machine's registry. The directory is made if it is
-    /// not there. Its first sync waits: `sync` says what it will do, and
-    /// `confirm_first_sync` lets it go. The answer says why the directory is
-    /// in cloud-synced or network storage, where it is; the folder is added
-    /// all the same. Reads the file system, so it can wait on a mount that
-    /// does not answer. Over a folder a watch holds, asks the watch to let it
-    /// go and waits up to 10 seconds, as every call that works a folder does:
-    /// past that, it is refused with `ReadingHandle`, naming the folder.
-    pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
-        let added = marfa_core::Folder::add(&dir, &folder, self.server(), self.renew())
-            .map_err(asked(&dir))?;
-        Ok(AddedFolder {
-            dir: added.root().display().to_string(),
-            folder: added.folder_id().to_string(),
-            storage: storage_of(added.storage_cause()),
-        })
-    }
-
-    /// The folders the machine's registry lists, the command line's among
-    /// them.
-    pub fn list(&self) -> Result<Vec<ListedFolder>, MarfaError> {
-        let Some(registry) = marfa_core::folder::Registry::located() else {
-            return Ok(Vec::new());
-        };
-        Ok(registry
-            .folders()?
-            .into_iter()
-            .map(|entry| ListedFolder {
-                dir: entry.dir.display().to_string(),
-                folder: entry.folder,
-            })
-            .collect())
-    }
-
-    /// Where every file stands, read from the folder's store without asking
-    /// the server, and beside a watch that holds the folder.
-    pub fn status(&self, dir: String) -> Result<FolderStatus, MarfaError> {
-        let report = marfa_core::Folder::status_of(&dir)?;
-        Ok(FolderStatus {
-            directories: report.directories.into_iter().map(flagged_file).collect(),
-            files: report
-                .files
-                .into_iter()
-                .map(|file| {
-                    Ok(FileStatus {
-                        state: state_of(file.status)?,
-                        path: file.path,
-                        item_id: file.item_id,
-                        waits: file.waits.iter().map(|wait| wait.to_string()).collect(),
-                        flag: file.flag.map(str::to_string),
-                        reason: file.reason,
-                        warning: file.warning,
-                    })
-                })
-                .collect::<Result<_, MarfaError>>()?,
-            paused: FolderPaused {
-                disk: report.paused.disk as u64,
-                pull: report.paused.pull as u64,
-                additions: report.paused.additions as u64,
-                outside_query: report.paused.outside_query as u64,
-            },
-            first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
-                plan: waiting.plan.map(Into::into),
-            }),
-        })
-    }
-
-    /// Everything a folder does, once: sends what changed on disk, catches
-    /// up with the server and writes out what its query matches. A folder
-    /// whose first sync waits to be confirmed is only read, and `Waiting`
-    /// says what the sync will do. Asks a watch that holds the folder to let
-    /// it go, as `add` does.
-    pub fn sync(&self, dir: String) -> Result<FolderSyncOutcome, MarfaError> {
-        let synced = match working(&dir, self.server(), self.renewal.as_ref())?.sync()? {
-            marfa_core::Synced::Done(synced) => *synced,
-            marfa_core::Synced::Waiting(plan) => {
-                return Ok(FolderSyncOutcome::Waiting { plan: plan.into() });
-            }
-        };
-        Ok(FolderSyncOutcome::Done {
-            sync: FolderSync {
-                hydrated: synced.hydrated.map(Into::into),
-                catch_up_error: synced.catch_up.err().map(Into::into),
-                pass: pass_of(
-                    synced.settings,
-                    synced.scan,
-                    synced.drain,
-                    synced.pull,
-                    None,
-                )?,
-            },
-        })
-    }
-
-    /// Lets a folder's first sync go, at the next sync or watch. Answers
-    /// whether it was waiting. A paused removal is not touched. Asks a watch
-    /// that holds the folder to let it go, as `add` does.
-    pub fn confirm_first_sync(&self, dir: String) -> Result<bool, MarfaError> {
-        Ok(working(&dir, None, None)?.confirm_first_sync()?)
-    }
-
-    /// Lets a paused large removal go: its deletes are queued, and files
-    /// whose items left elsewhere are taken away. Refused while the first
-    /// sync waits. Asks a watch that holds the folder to let it go, as `add`
-    /// does.
-    pub fn confirm(&self, dir: String) -> Result<ConfirmedFolder, MarfaError> {
-        let confirmed = working(&dir, None, None)?.confirm()?;
-        Ok(ConfirmedFolder {
-            deleted: confirmed.deleted as u64,
-            moved: confirmed.moved as u64,
-            removed: confirmed.removed as u64,
-            added: confirmed.added as u64,
-            unsure: confirmed
-                .unsure
-                .into_iter()
-                .map(|file| UnsureFile {
-                    path: file.path,
-                    reason: file.reason,
-                })
-                .collect(),
-        })
-    }
-
-    /// Cancels a paused large removal: files gone from the disk are written
-    /// back, and items that left elsewhere are restored. Asks a watch that
-    /// holds the folder to let it go, as `add` does.
-    pub fn restore(&self, dir: String) -> Result<RestoredRemoval, MarfaError> {
-        let restored = working(&dir, self.server(), self.renewal.as_ref())?.restore()?;
-        Ok(RestoredRemoval {
-            put_back: restored.put_back as u64,
-            not_written_back: restored
-                .not_written_back
-                .into_iter()
-                .map(flagged_file)
-                .collect(),
-            restored: restored.restored as u64,
-            pull: pull_of(restored.pull),
-        })
-    }
-
-    /// Takes the folder off this machine: its state under `.marfa` goes and
-    /// its files stay. Refused while writes wait, except for a first sync
-    /// still waiting to be confirmed, which this cancels. Follows no symbolic
-    /// link, and takes a path through one only where it is the path the
-    /// registry lists. Where that path is
-    /// gone, passes through a link, or holds state the registry does not
-    /// show to be the folder's own, the folder is only taken off the
-    /// registry. Asks a watch that holds the folder to let it go, as `add`
-    /// does; that watch then ends with `Removed` or `Unlisted`.
-    pub fn remove(&self, dir: String) -> Result<(), MarfaError> {
-        marfa_core::Folder::remove_at_asking(&dir).map_err(asked(&dir))?;
-        Ok(())
-    }
-
-    /// Keeps the folder in step on a thread of its own, as the command
-    /// line's watch does, until the subscription is stopped or let go. The
-    /// folder is held while it runs, so another process cannot work it
-    /// unasked; a watch does not ask for a folder another process holds, and
-    /// is refused at once with `ReadingHandle`.
-    ///
-    /// A call of `Folders`, or a command, that works the folder asks for it.
-    /// The watch lets it go at the end of the step of its pass under way and
-    /// tells `HandedOver`, then takes the folder back once the call ends and
-    /// tells `TakenBack`. A folder removed or taken off the registry meanwhile
-    /// ends the watch, after `Removed` or `Unlisted`. A pass under way when
-    /// it is stopped finishes before `ended` is called.
-    pub fn watch(
-        &self,
-        dir: String,
-        listener: Arc<dyn FolderListener>,
-    ) -> Result<Arc<Subscription>, MarfaError> {
-        let folder = marfa_core::Folder::open(&dir, self.server())
-            .map(|folder| renewing(folder, self.renewal.as_ref()))
-            .map_err(held(&dir))?;
-        // Refused here rather than ended later, so the caller is told at once.
-        if folder.awaiting_confirmation()? {
-            return Err(marfa_core::CoreError::FirstSyncWaiting.into());
+guarded! {
+    #[uniffi::export]
+    impl Folders {
+        /// `url` and `key` go together; without them only `list`, `status`,
+        /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
+        /// `renewer` renews `key` when the server refuses it, for every folder
+        /// these calls and watches work, as `CredentialRenewer` describes; it needs
+        /// `url` and `key`.
+        #[uniffi::constructor(default(renewer = None))]
+        pub fn new(
+            url: Option<String>,
+            key: Option<String>,
+            renewer: Option<Arc<dyn CredentialRenewer>>,
+        ) -> Result<Arc<Self>, MarfaError> {
+            let server = crate::server_of(url, key)?;
+            let renewal = Renewal::of(renewer, server.as_ref())?;
+            Ok(Arc::new(Folders { server, renewal }))
         }
-        let server = self.server.clone();
-        let renewal = self.renewal.clone();
-        let origin = server.as_ref().map(|server| server.url.clone());
-        let stop = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&stop);
-        std::thread::spawn(move || {
-            // Caught, so a listener waiting to be told the watch ended is told.
-            let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                keep_in_step(folder, server, renewal, &flag, &*listener)
-            }));
-            // The folder is let go by now, before the listener is told: one
-            // that works it again on being told must find it free.
-            listener.ended(match watched {
-                Ok(watched) => watched.err().map(|error| ended(error, origin.as_deref())),
-                Err(fault) => Some(MarfaError::Fault {
-                    message: format!("the watch stopped on a fault: {}", said(fault.as_ref())),
+
+        /// Makes `dir` a folder that follows the `system.folder` `folder`, and
+        /// lists it in the machine's registry. The directory is made if it is
+        /// not there. Its first sync waits: `sync` says what it will do, and
+        /// `confirm_first_sync` lets it go. The answer says why the directory is
+        /// in cloud-synced or network storage, where it is; the folder is added
+        /// all the same. Reads the file system, so it can wait on a mount that
+        /// does not answer. Over a folder a watch holds, asks the watch to let it
+        /// go and waits up to 10 seconds, as every call that works a folder does:
+        /// past that, it is refused with `ReadingHandle`, naming the folder.
+        pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
+            let added = marfa_core::Folder::add(&dir, &folder, self.server(), self.renew())
+                .map_err(asked(&dir))?;
+            Ok(AddedFolder {
+                dir: added.root().display().to_string(),
+                folder: added.folder_id().to_string(),
+                storage: storage_of(added.storage_cause()),
+            })
+        }
+
+        /// The folders the machine's registry lists, the command line's among
+        /// them.
+        pub fn list(&self) -> Result<Vec<ListedFolder>, MarfaError> {
+            let Some(registry) = marfa_core::folder::Registry::located() else {
+                return Ok(Vec::new());
+            };
+            Ok(registry
+                .folders()?
+                .into_iter()
+                .map(|entry| ListedFolder {
+                    dir: entry.dir.display().to_string(),
+                    folder: entry.folder,
+                })
+                .collect())
+        }
+
+        /// Where every file stands, read from the folder's store without asking
+        /// the server, and beside a watch that holds the folder.
+        pub fn status(&self, dir: String) -> Result<FolderStatus, MarfaError> {
+            let report = marfa_core::Folder::status_of(&dir)?;
+            Ok(FolderStatus {
+                directories: report.directories.into_iter().map(flagged_file).collect(),
+                files: report
+                    .files
+                    .into_iter()
+                    .map(|file| {
+                        Ok(FileStatus {
+                            state: state_of(file.status)?,
+                            path: file.path,
+                            item_id: file.item_id,
+                            waits: file.waits.iter().map(|wait| wait.to_string()).collect(),
+                            flag: file.flag.map(str::to_string),
+                            reason: file.reason,
+                            warning: file.warning,
+                        })
+                    })
+                    .collect::<Result<_, MarfaError>>()?,
+                paused: FolderPaused {
+                    disk: report.paused.disk as u64,
+                    pull: report.paused.pull as u64,
+                    additions: report.paused.additions as u64,
+                    outside_query: report.paused.outside_query as u64,
+                },
+                first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
+                    plan: waiting.plan.map(Into::into),
                 }),
+            })
+        }
+
+        /// Everything a folder does, once: sends what changed on disk, catches
+        /// up with the server and writes out what its query matches. A folder
+        /// whose first sync waits to be confirmed is only read, and `Waiting`
+        /// says what the sync will do. Asks a watch that holds the folder to let
+        /// it go, as `add` does.
+        pub fn sync(&self, dir: String) -> Result<FolderSyncOutcome, MarfaError> {
+            let synced = match working(&dir, self.server(), self.renewal.as_ref())?.sync()? {
+                marfa_core::Synced::Done(synced) => *synced,
+                marfa_core::Synced::Waiting(plan) => {
+                    return Ok(FolderSyncOutcome::Waiting { plan: plan.into() });
+                }
+            };
+            Ok(FolderSyncOutcome::Done {
+                sync: FolderSync {
+                    hydrated: synced.hydrated.map(Into::into),
+                    catch_up_error: synced.catch_up.err().map(Into::into),
+                    pass: pass_of(
+                        synced.settings,
+                        synced.scan,
+                        synced.drain,
+                        synced.pull,
+                        None,
+                    )?,
+                },
+            })
+        }
+
+        /// Lets a folder's first sync go, at the next sync or watch. Answers
+        /// whether it was waiting. A paused removal is not touched. Asks a watch
+        /// that holds the folder to let it go, as `add` does.
+        pub fn confirm_first_sync(&self, dir: String) -> Result<bool, MarfaError> {
+            Ok(working(&dir, None, None)?.confirm_first_sync()?)
+        }
+
+        /// Lets a paused large removal go: its deletes are queued, and files
+        /// whose items left elsewhere are taken away. Refused while the first
+        /// sync waits. Asks a watch that holds the folder to let it go, as `add`
+        /// does.
+        pub fn confirm(&self, dir: String) -> Result<ConfirmedFolder, MarfaError> {
+            let confirmed = working(&dir, None, None)?.confirm()?;
+            Ok(ConfirmedFolder {
+                deleted: confirmed.deleted as u64,
+                moved: confirmed.moved as u64,
+                removed: confirmed.removed as u64,
+                added: confirmed.added as u64,
+                unsure: confirmed
+                    .unsure
+                    .into_iter()
+                    .map(|file| UnsureFile {
+                        path: file.path,
+                        reason: file.reason,
+                    })
+                    .collect(),
+            })
+        }
+
+        /// Cancels a paused large removal: files gone from the disk are written
+        /// back, and items that left elsewhere are restored. Asks a watch that
+        /// holds the folder to let it go, as `add` does.
+        pub fn restore(&self, dir: String) -> Result<RestoredRemoval, MarfaError> {
+            let restored = working(&dir, self.server(), self.renewal.as_ref())?.restore()?;
+            Ok(RestoredRemoval {
+                put_back: restored.put_back as u64,
+                not_written_back: restored
+                    .not_written_back
+                    .into_iter()
+                    .map(flagged_file)
+                    .collect(),
+                restored: restored.restored as u64,
+                pull: pull_of(restored.pull),
+            })
+        }
+
+        /// Takes the folder off this machine: its state under `.marfa` goes and
+        /// its files stay. Refused while writes wait, except for a first sync
+        /// still waiting to be confirmed, which this cancels. Follows no symbolic
+        /// link, and takes a path through one only where it is the path the
+        /// registry lists. Where that path is
+        /// gone, passes through a link, or holds state the registry does not
+        /// show to be the folder's own, the folder is only taken off the
+        /// registry. Asks a watch that holds the folder to let it go, as `add`
+        /// does; that watch then ends with `Removed` or `Unlisted`.
+        pub fn remove(&self, dir: String) -> Result<(), MarfaError> {
+            marfa_core::Folder::remove_at_asking(&dir).map_err(asked(&dir))?;
+            Ok(())
+        }
+
+        /// Keeps the folder in step on a thread of its own, as the command
+        /// line's watch does, until the subscription is stopped or let go. The
+        /// folder is held while it runs, so another process cannot work it
+        /// unasked; a watch does not ask for a folder another process holds, and
+        /// is refused at once with `ReadingHandle`.
+        ///
+        /// A call of `Folders`, or a command, that works the folder asks for it.
+        /// The watch lets it go at the end of the step of its pass under way and
+        /// tells `HandedOver`, then takes the folder back once the call ends and
+        /// tells `TakenBack`. A folder removed or taken off the registry meanwhile
+        /// ends the watch, after `Removed` or `Unlisted`. A pass under way when
+        /// it is stopped finishes before `ended` is called.
+        pub fn watch(
+            &self,
+            dir: String,
+            listener: Arc<dyn FolderListener>,
+        ) -> Result<Arc<Subscription>, MarfaError> {
+            let folder = marfa_core::Folder::open(&dir, self.server())
+                .map(|folder| renewing(folder, self.renewal.as_ref()))
+                .map_err(held(&dir))?;
+            // Refused here rather than ended later, so the caller is told at once.
+            if folder.awaiting_confirmation()? {
+                return Err(marfa_core::CoreError::FirstSyncWaiting.into());
+            }
+            let server = self.server.clone();
+            let renewal = self.renewal.clone();
+            let origin = server.as_ref().map(|server| server.url.clone());
+            let stop = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                // Caught, so a listener waiting to be told the watch ended is told.
+                let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    keep_in_step(folder, server, renewal, &flag, &*listener)
+                }));
+                // The folder is let go by now, before the listener is told: one
+                // that works it again on being told must find it free.
+                listener.ended(match watched {
+                    Ok(watched) => watched.err().map(|error| ended(error, origin.as_deref())),
+                    Err(fault) => Some(MarfaError::Fault {
+                        message: format!("the watch stopped on a fault: {}", said(fault.as_ref())),
+                    }),
+                });
             });
-        });
-        Ok(Subscription::raising(stop))
+            Ok(Subscription::raising(stop))
+        }
     }
 }
 

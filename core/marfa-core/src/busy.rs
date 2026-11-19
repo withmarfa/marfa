@@ -57,9 +57,7 @@ pub(crate) fn transaction<T>(
 
 /// A busy statement can leave a transaction holding a stale snapshot.
 fn rolled_back(conn: &Mutex<Connection>) -> Result<()> {
-    let conn = conn
-        .lock()
-        .map_err(|_| CoreError::Store("the connection was poisoned by an earlier panic".into()))?;
+    let conn = conn.lock().map_err(|_| CoreError::poisoned())?;
     if conn.is_autocommit() {
         return Ok(());
     }

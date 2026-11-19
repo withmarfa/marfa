@@ -103,9 +103,7 @@ pub(crate) fn keep_relocated_origin(
                 std::thread::sleep(Duration::from_millis(5))
             }
             Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(CoreError::Store(
-                    "the connection was poisoned by an earlier panic".into(),
-                ));
+                return Err(CoreError::poisoned());
             }
         }
     };

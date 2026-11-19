@@ -358,6 +358,12 @@ fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
 }
 
 impl CoreError {
+    /// A call that panicked held the connection's lock, so the core itself
+    /// went wrong and every later call on it is a fault.
+    pub(crate) fn poisoned() -> Self {
+        CoreError::Fault("the connection was poisoned by an earlier panic".into())
+    }
+
     pub fn not_held(message: impl Into<String>) -> Self {
         CoreError::NotFound {
             code: NOT_HELD.into(),

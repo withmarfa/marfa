@@ -1,5 +1,6 @@
 //! Counts of linked items and of table rows.
 
+use crate::guard::guarded;
 use crate::{Core, MarfaError};
 
 /// What a count counts for each item.
@@ -62,30 +63,32 @@ impl From<marfa_core::ItemCount> for ItemCount {
     }
 }
 
-#[uniffi::export]
-impl Core {
-    /// Counts from the copy where possible. On `NotAnswerable`, call `servedCounts(ids:counted:)`.
-    pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
-        Ok(self
-            .inner
-            .counts(&ids, &counted.into())?
-            .into_iter()
-            .map(Into::into)
-            .collect())
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        /// Counts from the copy where possible. On `NotAnswerable`, call `servedCounts(ids:counted:)`.
+        pub fn counts(&self, ids: Vec<String>, counted: Counted) -> Result<Vec<ItemCount>, MarfaError> {
+            Ok(self
+                .inner
+                .counts(&ids, &counted.into())?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        }
 
-    /// Requests every count from the copy's server. Each result has `held` set to false.
-    pub fn served_counts(
-        &self,
-        ids: Vec<String>,
-        counted: Counted,
-    ) -> Result<Vec<ItemCount>, MarfaError> {
-        Ok(self
-            .inner
-            .served_counts(&ids, &counted.into())?
-            .into_iter()
-            .map(Into::into)
-            .collect())
+        /// Requests every count from the copy's server. Each result has `held` set to false.
+        pub fn served_counts(
+            &self,
+            ids: Vec<String>,
+            counted: Counted,
+        ) -> Result<Vec<ItemCount>, MarfaError> {
+            Ok(self
+                .inner
+                .served_counts(&ids, &counted.into())?
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        }
     }
 }
 

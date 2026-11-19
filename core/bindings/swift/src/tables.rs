@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::guard::guarded;
 use crate::{Core, JsonObject, MarfaError, QueuedWrite, SortDirection, Stop, flag_of, queued};
 
 /// What one pass over the tables not yet whole did.
@@ -173,102 +174,104 @@ fn answer(value: serde_json::Value) -> Result<JsonObject, MarfaError> {
     }
 }
 
-#[uniffi::export]
-impl Core {
-    /// Holds the table named `table` of every item of `type_id`, a pattern as
-    /// a hydration reads it, and fills it, or leaves it to the follow or
-    /// catch-up that holds the stream.
-    pub fn hold_table(
-        &self,
-        type_id: String,
-        table: String,
-        stop: Option<Arc<Stop>>,
-    ) -> Result<TableHold, MarfaError> {
-        let hold = self
-            .inner
-            .hold_table_until(&type_id, &table, &flag_of(stop))?;
-        Ok(TableHold {
-            r#type: hold.type_id,
-            table: hold.table,
-            was_held: hold.was_held,
-            fill: hold.fill.map(Into::into),
-        })
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        /// Holds the table named `table` of every item of `type_id`, a pattern as
+        /// a hydration reads it, and fills it, or leaves it to the follow or
+        /// catch-up that holds the stream.
+        pub fn hold_table(
+            &self,
+            type_id: String,
+            table: String,
+            stop: Option<Arc<Stop>>,
+        ) -> Result<TableHold, MarfaError> {
+            let hold = self
+                .inner
+                .hold_table_until(&type_id, &table, &flag_of(stop))?;
+            Ok(TableHold {
+                r#type: hold.type_id,
+                table: hold.table,
+                was_held: hold.was_held,
+                fill: hold.fill.map(Into::into),
+            })
+        }
 
-    /// Releases a choice, keeping the tables another choice holds; answers
-    /// whether it was held.
-    pub fn let_go_table(&self, type_id: String, table: String) -> Result<bool, MarfaError> {
-        Ok(self.inner.let_go_table(&type_id, &table)?)
-    }
+        /// Releases a choice, keeping the tables another choice holds; answers
+        /// whether it was held.
+        pub fn let_go_table(&self, type_id: String, table: String) -> Result<bool, MarfaError> {
+            Ok(self.inner.let_go_table(&type_id, &table)?)
+        }
 
-    pub fn held_tables(&self) -> Result<HeldTables, MarfaError> {
-        held(self.inner.held_tables()?)
-    }
+        pub fn held_tables(&self) -> Result<HeldTables, MarfaError> {
+            held(self.inner.held_tables()?)
+        }
 
-    /// Fills each table the copy holds that is not whole.
-    pub fn fill_tables(&self, stop: Option<Arc<Stop>>) -> Result<TableFill, MarfaError> {
-        Ok(self.inner.fill_tables(&flag_of(stop))?.into())
-    }
+        /// Fills each table the copy holds that is not whole.
+        pub fn fill_tables(&self, stop: Option<Arc<Stop>>) -> Result<TableFill, MarfaError> {
+            Ok(self.inner.fill_tables(&flag_of(stop))?.into())
+        }
 
-    /// A page of rows, from the copy where it holds the table whole and from
-    /// the server otherwise, with `held` saying which.
-    #[uniffi::method(default(asked = None))]
-    pub fn table_rows(
-        &self,
-        item_id: String,
-        table: String,
-        asked: Option<RowsAsked>,
-    ) -> Result<JsonObject, MarfaError> {
-        let asked = asked.map(Into::into).unwrap_or_default();
-        answer(self.inner.table_rows(&item_id, &table, &asked)?)
-    }
+        /// A page of rows, from the copy where it holds the table whole and from
+        /// the server otherwise, with `held` saying which.
+        #[uniffi::method(default(asked = None))]
+        pub fn table_rows(
+            &self,
+            item_id: String,
+            table: String,
+            asked: Option<RowsAsked>,
+        ) -> Result<JsonObject, MarfaError> {
+            let asked = asked.map(Into::into).unwrap_or_default();
+            answer(self.inner.table_rows(&item_id, &table, &asked)?)
+        }
 
-    pub fn table_row(
-        &self,
-        item_id: String,
-        table: String,
-        row: String,
-    ) -> Result<JsonObject, MarfaError> {
-        answer(self.inner.table_row(&item_id, &table, &row)?)
-    }
+        pub fn table_row(
+            &self,
+            item_id: String,
+            table: String,
+            row: String,
+        ) -> Result<JsonObject, MarfaError> {
+            answer(self.inner.table_row(&item_id, &table, &row)?)
+        }
 
-    #[uniffi::method(default(filter = None))]
-    pub fn table_totals(
-        &self,
-        item_id: String,
-        table: String,
-        filter: Option<String>,
-    ) -> Result<JsonObject, MarfaError> {
-        answer(
-            self.inner
-                .table_totals(&item_id, &table, filter.as_deref())?,
-        )
-    }
+        #[uniffi::method(default(filter = None))]
+        pub fn table_totals(
+            &self,
+            item_id: String,
+            table: String,
+            filter: Option<String>,
+        ) -> Result<JsonObject, MarfaError> {
+            answer(
+                self.inner
+                    .table_totals(&item_id, &table, filter.as_deref())?,
+            )
+        }
 
-    /// Queues one batch of row operations, laid over the copy where it
-    /// holds the table whole.
-    pub fn write_rows(
-        &self,
-        item_id: String,
-        table: String,
-        operations: Vec<JsonObject>,
-    ) -> Result<QueuedWrite, MarfaError> {
-        let operations = operations
-            .into_iter()
-            .map(|operation| operation.into_map().map(serde_json::Value::Object))
-            .collect::<Result<Vec<_>, _>>()?;
-        queued(self.inner.write_rows(&item_id, &table, &operations)?)
-    }
+        /// Queues one batch of row operations, laid over the copy where it
+        /// holds the table whole.
+        pub fn write_rows(
+            &self,
+            item_id: String,
+            table: String,
+            operations: Vec<JsonObject>,
+        ) -> Result<QueuedWrite, MarfaError> {
+            let operations = operations
+                .into_iter()
+                .map(|operation| operation.into_map().map(serde_json::Value::Object))
+                .collect::<Result<Vec<_>, _>>()?;
+            queued(self.inner.write_rows(&item_id, &table, &operations)?)
+        }
 
-    /// Queues an undo of a batch; no held row changes until the server's
-    /// `rows.changed` arrives.
-    pub fn undo_rows(
-        &self,
-        item_id: String,
-        table: String,
-        batch: String,
-    ) -> Result<QueuedWrite, MarfaError> {
-        queued(self.inner.undo_rows(&item_id, &table, &batch)?)
+        /// Queues an undo of a batch; no held row changes until the server's
+        /// `rows.changed` arrives.
+        pub fn undo_rows(
+            &self,
+            item_id: String,
+            table: String,
+            batch: String,
+        ) -> Result<QueuedWrite, MarfaError> {
+            queued(self.inner.undo_rows(&item_id, &table, &batch)?)
+        }
     }
 }
 
