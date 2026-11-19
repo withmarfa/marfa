@@ -1662,6 +1662,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::StoreDamaged { .. }
         | E::UnsentDiffers { .. }
         | E::ReadingHandle
+        | E::OpenedToRead
         | E::CopyExpired { .. }
         | E::StreamIncomplete { .. }
         | E::WrongServer { .. }
@@ -1765,6 +1766,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::HydrationIncomplete
         | E::NoCatalog
         | E::ReadingHandle
+        | E::OpenedToRead
         | E::FirstSyncWaiting
         | E::Canceled
         | E::Invalid(_)
@@ -1774,7 +1776,12 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
     if let Some(answer) = error.answer() {
         fields.push((
             "server",
-            json!({ "status": answer.status, "code": answer.code, "details": answer.details }),
+            json!({
+                "status": answer.status,
+                "code": answer.code,
+                "details": answer.details,
+                "requestId": answer.request_id,
+            }),
         ));
     }
     if let Some((code, details)) = error.local() {
@@ -3767,12 +3774,13 @@ mod tests {
                 message: String::new(),
                 retry_after_seconds: Some(7),
                 details: Some(Box::new(json!({ "scope": "key" }))),
+                request_id: None,
             }),
             vec![
                 ("retryAfterSeconds", json!(7)),
                 (
                     "server",
-                    json!({ "status": 429, "code": "rate_limited", "details": { "scope": "key" } })
+                    json!({ "status": 429, "code": "rate_limited", "details": { "scope": "key" }, "requestId": null })
                 ),
             ]
         );
@@ -3805,7 +3813,7 @@ mod tests {
                 ("writeSent", json!(true)),
                 (
                     "server",
-                    json!({ "status": 201, "code": null, "details": null })
+                    json!({ "status": 201, "code": null, "details": null, "requestId": null })
                 ),
             ]
         );
@@ -3833,6 +3841,7 @@ mod tests {
                 status: 404,
                 code: Some("item_not_found".into()),
                 details: Some(json!({ "trashed": true })),
+                request_id: None,
             })),
             code: "item_not_found".into(),
             message: String::new(),
@@ -3841,7 +3850,7 @@ mod tests {
             answered,
             vec![(
                 "server",
-                json!({ "status": 404, "code": "item_not_found", "details": { "trashed": true } })
+                json!({ "status": 404, "code": "item_not_found", "details": { "trashed": true }, "requestId": null })
             )]
         );
         let reworded = fields(E::Unauthorized {
@@ -3849,6 +3858,7 @@ mod tests {
                 status: 401,
                 code: Some("unauthorized".into()),
                 details: None,
+                request_id: None,
             })),
             code: "credential_refused".into(),
             message: String::new(),

@@ -1206,6 +1206,7 @@ pub(crate) fn fetch<G>(
             reply.contract.is_some(),
             &text,
             reply.retry_after_seconds,
+            reply.request_id,
         ));
     }
     let link: serde_json::Value = serde_json::from_str(&text)?;

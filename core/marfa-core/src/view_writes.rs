@@ -94,6 +94,7 @@ impl Core {
                 answer.contract_named,
                 &answer.body,
                 answer.retry_after_seconds,
+                answer.request_id,
             ));
         }
         Ok((answer, http.clone()))

@@ -11,6 +11,8 @@ pub struct ServerAnswer {
     pub status: u16,
     pub code: Option<String>,
     pub details: Option<serde_json::Value>,
+    /// The server's `X-Request-ID`, which a report of a problem can quote.
+    pub request_id: Option<String>,
 }
 
 impl ServerAnswer {
@@ -19,6 +21,7 @@ impl ServerAnswer {
             status,
             code: None,
             details: None,
+            request_id: None,
         })
     }
 }
@@ -67,6 +70,7 @@ pub enum CoreError {
         message: String,
         retry_after_seconds: Option<u64>,
         details: Option<Box<serde_json::Value>>,
+        request_id: Option<String>,
     },
     #[error("server answered {status} ({code}): {message}")]
     Server {
@@ -74,6 +78,7 @@ pub enum CoreError {
         code: String,
         message: String,
         details: Option<Box<serde_json::Value>>,
+        request_id: Option<String>,
     },
     #[error("{0}")]
     Io(String),
@@ -391,6 +396,7 @@ impl CoreError {
                 status,
                 code: Some(code.into()),
                 details: None,
+                request_id: None,
             })),
         }
     }
@@ -431,20 +437,28 @@ impl CoreError {
             | CoreError::UnknownType { server, .. }
             | CoreError::CopyExpired { server, .. }
             | CoreError::StreamIncomplete { server, .. } => server.as_deref().cloned(),
-            CoreError::RateLimited { code, details, .. } => Some(ServerAnswer {
+            CoreError::RateLimited {
+                code,
+                details,
+                request_id,
+                ..
+            } => Some(ServerAnswer {
                 status: 429,
                 code: (code != UNREAD_CODE).then(|| code.clone()),
                 details: details.as_deref().cloned(),
+                request_id: request_id.clone(),
             }),
             CoreError::Server {
                 status,
                 code,
                 details,
+                request_id,
                 ..
             } => Some(ServerAnswer {
                 status: *status,
                 code: (code != UNREAD_CODE).then(|| code.clone()),
                 details: details.as_deref().cloned(),
+                request_id: request_id.clone(),
             }),
             CoreError::Unnamed { status, .. } | CoreError::Redirected { status, .. } => {
                 Some(*ServerAnswer::status_only(*status))
@@ -943,6 +957,7 @@ mod tests {
             code: "x".into(),
             message: String::new(),
             details: None,
+            request_id: None,
         };
         assert!(CoreError::Network("down".into()).is_unreachable());
         assert!(status(503).is_unreachable());
@@ -955,6 +970,7 @@ mod tests {
                 message: String::new(),
                 retry_after_seconds: None,
                 details: None,
+                request_id: None,
             }
             .is_unreachable()
         );
@@ -985,6 +1001,7 @@ mod tests {
             message: String::new(),
             retry_after_seconds: seconds,
             details: None,
+            request_id: None,
         };
         assert!(limited(None).is_environmental());
         assert_eq!(limited(None).retry_after(), None);
@@ -996,6 +1013,7 @@ mod tests {
             code: String::new(),
             message: String::new(),
             details: None,
+            request_id: None,
         };
         assert!(answered(503).is_environmental());
         assert!(answered(408).is_environmental());

@@ -2158,6 +2158,7 @@ pub(crate) mod tests {
                 status: 404,
                 code: Some("item_not_found".into()),
                 details: Some(serde_json::json!({ "id": "x" })),
+                request_id: None,
             })
         );
     }
@@ -2180,6 +2181,7 @@ pub(crate) mod tests {
                 details: Some(
                     serde_json::json!({ "grant": { "kind": "type", "name": "system.folder", "level": "read" } })
                 ),
+                request_id: None,
             })
         );
     }

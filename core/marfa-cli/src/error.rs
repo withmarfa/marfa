@@ -226,26 +226,28 @@ impl From<CoreError> for CliError {
                     code,
                     message,
                     details,
+                    request_id,
                 } => Self::Refused {
                     status,
                     code,
                     message,
                     retry_after_seconds: None,
                     details,
-                    request_id: None,
+                    request_id,
                 },
                 CoreError::RateLimited {
                     code,
                     message,
                     retry_after_seconds,
                     details,
+                    request_id,
                 } => Self::Refused {
                     status: 429,
                     code,
                     message,
                     retry_after_seconds,
                     details,
-                    request_id: None,
+                    request_id,
                 },
                 CoreError::SignedOut { origin } => Self::SignedOut { origin },
                 CoreError::NoKeychain(reason) => Self::NoKeychain(reason),
@@ -258,13 +260,14 @@ impl From<CoreError> for CliError {
                 code,
                 message,
                 details,
+                request_id,
             } => Self::Refused {
                 status,
                 code,
                 message,
                 retry_after_seconds: None,
                 details,
-                request_id: None,
+                request_id,
             },
             CoreError::Redirected {
                 origin,
@@ -565,11 +568,13 @@ impl CliError {
                 status,
                 code,
                 details,
+                request_id,
                 ..
             } => Some(ServerAnswer {
                 status: *status,
                 code: (code != marfa_core::UNREAD_CODE).then(|| code.clone()),
                 details: details.as_deref().cloned(),
+                request_id: request_id.clone(),
             }),
             // The body, and so the code, was not read.
             CliError::ContractMismatch {
@@ -583,14 +588,8 @@ impl CliError {
 
     /// The server's `X-Request-ID` for the answer that refused, where the
     /// command read one.
-    pub fn request_id(&self) -> Option<&str> {
-        match self {
-            CliError::CatchUp { error, .. }
-            | CliError::BinPartlyEmptied { error, .. }
-            | CliError::SecretRefused { error } => error.request_id(),
-            CliError::Refused { request_id, .. } => request_id.as_deref(),
-            _ => None,
-        }
+    pub fn request_id(&self) -> Option<String> {
+        self.server().and_then(|answer| answer.request_id)
     }
 
     fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
@@ -621,13 +620,12 @@ impl CliError {
     }
 
     pub fn envelope(&self) -> serde_json::Value {
-        let request_id = self.request_id();
         let server = self.server().map(|answer| {
             serde_json::json!({
                 "status": answer.status,
                 "code": answer.code,
                 "details": answer.details,
-                "request_id": request_id,
+                "request_id": answer.request_id,
             })
         });
         let local = self
@@ -1134,6 +1132,7 @@ mod tests {
             message: "slow down".into(),
             retry_after_seconds: Some(7),
             details: Some(Box::new(serde_json::json!({ "scope": "key" }))),
+            request_id: None,
         });
         let envelope = error.envelope();
         assert_eq!(envelope["error"]["code"], "rate_limited");
@@ -1211,6 +1210,7 @@ mod tests {
             status,
             code: Some(code.into()),
             details: None,
+            request_id: None,
         }))
     }
 
@@ -1221,6 +1221,7 @@ mod tests {
                 status,
                 code: Some(code.into()),
                 details,
+                request_id: None,
             }))
         };
         let expired = CliError::Core(CoreError::CopyExpired {
@@ -1279,6 +1280,7 @@ mod tests {
             code: marfa_core::UNREAD_CODE.into(),
             message: text.into(),
             details: None,
+            request_id: None,
         })
         .envelope();
         assert_eq!(unread["error"]["server"], through_core["error"]["server"]);
@@ -1455,6 +1457,7 @@ mod tests {
                 code: "ancestor_unavailable".into(),
                 message: "the server said no".into(),
                 details: None,
+                request_id: None,
             })
         };
         for (status, code) in [
@@ -1491,6 +1494,7 @@ mod tests {
                 code: "code".into(),
                 message: String::new(),
                 details: None,
+                request_id: None,
             })
         };
         for status in [405, 415] {

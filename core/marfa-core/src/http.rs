@@ -528,6 +528,8 @@ pub struct Answer {
     /// The server names its contract on every answer, so a refusal naming
     /// none came from something in front of it, a proxy or a tunnel.
     pub contract_named: bool,
+    /// The server's `X-Request-ID`, which a report of a problem can quote.
+    pub request_id: Option<String>,
 }
 
 impl Answer {
@@ -559,6 +561,7 @@ impl Answer {
                 .as_ref()
                 .map(|envelope| envelope.error.code.clone()),
             details: envelope.and_then(|envelope| envelope.error.details),
+            request_id: self.request_id.clone(),
         })
     }
 
@@ -1204,9 +1207,10 @@ impl Http {
         named: bool,
         text: &str,
         retry_after_seconds: Option<u64>,
+        request_id: Option<String>,
     ) -> CoreError {
         if named {
-            let refused = refusal(status, text, retry_after_seconds);
+            let refused = refusal(status, text, retry_after_seconds, request_id);
             if self.reach.is_some() && status == 401 {
                 return credential_ended(&refused);
             }
@@ -1498,6 +1502,7 @@ impl Http {
             reply.contract.is_some(),
             &reply.body,
             reply.retry_after_seconds,
+            reply.request_id,
         ))
     }
 
@@ -1544,6 +1549,7 @@ impl Http {
                 reply.contract.is_some(),
                 &reply.body,
                 reply.retry_after_seconds,
+                reply.request_id,
             ));
         }
         serde_json::from_str(&reply.body)
@@ -1579,6 +1585,7 @@ impl Http {
                 reply.contract.is_some(),
                 &body,
                 reply.retry_after_seconds,
+                reply.request_id,
             ));
         }
         let description: crate::InstanceDescription = serde_json::from_str(&body)?;
@@ -1621,13 +1628,14 @@ impl Http {
         self.hold(&response, status, false)?;
         let named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after = retry_after(&response);
+        let request_id = header(&response, REQUEST_ID_HEADER);
         let body = response
             .into_body()
             .read_to_string()
             .map_err(|error| self.unreached(error))?;
         if !(200..300).contains(&status) {
             return Err(if named {
-                unconfirmed(refusal(status, &body, retry_after))
+                unconfirmed(refusal(status, &body, retry_after, request_id))
             } else {
                 CoreError::Unnamed {
                     origin: self.origin(),
@@ -2014,6 +2022,7 @@ impl Http {
         self.hold(&response, status, true)?;
         let contract_named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after_seconds = retry_after(&response);
+        let request_id = header(&response, REQUEST_ID_HEADER);
         let replayed = response
             .headers()
             .get("Idempotency-Replayed")
@@ -2039,6 +2048,7 @@ impl Http {
             retry_after_seconds,
             replayed,
             contract_named,
+            request_id,
         };
         // Not the write's answer: the instance that gave it never had the
         // rows the write was made against.
@@ -2072,6 +2082,7 @@ impl Http {
             reply.contract.is_some(),
             &reply.body,
             reply.retry_after_seconds,
+            reply.request_id,
         );
         if matches!(
             &refused,
@@ -2106,6 +2117,7 @@ impl Http {
             reply.contract.is_some(),
             &reply.body,
             reply.retry_after_seconds,
+            reply.request_id,
         ))?;
         Ok(Replacement::Refused { code, message })
     }
@@ -2167,11 +2179,17 @@ impl Http {
         if !(200..300).contains(&status) {
             let named = header(&response, CONTRACT_HEADER).is_some();
             let retry_after = retry_after(&response);
+            let request_id = header(&response, REQUEST_ID_HEADER);
             let text = response.into_body().read_to_string().unwrap_or_default();
             if status == 401 && named {
-                return Err(credential_ended(&refusal(status, &text, retry_after)));
+                return Err(credential_ended(&refusal(
+                    status,
+                    &text,
+                    retry_after,
+                    request_id,
+                )));
             }
-            return Err(self.refused(status, named, &text, retry_after));
+            return Err(self.refused(status, named, &text, retry_after, request_id));
         }
         Ok(Box::new(response.into_body().into_reader()))
     }
@@ -2578,6 +2596,7 @@ impl Http {
         self.hold(&response, status, false)?;
         let named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after = retry_after(&response);
+        let request_id = header(&response, REQUEST_ID_HEADER);
         let proof = response
             .headers()
             .get_all("X-Marfa-Reach")
@@ -2587,7 +2606,7 @@ impl Http {
             .is_none_or(|expected| proof.len() == 1 && proof[0].to_str().ok() == Some(expected));
         let text = self.whole(response.into_body())?;
         if !(200..300).contains(&status) {
-            let error = self.refused(status, named, &text, retry_after);
+            let error = self.refused(status, named, &text, retry_after, request_id);
             if conditional.is_some() && named && matches!(status, 403 | 404) && !certified {
                 return Err(crate::reach::invalid());
             }
@@ -2780,14 +2799,23 @@ fn unconfirmed(error: CoreError) -> CoreError {
             status: 404,
             code,
             message,
-            details: server.and_then(|answer| answer.details).map(Box::new),
+            details: server
+                .as_ref()
+                .and_then(|answer| answer.details.clone())
+                .map(Box::new),
+            request_id: server.and_then(|answer| answer.request_id),
         },
         other => other,
     }
 }
 
 /// Only for an answer that names the server's contract.
-fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
+fn refusal(
+    status: u16,
+    text: &str,
+    retry_after_seconds: Option<u64>,
+    request_id: Option<String>,
+) -> CoreError {
     let (code, message, details, read) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
             envelope.error.code,
@@ -2806,6 +2834,7 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
         status,
         code: read.then(|| code.clone()),
         details: details.clone(),
+        request_id: request_id.clone(),
     }));
     match status {
         409 if code == "reach_changed" => CoreError::CopyExpired {
@@ -2843,12 +2872,14 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
             message,
             retry_after_seconds,
             details: details.map(Box::new),
+            request_id,
         },
         _ => CoreError::Server {
             status,
             code,
             message,
             details: details.map(Box::new),
+            request_id,
         },
     }
 }
@@ -3270,13 +3301,14 @@ mod tests {
     fn unnamed_rate_limits_keep_the_wait_without_trusting_the_refusal() {
         let http = Http::new("https://marfa.example", "k").unwrap();
         for (seconds, expected) in [(None, None), (Some(7), Some(7)), (Some(86_400), Some(300))] {
-            let error = http.refused(429, false, "slow down", seconds);
+            let error = http.refused(429, false, "slow down", seconds, None);
             assert!(matches!(error, CoreError::Unnamed { status: 429, .. }));
             assert!(error.is_environmental());
             assert_eq!(error.retry_after().map(|wait| wait.as_secs()), expected);
         }
         assert_eq!(
-            http.refused(401, false, "no key", Some(7)).retry_after(),
+            http.refused(401, false, "no key", Some(7), None)
+                .retry_after(),
             None
         );
     }
@@ -3389,14 +3421,14 @@ mod tests {
         let details = serde_json::json!({ "errors": [{ "field": "title" }] });
         let body = r#"{"error":{"code":"validation_error","message":"no","details":{"errors":[{"field":"title"}]}}}"#;
         for status in [400u16, 401, 403, 404, 409, 422, 429, 500] {
-            let answer = refusal(status, body, None)
+            let answer = refusal(status, body, None, None)
                 .answer()
                 .unwrap_or_else(|| panic!("{status} carries no answer"));
             assert_eq!(answer.status, status);
             assert_eq!(answer.code.as_deref(), Some("validation_error"));
             assert_eq!(answer.details.as_ref(), Some(&details), "{status}");
         }
-        let unread = refusal(502, "<html>", None).answer().unwrap();
+        let unread = refusal(502, "<html>", None, None).answer().unwrap();
         assert_eq!(
             (unread.status, unread.code, unread.details),
             (502, None, None)
@@ -3407,7 +3439,7 @@ mod tests {
     fn a_credential_the_server_ended_expires_the_copy_and_names_its_answer() {
         let body =
             r#"{"error":{"code":"unauthorized","message":"no","details":{"why":"expired"}}}"#;
-        let ended = credential_ended(&refusal(401, body, None));
+        let ended = credential_ended(&refusal(401, body, None, None));
         let answer = ended.answer().unwrap();
         assert!(
             matches!(&ended, CoreError::CopyExpired { reason, .. } if reason == "credential_ended")
@@ -3427,6 +3459,7 @@ mod tests {
             retry_after_seconds: None,
             replayed: false,
             contract_named: true,
+            request_id: None,
         }
         .instance_changed_error();
         let answer = instance.answer().unwrap();
@@ -3435,15 +3468,38 @@ mod tests {
     }
 
     #[test]
+    fn every_refusal_keeps_the_request_id_the_server_sent() {
+        let body = r#"{"error":{"code":"validation_error","message":"no"}}"#;
+        for status in [400u16, 401, 403, 404, 409, 422, 429, 500] {
+            let sent = refusal(status, body, None, Some("req-9".into()));
+            assert_eq!(
+                sent.answer()
+                    .and_then(|answer| answer.request_id)
+                    .as_deref(),
+                Some("req-9"),
+                "{status}"
+            );
+            assert_eq!(
+                refusal(status, body, None, None)
+                    .answer()
+                    .unwrap()
+                    .request_id,
+                None
+            );
+        }
+    }
+
+    #[test]
     fn refusals_keep_the_server_code() {
         let body = r#"{"error":{"code":"unknown_type","message":"no such type"}}"#;
         assert_eq!(
-            refusal(400, body, None),
+            refusal(400, body, None, None),
             CoreError::UnknownType {
                 server: Some(Box::new(ServerAnswer {
                     status: 400,
                     code: Some("unknown_type".into()),
                     details: None,
+                    request_id: None,
                 })),
                 message: "no such type".into()
             }
@@ -3452,6 +3508,7 @@ mod tests {
             refusal(
                 404,
                 r#"{"error":{"code":"item_not_found","message":"gone"}}"#,
+                None,
                 None
             ),
             CoreError::NotFound {
@@ -3459,6 +3516,7 @@ mod tests {
                     status: 404,
                     code: Some("item_not_found".into()),
                     details: None,
+                    request_id: None,
                 })),
                 code: "item_not_found".into(),
                 message: "gone".into()
@@ -3468,7 +3526,8 @@ mod tests {
             refusal(
                 429,
                 r#"{"error":{"code":"rate_limited","message":"slow"}}"#,
-                Some(7)
+                Some(7),
+                None
             ),
             CoreError::RateLimited {
                 retry_after_seconds: Some(7),
@@ -3476,7 +3535,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            refusal(502, "<html>", None),
+            refusal(502, "<html>", None, None),
             CoreError::Server { status: 502, .. }
         ));
     }

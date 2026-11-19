@@ -357,6 +357,7 @@ impl Core {
                 answer.contract_named,
                 &answer.body,
                 answer.retry_after_seconds,
+                answer.request_id,
             ));
         }
         let answered: WireItemWithMetadata = serde_json::from_str(&answer.body)

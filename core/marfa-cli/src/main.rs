@@ -489,7 +489,7 @@ fn refusal_text(error: &CliError) -> String {
         _ => output::printable(&error.to_string()),
     };
     if let Some(id) = error.request_id() {
-        text.push_str(&format!("\nRequest ID: {}", output::printable(id)));
+        text.push_str(&format!("\nRequest ID: {}", output::printable(&id)));
     }
     text
 }
@@ -781,6 +781,26 @@ mod tests {
             "the server refused (403 forbidden): no"
         );
         assert_eq!(refusal_text(&CliError::NoStoreNamed).lines().count(), 1);
+    }
+
+    #[test]
+    fn a_refusal_through_the_core_names_the_request_id_the_server_sent() {
+        let refusal = |request_id: Option<&str>| {
+            CliError::from(marfa_core::CoreError::Forbidden {
+                code: "type_not_permitted".into(),
+                message: "no".into(),
+                server: Some(Box::new(marfa_core::ServerAnswer {
+                    status: 403,
+                    code: Some("type_not_permitted".into()),
+                    details: None,
+                    request_id: request_id.map(str::to_string),
+                })),
+            })
+        };
+        let sent = refusal(Some("req-2"));
+        assert!(refusal_text(&sent).ends_with("\nRequest ID: req-2"));
+        assert_eq!(sent.envelope()["error"]["server"]["request_id"], "req-2");
+        assert!(!refusal_text(&refusal(None)).contains("Request ID"));
     }
 
     #[test]

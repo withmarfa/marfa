@@ -992,6 +992,24 @@ fn field<'a>(record: &'a Value, name: &str) -> &'a str {
     record.get(name).and_then(Value::as_str).unwrap_or("")
 }
 
+/// Who an audit entry names: the sign-in's name, its kind and ID where it
+/// kept no name, and `no sign-in` for a request that had none.
+fn audit_actor(actor: &Value) -> String {
+    if actor.is_null() {
+        return "no sign-in".to_string();
+    }
+    let name = field(actor, "name");
+    if !name.is_empty() {
+        return name.to_string();
+    }
+    [field(actor, "kind"), field(actor, "id")]
+        .iter()
+        .filter(|part| !part.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn record_title(record: &Value) -> &str {
     let property = |name: &str| {
         record
@@ -1267,18 +1285,10 @@ fn record_columns(record: &Value) -> Cols {
         );
     }
     if record.get("action").is_some() && record.get("actor").is_some() {
-        let actor = record
-            .get("actor")
-            .filter(|actor| !actor.is_null())
-            .map_or("unknown", |actor| field(actor, "name"));
+        let actor = audit_actor(&record["actor"]);
         return Cols::new(
             &["id", "action", "when", "actor"],
-            vec![
-                owned("id"),
-                owned("action"),
-                owned("created_at"),
-                actor.to_string(),
-            ],
+            vec![owned("id"), owned("action"), owned("created_at"), actor],
         );
     }
     let kind = ["type", "action"]
@@ -2173,6 +2183,7 @@ pub(crate) mod tests {
                 entry("a1", json!({"kind": "key", "id": "k1", "name": "CRM sync"})),
                 entry("a2", json!({"kind": "server", "id": "server", "name": "Marfa"})),
                 entry("a3", Value::Null),
+                entry("a4", json!({"kind": "key", "id": "k2", "name": ""})),
             ],
             "next_cursor": null,
         }))
@@ -2182,7 +2193,8 @@ pub(crate) mod tests {
             "id  action         when                      actor\n\
              a1  config.update  2026-10-03T10:09:45.373Z  CRM sync\n\
              a2  config.update  2026-10-03T10:09:45.373Z  Marfa\n\
-             a3  config.update  2026-10-03T10:09:45.373Z  unknown"
+             a3  config.update  2026-10-03T10:09:45.373Z  no sign-in\n\
+             a4  config.update  2026-10-03T10:09:45.373Z  key k2"
         );
     }
 

@@ -2639,6 +2639,39 @@ mod tests {
         assert!(core.get("pin-100").unwrap().is_none());
     }
 
+    #[test]
+    fn a_refused_listing_carries_the_request_id_the_server_sent() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/types",
+            vec![scripted::certified(scripted::types(&[("core.note", None)]))],
+        );
+        server.on(
+            "/items",
+            vec![scripted::with_request_id(
+                scripted::certified(scripted::refusal(403, "type_not_permitted")),
+                "req-hydrate-1",
+            )],
+        );
+        let refused = core
+            .hydrate_until(
+                &["core.note".into()],
+                SliceTier::Library,
+                &[],
+                &AtomicBool::new(false),
+            )
+            .unwrap_err();
+        assert_eq!(
+            refused
+                .answer()
+                .and_then(|answer| answer.request_id)
+                .as_deref(),
+            Some("req-hydrate-1"),
+            "{refused:?}"
+        );
+    }
+
     /// A credential that is not a key cannot read its own map, so the device
     /// cannot tell before listing whether it may read a type. The listing's
     /// refusal has to arrive before the copy is cleared, or the old slice,
@@ -2701,6 +2734,7 @@ mod tests {
                         status: 403,
                         code: Some("type_not_permitted".into()),
                         details: None,
+                        request_id: None,
                     }),
                     "the listing's refusal was a server's answer"
                 );
@@ -3718,12 +3752,14 @@ mod tests {
             message: String::new(),
             retry_after_seconds: None,
             details: None,
+            request_id: None,
         }));
         assert!(!ends(CoreError::Server {
             status: 503,
             code: "unavailable".into(),
             message: String::new(),
             details: None,
+            request_id: None,
         }));
         assert!(!ends(CoreError::Invalid("bad".into())));
     }

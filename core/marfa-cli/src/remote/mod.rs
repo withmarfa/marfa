@@ -284,12 +284,14 @@ fn renewal_error(error: CliError) -> CoreError {
             code,
             message,
             details,
+            request_id,
             ..
         } => CoreError::Unauthorized {
             server: Some(Box::new(marfa_core::ServerAnswer {
                 status: 401,
                 code: (code != marfa_core::UNREAD_CODE).then(|| code.clone()),
                 details: details.as_deref().cloned(),
+                request_id,
             })),
             code,
             message,
@@ -300,24 +302,27 @@ fn renewal_error(error: CliError) -> CoreError {
             message,
             retry_after_seconds,
             details,
-            ..
+            request_id,
         } => CoreError::RateLimited {
             code,
             message,
             retry_after_seconds,
             details,
+            request_id,
         },
         CliError::Refused {
             status,
             code,
             message,
             details,
+            request_id,
             ..
         } => CoreError::Server {
             status,
             code,
             message,
             details,
+            request_id,
         },
         CliError::ContractMismatch {
             origin,
@@ -2181,7 +2186,7 @@ mod tests {
         ]);
         let remote = remote_at(&door, Some("marfa_k1_x"));
         let sent = remote.json(&Request::get(&["items"])).unwrap_err();
-        assert_eq!(sent.request_id(), Some("req-7"));
+        assert_eq!(sent.request_id().as_deref(), Some("req-7"));
         let envelope = sent.envelope();
         assert_eq!(envelope["error"]["server"]["request_id"], "req-7");
         assert!(
