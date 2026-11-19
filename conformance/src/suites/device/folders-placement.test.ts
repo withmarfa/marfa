@@ -1,6 +1,7 @@
 import {
   appendFileSync,
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -11,6 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -67,7 +69,7 @@ import {
   sentUpdates,
   withFault,
 } from "./folders.shared.js";
-import { tempFolder } from "../../utils/temp-folder.js";
+import { detachImageAtCleanup, tempFolder } from "../../utils/temp-folder.js";
 
 /** Document names in the three extensions and more than one letter case. */
 const DOC_NAMES = ["notes.md", "NOTES.MD", "Notes.Markdown", "Notes.TXT"];
@@ -86,6 +88,56 @@ afterEach(async () => {
   harness = undefined;
   second = undefined;
 });
+
+/**
+ * Moves the folder onto a volume that keeps names differing only in case
+ * apart: a case-sensitive APFS image on a Mac, the temporary folder's own
+ * file system elsewhere.
+ */
+async function onCaseSensitiveVolume(moved: FolderHarness): Promise<void> {
+  const scratch = tempFolder("marfa-case-sensitive-");
+  const mount = join(scratch, "volume");
+  mkdirSync(mount);
+  if (process.platform === "darwin") {
+    const image = join(scratch, "case.sparseimage");
+    const made = spawnSync("hdiutil", [
+      "create",
+      "-size",
+      "256m",
+      "-type",
+      "SPARSE",
+      "-fs",
+      "Case-sensitive APFS",
+      "-volname",
+      "conformance",
+      image,
+    ]);
+    expect(made.status, String(made.stderr)).toBe(0);
+    const attached = spawnSync("hdiutil", [
+      "attach",
+      image,
+      "-mountpoint",
+      mount,
+      "-nobrowse",
+      "-noautoopen",
+    ]);
+    expect(attached.status, String(attached.stderr)).toBe(0);
+    detachImageAtCleanup(mount);
+  }
+  const dir = join(mount, "notes");
+  cpSync(moved.dir, dir, { recursive: true });
+  rmSync(moved.dir, { recursive: true });
+  moved.dir = dir;
+  moved.folder = new CliFolder(dir, {
+    binary: requireBinary(),
+    url: moved.server.url,
+    key: KEY,
+    registry: moved.registry,
+  });
+  writeFileSync(join(dir, "case.probe"), "");
+  expect(existsSync(join(dir, "CASE.probe"))).toBe(false);
+  rmSync(join(dir, "case.probe"));
+}
 
 describe("where a file sits", () => {
   /** An item the server holds, a note unless typed, placed in the folder at
@@ -4211,6 +4263,79 @@ describe("writing", () => {
     expect(now).toContain("title: Retitled");
     expect(now).toContain("my edit, twice");
     expect(now).toContain("marfa_version: 4");
+  });
+
+  it("keeps a file held for its name where a retitle moved its note's file from, on a file system that keeps case apart", async () => {
+    const id = "01a00000-0000-7000-8000-0000000002a2";
+    harness = await folderHarness("folder-moved-save-case", {
+      items: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        copyLiveReplay("2", [
+          copyItemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "Retitled", body: "as read\n" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    await onCaseSensitiveVolume(harness);
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Note.md");
+    put(harness, "note.md", held.replace("as read", "a copy"));
+    expect(statSync(join(harness.dir, "note.md")).ino).not.toBe(
+      statSync(join(harness.dir, "Note.md")).ino,
+    );
+    const scanned = await harness.folder.scan();
+    expect(
+      scanned.ok && scanned.value.flagged.map((f) => [f.path, f.flag]),
+    ).toEqual([["note.md", "name"]]);
+    door?.update(id, { properties: { title: "Retitled" }, version: 1 });
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(existsSync(join(harness.dir, "Note.md"))).toBe(false);
+    expect(read(harness, "Retitled.md")).toContain("marfa_version: 2");
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      rows.get(id)?.properties,
+      "the held file took the place of the note's file",
+    ).toEqual({ title: "Retitled", body: "as read\n" });
+    expect(read(harness, "note.md")).toContain("a copy");
+    expect(read(harness, "Retitled.md")).toContain("as read");
+
+    // The witness: an old buffer at the very name the file left is taken.
+    rmSync(join(harness.dir, "note.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "Note.md", held.replace("as read", "my edit"));
+    const taken = await harness.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(rows.get(id)?.properties).toEqual({
+      title: "Retitled",
+      body: "my edit\n",
+    });
+    expect(existsSync(join(harness.dir, "Note.md"))).toBe(false);
+    expect(read(harness, "Retitled.md")).toContain("my edit");
   });
 
   it("bases a stale file's edit on the version written in it", async () => {

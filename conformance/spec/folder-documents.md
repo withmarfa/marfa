@@ -1338,6 +1338,14 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 **Tests:** `device/folders-placement.test.ts › takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item`, `device/folders-placement.test.ts › takes an old buffer saved at the name a retitle moved its file from as a stale save of its note`, `device/folders-placement.test.ts › leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after`.
 
+### `folder-documents/moved-save-same-name`
+
+When a file's path equals the path a pull last moved an item's file away from only without regard to case or Unicode normalization, and the file system holds the two paths as different names, a device MUST NOT put that file in the item's file's place.
+
+**Reason:** on such a file system the file is another file the person made, such as one held under `folder-documents/same-name-scan-choice-other-paths-held` beside the item's file before the move, and taking it would replace the item's file with its bytes and remove that file.
+
+**Tests:** `device/folders-placement.test.ts › keeps a file held for its name where a retitle moved its note's file from, on a file system that keeps case apart`.
+
 ### `folder-documents/moved-save-held`
 
 When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds a change the device has not read, or one it holds unsent or refused, a device MUST hold the file, flagged `waiting`, without making an item of it, until the person changes or removes that file.
