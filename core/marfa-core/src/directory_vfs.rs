@@ -23,7 +23,9 @@ impl DirectoryVfs {
         // SAFETY: the descriptor belongs to `directory`, which is open for the call.
         let result = unsafe { marfa_directory_vfs_supported(directory.as_raw_fd()) };
         #[cfg(debug_assertions)]
-        let result = if crate::fault::fails(|| "unlocked-filesystem") {
+        let result = if crate::fault::fails(|| "unlocked-filesystem")
+            || crate::fault::named("unlocked-filesystem").is_some()
+        {
             rusqlite::ffi::SQLITE_NOTFOUND
         } else {
             result

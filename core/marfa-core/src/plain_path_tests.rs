@@ -151,10 +151,7 @@ fn a_plain_path_on_a_file_system_that_does_not_lock_is_refused_before_a_lock_is_
         let present: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert!(present.is_empty(), "a refused open left {present:?}");
         // An in-memory store holds no file to lock.
-        assert_eq!(
-            Core::open_in_memory(None).unwrap().handle(),
-            Handle::Writer
-        );
+        assert_eq!(Core::open_in_memory(None).unwrap().handle(), Handle::Writer);
     }
     // The witness: the same path opens as the writer where files lock.
     assert_eq!(Core::open(&path, None).unwrap().handle(), Handle::Writer);
