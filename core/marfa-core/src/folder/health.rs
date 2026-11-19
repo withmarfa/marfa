@@ -694,7 +694,7 @@ impl Folder {
         if !reuse {
             return compute(None, None);
         }
-        // No memo: it is of a walk of every file.
+        // A status from the inventory is not memoised: a memo stands for a full walk.
         if let Some(walked) = self.inventory_walked() {
             *self.health_status.lock().expect("health status lock") = None;
             return compute(None, Some(walked));
