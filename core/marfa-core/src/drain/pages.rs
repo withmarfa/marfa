@@ -1051,6 +1051,12 @@ fn settle(
             waited(report, error.retry_after().map(|wait| wait.as_secs()));
             return Ok(());
         }
+        // The server took the page, so each create is owed its read, not sent
+        // again.
+        Err(CoreError::Canceled) => {
+            owe(core, report, standing, lane, created)?;
+            return Err(CoreError::Canceled);
+        }
         Err(error) => return Err(context.failed(core, error)?),
     };
     for row in rows {
