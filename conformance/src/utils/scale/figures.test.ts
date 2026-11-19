@@ -155,6 +155,7 @@ describe("the folder and device figures", () => {
       "folder_push",
       "folder_notes_synced",
       "folder_watch_rss",
+      "folder_edit_cpu",
       "device_copy_size",
     ]) {
       expect(CEILINGS[name]?.ceiling, name).toBeNull();

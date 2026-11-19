@@ -38,6 +38,8 @@ export interface FiguresFile {
   runId: string;
   date: string;
   profile: string;
+  /** The machine the night ran on: its CPU model and how many CPUs. */
+  host: string;
   /** The instance's real size, counted by the seed step; null if it never reported. */
   items: number | null;
   figures: Figure[];
@@ -51,6 +53,7 @@ export interface RunIdentity {
   runId: string;
   date: string;
   profile: string;
+  host: string;
 }
 
 export function mergeFragments(
@@ -224,6 +227,7 @@ export function parseFiguresFile(text: string): FiguresFile | null {
     runId: string(file.runId),
     date: string(file.date),
     profile: string(file.profile),
+    host: string(file.host),
     items: typeof file.items === "number" ? file.items : null,
     figures: file.figures.filter(isFigure),
     missingSteps: Array.isArray(file.missingSteps)
@@ -333,7 +337,7 @@ export function renderSummary(
       ? `Passed, with ${notJudged} time figure${notJudged === 1 ? "" : "s"} not judged.`
       : "Passed";
   lines.push(
-    `${headline} ${size}, commit \`${tonight.commit}\`, profile ${tonight.profile}.`,
+    `${headline} ${size}, commit \`${tonight.commit}\`, profile ${tonight.profile}${tonight.host === "" ? "" : `, on ${tonight.host}`}.`,
     "",
     runnerLine(verdict),
     "",

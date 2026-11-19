@@ -137,11 +137,22 @@ export async function watch(): Promise<void> {
       `the watch is live after ${((performance.now() - begun) / 1000).toFixed(1)} s`,
     );
 
+    // The CPU of the counted edits: from when the watch has finished with the
+    // warm ones to when the last has arrived.
+    await sleep(SPACING_MS);
+    const editMeter = new CpuMeter();
+    const sampleEdits = () => {
+      const tree = readTree(held.pid);
+      editMeter.read(new Map(tree.map((p) => [p.pid, p.cpuSeconds])));
+    };
+    sampleEdits();
+
     // Spread evenly across the folder, past the notes the warm edits used.
     for (let n = 0; n < EDITS; n++) {
       stillWatching();
       written.push(edit(2 + Math.floor((n * (bench.notes - 1)) / EDITS)));
       await sleep(SPACING_MS);
+      sampleEdits();
     }
     const lastWrite = performance.now();
     while (
@@ -151,6 +162,12 @@ export async function watch(): Promise<void> {
       stillWatching();
       await sleep(POLL_MS);
     }
+    sampleEdits();
+    recorder.add(
+      scalar("folder_edit_cpu", "s", editMeter.usedSinceFirstRead() / EDITS, {
+        note: `CPU seconds for one edit, over ${EDITS} edits, on ${process.platform}`,
+      }),
+    );
     const matched = matchArrivals(written, readings);
     errors += matched.missing.length + (pollFailures > 5 ? 1 : 0);
     if (matched.missing.length > 0) {
