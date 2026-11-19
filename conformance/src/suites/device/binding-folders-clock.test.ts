@@ -15,7 +15,7 @@ import {
   folderTold,
   type BindingFolderHarness,
 } from "./binding-folders.shared.js";
-import { heldBy, untilHeld } from "./binding.shared.js";
+import { untilHeld } from "./binding.shared.js";
 import {
   EdgeDoor,
   scriptFolderChanges,
@@ -39,7 +39,7 @@ async function prepared(
   const edges = new EdgeDoor();
   const feed = new StreamFeed();
   let watching = false;
-  const held = heldBy(feed);
+  const held = edges.held(feed);
   const harness = await bindingFolderHarness(label, {
     files,
     settings: {
@@ -47,14 +47,7 @@ async function prepared(
       removal_threshold: { files: 100, fraction: 1 },
       ...more,
     },
-    events: [
-      (request) =>
-        watching
-          ? typeof held === "function"
-            ? held(request)
-            : held
-          : edges.stream()(request),
-    ],
+    events: [(request) => (watching ? held : edges.stream())(request)],
   });
   made.push(harness);
   const rows = scriptFolderWrites(harness, { edges });

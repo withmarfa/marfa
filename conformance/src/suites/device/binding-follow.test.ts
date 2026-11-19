@@ -21,6 +21,7 @@ import {
   copyHeadRead,
   copyHeldLog,
   copyItemEvent,
+  copyLiveReplay,
   copyStreamCursor,
   typeCatalog,
   wireItem,
@@ -302,7 +303,9 @@ describe("what a follow through a binding tells", () => {
       // A caller last told the server was lost, with a write the server will
       // not take from it.
       await queueNotes(device, "second");
-      events.set(LIVE);
+      // Asked from the event before 11, the last the copy took
+      // (`device/stream-asks-before-last`), the server names its head.
+      events.set(copyLiveReplay("11", []));
       const back = await device.follow({ toldUnreachable: true });
       await untilTold(
         back,
