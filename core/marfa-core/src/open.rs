@@ -97,7 +97,8 @@ impl Core {
 
     /// Only the writer creates a missing store. The first request to a changed origin verifies the recorded instance.
     pub fn open(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
-        let path = path.as_ref();
+        let given = path.as_ref();
+        let path = &lock::linked(given)?;
         // Claimed before the store is opened: a second opener that read the
         // store first would act as a writer until it found out it was not.
         let lock = lock::WriterLock::claim(Some(path))?;
@@ -111,7 +112,7 @@ impl Core {
         };
         Self::from_connection(conn, server, Arc::new(lock), Some(cache))
             .map(Core::swept)
-            .map_err(|error| damage::at_path(error, path))
+            .map_err(|error| damage::at_path(error, given))
     }
 
     /// Reads every page of the store at `path`, and checks each index
@@ -123,13 +124,14 @@ impl Core {
     /// longer the larger the store: for a store a call refused
     /// `StoreDamaged` without naming it.
     pub fn check_store(path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref();
+        let given = path.as_ref();
+        let path = &lock::linked(given)?;
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
         if path.symlink_metadata().is_err() {
             return Err(CoreError::Invalid(format!(
                 "{} holds no store to check",
-                path.display()
+                given.display()
             )));
         }
         damage::check(path)
@@ -144,7 +146,8 @@ impl Core {
     /// its file is empty while its log holds committed writes, and with
     /// `Store` where the queue cannot be read.
     pub fn read_unsent(path: impl AsRef<Path>) -> Result<UnsentWrites> {
-        let path = path.as_ref();
+        let given = path.as_ref();
+        let path = &lock::linked(given)?;
         // A store made after this check is still guarded by the confirmation.
         if path.symlink_metadata().is_err() && lock::lock_path(path).symlink_metadata().is_err() {
             damage::refuse_unfinished(path)?;
@@ -162,7 +165,7 @@ impl Core {
         let writes = writes.ok_or_else(|| {
             CoreError::Store(format!(
                 "the queue of {} cannot be read: set it aside if it is damaged (`marfa device set-aside`, or `setAsideDamaged` in a binding), which names each write it cannot read",
-                path.display()
+                given.display()
             ))
         })?;
         Ok(UnsentWrites {
@@ -182,6 +185,7 @@ impl Core {
         if !holder.is_dir() {
             return Ok(Unsent::NoFolder);
         }
+        let path = &lock::linked(path)?;
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
         if refuse_folders {
@@ -197,12 +201,13 @@ impl Core {
     }
 
     /// Sets aside a store SQLite cannot read: moves the store file and its
-    /// logs to `<store>.damaged-<n>` beside it, for the first `n` no file
+    /// logs to `<store>.damaged-<n>` beside it (beside the file a symbolic link
+    /// at `path` leads to), for the first `n` no file
     /// holds, never deleting them, and makes a new store at `path` that
     /// carries every write the old queue lets be read, under its id and
     /// idempotency key, with its body, base version and verdict. The new
     /// store keeps the server and instance the old one was built from, and
-    /// the fetched and uploaded bytes beside the path, which are addressed by
+    /// the fetched and uploaded bytes beside the file the path leads to, which are addressed by
     /// content. Where it cannot read every write, every record that decides
     /// how a carried write is sent, or every record of the bytes an earlier
     /// set-aside keeps, every byte held beside the path as it sets the store
@@ -215,7 +220,7 @@ impl Core {
     /// writer role. A set-aside that stopped part way is finished by asking
     /// again, and until then a writer's open is refused `StoreDamaged`.
     pub fn set_aside_damaged(path: impl AsRef<Path>) -> Result<SetAside> {
-        let path = path.as_ref();
+        let path = &lock::linked(path.as_ref())?;
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
         damage::set_aside(path)
@@ -259,7 +264,8 @@ impl Core {
     /// not by the store. Refuses with `Invalid` a folder's store, and with
     /// `StoreDamaged` while a set-aside of the store is unfinished.
     pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
-        let path = path.as_ref();
+        let given = path.as_ref();
+        let path = &lock::linked(given)?;
         // Held from the count to the returned core, so no write can be
         // queued between the count and the replacement.
         let lock = lock::WriterLock::claim(Some(path))?;
@@ -273,7 +279,7 @@ impl Core {
         if path.symlink_metadata().is_err() {
             return Err(CoreError::Invalid(format!(
                 "{} holds no store to replace",
-                path.display()
+                given.display()
             )));
         }
         match store::refusal(path)? {
@@ -284,7 +290,7 @@ impl Core {
             None => {
                 return Err(CoreError::Invalid(format!(
                     "{} opens as it is, so there is nothing to replace",
-                    path.display()
+                    given.display()
                 )));
             }
         }
@@ -372,7 +378,7 @@ impl Core {
     /// store has been made rather than making one. `data_version` is how it
     /// learns the writer saved.
     pub fn open_reader(path: impl AsRef<Path>) -> Result<Core> {
-        let path = path.as_ref();
+        let path = &lock::linked(path.as_ref())?;
         let conn = store::open_to_read(path)?;
         let removing = Arc::default();
         store::Removals::serve(&removing, &conn)?;

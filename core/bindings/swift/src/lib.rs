@@ -3455,8 +3455,8 @@ pub struct SetAside {
 
 guarded! {
     /// Sets aside the store at `path`, which `open` refuses with `StoreDamaged`:
-    /// moves it and its logs to `<path>.damaged-<n>` beside it, never deleting
-    /// them, and makes a new store at `path` that carries every write its queue
+    /// moves it and its logs to `<path>.damaged-<n>` beside it (beside the file
+    /// a symbolic link at `path` leads to), never deleting them, and makes a new store at `path` that carries every write its queue
     /// lets be read, under its id and idempotency key, with its body, base
     /// version and verdict, and the server and instance it was built from. Drop
     /// every `Core` on the store first. The new store holds no copy: hydrate it,
