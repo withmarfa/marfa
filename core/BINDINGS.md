@@ -8,6 +8,8 @@ This page is the reference for an app developer who embeds the Rust core through
 
 The read keeps the address's path prefix, asks for JSON and sends no credential, including one embedded in the URL. It returns the configured display name, or the server's default `Marfa`, and does not invent a name when the answer is malformed. A connection failure, an HTTP refusal, a redirect or a malformed description returns an error. A description can be read from a server on another contract, so a client can identify it before opening a working copy; reading it does not establish contract compatibility or access to any data.
 
+A call that sends the server an item ID, a file hash or an event cursor the copy holds (a pin, a table hold or read, the bin, a catch-up, a follow and each stream it opens, a fetch of files) first reads the root, and reads it again after a credential renewal. If the root names an instance other than the one the copy was built from, the call sends nothing more and ends `CopyExpired` with the reason `instance_changed`, and a writing handle expires the copy. The root read and the request are two requests, so a server that takes the address between them still receives that one request.
+
 ## Trash several items at once
 
 An app that deletes a selection previews, then trashes, on `Core` (the Swift binding carries both as `preview_trash(ids)` and `trash_items(preview)`):
