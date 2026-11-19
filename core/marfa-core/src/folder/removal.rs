@@ -448,9 +448,11 @@ mod tests {
         // Unread, `sub` may hold `gone.md` too, under another name.
         assert_eq!(unsure, ["gone.md", "sub/original.md"], "{confirmed:?}");
         assert!(
-            confirmed.unsure[0]
-                .reason
-                .contains("`sub` could not be read"),
+            confirmed
+                .unsure
+                .iter()
+                .any(|file| file.path == "gone.md"
+                    && file.reason.contains("`sub` could not be read")),
             "{confirmed:?}"
         );
         assert!(deletes_queued(folder).is_empty(), "a delete was queued");
