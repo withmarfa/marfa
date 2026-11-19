@@ -160,7 +160,9 @@ impl Outcome {
             "ids": self.ended,
             "failed": self.failed
                 .iter()
-                .map(|(id, error)| json!({ "id": id, "error": error.to_string() }))
+                .map(|(id, error)| {
+                    json!({ "id": id, "error": error.to_string(), "request_id": error.request_id() })
+                })
                 .collect::<Vec<_>>(),
         })
     }
@@ -390,6 +392,7 @@ mod tests {
         assert!(lines[1].starts_with("could not end b2: "), "{text}");
         assert_eq!(lines[2], "Request ID: req-end-2");
         assert_eq!(outcome.json()["failed"][0]["id"], "b2");
+        assert_eq!(outcome.json()["failed"][0]["request_id"], "req-end-2");
         assert_eq!(door.received().len(), 4);
     }
 
