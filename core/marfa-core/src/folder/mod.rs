@@ -4108,40 +4108,58 @@ mod tests {
     /// A note a pull moved from `a.md` to `moved.md`, and an editor's save of
     /// its old buffer, with another body, at `a.md` in a new file.
     fn moved_note_with_a_stale_save() -> (ScannedDir, Folder, String) {
-        let (dir, folder) = settled_notes(&["a.md"]);
-        let item_id = state::bound_at(&folder.core.conn().unwrap(), "a.md")
-            .unwrap()
-            .unwrap()
-            .item_id;
-        std::fs::rename(dir.path().join("a.md"), dir.path().join("moved.md")).unwrap();
-        {
-            let conn = folder.core.conn().unwrap();
-            let bound = state::bound_at(&conn, "a.md").unwrap().unwrap();
-            state::unbind(&conn, "a.md").unwrap();
-            state::bind(
-                &conn,
-                &state::Bound {
-                    path: "moved.md".into(),
-                    ..bound
-                },
-            )
-            .unwrap();
-            state::set_moved_from(
-                &conn,
-                &item_id,
-                &state::MovedFrom {
-                    path: "a.md".into(),
-                    version: 5,
-                },
-            )
-            .unwrap();
-        }
-        std::fs::write(
-            dir.path().join("a.md"),
-            format!("---\nmarfa_id: {item_id}\nmarfa_version: 3\ntitle: a.md\n---\nstal\n"),
+        moved_note_with_a_save("a.md", "a.md")
+    }
+
+    /// A note at `from` a pull moved to `moved.md`, and a save of its old
+    /// buffer, with another body, at `save` in a new file.
+    fn moved_note_with_a_save(from: &str, save: &str) -> (ScannedDir, Folder, String) {
+        let (dir, folder) = settled_notes(&[from]);
+        let item_id = bound_item(&folder, from).unwrap();
+        moved_by_a_pull(&dir, &folder, &item_id, from, "moved.md");
+        std::fs::write(dir.path().join(save), old_buffer(&item_id, from, "stal")).unwrap();
+        (dir, folder, item_id)
+    }
+
+    /// A note naming `item_id` at a version older than its move, with
+    /// `title` and `body`.
+    fn old_buffer(item_id: &str, title: &str, body: &str) -> String {
+        format!("---\nmarfa_id: {item_id}\nmarfa_version: 3\ntitle: {title}\n---\n{body}\n")
+    }
+
+    /// As a pull's move of the file bound at `from` to `to` leaves the folder.
+    fn moved_by_a_pull(dir: &ScannedDir, folder: &Folder, item_id: &str, from: &str, to: &str) {
+        std::fs::rename(dir.path().join(from), dir.path().join(to)).unwrap();
+        let conn = folder.core.conn().unwrap();
+        let bound = state::bound_at(&conn, from).unwrap().unwrap();
+        state::unbind(&conn, from).unwrap();
+        state::bind(
+            &conn,
+            &state::Bound {
+                path: to.into(),
+                ..bound
+            },
         )
         .unwrap();
-        (dir, folder, item_id)
+        state::set_moved_from(
+            &conn,
+            item_id,
+            &state::MovedFrom {
+                path: from.into(),
+                version: 5,
+            },
+        )
+        .unwrap();
+    }
+
+    /// Whether `dir` holds `one` and `other` as two files, as a volume that
+    /// keeps their case or Unicode form apart does.
+    fn keeps_apart(dir: &Path, one: &str, other: &str) -> bool {
+        let probe = dir.join(one);
+        std::fs::write(&probe, b"").unwrap();
+        let apart = !dir.join(other).exists();
+        std::fs::remove_file(probe).unwrap();
+        apart
     }
 
     /// The two bindings an interrupted move leaves, with an optional landing.
@@ -4294,6 +4312,110 @@ mod tests {
             let again = folder.scan().unwrap();
             assert_eq!(flagged_waiting(&again), [("a.md", "waiting")], "{keeping}");
         }
+    }
+
+    fn body_on_disk(dir: &Path, name: &str) -> Option<String> {
+        read(dir, name).map(|text| text.rsplit("---\n").next().unwrap_or_default().to_string())
+    }
+
+    #[test]
+    fn a_file_held_beside_a_moved_file_in_another_case_stays_where_the_volume_keeps_case() {
+        let (dir, folder) = settled_notes(&["q.md"]);
+        if !keeps_apart(dir.path(), "q.probe", "Q.probe") {
+            eprintln!("skipped: the temporary folder reads names in either case as one");
+            return;
+        }
+        let item_id = bound_item(&folder, "q.md").unwrap();
+        std::fs::write(dir.path().join("Q.md"), old_buffer(&item_id, "q", "copy")).unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(flagged_waiting(&report), [("Q.md", "name")], "{report:?}");
+        moved_by_a_pull(&dir, &folder, &item_id, "q.md", "q renamed.md");
+
+        for _ in 0..2 {
+            let report = folder.scan().unwrap();
+            assert_eq!(report.deleted, 0, "{report:?}");
+            assert_eq!(body_on_disk(dir.path(), "Q.md").as_deref(), Some("copy\n"));
+            assert_eq!(
+                body_on_disk(dir.path(), "q renamed.md").as_deref(),
+                Some("body\n")
+            );
+            assert!(bound_paths(&folder).contains(&("q renamed.md".into(), item_id.clone())));
+            assert!(body_of(&folder, "q renamed.md").starts_with("body"));
+        }
+    }
+
+    #[test]
+    fn a_new_file_at_the_old_case_of_a_renamed_file_leaves_both_where_the_volume_keeps_case() {
+        let (dir, folder) = settled_notes(&["w.md"]);
+        if !keeps_apart(dir.path(), "w.probe", "W.probe") {
+            eprintln!("skipped: the temporary folder reads names in either case as one");
+            return;
+        }
+        let item_id = bound_item(&folder, "w.md").unwrap();
+        std::fs::rename(dir.path().join("w.md"), dir.path().join("W.md")).unwrap();
+        folder.scan().unwrap();
+        assert_eq!(bound_paths(&folder), [("W.md".into(), item_id.clone())]);
+        // A record of a move from the old name, so only the hold keeps the
+        // new file from being taken for an old buffer.
+        state::set_moved_from(
+            &folder.core.conn().unwrap(),
+            &item_id,
+            &state::MovedFrom {
+                path: "w.md".into(),
+                version: 5,
+            },
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("w.md"), old_buffer(&item_id, "w", "neww")).unwrap();
+
+        for _ in 0..2 {
+            let report = folder.scan().unwrap();
+            assert_eq!(flagged_waiting(&report), [("w.md", "name")], "{report:?}");
+            assert_eq!(report.deleted, 0, "{report:?}");
+            assert_eq!(body_on_disk(dir.path(), "w.md").as_deref(), Some("neww\n"));
+            assert_eq!(body_on_disk(dir.path(), "W.md").as_deref(), Some("body\n"));
+            assert_eq!(bound_paths(&folder), [("W.md".into(), item_id.clone())]);
+        }
+    }
+
+    #[test]
+    fn a_save_at_another_unicode_form_of_a_moved_name_stays_where_the_volume_keeps_forms_apart() {
+        let (composed, decomposed) = ("caf\u{e9}.md", "cafe\u{301}.md");
+        let (dir, folder, item_id) = moved_note_with_a_save(composed, decomposed);
+        if !keeps_apart(dir.path(), "caf\u{e9}.probe", "cafe\u{301}.probe") {
+            eprintln!("skipped: the temporary folder reads both Unicode forms as one name");
+            return;
+        }
+        let report = folder.scan().unwrap();
+        assert_eq!(report.deleted, 0, "{report:?}");
+        assert_eq!(
+            body_on_disk(dir.path(), decomposed).as_deref(),
+            Some("stal\n")
+        );
+        assert_eq!(
+            body_on_disk(dir.path(), "moved.md").as_deref(),
+            Some("body\n")
+        );
+        assert!(bound_paths(&folder).contains(&("moved.md".into(), item_id)));
+        assert!(body_of(&folder, "moved.md").starts_with("body"));
+    }
+
+    #[test]
+    fn a_save_at_another_case_of_a_moved_name_is_taken_where_the_volume_folds_case() {
+        let (dir, folder, item_id) = moved_note_with_a_save("a.md", "A.md");
+        if keeps_apart(dir.path(), "a.probe", "A.probe") {
+            eprintln!("skipped: the temporary folder keeps names in either case apart");
+            return;
+        }
+        let report = folder.scan().unwrap();
+        assert!(report.flagged.is_empty(), "{report:?}");
+        assert_eq!(read(dir.path(), "a.md"), None);
+        assert_eq!(
+            body_on_disk(dir.path(), "moved.md").as_deref(),
+            Some("stal\n")
+        );
+        assert_eq!(bound_paths(&folder), [("moved.md".into(), item_id)]);
+        assert!(body_of(&folder, "moved.md").starts_with("stal"));
     }
 
     /// As if the copy had synced and the server had taken the folder's
