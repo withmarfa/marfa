@@ -26,7 +26,13 @@ fn clock_answer(app: &App) -> Response {
 }
 
 fn faults_answer(app: &App) -> Response {
-    json_answer(StatusCode::OK, &json!({ "faults": app.faults.list() }))
+    json_answer(
+        StatusCode::OK,
+        &json!({
+            "faults": app.faults.list(),
+            "queued_writes": app.faults.queued_writes(),
+        }),
+    )
 }
 
 pub async fn read_clock(State(app): State<Arc<App>>) -> Response {

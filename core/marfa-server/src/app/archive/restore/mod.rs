@@ -21,7 +21,7 @@ use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
 use crate::app::catalog::{self, Snapshot};
 use crate::app::edges::write::Writing;
-use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
+use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
@@ -316,6 +316,7 @@ impl App {
                 registrations.secrets.clone(),
                 registrations.enforcement.clone(),
             );
+            app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
             // On the writer, so every write admitted before the hold has landed.
             app.db
                 .write(Write::own().unsynced(), move |tx| {

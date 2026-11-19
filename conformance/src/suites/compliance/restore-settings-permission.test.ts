@@ -256,16 +256,16 @@ describe("a restore's settings and config.manage", () => {
     await expectWritten(plain.id, plain.hash);
   });
 
-  it("judges a restore's settings after every write admitted before it, and places no file when it refuses", async () => {
+  it("judges a restore's settings after every write accepted before it began, and places no file when it refuses", async () => {
     await setConfig({ trash_retention_days: 45 });
     const app = await signedInNow(backupsOnlyApp, BACKUPS_ONLY);
     const held = archiveWith([setting("trash_retention_days", 45)]);
-    const pause = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
 
     // A bulk write holds the writer, so the settings change below is admitted
-    // and waits behind it, and the restore starts while the change is unwritten.
+    // and waits behind it, and the restore reaches its check while the change
+    // is unwritten.
     await server.setFault("hold:bulk-page=1");
+    await server.setFault("hold:restore:settings");
     const page = fetch(`${server.apiUrl}/items/bulk`, {
       method: "POST",
       headers: {
@@ -283,15 +283,23 @@ describe("a restore's settings and config.manage", () => {
         ],
       }),
     });
+    let landed = false;
     let removed: Promise<{ status: number; error?: unknown }> | undefined;
     let restoring: Promise<{ status: number; error?: unknown }> | undefined;
     try {
       await server.waitForHold("hold:bulk-page");
       removed = operator.patchConfig({ trash_retention_days: null });
-      await pause(500);
+      void removed.then(() => {
+        landed = true;
+      });
+      await server.waitForQueuedWrite("config.update");
       restoring = app.restoreArchive(held.archive);
-      await pause(1500);
+      await server.waitForHold("hold:restore:settings");
+      expect(landed).toBe(false);
+      expect((await config()).trash_retention_days).toBe(45);
+      await server.clearFault("hold:restore:settings");
     } finally {
+      await server.clearFault("hold:restore:settings");
       await server.clearFault("hold:bulk-page");
     }
     expect((await page).status).toBe(200);

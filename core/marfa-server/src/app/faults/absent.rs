@@ -17,10 +17,20 @@ point_list!(points);
 #[must_use]
 pub struct Released;
 
+pub struct QueuedWrite;
+
+impl QueuedWrite {
+    pub fn started(self) {}
+}
+
 #[derive(Debug, Default)]
 pub struct Faults;
 
 impl Faults {
+    pub fn queue_write(&self, _action: Option<&'static str>) -> QueuedWrite {
+        QueuedWrite
+    }
+
     pub async fn hold(&self, _point: &Point, _action: Option<&str>) {}
 
     pub async fn hold_job(&self, _job: &str) {}

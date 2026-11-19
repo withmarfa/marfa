@@ -281,16 +281,6 @@ impl Writer {
         let commits = self.commits.clone();
         let unsynced = self.unsynced.clone();
         let claim = ticket.clone();
-        let run: Job = Box::new(move |conn| {
-            if claim
-                .compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                let _ = answer.send(run_transaction(
-                    conn, write, deadline, &faults, &commits, &unsynced, job,
-                ));
-            }
-        });
         let reserve = self.queue.reserve();
         tokio::pin!(reserve);
         let slot = loop {
@@ -303,11 +293,24 @@ impl Writer {
                 },
             }
         };
+        let enqueue = move || {
+            let queued = faults.queue_write(write.action);
+            let run: Job = Box::new(move |conn| {
+                queued.started();
+                if claim
+                    .compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let _ = answer.send(run_transaction(
+                        conn, write, deadline, &faults, &commits, &unsynced, job,
+                    ));
+                }
+            });
+            slot.send(Message::Run(run));
+        };
         match hold {
-            Some(hold) => hold
-                .admit(move || slot.send(Message::Run(run)))
-                .map_err(Turned::Held)?,
-            None => slot.send(Message::Run(run)),
+            Some(hold) => hold.admit(enqueue).map_err(Turned::Held)?,
+            None => enqueue(),
         }
         let lost = |_| Refusal::internal("the writer has stopped");
         loop {

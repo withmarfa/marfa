@@ -128,6 +128,16 @@ export interface FreshServer {
    */
   waitForHold(name: string, count?: number, timeoutMs?: number): Promise<void>;
   /**
+   * Waits until the writer holds, admitted and not yet started, `count`
+   * writes for the audit action named, as `fault list` reports in
+   * `queued_writes`. Rejects after `timeoutMs` (60 seconds by default).
+   */
+  waitForQueuedWrite(
+    action: string,
+    count?: number,
+    timeoutMs?: number,
+  ): Promise<void>;
+  /**
    * Copies the server's data directory as it stands at one instant, through
    * `image`, into a new directory it answers with: what a volume snapshot
    * takes while the instance is writing. The caller removes the directory.
@@ -455,7 +465,10 @@ export async function bootFreshServer(
     }
     return readExit(state, signaledAt, signaledWith === "SIGKILL");
   };
-  const listArmedFaults = async (): Promise<ArmedFault[]> => {
+  const listFaults = async (): Promise<{
+    faults: ArmedFault[];
+    queued_writes: (string | null)[];
+  }> => {
     const listed = await adapter("fault", "list");
     const line = listed.output
       .split("\n")
@@ -463,8 +476,13 @@ export async function bootFreshServer(
     if (listed.status !== 0 || line === undefined) {
       throw new Error(`the target did not list its faults:\n${listed.output}`);
     }
-    return (JSON.parse(line) as { faults: ArmedFault[] }).faults;
+    return JSON.parse(line) as {
+      faults: ArmedFault[];
+      queued_writes: (string | null)[];
+    };
   };
+  const listArmedFaults = async (): Promise<ArmedFault[]> =>
+    (await listFaults()).faults;
   let ownerCookie = env.MARFA_OWNER_COOKIE;
   const server: FreshServer = {
     apiUrl,
@@ -593,6 +611,22 @@ export async function bootFreshServer(
         if (Date.now() > deadline) {
           throw new Error(
             `${String(seen)} of ${String(count)} callers waited at ${name} after ${String(timeoutMs)}ms`,
+          );
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      }
+    },
+    async waitForQueuedWrite(action, count = 1, timeoutMs = 60_000) {
+      const deadline = Date.now() + timeoutMs;
+      let seen = 0;
+      for (;;) {
+        seen = (await listFaults()).queued_writes.filter(
+          (queued) => queued === action,
+        ).length;
+        if (seen >= count) return;
+        if (Date.now() > deadline) {
+          throw new Error(
+            `${String(seen)} of ${String(count)} ${action} writes were queued on the writer after ${String(timeoutMs)}ms`,
           );
         }
         await new Promise((resolveWait) => setTimeout(resolveWait, 100));
