@@ -2598,7 +2598,7 @@ Where a copy names the instance it was hydrated from, a device MUST confirm that
 
 When a device renews its credential during a hydration, a device MUST confirm that the server's root names the instance the hydration's first read of the log's head named before it sends the hydration's next request.
 
-**Reason:** a hydration takes its instance from that first read, so it needs no root read before it, but another instance can take the address while the device renews.
+**Reason:** a hydration takes its instance from that first read rather than from a copy it holds, but another instance can take the address while the device renews.
 
 **Tests:** `device/server-reads-instance.test.ts › confirms the instance again before a hydration sends its next request after a credential renewal`.
 
