@@ -159,8 +159,8 @@ async function up(args: Args): Promise<void> {
   const s3Port = args.port ?? (await freePort());
   const rpcPort = await freePort();
   const adminPort = await freePort();
-  // Path-style addressing, because the suite reaches the node by address
-  // and a virtual-hosted URL would need a name for the bucket to resolve.
+  // The suite reaches the node by address and path, and by virtual host at
+  // `<bucket>.s3.garage.localhost`, whose lookup a fixture scripts.
   writeFileSync(
     p.config,
     [

@@ -2781,7 +2781,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `object_store_bucket`            | None               | A name of 1 to 255 letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`, or empty | The bucket of an S3-compatible object store, which keeps a second copy of each file and the backups. The store is in use while this is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `object_store_region`            | `us-east-1`        | A name of 1 to 63 letters, digits, `-` and `_` that can be part of a host name, or empty     | The region of the object store, such as `us-east-1` or `auto`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `object_store_endpoint`          | None               | An absolute `http` or `https` URL with no user name or password, or empty                    | The endpoint of the object store. A `/` that is the whole path is dropped. When empty, the store's provider chooses it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `object_store_path_style`        | `true`             | `true` or `false`                                                                            | Whether the object store is addressed by path rather than by virtual host. Read only while `object_store_endpoint` is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `object_store_path_style`        | `true`             | `true` or `false`                                                                            | Whether the object store is addressed by path rather than by virtual host, where the bucket goes before the endpoint's host. Read only while `object_store_endpoint` is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `object_store_prefix`            | `marfa`            | `/`-joined segments of letters, digits, `.`, `_` and `-`                                     | The key prefix the instance keeps everything under in the bucket: its files under `blobs/` and its backups under `backups/`. Each running instance on a bucket needs its own; a server that replaces an instance starts on its prefix. A `/` at either end is dropped; a `.` or `..` segment is refused.                                                                                                                                                                                                                                                                                                                                                                                                |
 | `object_store_access_key_id`     | None               | Text of 1 to 256 characters, or empty                                                        | The access key ID for the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `object_store_secret_access_key` | None               | A secret: text of 1 to 4096 characters with no whitespace around it, or empty                | The secret access key for the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -3350,6 +3350,40 @@ If a write to `/config` sets `object_store_bucket` to text that, with the whites
 
 **Tests:** `compliance/destination-settings.test.ts › refuses an object store bucket that is not a valid name, and takes the names real stores use`.
 
+### `instance/object-store-virtual-host`
+
+Where `object_store_endpoint` is set and `object_store_path_style` is `false`, the server MUST address the object store at the host made of `object_store_bucket`, a dot and the endpoint's host, with the bucket left out of the path, in each request it sends to the store and in each link the store signs, whatever the endpoint's host begins with.
+
+**Tests:** `compliance/destination-addresses.test.ts › reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
+
+### `instance/object-store-virtual-host-refused`
+
+If a write to `/config` that sets `object_store_bucket`, `object_store_endpoint` or `object_store_path_style` leaves `object_store_path_style` `false` with both `object_store_bucket` and `object_store_endpoint` set, and the bucket is not labels of 1 to 63 lowercase ASCII letters, digits and hyphens joined by dots with no label starting or ending with a hyphen, the endpoint's host is an IP address, or the bucket, a dot and the endpoint's host are longer than 253 characters, then the server MUST answer `400 validation_error` naming a setting the write sets, with no part of the endpoint in the refusal.
+
+**Reason:** by virtual host the bucket is a part of a host name, which holds only such labels, carries no case and cannot go before an address. The endpoint is the store's own host, without the bucket: a host that begins with the bucket can be a store's own, as the bucket `s3` before `s3.store.example`.
+
+**Tests:** `compliance/destination-settings.test.ts › refuses object store settings addressed by virtual host that cannot make the store's host, and takes the same values by path`.
+
+### `instance/object-store-virtual-host-unusable`
+
+While the stored `object_store_path_style` is `false` and the stored `object_store_bucket` and `object_store_endpoint` are values `instance/object-store-virtual-host-refused` refuses together, the server MUST NOT attach an object store.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`.
+
+### `instance/object-store-virtual-host-start`
+
+While the stored `object_store_path_style` is `false` and the stored `object_store_bucket` and `object_store_endpoint` are values `instance/object-store-virtual-host-refused` refuses together, when the server starts, the server MUST NOT refuse the start because the blob folder is missing or holds no marker.
+
+**Reason:** only a running server can take the corrected settings through `/config`.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`.
+
+### `instance/object-store-virtual-host-told`
+
+While `instance/object-store-virtual-host-unusable` keeps an object store from being attached, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` and reference `store` that names `object_store_path_style` and holds no part of the endpoint.
+
+**Tests:** `compliance/destination-settings.test.ts › starts over an emptied blob folder while the stored object store settings cannot make the store's host, names them on the attention list, and takes the store once path style is set again`.
+
 ### `instance/store-setting-unreadable-start`
 
 Where `object_store_bucket` is set or its stored value does not read, and a stored setting whose key begins `object_store_` does not read, or where `object_store_bucket` is not set and the stored `backup_path` does not read, when the server starts, the server MUST NOT refuse the start because the blob folder is missing or holds no marker.
@@ -3420,11 +3454,11 @@ Where `allow_private_addresses` is `false`, if the host of `error_webhook_url` i
 
 ### `instance/object-store-private-unusable`
 
-Where `allow_private_addresses` is `false`, if the host of `object_store_endpoint` is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`.
+Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`.
 
 **Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`).
 
-**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`.
+**Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
 
 ## Start-only settings
 

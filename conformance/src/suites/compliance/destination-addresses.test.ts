@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, get, type RequestOptions } from "node:http";
 import { describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { beatReceiver } from "../../utils/beat-receiver.js";
@@ -15,6 +15,7 @@ import {
   PUBLIC_ONLY,
   replicateUntilCaughtUp,
   runJob,
+  storeByName,
 } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -47,6 +48,30 @@ function byName(url: string): string {
   const named = new URL(url);
   named.hostname = "localhost";
   return named.toString();
+}
+
+/** An address the server judges public, where the resolver fault scripts one. */
+const PUBLIC_ADDRESS = "93.184.216.34";
+
+/** `url` asked of loopback under its own host, which no lookup then needs to find. */
+function getAtLoopback(url: URL): Promise<{ status: number; body: Buffer }> {
+  const lookup: RequestOptions["lookup"] = (_host, options, done) => {
+    if (options.all) {
+      done(null, [{ address: "127.0.0.1", family: 4 }]);
+    } else {
+      done(null, "127.0.0.1", 4);
+    }
+  };
+  return new Promise((resolve, reject) => {
+    get(url, { lookup }, (answer) => {
+      const parts: Buffer[] = [];
+      answer.on("data", (part: Buffer) => parts.push(part));
+      answer.on("end", () =>
+        resolve({ status: answer.statusCode ?? 0, body: Buffer.concat(parts) }),
+      );
+      answer.on("error", reject);
+    }).on("error", reject);
+  });
 }
 
 describe("where the server may send", () => {
@@ -295,6 +320,92 @@ describe("where the server may send", () => {
         expect(
           (await operator.listBlobCopies(upload.data.hash)).data.data,
         ).toHaveLength(2);
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address",
+    async () => {
+      const endpoint = process.env.MARFA_OBJECT_STORE_ENDPOINT;
+      const bucket = process.env.MARFA_OBJECT_STORE_BUCKET;
+      if (!endpoint || !bucket) {
+        throw new Error(
+          "MARFA_OBJECT_STORE_BUCKET and MARFA_OBJECT_STORE_ENDPOINT are required: source the env file `pnpm garage:up` writes.",
+        );
+      }
+      const server = await bootFreshServer("switch-virtual-host", {
+        ...PUBLIC_ONLY,
+        MARFA_BACKUP_INTERVAL_SECONDS: "0",
+      });
+      try {
+        const { operator, working } = clientsFor(server);
+        const backups = async () => {
+          const answer = await operator.rawRequest<{
+            backups: Record<string, unknown>;
+          }>("/health");
+          expect(answer.status, JSON.stringify(answer.data)).toBe(200);
+          return answer.data.backups;
+        };
+        const named = storeByName(endpoint);
+        // The bucket's host is scripted, so the test needs no resolver of its own.
+        const host = `resolve:${bucket}.${new URL(named).hostname}`;
+        await server.setFault(`${host}=127.0.0.1`);
+        const settings = {
+          object_store_bucket: bucket,
+          object_store_region: process.env.MARFA_OBJECT_STORE_REGION ?? "",
+          object_store_access_key_id:
+            process.env.MARFA_OBJECT_STORE_ACCESS_KEY_ID ?? "",
+          object_store_secret_access_key:
+            process.env.MARFA_OBJECT_STORE_SECRET_ACCESS_KEY ?? "",
+          object_store_endpoint: named,
+          object_store_path_style: false,
+        };
+        await setFrom(operator, {
+          ...settings,
+          object_store_prefix: `fixture-${randomUUID()}`,
+        });
+        const unusable = await waitFor("the store to be unusable", async () => {
+          const said = await backups();
+          return said.reason === "destination_unusable" ? said : undefined;
+        });
+        expect(unusable.status).toBe("failing");
+
+        // The witness: the same store, its host judged public, is taken.
+        await server.setFault(`${host}=${PUBLIC_ADDRESS}>127.0.0.1`);
+        const prefix = `fixture-${randomUUID()}`;
+        await setFrom(operator, { ...settings, object_store_prefix: prefix });
+        await waitFor("the object store to be in use", async () => {
+          const said = await backups();
+          return said.destination === "bucket" &&
+            said.reason !== "destination_unusable"
+            ? true
+            : undefined;
+        });
+        const bytes = bytesOf("kept in a store reached by its host", 128);
+        const upload = await working.uploadBlob(bytes, "text/plain");
+        expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+        const note = await working.createItem({
+          type: "core.note",
+          properties: { body: `![blob](${upload.data.hash})` },
+        });
+        expect(note.status, JSON.stringify(note.error)).toBe(201);
+        await replicateUntilCaughtUp(operator, "the file's copy in the store");
+        expect(
+          (await operator.listBlobCopies(upload.data.hash)).data.data,
+        ).toHaveLength(2);
+
+        const link = await working.getBlobUrl(upload.data.hash);
+        expect(link.status, JSON.stringify(link.error)).toBe(200);
+        const url = new URL(link.data.url);
+        expect(url.host).toBe(`${bucket}.${new URL(named).host}`);
+        expect(url.pathname.startsWith(`/${prefix}/`), url.pathname).toBe(true);
+        const fetched = await getAtLoopback(url);
+        expect(fetched.status).toBe(200);
+        expect(new Uint8Array(fetched.body)).toEqual(bytes);
       } finally {
         await server.stop();
       }

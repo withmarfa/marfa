@@ -148,7 +148,11 @@ stays because that thing is what it checks.
   row that does not read before a start, for the same reason. Those that start
   or refuse over an emptied blob folder also remove, move or empty that folder
   while the server is stopped, and one moves it back while the server runs,
-  because only a disk that goes away and returns does that.
+  because only a disk that goes away and returns does that. "starts over an
+  emptied blob folder while the stored object store settings cannot make the
+  store's host" writes `object_store_path_style` as `false` beside an endpoint
+  at an IP address and empties the blob folder while the server is stopped,
+  because `/config` refuses that combination.
 - `compliance/restore-says.test.ts`, "refuses an export while the enforcement
   settings do not read, and a backup holds the items and names them", writes the `settings`
   table's `enforcement` row to a value that does not read before a restart.
