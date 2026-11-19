@@ -72,9 +72,9 @@ fn wait_unless_stopped(wait: Duration, stop: &AtomicBool) -> Result<()> {
     }
 }
 
-/// A renewal changes the bearer, not the credential, so each upload
+/// A renewal changes the bearer, not the credential, so each write
 /// recorded as sent with the replaced header is now recorded as sent with
-/// the new one (`store::move_uploads_sent_as`).
+/// the new one (`store::move_sent_as`).
 pub(crate) fn write_down_renewals(
     conn: &Connection,
     pending: &Mutex<Vec<(String, String)>>,
@@ -85,7 +85,7 @@ pub(crate) fn write_down_renewals(
             .unwrap_or_else(std::sync::PoisonError::into_inner),
     );
     for (from, to) in renewals {
-        store::move_uploads_sent_as(conn, &from, &to)?;
+        store::move_sent_as(conn, &from, &to)?;
     }
     Ok(())
 }

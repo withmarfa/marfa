@@ -15,7 +15,7 @@ use super::reach::{edge_write_ends, let_go_of_ends};
 use super::removing::refuse_removing;
 use super::rows::WAITING;
 use super::time::{now_iso, now_millis};
-use super::write_state::{chosen_tier_key, cleared_time_key, unsent};
+use super::write_state::{cleared_time_key, forget_versions_named, forget_write_state, unsent};
 use crate::error::CoreError;
 use crate::model::{BlockedReason, QueuedWrite, Subject, Verdict, WriteKind};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -461,6 +461,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let rows = kind.parse::<WriteKind>()?.rows();
     if fresh_key_on_release(verdict, reason.as_deref()) {
         crate::row_writes::spend_key(conn, &batch[0])?;
+        forget_versions_named(conn, &batch[0])?;
     }
     if rows {
         for write in &batch {
@@ -646,8 +647,7 @@ pub(super) fn take_out(
     let ends = edge_write_ends(conn, &row.id)?;
     conn.execute_cached("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
-    meta_delete(conn, &chosen_tier_key(&row.id))?;
-    meta_delete(conn, &cleared_time_key(&row.id))?;
+    forget_write_state(conn, &row.id)?;
     put_back(conn, row)?;
     let_go_of_ends(conn, &ends)
 }

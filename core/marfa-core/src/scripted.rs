@@ -71,6 +71,7 @@ pub enum Then {
 
 #[derive(Debug, Clone)]
 pub struct Seen {
+    pub method: String,
     pub path: String,
     pub query: String,
     pub reach: Option<String>,
@@ -158,6 +159,12 @@ impl Scripted {
             .insert(path.to_string(), answers);
     }
 
+    /// Answers to `path` whose query holds `fragment`, taken ahead of the
+    /// path's own.
+    pub fn on_query(&self, path: &str, fragment: &str, answers: Vec<Answer>) {
+        self.on(&format!("{path}?{fragment}"), answers);
+    }
+
     pub fn seen(&self, path: &str) -> Vec<Seen> {
         self.script
             .lock()
@@ -214,6 +221,11 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
         return;
     }
+    let method = request_line
+        .split_whitespace()
+        .next()
+        .unwrap_or("GET")
+        .to_string();
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     let path = target.split('?').next().unwrap_or("/").to_string();
     let mut last_event_id = None;
@@ -260,9 +272,20 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     let sent = body.clone();
     let answer = {
         let mut script = script.lock().unwrap();
+        let query = target.split_once('?').map_or("", |(_, query)| query);
+        let key = script
+            .answers
+            .keys()
+            .find(|key| {
+                key.split_once('?')
+                    .is_some_and(|(at, fragment)| at == path && query.contains(fragment))
+            })
+            .cloned()
+            .unwrap_or_else(|| path.clone());
         script.seen.push(Seen {
+            method,
             path: path.clone(),
-            query: target.split_once('?').map_or("", |(_, query)| query).into(),
+            query: query.into(),
             reach,
             last_event_id,
             authorization,
@@ -270,7 +293,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             instance,
             body,
         });
-        match script.answers.get_mut(&path) {
+        match script.answers.get_mut(&key) {
             Some(answers) if answers.len() > 1 => Some(answers.remove(0)),
             Some(answers) => answers.first().cloned(),
             None if path == "/" => Some(root(INSTANCE)),

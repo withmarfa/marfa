@@ -1,6 +1,6 @@
 //! The files the copy holds attached to its items, the uploads that carry their bytes and the bytes sent again.
 
-use super::meta::{meta_delete, meta_get, meta_set, prefix_end};
+use super::meta::{meta_delete, meta_get, meta_set};
 use super::verdicts::{Answered, SELF_CLEARING, record_verdict, waits_for_withdrawn};
 use crate::error::CoreError;
 use crate::model::{Verdict, WriteKind};
@@ -331,31 +331,6 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     Ok(hashes)
 }
 
-pub(crate) fn upload_sent_as_key(id: &str) -> String {
-    format!("{UPLOAD_SENT_AS}{id}")
-}
-
-/// The credential, as `credential_digest` names it, that the upload `id`
-/// was last sent with.
-pub fn record_upload_sent_as(
-    conn: &Connection,
-    id: &str,
-    credential: &str,
-) -> Result<(), CoreError> {
-    meta_set(conn, &upload_sent_as_key(id), credential)
-}
-
-/// A renewal replaces the bearer a credential sends, not the credential:
-/// the server credits an app's uploads to its grant, which the new token
-/// carries.
-pub fn move_uploads_sent_as(conn: &Connection, from: &str, to: &str) -> Result<(), CoreError> {
-    conn.execute(
-        "UPDATE meta SET value = ?2 WHERE key >= ?3 AND key < ?4 AND value = ?1",
-        params![from, to, UPLOAD_SENT_AS, prefix_end(UPLOAD_SENT_AS)],
-    )?;
-    Ok(())
-}
-
 /// Each taken upload, by its queue id and hash, that was sent with a
 /// credential other than `credential` and that a write the next pass sends
 /// waits on: one unanswered, or blocked for a reason that clears itself.
@@ -373,7 +348,7 @@ pub fn uploads_to_send_again(
         "SELECT upload.id, upload.blob FROM queue AS upload
           WHERE upload.kind = :upload AND upload.blob IS NOT NULL
             AND upload.verdict IN (:accepted, :merged, :conflicted)
-            AND (SELECT value FROM meta WHERE key = 'upload_sent_as/' || upload.id)
+            AND (SELECT value FROM meta WHERE key = 'sent_as/' || upload.id)
                 IS NOT :credential
             AND EXISTS (
               SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
@@ -490,5 +465,3 @@ pub fn send_bytes_again(
     }
     Ok(waits)
 }
-
-pub(super) const UPLOAD_SENT_AS: &str = "upload_sent_as/";

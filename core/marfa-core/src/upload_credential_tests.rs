@@ -417,7 +417,7 @@ fn writes_down_a_renewal_left_in_memory_when_a_drain_ends() {
     let sent_as = || {
         crate::store::meta_get(
             &core.conn().unwrap(),
-            &format!("upload_sent_as/{}", added.upload.id),
+            &format!("sent_as/{}", added.upload.id),
         )
         .unwrap()
     };

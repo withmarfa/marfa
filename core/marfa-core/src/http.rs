@@ -948,7 +948,15 @@ impl Http {
         &self,
         segments: &[&str],
     ) -> Result<Option<serde_json::Value>, CoreError> {
-        match self.get_json::<serde_json::Value>(segments, &[]) {
+        self.read_whole_with(segments, &[])
+    }
+
+    pub(crate) fn read_whole_with(
+        &self,
+        segments: &[&str],
+        params: &[(&str, &str)],
+    ) -> Result<Option<serde_json::Value>, CoreError> {
+        match self.get_json::<serde_json::Value>(segments, params) {
             Ok(answer) => Ok(Some(answer)),
             Err(CoreError::NotFound { .. }) => Ok(None),
             Err(error) => Err(error),
@@ -1881,6 +1889,29 @@ impl Http {
             .filter(|found| found.source.as_deref() == Some(source))
             .filter_map(|found| found.source_id)
             .collect())
+    }
+
+    /// The row the server holds under the natural key, as the lookup answers
+    /// it, or `None`.
+    pub(crate) fn item_by_key(
+        &self,
+        r#type: &str,
+        source: &str,
+        source_id: &str,
+    ) -> Result<Option<serde_json::Value>, CoreError> {
+        let body = serde_json::json!({
+            "type": r#type,
+            "source": source,
+            "source_ids": [source_id],
+        })
+        .to_string();
+        let answer: serde_json::Value = self.read_json(&["items", "lookup"], &[], Some(&body))?;
+        Ok(answer["data"].as_array().and_then(|found| {
+            found
+                .iter()
+                .find(|row| row["source"] == source && row["source_id"] == source_id)
+                .cloned()
+        }))
     }
 
     /// Redirects, contract mismatches, transport or renewal failures and a
