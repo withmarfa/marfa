@@ -296,9 +296,12 @@ pub enum DeviceCommand {
     ///
     /// A write blocked `awaiting_dependency` is released only by the answer
     /// to the write it waits behind, never by this command. A released write
-    /// goes under a fresh idempotency key. A row write instead goes again with
-    /// every write sent in its batch, as they went, under the batch's key, and
-    /// an undo under its own key, unless either was blocked `key_spent`. A
+    /// goes under the idempotency key it holds, unless it was blocked
+    /// `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, which
+    /// goes under a fresh one. A row write goes again with every write sent in
+    /// its batch, as they went. A write blocked `server_restored` was never
+    /// sent: the copy queued it to put back what the server lost when it was
+    /// restored to an earlier point. A
     /// write blocked `record_unread` whose copy is now built from another
     /// instance than the one it was made against, or from one the set-aside
     /// could not tell, is held `instance_changed` instead, and goes only when
@@ -316,9 +319,9 @@ pub enum DeviceCommand {
         reason: Option<marfa_core::BlockedReason>,
     },
     /// Take a write that is `dead`, or blocked `ancestor_unavailable`,
-    /// `conflict_unresolved`, `failing_alone`, `instance_changed` or
-    /// `record_unread`, out of the queue, and put the copy back to what the
-    /// server holds.
+    /// `conflict_unresolved`, `failing_alone`, `instance_changed`,
+    /// `record_unread` or `server_restored`, out of the queue, and put the
+    /// copy back to what the server holds.
     ///
     /// A release sends a write again on the version it already names. A write
     /// blocked `conflict_unresolved` is refused the same way each time, and
@@ -2239,7 +2242,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
             output::report(&withdrawn, json, || {
                 if withdrawn.is_empty() {
                     format!(
-                        "nothing to withdraw: {id} is not dead or blocked ancestor_unavailable, conflict_unresolved, failing_alone, instance_changed or record_unread"
+                        "nothing to withdraw: {id} is not dead or blocked ancestor_unavailable, conflict_unresolved, failing_alone, instance_changed, record_unread or server_restored"
                     )
                 } else {
                     format!(

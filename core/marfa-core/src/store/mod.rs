@@ -14,6 +14,7 @@ mod reach;
 mod read_only;
 mod reads;
 mod removing;
+pub(crate) mod restored;
 mod rows;
 mod stamps;
 #[cfg(test)]

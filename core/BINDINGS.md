@@ -131,6 +131,18 @@ Every `store_damaged` refusal carries `setAsideStopped` in Node and Swift: true 
 
 Use `removeStoreLosingAll` when the person agrees to lose every unsent write. It reads the queue under the writer lock and refuses with `unsent_differs` and the count in `unsent` if the complete list of unsent writes reads and holds any. Call `readUnsent`, show the person those writes, and pass their confirmation to `removeStore`. If the list cannot be read in full, even where some rows read, or is empty, removal proceeds under the same lock.
 
+## A server restored to an earlier point
+
+A server put back to an earlier copy of its database no longer holds what it took after that point, and its event log reuses the ids it gave then. A catch-up or `follow` finds this in three ways, and ends `CopyExpired` with the reason `head_past_log`:
+
+- The server's log ends before the cursor the copy holds.
+- The event at the last id the copy took differs from the one it took. The core keeps that event's fingerprint and asks the stream for one event before its cursor, so each stream it opens replays one event the copy already holds.
+- The server no longer holds a write it accepted from this copy. The core keeps a receipt of each create, edit, delete and edge write the server accepted, until the stream shows the change or for 30 days, and checks each unseen receipt once per stream, after the replay.
+
+The next `hydrate` clears the copy and fills it from the server, as for any expired copy, and then compares what the copy held with what the server now holds. For each item, tag set, edge, removal and file the copy held that the server lacks or holds at an earlier point, it queues a write that puts it back, blocked `server_restored`. Nothing is sent until the person releases those writes; a released write keeps its idempotency key, because it was never sent. Withdraw one to drop it. A queued write for an item the server lost waits on the kept create and is never sent before it.
+
+The comparison keeps only what the copy held. A tag change alone keeps no receipt, a purge is not put back, an item the copy held in the bin or revoked is not created again, and a removal another device made is not repeated. A hydration that starts for another reason, or a copy rebuilt from another instance, keeps nothing, and `marfa backups restore` and `marfa restore` add to what the server holds, so neither starts the check.
+
 ## Hold and write tables
 
 `holdTable`, `letGoTable`, `heldTables`, `fillTables`, `tableRows`, `tableRow`, `tableTotals`, `writeRows` and `undoRows` on `Core` hold a type's tables in the copy, read their rows and queue row writes, as the sections of `device.md` from "Tables a device holds" to "Writing a table on a device", and "Row writes" in `queue-and-verdicts.md`, say.

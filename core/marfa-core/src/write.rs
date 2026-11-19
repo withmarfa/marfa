@@ -291,27 +291,7 @@ pub(crate) fn queue_create(
     }
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
-    let declared = match store::slice(tx)? {
-        Some((types, tier))
-            if store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier) =>
-        {
-            match store::slice_query(tx)? {
-                Some(query) => crate::slice::judge_held(
-                    tx,
-                    catalog,
-                    &query,
-                    crate::slice::Reading::Holds,
-                    crate::slice::Scope::default(),
-                    &id,
-                )?,
-                None => true,
-            }
-        }
-        _ => false,
-    };
-    if !declared {
-        store::pin(tx, &id)?;
-    }
+    pin_unless_declared(tx, catalog, &row.r#type, shown_tier, &id)?;
     let queued = enqueue(
         tx,
         &store::NewWrite {
@@ -353,6 +333,36 @@ pub(crate) fn queue_create(
         )?;
     }
     Ok(queued)
+}
+
+/// Pins the row `id` the copy holds where its slice does not declare it.
+pub(crate) fn pin_unless_declared(
+    tx: &Connection,
+    catalog: &marfa_rules::catalog::Catalog,
+    r#type: &str,
+    tier: Option<Tier>,
+    id: &str,
+) -> Result<()> {
+    let declared = match store::slice(tx)? {
+        Some((types, slice_tier)) if store::slice_takes(catalog, &types, slice_tier, r#type, tier) => {
+            match store::slice_query(tx)? {
+                Some(query) => crate::slice::judge_held(
+                    tx,
+                    catalog,
+                    &query,
+                    crate::slice::Reading::Holds,
+                    crate::slice::Scope::default(),
+                    id,
+                )?,
+                None => true,
+            }
+        }
+        _ => false,
+    };
+    if !declared {
+        store::pin(tx, id)?;
+    }
+    Ok(())
 }
 
 /// Whether a write reads the item's body as edges. A folder reads its own

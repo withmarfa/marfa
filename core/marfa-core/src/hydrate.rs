@@ -425,7 +425,15 @@ fn attempt(
                 .is_some_and(|built| !built.is_empty() && built != instance)
             {
                 store::block_for_another_instance(&tx)?;
+                // What the copy held is compared with no other instance.
+                store::restored::release_held_back(&tx)?;
+                store::restored::forget_receipts(&tx)?;
+            } else if not_in_place == Some(HydrateRestart::HeadPastLog.as_str())
+                && !store::restored::holds_back(&tx)?
+            {
+                store::restored::hold_copy(&tx)?;
             }
+            store::restored::forget_anchor(&tx)?;
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
             store::attachments_start_growing(&tx)?;
@@ -727,11 +735,15 @@ fn attempt(
             replay => replay?,
         };
         let cursor = replay.cursor;
+        // Read before the transaction, which holds the store: a row the
+        // filled copy does not hold is asked of the server.
+        let lost = crate::restored::compare(core, &context.http(http), stop)?;
         let (items, edges) = {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
             let catalog = crate::catalog::load(&tx)?;
+            crate::restored::keep(&tx, &catalog, lost)?;
             lay_queue_over(
                 &tx,
                 &catalog,
@@ -799,8 +811,8 @@ struct Built<'a> {
 /// what it holds only then; anything else may hold rows the key no longer
 /// reads, so it is cleared first. A log that ends before the cursor the copy
 /// held when it went stale is a server restored to an earlier point, whose
-/// rows the later versions held would refuse. Otherwise why not, as a
-/// `copy_expired` reason.
+/// rows the later versions held would refuse, as is a copy that set its rows
+/// aside on finding one. Otherwise why not, as a `copy_expired` reason.
 fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option<&'static str>> {
     let Some(refill) = store::refill(conn)? else {
         // An expiry keeps the instance a copy was built from, so a copy that
@@ -810,12 +822,16 @@ fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option
             .is_some_and(|held| !held.is_empty() && held != built.instance);
         return Ok(Some(if elsewhere {
             HydrateRestart::InstanceChanged.as_str()
+        } else if store::restored::holds_back(conn)? {
+            HydrateRestart::HeadPastLog.as_str()
         } else {
             NOT_STALE
         }));
     };
     Ok(if refill.instance != built.instance {
         Some(HydrateRestart::InstanceChanged.as_str())
+    } else if store::restored::holds_back(conn)? {
+        Some(HydrateRestart::HeadPastLog.as_str())
     } else if refill.reach != built.fence {
         Some(HydrateRestart::ReachChanged.as_str())
     } else if !holds_built_slice(conn, built)? {

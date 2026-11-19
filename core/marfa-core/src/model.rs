@@ -1277,6 +1277,10 @@ pub enum BlockedReason {
     /// Carried from a store set aside where a record that decides how it is
     /// sent could not be read: sent only once a caller releases it.
     RecordUnread,
+    /// Queued by the device to put back what it held that a server restored
+    /// to an earlier point no longer holds: sent only once a caller releases
+    /// it, since the owner may have restored the server to undo that work.
+    ServerRestored,
 }
 
 /// The reason the queue stores under `blocked` for a write held behind
@@ -1346,7 +1350,7 @@ fn grouped(number: usize) -> String {
 }
 
 impl BlockedReason {
-    pub const ALL: [BlockedReason; 7] = [
+    pub const ALL: [BlockedReason; 8] = [
         BlockedReason::CredentialRefused,
         BlockedReason::KeySpent,
         BlockedReason::AncestorUnavailable,
@@ -1354,6 +1358,7 @@ impl BlockedReason {
         BlockedReason::FailingAlone,
         BlockedReason::InstanceChanged,
         BlockedReason::RecordUnread,
+        BlockedReason::ServerRestored,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -1365,6 +1370,7 @@ impl BlockedReason {
             BlockedReason::FailingAlone => "failing_alone",
             BlockedReason::InstanceChanged => "instance_changed",
             BlockedReason::RecordUnread => "record_unread",
+            BlockedReason::ServerRestored => "server_restored",
         }
     }
 }
@@ -1378,7 +1384,7 @@ impl FromStr for BlockedReason {
             .find(|reason| reason.as_str() == text)
             .ok_or_else(|| {
                 CoreError::Invalid(format!(
-                    "{text:?} is not one of the seven blocked reasons a caller can release by: {}",
+                    "{text:?} is not one of the eight blocked reasons a caller can release by: {}",
                     BlockedReason::ALL.map(BlockedReason::as_str).join(", ")
                 ))
             })
@@ -1557,6 +1563,7 @@ impl QueuedWrite {
                         | BlockedReason::FailingAlone
                         | BlockedReason::InstanceChanged
                         | BlockedReason::RecordUnread
+                        | BlockedReason::ServerRestored
                 )
             )
     }

@@ -167,6 +167,11 @@ impl Context {
 
     /// Takes `confirmation` where it is for this copy's instance, for a read
     /// that follows a write the same call confirmed.
+    /// Whether the copy was still being filled when this was captured.
+    pub(crate) fn building(&self) -> bool {
+        self.building
+    }
+
     pub(crate) fn sharing(mut self, confirmation: Option<&Arc<Confirmation>>) -> Self {
         if let Some(confirmation) = confirmation
             && confirmation.instance() == self.instance
@@ -232,6 +237,10 @@ impl Context {
                 == Some(crate::model::HydrateRestart::HeadAgedOut)
                 && (!self.building || store::refilling(tx)?);
             let cursor = store::meta_get(tx, store::META_EVENT_CURSOR)?;
+            if crate::catch_up::divergence(reason) == Some(crate::model::HydrateRestart::HeadPastLog)
+            {
+                store::restored::hold_copy(tx)?;
+            }
             expire(tx)?;
             if in_place && let Some(cursor) = cursor {
                 store::meta_set(
@@ -308,6 +317,11 @@ impl Before {
             && crate::catch_up::divergence(reason)
                 != Some(crate::model::HydrateRestart::HeadAgedOut)
         {
+            if crate::catch_up::divergence(reason)
+                == Some(crate::model::HydrateRestart::HeadPastLog)
+            {
+                store::restored::hold_copy(&tx)?;
+            }
             expire(&tx)?;
         }
         tx.commit()?;
@@ -324,6 +338,7 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     store::meta_delete(conn, store::META_ITEMS_LISTED)?;
     store::meta_delete(conn, store::META_HYDRATE_RESUME)?;
     store::meta_delete(conn, store::META_REFILL)?;
+    store::restored::forget_anchor(conn)?;
     store::meta_delete(conn, FENCE)
 }
 
