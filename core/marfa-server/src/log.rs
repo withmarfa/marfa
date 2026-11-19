@@ -125,11 +125,12 @@ pub fn now() -> String {
 /// A read answered well within this is in the request log only, not exported.
 const QUIET_READ_UNDER_MS: f64 = 1_000.0;
 
-/// Health checks and quick successful reads would be nearly every exported record.
+/// Quick successful reads, health checks and polling among them, would be nearly every
+/// exported record.
 fn exported(record: &Request<'_>) -> bool {
     let read = matches!(record.method, "GET" | "HEAD");
     let answered = (200..300).contains(&record.status) || record.status == 304;
-    record.path != "/health" && !(read && answered && record.duration_ms < QUIET_READ_UNDER_MS)
+    !(read && answered && record.duration_ms < QUIET_READ_UNDER_MS)
 }
 
 pub fn request(record: &Request<'_>) {
@@ -227,7 +228,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_read_that_went_well_and_quickly_or_a_health_check_stays_unexported() {
+    fn only_a_read_that_went_well_and_quickly_stays_unexported() {
         let record = |method, path, status, duration_ms| Request {
             timestamp: "2026-11-19T10:00:00.000Z",
             request_id: "r",
@@ -243,8 +244,7 @@ mod tests {
         for quiet in [
             record("GET", "/items", 200, 3.0),
             record("HEAD", "/items/x", 304, 999.9),
-            record("GET", "/health", 503, 2.0),
-            record("POST", "/health", 405, 2.0),
+            record("GET", "/health", 200, 2.0),
         ] {
             assert!(
                 !exported(&quiet),
@@ -255,6 +255,8 @@ mod tests {
             );
         }
         for kept in [
+            record("GET", "/health", 503, 2.0),
+            record("POST", "/health", 405, 2.0),
             record("GET", "/items", 404, 3.0),
             record("GET", "/items", 500, 3.0),
             record("GET", "/items", 200, 1_000.0),

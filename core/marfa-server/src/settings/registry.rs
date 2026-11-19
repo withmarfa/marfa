@@ -23,6 +23,10 @@ pub enum Rule {
     Text {
         max: usize,
     },
+    /// A token sent in an HTTP header: at most `max` visible ASCII characters, or nothing.
+    Token {
+        max: usize,
+    },
     /// A region name that can be part of a host name, or nothing.
     Region,
     /// A bucket name of ASCII letters, digits, dots, colons, hyphens and underscores, or nothing.
@@ -234,6 +238,14 @@ impl Entry {
                 }
                 Some(kept.to_string())
             }
+            Rule::Token { max } => {
+                if text.len() > max || !text.bytes().all(|byte| byte.is_ascii_graphic()) {
+                    return Err(format!(
+                        "must be 1 to {max} visible ASCII characters, with no spaces"
+                    ));
+                }
+                Some(text.to_string())
+            }
             Rule::Region => Some(region(text.trim())?),
             Rule::Bucket => Some(bucket(text.trim())?),
             Rule::Endpoint => Some(url(text.trim(), true)?),
@@ -293,6 +305,9 @@ impl Entry {
             Rule::Address => "an address such as https://marfa.example, or nothing".to_string(),
             Rule::Addresses => "a list of addresses such as https://marfa.example".to_string(),
             Rule::Text { max } => format!("text of 1 to {max} characters, or nothing"),
+            Rule::Token { max } => {
+                format!("1 to {max} visible ASCII characters with no spaces, or nothing")
+            }
             Rule::Region => {
                 "a region name such as us-east-1 or auto, of letters, digits, `-` and `_`, or nothing"
                     .to_string()
@@ -336,6 +351,7 @@ impl Entry {
             }
             (
                 Rule::Text { .. }
+                | Rule::Token { .. }
                 | Rule::Region
                 | Rule::Bucket
                 | Rule::Endpoint
@@ -644,7 +660,7 @@ registry! {
     HEARTBEAT_URL: Option<Secret> = "heartbeat_url", Rule::Url, "", "Where the server sends its heartbeat, a GET request on the housekeeping schedule, so that something else can notice when the requests stop.", Secret;
     ERROR_WEBHOOK_URL: Option<Secret> = "error_webhook_url", Rule::Url, "", "Where the server posts a notice of each error it answers with a 500.", Secret;
     POSTHOG_HOST: Option<Secret> = "posthog_host", Rule::CaptureHost, "", "The PostHog host the server sends a report of each of its own faults to, for PostHog's error tracking. It needs posthog_project_token set too.", Secret;
-    POSTHOG_PROJECT_TOKEN: Option<Secret> = "posthog_project_token", Rule::Text { max: 256 }, "", "The PostHog project token the server's fault reports are sent with. It needs posthog_host set too.", Secret;
+    POSTHOG_PROJECT_TOKEN: Option<Secret> = "posthog_project_token", Rule::Token { max: 256 }, "", "The PostHog project token the server's fault reports are sent with. It needs posthog_host set too.", Secret;
     ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, error_webhook_url, posthog_host and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
@@ -841,6 +857,17 @@ mod tests {
             assert!(entry.parse(entry.default).is_ok(), "{}", entry.key);
         }
         each_kind_reads_its_rule();
+    }
+
+    #[test]
+    fn a_project_token_is_taken_only_as_header_text() {
+        let token = POSTHOG_PROJECT_TOKEN.entry;
+        assert!(token.parse("phc_Ab-9_x.y").is_ok());
+        assert!(token.parse("").is_ok());
+        for refused in ["phc_é", "phc a", "phc\u{7f}", &"p".repeat(257)] {
+            let refusal = token.parse(refused).expect_err(refused);
+            assert!(!refusal.contains(refused), "{refusal}");
+        }
     }
 
     fn spec_table(heading: &str) -> Vec<Vec<String>> {
@@ -1265,7 +1292,7 @@ mod tests {
                     problems.push(format!("{key}: range against {min} to {max}"));
                 }
             }
-            Rule::Text { max } if schema["maxLength"] != max => {
+            Rule::Text { max } | Rule::Token { max } if schema["maxLength"] != max => {
                 problems.push(format!("{key}: maxLength against {max}"));
             }
             Rule::Region if schema["maxLength"] != REGION_LONGEST => {
