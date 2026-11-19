@@ -796,12 +796,9 @@ fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(), CoreError>
     };
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
         .map_err(|error| on_volume(error, place))?;
+    // With WAL, `NORMAL` leaves a commit unsynced, so a write reported as
+    // queued could vanish when the system stops.
     conn.execute_batch("PRAGMA synchronous = FULL;")?;
-    // With WAL, `NORMAL` leaves a commit unsynced, and on Apple platforms a
-    // plain `fsync` leaves it in the drive's cache, so a write reported as
-    // queued could vanish on power loss.
-    #[cfg(target_vendor = "apple")]
-    conn.execute_batch("PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON;")?;
     tune(conn)?;
     match step {
         Step::None => {}

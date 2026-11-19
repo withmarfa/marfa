@@ -1,7 +1,8 @@
-//! A write the device reports as queued survives power loss, so every
-//! writable store commits with a sync after each transaction, and on Apple
-//! platforms that sync empties the drive's cache. Power loss cannot be
-//! staged here, so these read the settings back from an opened writer.
+//! A write the device reports as queued survives the app or the system
+//! stopping, so every writable store syncs its log at each commit. The sync
+//! does not empty the drive's own cache, which is far slower. A system stop
+//! cannot be staged here, so these read the setting back from an opened
+//! writer.
 //!
 //! With `MARFA_DURABLE_BENCH` set, `durable_commit_bench` times a hydration
 //! of 10,000 items and a burst of 1,000 queued writes and their drain:
@@ -32,21 +33,8 @@ fn commits_durably(conn: &Connection) {
     assert_eq!(
         pragma(conn, "synchronous"),
         FULL,
-        "a commit does not sync the log, so power loss can drop a write reported as queued"
+        "a commit does not sync the log, so a system stop can drop a write reported as queued"
     );
-    #[cfg(target_vendor = "apple")]
-    {
-        assert_eq!(
-            pragma(conn, "fullfsync"),
-            1,
-            "a plain fsync leaves the commit in the drive's cache"
-        );
-        assert_eq!(
-            pragma(conn, "checkpoint_fullfsync"),
-            1,
-            "a checkpoint's sync leaves the store's pages in the drive's cache"
-        );
-    }
 }
 
 #[test]

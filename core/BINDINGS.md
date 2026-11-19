@@ -109,7 +109,7 @@ Each binding takes a `Stop` on the calls that can be stopped, such as a hydratio
 
 ## What a queued write survives
 
-A call that returns a queued write has synced it to stable storage, so the write is still there after the process is killed or the device loses power. On Apple platforms the sync empties the drive's cache. The store syncs every commit, including each page of a hydration, so a write or a hydration takes longer than it would without the sync, most on a drive with a slow flush.
+A call that returns a queued write has synced it to the store's log, so the write is still there after the app is killed or the system stops. A sudden power cut on a Mac can still lose the last writes the drive had not yet stored, because the sync does not empty the drive's own cache. The store syncs every commit, including each page of a hydration, so a write or a hydration takes a little longer than it would without the sync.
 
 ## A store another build made
 
