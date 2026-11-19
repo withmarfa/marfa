@@ -866,24 +866,6 @@ pub fn rotate_refresh_token(tx: &Connection, id: &str, now: Stamp) -> Result<()>
     Ok(())
 }
 
-/// Keep the expiry boundary in step with credential cleanup.
-pub fn chain_lives(tx: &Connection, token: &RefreshToken, now: Stamp) -> Result<bool> {
-    let newest = match token.rotated_at {
-        None => Some((token.ended_at, token.expires_at)),
-        Some(_) => tx
-            .query_row(
-                "SELECT ended_at, expires_at FROM oauth_refresh_tokens \
-                 WHERE chain_id = ?1 AND rotated_at IS NULL",
-                [&token.chain_id],
-                |row| Ok((row.get("ended_at")?, row.get("expires_at")?)),
-            )
-            .optional()?,
-    };
-    let live =
-        |(ended_at, expires_at): (Option<Stamp>, Stamp)| ended_at.is_none() && expires_at > now;
-    Ok(newest.is_some_and(live))
-}
-
 pub fn end_chain(tx: &Connection, chain_id: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "DELETE FROM oauth_access_tokens WHERE chain_id = ?1",

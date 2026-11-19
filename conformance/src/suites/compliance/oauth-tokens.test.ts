@@ -5,6 +5,12 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
+  DAY_MS,
+  movedClock,
+  QUIET_SCHEDULE,
+  quiet,
+} from "../../utils/moved-clock.js";
+import {
   authorize,
   authorizeQuery,
   CALLBACK,
@@ -762,4 +768,80 @@ describe("revocation", () => {
     expect(await itemsStatus(server, renewed.body.access_token!)).toBe(401);
     expect(await grantedClients()).not.toContain(app.clientId);
   });
+
+  it(
+    "of a refresh token past its own expiry leaves the grant and its live sign-in",
+    async () => {
+      const moved = await bootFreshServer(
+        "oauth-tokens-expired-refresh",
+        QUIET_SCHEDULE,
+      );
+      try {
+        await quiet(moved, ["credential-cleanup"]);
+        const movedOrigin = await issuerOrigin(moved);
+        const movedCookie = await signIn(moved, movedOrigin);
+        const scope = `${NOTES} offline_access`;
+        const app = await registerApp(moved, scope);
+        const renew = (refreshToken: string) =>
+          token(moved, {
+            grant_type: "refresh_token",
+            refresh_token: refreshToken,
+            client_id: app.clientId,
+          });
+        const revoke = async (refreshToken: string) => {
+          const answered = await fetch(`${moved.apiUrl}/oauth/revoke`, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              token: refreshToken,
+              token_type_hint: "refresh_token",
+              client_id: app.clientId,
+            }),
+          });
+          expect(answered.status).toBe(200);
+        };
+        const granted = async (): Promise<boolean> => {
+          const response = await fetch(`${moved.apiUrl}/grants`, {
+            headers: { authorization: `Bearer ${moved.managementKey}` },
+          });
+          expect(response.status).toBe(200);
+          const body = (await response.json()) as {
+            data: { client_id: string }[];
+          };
+          return body.data.some((grant) => grant.client_id === app.clientId);
+        };
+
+        const unused = await connect(
+          moved,
+          movedOrigin,
+          movedCookie,
+          app,
+          scope,
+        );
+        const live = await connect(moved, movedOrigin, movedCookie, app, scope);
+        const clock = movedClock(moved);
+        await clock.advance(10 * DAY_MS);
+        const rotated = await renew(live.refresh_token!);
+        expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+        // Past the 30 days a refresh token lives, short of the renewed one.
+        await clock.advance(21 * DAY_MS);
+
+        for (const expired of [unused.refresh_token!, live.refresh_token!]) {
+          await revoke(expired);
+        }
+        expect(await granted()).toBe(true);
+        const renewed = await renew(rotated.body.refresh_token!);
+        expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
+        expect(await itemsStatus(moved, renewed.body.access_token!)).toBe(200);
+
+        // The witness: a token of the live chain ends the grant.
+        await revoke(renewed.body.refresh_token!);
+        expect(await granted()).toBe(false);
+        expect(await itemsStatus(moved, renewed.body.access_token!)).toBe(401);
+      } finally {
+        await moved.stop();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

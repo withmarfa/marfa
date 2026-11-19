@@ -1931,7 +1931,7 @@ export interface paths {
         put?: never;
         /**
          * Revoke a token
-         * @description Revokes an access token or a refresh token (RFC 7009). A refresh token ends the app's grant, even one a refresh replaced, unless its chain of refreshes has ended or expired. A token Marfa doesn't know returns `200` too.
+         * @description Revokes an access token or a refresh token (RFC 7009). Revoking a refresh token that hasn't ended or expired ends the app's grant, even one a later refresh replaced. A token Marfa doesn't know returns `200` too.
          */
         post: operations["revokeToken"];
         delete?: never;

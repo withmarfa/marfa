@@ -6,23 +6,12 @@ import {
   stopFreshServers,
 } from "../../utils/fresh-server.js";
 import {
-  DAY_MS,
   jobs,
   MINUTE_MS,
-  movedClock,
   operatorOf,
   QUIET_SCHEDULE,
   runJob,
 } from "../../utils/moved-clock.js";
-import {
-  connect,
-  issuerOrigin,
-  itemsStatus,
-  registerApp,
-  signIn,
-  token,
-  type App,
-} from "../../utils/signed-in.js";
 
 /**
  * The jobs the server lists, and the one job that ends and removes the
@@ -58,166 +47,6 @@ const NOT_RUN = [
 ];
 
 describe("the credential clean-up", () => {
-  it(
-    "keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay",
-    async () => {
-      const server = await bootFreshServer(
-        "credential-cleanup-rotated-refresh",
-        QUIET_SCHEDULE,
-      );
-      const origin = await issuerOrigin(server);
-      const cookie = await signIn(server, origin);
-      const scope = "core.note:read offline_access";
-      const refresh = (app: App, refreshToken: string) =>
-        token(server, {
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: app.clientId,
-        });
-      const granted = async (): Promise<string[]> => {
-        const response = await fetch(`${server.apiUrl}/grants`, {
-          headers: { authorization: `Bearer ${server.managementKey}` },
-        });
-        expect(response.status).toBe(200);
-        const body = (await response.json()) as {
-          data: { client_id: string }[];
-        };
-        return body.data.map((grant) => grant.client_id);
-      };
-
-      const connected = async () => {
-        const app = await registerApp(server, scope);
-        const first = await connect(server, origin, cookie, app, scope);
-        return { app, first: first.refresh_token!, newest: "" };
-      };
-      const revoked = await connected();
-      const replayed = await connected();
-      const witness = await connected();
-      const clock = movedClock(server);
-      await clock.advance(10 * DAY_MS);
-      for (const held of [revoked, replayed, witness]) {
-        const renewed = await refresh(held.app, held.first);
-        expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
-        held.newest = renewed.body.refresh_token!;
-      }
-      // Past the 30 days the first refresh tokens live, short of the newest.
-      await clock.advance(21 * DAY_MS);
-      expect((await runJob(server, "credential-cleanup")).outcome).toBe(
-        "succeeded",
-      );
-
-      // The witness: a chain lives on past its first token's expiry.
-      const kept = await refresh(witness.app, witness.newest);
-      expect(kept.status, JSON.stringify(kept.body)).toBe(200);
-      expect(await itemsStatus(server, kept.body.access_token!)).toBe(200);
-
-      expect(await granted()).toContain(revoked.app.clientId);
-      const answered = await fetch(`${server.apiUrl}/oauth/revoke`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          token: revoked.first,
-          token_type_hint: "refresh_token",
-          client_id: revoked.app.clientId,
-        }),
-      });
-      expect(answered.status).toBe(200);
-      const afterRevoke = await refresh(revoked.app, revoked.newest);
-      expect(afterRevoke.status).toBe(400);
-      expect(afterRevoke.body.error).toBe("invalid_grant");
-      expect(await granted()).not.toContain(revoked.app.clientId);
-
-      const replay = await refresh(replayed.app, replayed.first);
-      expect(replay.status).toBe(400);
-      expect(replay.body.error).toBe("invalid_grant");
-      const afterReplay = await refresh(replayed.app, replayed.newest);
-      expect(afterReplay.status).toBe(400);
-      expect(afterReplay.body.error).toBe("invalid_grant");
-      expect(await granted()).toContain(replayed.app.clientId);
-    },
-    4 * FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it(
-    "leaves the grant and its other sign-in on a revocation naming a token of a chain whose newest refresh token expired, before and after a run",
-    async () => {
-      const server = await bootFreshServer(
-        "credential-cleanup-expired-chain",
-        QUIET_SCHEDULE,
-      );
-      const origin = await issuerOrigin(server);
-      const cookie = await signIn(server, origin);
-      const scope = "core.note:read offline_access";
-      const app = await registerApp(server, scope);
-      const refresh = async (refreshToken: string) =>
-        token(server, {
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: app.clientId,
-        });
-      const revoke = async (refreshToken: string) => {
-        const answered = await fetch(`${server.apiUrl}/oauth/revoke`, {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            token: refreshToken,
-            token_type_hint: "refresh_token",
-            client_id: app.clientId,
-          }),
-        });
-        expect(answered.status).toBe(200);
-      };
-      const granted = async (): Promise<boolean> => {
-        const response = await fetch(`${server.apiUrl}/grants`, {
-          headers: { authorization: `Bearer ${server.managementKey}` },
-        });
-        expect(response.status).toBe(200);
-        const body = (await response.json()) as {
-          data: { client_id: string }[];
-        };
-        return body.data.some((grant) => grant.client_id === app.clientId);
-      };
-
-      const finished = await connect(server, origin, cookie, app, scope);
-      const rotated = await refresh(finished.refresh_token!);
-      expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
-      const finishedTokens = [
-        finished.refresh_token!,
-        rotated.body.refresh_token!,
-      ];
-      const live = await connect(server, origin, cookie, app, scope);
-      const clock = movedClock(server);
-      await clock.advance(10 * DAY_MS);
-      let renewed = await refresh(live.refresh_token!);
-      expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
-      let liveToken = renewed.body.refresh_token!;
-      // Past the 30 days the first chain's newest token lives, short of the second's.
-      await clock.advance(21 * DAY_MS);
-
-      for (const run of [false, true]) {
-        if (run) {
-          expect((await runJob(server, "credential-cleanup")).outcome).toBe(
-            "succeeded",
-          );
-        }
-        for (const held of finishedTokens) {
-          await revoke(held);
-        }
-        expect(await granted()).toBe(true);
-        renewed = await refresh(liveToken);
-        expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
-        expect(await itemsStatus(server, renewed.body.access_token!)).toBe(200);
-        liveToken = renewed.body.refresh_token!;
-      }
-
-      // The witness: a token of the live chain ends the grant.
-      await revoke(liveToken);
-      expect(await granted()).toBe(false);
-      expect(await itemsStatus(server, renewed.body.access_token!)).toBe(401);
-    },
-    4 * FRESH_SERVER_TIMEOUT_MS,
-  );
-
   it(
     "removes a device code ten minutes after it expires, and not before",
     async () => {

@@ -353,9 +353,6 @@ async fn by_refresh(
             return Ok(Err(dead()));
         };
         if old.rotated_at.is_some() {
-            if !store::chain_lives(tx, &old, now)? {
-                return Ok(Err(dead()));
-            }
             store::end_chain(tx, &old.chain_id, now)?;
             audit::record_from(
                 tx,

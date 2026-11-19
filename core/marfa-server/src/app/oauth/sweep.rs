@@ -306,57 +306,7 @@ async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
         .await
 }
 
-/// A chain is finished by its newest refresh token, the one a refresh has not rotated.
-fn finished_chains() -> String {
-    format!(
-        "SELECT chain_id FROM oauth_refresh_tokens WHERE rotated_at IS NULL \
-         AND (ended_at IS NOT NULL OR ({} AND expires_at <= ?1)) LIMIT ?2",
-        readable("expires_at")
-    )
-}
-
-/// The newest token goes last, so a chain only partly removed is still found finished.
-async fn finished_chain_tokens(app: &Arc<App>) -> Result<i64> {
-    let Some(now) = app.clock.judging() else {
-        return Ok(0);
-    };
-    app.db
-        .write(Write::own(), move |tx| {
-            let chains: Vec<String> = tx
-                .prepare(&finished_chains())?
-                .query_map(params![now, BATCH], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?;
-            let mut left = BATCH;
-            for chain in &chains {
-                if left == 0 {
-                    break;
-                }
-                let rotated = tx.execute(
-                    "DELETE FROM oauth_refresh_tokens WHERE id IN ( \
-                     SELECT id FROM oauth_refresh_tokens \
-                     WHERE chain_id = ?1 AND rotated_at IS NOT NULL LIMIT ?2)",
-                    params![chain, left],
-                )?;
-                left = left.saturating_sub(i64::try_from(rotated).unwrap_or(i64::MAX));
-                if left > 0 {
-                    let newest = tx.execute(
-                        "DELETE FROM oauth_refresh_tokens WHERE chain_id = ?1",
-                        [chain],
-                    )?;
-                    left = left.saturating_sub(i64::try_from(newest).unwrap_or(i64::MAX));
-                }
-            }
-            Ok(BATCH - left)
-        })
-        .await
-}
-
-const NEWEST_UNREAD: Unread<'static> = Unread {
-    table: "oauth_refresh_tokens",
-    time: "expires_at",
-    scope: "rotated_at IS NULL AND ended_at IS NULL",
-};
-
+/// A rotated refresh token stays until then, so a replay of it is still recognized.
 pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (mut deleted, mut done) = drain(run, BATCH, || expired_sessions(app)).await?;
     if done {
@@ -373,6 +323,7 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
             DEVICE_CODE_SECONDS * MS_PER_SECOND,
         ),
         ("oauth_access_tokens", "id", 0),
+        ("oauth_refresh_tokens", "id", 0),
         ("setup_proof", "digest", 0),
     ] {
         if !done {
@@ -389,14 +340,6 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
                 scope: "1",
             };
             report_kept(app, run, Cutoff::At(before), [unread]).await?;
-        }
-    }
-    if done {
-        let (taken, finished) = drain(run, BATCH, || finished_chain_tokens(app)).await?;
-        deleted += taken;
-        done = finished;
-        if let (true, Some(now)) = (done, app.clock.judging()) {
-            report_kept(app, run, Cutoff::At(now), [NEWEST_UNREAD]).await?;
         }
     }
     Ok((deleted, done))

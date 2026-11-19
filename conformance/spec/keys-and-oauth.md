@@ -2129,15 +2129,7 @@ When the server refuses a replayed refresh token, the server MUST end every acce
 
 **Reason:** A replay means two parties hold one chain, and the server cannot tell which of them is the app.
 
-**Tests:** `compliance/oauth-tokens.test.ts › refuse a replayed refresh token invalid_grant, and end every token of its chain`, `compliance/credential-cleanup.test.ts › keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay`.
-
-### `keys-and-oauth/refresh-rotated-kept`
-
-While a refresh token's chain has not ended and the chain's newest refresh token has not expired, the server MUST hold every refresh token that a refresh of the chain rotated as a token of the chain, past that token's own expiry and across runs of the `credential-cleanup` job.
-
-**Reason:** Each refresh gives the newest token a lifetime of its own, so a chain outlives its earlier tokens, and `keys-and-oauth/revoke-rotated-refresh-token` and `keys-and-oauth/refresh-replay-chain` hold for as long as it lives.
-
-**Tests:** `compliance/credential-cleanup.test.ts › keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay`.
+**Tests:** `compliance/oauth-tokens.test.ts › refuse a replayed refresh token invalid_grant, and end every token of its chain`.
 
 ### `keys-and-oauth/refresh-unknown`
 
@@ -2265,7 +2257,7 @@ When an app revokes an access token at `POST /oauth/revoke`, the server MUST ref
 
 ### `keys-and-oauth/revoke-refresh-token`
 
-When an app revokes its refresh token at `POST /oauth/revoke`, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
+When an app revokes at `POST /oauth/revoke` its newest refresh token, one no refresh has rotated, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
 
 **Reason:** RFC 7009 is the one way an app says "disconnect me", and an app that used it was still connected while the grant's records stood.
 
@@ -2273,27 +2265,19 @@ When an app revokes its refresh token at `POST /oauth/revoke`, the server MUST e
 
 ### `keys-and-oauth/revoke-rotated-refresh-token`
 
-When an app revokes at `POST /oauth/revoke` a refresh token that an earlier refresh rotated, while that token's chain has not ended and the chain's newest refresh token has not expired, the server MUST end the app's grant: its tokens, its newest refresh token, its entry in `GET /grants` and the person's consent.
+When an app revokes at `POST /oauth/revoke` a refresh token the server issued to that app, whether or not a refresh rotated it, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its newest refresh token, its entry in `GET /grants` and the person's consent.
 
 **Reason:** An app signs out with the refresh token it last stored, which need not be the newest one its chain holds.
 
-**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token a refresh already rotated ends the app's grant and its newest refresh token`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`, `compliance/credential-cleanup.test.ts › keeps a refresh token a refresh rotated past its own expiry while its chain lives, for a revocation and a replay`.
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token a refresh already rotated ends the app's grant and its newest refresh token`, `› of the newest refresh token after a rotation ends the app's grant`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
 
-### `keys-and-oauth/revoke-ended-chain`
+### `keys-and-oauth/revoke-ended-or-expired`
 
-When an app revokes at `POST /oauth/revoke` a refresh token whose chain has already ended, the server MUST leave the app's grant, its other tokens and its entry in `GET /grants` as they stand.
+When an app revokes at `POST /oauth/revoke` a refresh token whose chain has ended, or one past its own expiry, the server MUST leave the app's grant, its other tokens and its entry in `GET /grants` as they stand.
 
-**Reason:** A grant keeps its ID when the person approves the app again, so a token from an approval that ended must not reach the approval that followed it.
+**Reason:** A grant keeps its ID when the person approves the app again and can hold several chains, so a token that may belong to a finished chain must not end a chain that lives.
 
-**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token from before the person revoked the grant and approved the app again leaves the new approval`, `› of a refresh token whose chain a replay ended leaves the grant and its other sign-ins`.
-
-### `keys-and-oauth/revoke-expired-chain`
-
-When an app revokes at `POST /oauth/revoke` a refresh token whose chain's newest refresh token has expired, the server MUST leave the app's grant, its other tokens and its entry in `GET /grants` as they stand, whether or not the `credential-cleanup` job has run since that expiry.
-
-**Reason:** A chain whose newest token expired can no longer be renewed, and the same grant can hold another chain the app still uses; the answer must not change when the clean-up removes the finished chain.
-
-**Tests:** `compliance/credential-cleanup.test.ts › leaves the grant and its other sign-in on a revocation naming a token of a chain whose newest refresh token expired, before and after a run`.
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token from before the person revoked the grant and approved the app again leaves the new approval`, `› of a refresh token whose chain a replay ended leaves the grant and its other sign-ins`, `› of a refresh token past its own expiry leaves the grant and its live sign-in`.
 
 ### `keys-and-oauth/revoke-unknown-token`
 

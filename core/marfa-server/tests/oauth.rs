@@ -601,7 +601,8 @@ async fn two_refreshes_at_once_cannot_both_leave_a_live_token() {
     let mut statuses = [first.status, second.status];
     statuses.sort();
     assert_eq!(statuses, [StatusCode::OK, StatusCode::BAD_REQUEST]);
-    let live = "SELECT count(*) FROM oauth_refresh_tokens WHERE ended_at IS NULL";
+    let live = "SELECT count(*) FROM oauth_refresh_tokens \
+                WHERE ended_at IS NULL AND rotated_at IS NULL";
     assert_eq!(instance.count(live).await, 0);
     instance
         .grant_and_browser_stand(&client, OFFLINE_NOTES)
@@ -735,6 +736,56 @@ async fn a_grant_revoked_between_approval_and_poll_issues_nothing() {
     refused_as(&instance.poll(&client, &late).await, "invalid_grant");
     let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 0);
+}
+
+#[tokio::test]
+async fn revoking_a_rotated_refresh_token_ends_the_grant() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
+    let first = text_at(&issued, "refresh_token");
+    let renewed = instance.refresh(&client, first).await;
+    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
+    let renewed = renewed.json();
+
+    instance.revoke(&client, first).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
+    let newest = instance
+        .refresh(&client, text_at(&renewed, "refresh_token"))
+        .await;
+    refused_as(&newest, "invalid_grant");
+    let written = instance.write_note(text_at(&renewed, "access_token")).await;
+    assert_eq!(written.status, StatusCode::UNAUTHORIZED, "{}", written.text);
+}
+
+#[tokio::test]
+async fn revoking_an_expired_refresh_token_leaves_the_live_chain_of_its_grant() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(OFFLINE_NOTES).await;
+    let unused = instance.tokens(&client, OFFLINE_NOTES).await;
+    let live = instance.tokens(&client, OFFLINE_NOTES).await;
+    instance.app.clock.advance(10 * DAY_MS).unwrap();
+    let rotated = instance
+        .refresh(&client, text_at(&live, "refresh_token"))
+        .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.text);
+    instance.app.clock.advance(21 * DAY_MS).unwrap();
+
+    for expired in [&unused, &live] {
+        instance
+            .revoke(&client, text_at(expired, "refresh_token"))
+            .await;
+    }
+    assert_eq!(instance.count(WITHDRAWN).await, 0);
+    let renewed = instance
+        .refresh(&client, text_at(&rotated.json(), "refresh_token"))
+        .await;
+    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
+
+    instance
+        .revoke(&client, text_at(&renewed.json(), "refresh_token"))
+        .await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
 }
 
 #[tokio::test]
@@ -1488,12 +1539,8 @@ async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_no
     assert_eq!(instance.count(CLIENTS).await, 1);
 }
 
-const ROTATED: &str = "SELECT count(*) FROM oauth_refresh_tokens WHERE rotated_at IS NOT NULL";
-const CHAINS: &str = "SELECT count(DISTINCT chain_id) FROM oauth_refresh_tokens";
-const REPLAYED: &str = "SELECT count(*) FROM audit_log WHERE action = 'auth.refresh.replayed'";
-
 #[tokio::test]
-async fn the_expired_go_and_a_rotated_token_waits_for_its_chain() {
+async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;
     let issued = instance.tokens(&client, OFFLINE_NOTES).await;
@@ -1511,149 +1558,15 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_chain() {
         cleaned(app).await.deleted,
         both_codes_and_both_access_tokens
     );
-    assert_eq!(instance.count(ROTATED).await, 1);
+    let rotated = "SELECT count(*) FROM oauth_refresh_tokens WHERE rotated_at IS NOT NULL";
+    assert_eq!(instance.count(rotated).await, 1);
     app.clock.advance(31 * DAY_MS).unwrap();
     let both_tokens_and_the_browser_session = 3;
     assert_eq!(
         cleaned(app).await.deleted,
         both_tokens_and_the_browser_session
     );
-    assert_eq!(instance.count(ROTATED).await, 0);
-    assert_eq!(instance.count(CHAINS).await, 0);
-}
-
-/// Cleanup runs after the first token expires while its successor is still live.
-async fn renewed_past_the_first_expiry(
-    instance: &Instance,
-    clients: &[&str],
-) -> Vec<(String, String)> {
-    let mut held = Vec::new();
-    for client in clients {
-        let issued = instance.tokens(client, OFFLINE_NOTES).await;
-        held.push(text_at(&issued, "refresh_token").to_string());
-    }
-    instance.app.clock.advance(10 * DAY_MS).unwrap();
-    let mut renewed = Vec::new();
-    for (client, first) in clients.iter().zip(held) {
-        let reply = instance.refresh(client, &first).await;
-        assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
-        renewed.push((first, text_at(&reply.json(), "refresh_token").to_string()));
-    }
-    instance.app.clock.advance(21 * DAY_MS).unwrap();
-    cleaned(&instance.app).await;
-    renewed
-}
-
-#[tokio::test]
-async fn revoking_a_rotated_token_past_its_own_expiry_ends_the_grant_while_its_chain_lives() {
-    let instance = Instance::signed_in().await;
-    let client = instance.register(OFFLINE_NOTES).await;
-    let held = renewed_past_the_first_expiry(&instance, &[&client]).await;
-    let (first, newest) = &held[0];
-
-    instance.revoke(&client, first).await;
-    refused_as(&instance.refresh(&client, newest).await, "invalid_grant");
-    assert_eq!(instance.count(WITHDRAWN).await, 1);
-}
-
-#[tokio::test]
-async fn replaying_a_rotated_token_past_its_own_expiry_ends_its_chain() {
-    let instance = Instance::signed_in().await;
-    let client = instance.register(OFFLINE_NOTES).await;
-    let witness = instance.register(OFFLINE_NOTES).await;
-    let held = renewed_past_the_first_expiry(&instance, &[&client, &witness]).await;
-    let ((first, newest), (_, kept)) = (&held[0], &held[1]);
-
-    refused_as(&instance.refresh(&client, first).await, "invalid_grant");
-    refused_as(&instance.refresh(&client, newest).await, "invalid_grant");
-    assert_eq!(instance.count(REPLAYED).await, 1);
-    let renewed = instance.refresh(&witness, kept).await;
-    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
-}
-
-#[tokio::test]
-async fn the_clean_up_removes_a_chain_once_it_ends() {
-    let instance = Instance::signed_in().await;
-    let client = instance.register(OFFLINE_NOTES).await;
-    let ended = instance.tokens(&client, OFFLINE_NOTES).await;
-    let ended = text_at(&ended, "refresh_token");
-    let live = instance.tokens(&client, OFFLINE_NOTES).await;
-    let live = text_at(&live, "refresh_token");
-    for token in [ended, live] {
-        let renewed = instance.refresh(&client, token).await;
-        assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
-    }
-    refused_as(&instance.refresh(&client, ended).await, "invalid_grant");
-    assert_eq!(instance.count(ROTATED).await, 2);
-    assert_eq!(instance.count(CHAINS).await, 2);
-
-    cleaned(&instance.app).await;
-    assert_eq!(instance.count(ROTATED).await, 1);
-    assert_eq!(instance.count(CHAINS).await, 1);
-    refused_as(&instance.refresh(&client, live).await, "invalid_grant");
-    assert_eq!(instance.count(REPLAYED).await, 2);
-    cleaned(&instance.app).await;
-    assert_eq!(instance.count(ROTATED).await, 0);
-    assert_eq!(instance.count(CHAINS).await, 0);
-}
-
-#[tokio::test]
-async fn a_token_of_a_chain_whose_newest_token_expired_changes_nothing_before_or_after_the_clean_up()
- {
-    let instance = Instance::signed_in().await;
-    let client = instance.register(OFFLINE_NOTES).await;
-    let finished = instance.tokens(&client, OFFLINE_NOTES).await;
-    let first = text_at(&finished, "refresh_token").to_string();
-    let renewed = instance.refresh(&client, &first).await;
-    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
-    let newest = text_at(&renewed.json(), "refresh_token").to_string();
-    let live = instance.tokens(&client, OFFLINE_NOTES).await;
-    let mut live = text_at(&live, "refresh_token").to_string();
-    instance.app.clock.advance(10 * DAY_MS).unwrap();
-    let kept = instance.refresh(&client, &live).await;
-    assert_eq!(kept.status, StatusCode::OK, "{}", kept.text);
-    live = text_at(&kept.json(), "refresh_token").to_string();
-    instance.app.clock.advance(21 * DAY_MS).unwrap();
-
-    for cleaned_first in [false, true] {
-        if cleaned_first {
-            cleaned(&instance.app).await;
-            assert_eq!(instance.count(CHAINS).await, 1);
-        }
-        for token in [&first, &newest] {
-            instance.revoke(&client, token).await;
-            refused_as(&instance.refresh(&client, token).await, "invalid_grant");
-        }
-        assert_eq!(instance.count(WITHDRAWN).await, 0);
-        assert_eq!(instance.count(REPLAYED).await, 0);
-        let kept = instance.refresh(&client, &live).await;
-        assert_eq!(kept.status, StatusCode::OK, "{}", kept.text);
-        live = text_at(&kept.json(), "refresh_token").to_string();
-    }
-
-    instance.revoke(&client, &live).await;
-    assert_eq!(instance.count(WITHDRAWN).await, 1);
-}
-
-#[tokio::test]
-async fn the_clean_up_removes_a_chain_longer_than_one_write_whole() {
-    let instance = Instance::signed_in().await;
-    let client = instance.register(OFFLINE_NOTES).await;
-    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
-    let mut held = text_at(&issued, "refresh_token").to_string();
-    for _ in 0..250 {
-        let renewed = instance.refresh(&client, &held).await;
-        assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
-        held = text_at(&renewed.json(), "refresh_token").to_string();
-    }
-    assert_eq!(instance.count(ROTATED).await, 250);
-    cleaned(&instance.app).await;
-    assert_eq!(instance.count(ROTATED).await, 250);
-
-    instance.revoke(&client, &held).await;
-    cleaned(&instance.app).await;
-    assert_eq!(instance.count(ROTATED).await, 0);
-    assert_eq!(instance.count(CHAINS).await, 0);
+    assert_eq!(instance.count(rotated).await, 0);
 }
 
 #[tokio::test]
