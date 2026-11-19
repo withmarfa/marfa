@@ -592,3 +592,72 @@ fn a_write_through_a_link_outside_the_folder_is_found_by_a_quick_pass_an_event_e
         .unwrap();
     assert_eq!(before, read_hash(&folder, "n002.md"), "no event named it");
 }
+
+/// Has the folder see `directory` on another volume until dropped.
+#[cfg(unix)]
+struct OnAnotherVolume;
+
+#[cfg(unix)]
+impl OnAnotherVolume {
+    fn at(directory: &Path) -> OnAnotherVolume {
+        use std::os::unix::fs::MetadataExt;
+        let inode = std::fs::metadata(directory).unwrap().ino();
+        FOREIGN_VOLUME.with(|foreign| foreign.borrow_mut().push(inode));
+        OnAnotherVolume
+    }
+}
+
+#[cfg(unix)]
+impl Drop for OnAnotherVolume {
+    fn drop(&mut self) {
+        FOREIGN_VOLUME.with(|foreign| foreign.borrow_mut().clear());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_quick_pass_walks_while_the_scan_enters_a_directory_on_another_volume() {
+    let mut all = names(12);
+    all.push("shared/plan.md".into());
+    let (dir, folder, _server, mut passes) = watched(&all);
+    let volume = OnAnotherVolume::at(&dir.path().join("shared"));
+    // The walk that follows finds the mount, and keeps no inventory; quick
+    // passes that follow have none to scope by.
+    passes.run(&folder, true).unwrap();
+    for _ in 0..3 {
+        passes.run(&folder, false).unwrap();
+    }
+
+    // Another computer's edit fires no event, and one elsewhere drives each pass.
+    let before = read_hash(&folder, "shared/plan.md");
+    edit(dir.path(), "shared/plan.md");
+    edit(dir.path(), "n001.md");
+    // A file changed within the settle time is left for a later pass.
+    std::thread::sleep(Duration::from_millis(400));
+    counted();
+    passes
+        .touching(&folder, &[&dir.path().join("n001.md")])
+        .unwrap();
+    assert_ne!(
+        before,
+        read_hash(&folder, "shared/plan.md"),
+        "found the edit"
+    );
+    assert!(counted().0 >= 12, "a walk found it");
+
+    // The witness: with every directory on the root's volume, only an event
+    // names a file.
+    drop(volume);
+    let (dir, folder, _server, mut passes) = watched(&all);
+    let before = read_hash(&folder, "shared/plan.md");
+    edit(dir.path(), "shared/plan.md");
+    edit(dir.path(), "n001.md");
+    passes
+        .touching(&folder, &[&dir.path().join("n001.md")])
+        .unwrap();
+    assert_eq!(
+        before,
+        read_hash(&folder, "shared/plan.md"),
+        "no event named it"
+    );
+}

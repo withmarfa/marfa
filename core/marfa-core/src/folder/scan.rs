@@ -341,8 +341,13 @@ impl Folder {
     }
 
     /// Keeps what the pass found for the next quick pass, but not where it set
-    /// a save aside or folded a name, which only a walk follows.
+    /// a save aside or folded a name, which only a walk follows, nor where the
+    /// walk entered another volume, which may change with no event heard.
     fn leave_inventory(&self, scan: &mut ScanState) {
+        if scan.walked.crossed {
+            self.forget_inventory();
+            return;
+        }
         if !scan.stale.is_empty()
             || scan.files.iter().any(|file| file.folded)
             || scan.seen.len() != scan.keys.len() && scan.scope.is_none()
