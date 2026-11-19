@@ -347,6 +347,11 @@ impl Folder {
             || scan.files.iter().any(|file| file.folded)
             || scan.seen.len() != scan.keys.len() && scan.scope.is_none()
             || scan.keys.iter().any(|key| !scan.seen.contains(key))
+            || scan
+                .walked
+                .opened
+                .values()
+                .any(|captured| linked_elsewhere(&captured.metadata.borrow()))
         {
             return;
         }
@@ -372,18 +377,6 @@ impl Folder {
                 inventory
             }
             None => Inventory {
-                linked: scan
-                    .paths
-                    .iter()
-                    .zip(&scan.keys)
-                    .filter(|(path, _)| {
-                        scan.walked
-                            .opened
-                            .get(*path)
-                            .is_some_and(|captured| linked_elsewhere(&captured.metadata.borrow()))
-                    })
-                    .map(|(_, key)| key.clone())
-                    .collect(),
                 guard: scan.guard.clone(),
                 dirty: scan
                     .keys

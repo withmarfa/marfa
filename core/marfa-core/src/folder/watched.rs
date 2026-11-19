@@ -10,7 +10,7 @@ use notify::{EventKind, RecursiveMode, Watcher, WatcherKind};
 
 use super::lists::Lists;
 use super::scoped::Touched;
-use super::{SETTINGS_FILE, STATE_DIR};
+use super::{SETTINGS_FILE, STATE_DIR, StorageCause};
 
 /// The most directories `Reach` remembers of each kind, so a stream of new
 /// directory names cannot grow it without end.
@@ -195,6 +195,9 @@ pub(super) struct Listening<W> {
     watcher: W,
     pub(super) reach: Reach,
     tree: Option<Tree>,
+    /// Whether the watch is of a place where another machine's change fires
+    /// no event, so no event can be taken to name all that changed.
+    remote: bool,
 }
 
 impl<W: Watcher> Listening<W> {
@@ -214,6 +217,7 @@ impl<W: Watcher> Listening<W> {
                 watcher,
                 reach,
                 tree: None,
+                remote: false,
             },
             Vec::new(),
         ))
@@ -235,9 +239,17 @@ impl<W: Directories> Listening<W> {
                 watcher,
                 reach,
                 tree: Some(tree),
+                remote: false,
             },
             failures,
         ))
+    }
+
+    /// Notes where the folder is stored. On a network file system every
+    /// registration succeeds, yet a change another machine makes fires no
+    /// event, so the watch is then never trusted to name what changed.
+    pub(super) fn stored(&mut self, cause: Option<&StorageCause>) {
+        self.remote = matches!(cause, Some(StorageCause::NetworkFileSystem(_)));
     }
 
     /// Takes the rules a new read of the settings gave. Returns whether they
@@ -271,21 +283,27 @@ impl<W: Directories> Listening<W> {
 
     /// Readies the watch for a pass. A directory that could not be watched is
     /// tried again, and while one stands unwatched, or has only now been
-    /// watched, no event names what changed in it, so the pass walks. Returns
-    /// what `restore` does.
+    /// watched, or the folder is on a network file system, no event names what
+    /// changed, so the pass walks. Returns the directories that could not be
+    /// watched and were not told of before, or `None` where there are none.
     pub(super) fn ready(&mut self, touched: &mut Touched) -> Option<Vec<notify::Error>> {
-        let unwatched = self
-            .tree
-            .as_ref()
-            .is_some_and(|tree| !tree.unwatched.is_empty());
+        let mut distrust = self.remote;
+        let mut failures = Vec::new();
         if let Some(tree) = &mut self.tree {
-            tree.retry(&mut self.watcher);
+            distrust |= !tree.unwatched.is_empty();
+            failures = tree.retry(&mut self.watcher, &self.reach);
         }
         let restored = self.restore();
-        if unwatched || restored.is_some() {
+        if distrust || restored.is_some() {
             touched.distrust();
         }
-        restored
+        match restored {
+            Some(mut restored) => {
+                restored.extend(failures);
+                Some(restored)
+            }
+            None => (!failures.is_empty()).then_some(failures),
+        }
     }
 }
 
@@ -356,14 +374,40 @@ impl Tree {
         }
         self.unwatched
             .retain(|directory| wanted.contains(directory));
-        self.add(watcher, wanted)
+        self.add(watcher, wanted, false)
     }
 
     /// Tries again to watch the directories that could not be, without saying
-    /// again that they could not.
-    fn retry(&mut self, watcher: &mut impl Directories) {
-        let wanted = std::mem::take(&mut self.unwatched);
-        self.add(watcher, wanted);
+    /// again that they could not, and watches what a scan enters below each one
+    /// that now is, which was out of sight while it was not. Returns the
+    /// directories found below that could not be watched. The first refusal for
+    /// want of watches ends the round with the rest still unwatched.
+    fn retry(&mut self, watcher: &mut impl Directories, reach: &Reach) -> Vec<notify::Error> {
+        let mut failures = Vec::new();
+        let mut pending = std::mem::take(&mut self.unwatched).into_iter();
+        while let Some(directory) = pending.next() {
+            if self.held.contains(&directory) || self.unwatched.contains(&directory) {
+                continue;
+            }
+            let mut out = self
+                .add(watcher, BTreeSet::from([directory.clone()]), true)
+                .iter()
+                .any(out_of_watches);
+            if !out && self.held.contains(&directory) {
+                let below = entered_under(&self.root, &directory, reach)
+                    .into_iter()
+                    .collect();
+                let found = self.add(watcher, below, true);
+                out = found.iter().any(out_of_watches);
+                failures.extend(found);
+            }
+            if out {
+                self.unwatched
+                    .extend(pending.filter(|left| !self.held.contains(left)));
+                break;
+            }
+        }
+        failures
     }
 
     /// The state directory. A scan never enters it, but an edit of the
@@ -373,14 +417,17 @@ impl Tree {
     }
 
     /// Watches each of `wanted` not yet watched, a parent before its
-    /// children.
+    /// children. With `stopping`, the first refusal for want of watches leaves
+    /// the rest of `wanted` unwatched without asking for them.
     fn add(
         &mut self,
         watcher: &mut impl Directories,
         wanted: BTreeSet<PathBuf>,
+        stopping: bool,
     ) -> Vec<notify::Error> {
         let mut failures = Vec::new();
-        for directory in wanted {
+        let mut wanted = wanted.into_iter();
+        while let Some(directory) = wanted.next() {
             if self.held.contains(&directory) {
                 continue;
             }
@@ -395,7 +442,13 @@ impl Tree {
                 }
                 Err(error) => {
                     self.unwatched.insert(directory);
+                    let out = out_of_watches(&error);
                     failures.push(error);
+                    if stopping && out {
+                        self.unwatched
+                            .extend(wanted.filter(|left| !self.held.contains(left)));
+                        break;
+                    }
                 }
             }
         }
@@ -458,7 +511,7 @@ impl Tree {
         } else {
             return Vec::new();
         };
-        self.add(watcher, wanted)
+        self.add(watcher, wanted, false)
     }
 
     /// Stops watching `path` and everything below it.
@@ -476,6 +529,10 @@ impl Tree {
         self.unwatched
             .retain(|directory| !directory.starts_with(path));
     }
+}
+
+fn out_of_watches(error: &notify::Error) -> bool {
+    matches!(error.kind, notify::ErrorKind::MaxFilesWatch)
 }
 
 fn is_directory(path: &Path) -> bool {
@@ -1120,17 +1177,96 @@ mod tests {
         assert_eq!(failures.len(), 3);
         assert_eq!(tree.unwatched.len(), 3);
         // Tried again, it fails without being told again, and stays unwatched.
-        tree.retry(&mut watcher);
+        tree.retry(&mut watcher, &reach);
         assert_eq!(tree.unwatched.len(), 3);
         // One is watched at last; one is removed; one is no longer entered.
         watcher.refused.remove(&root.join("a"));
         std::fs::remove_dir(root.join("b")).unwrap();
-        tree.retry(&mut watcher);
+        tree.retry(&mut watcher, &reach);
         assert_eq!(tree.unwatched, BTreeSet::from([root.join("c")]));
         assert!(tree.held.contains(&root.join("a")));
         let mut reach = reach;
         assert!(reach.replace(Some(Lists::new(&[], &lines(&["c/"])).unwrap())));
         tree.sync(&mut watcher, &reach);
         assert!(tree.unwatched.is_empty());
+    }
+
+    #[test]
+    fn a_directory_below_one_that_could_not_be_watched_is_watched_when_it_is() {
+        let dir = folder_of(&["a", "b"]);
+        let root = dir.path();
+        let reach = reaching(&[]);
+        let mut watcher = Refusing {
+            refused: BTreeSet::from([root.join("a")]),
+        };
+        let mut tree = Tree::new(root.to_path_buf());
+        assert_eq!(tree.open(&mut watcher, &reach).unwrap().len(), 1);
+        // Made, and one moved in, while `a` was not watched: no event named
+        // either, and the watch of `a` found neither.
+        std::fs::create_dir_all(root.join("a/new/deep")).unwrap();
+        // The witness: still refused, the retry reaches nothing below.
+        assert!(tree.retry(&mut watcher, &reach).is_empty());
+        assert_eq!(tree.unwatched, BTreeSet::from([root.join("a")]));
+        assert!(!tree.held.contains(&root.join("a/new")));
+        watcher.refused.clear();
+        assert!(tree.retry(&mut watcher, &reach).is_empty());
+        assert!(tree.unwatched.is_empty());
+        for held in ["a", "a/new", "a/new/deep"] {
+            assert!(tree.held.contains(&root.join(held)), "{held}");
+        }
+        // One of them refused is told, and tried again without being told.
+        std::fs::create_dir(root.join("b/more")).unwrap();
+        tree.held.remove(&root.join("b"));
+        tree.unwatched.insert(root.join("b"));
+        watcher.refused = BTreeSet::from([root.join("b/more")]);
+        assert_eq!(tree.retry(&mut watcher, &reach).len(), 1);
+        assert_eq!(tree.unwatched, BTreeSet::from([root.join("b/more")]));
+        assert!(tree.retry(&mut watcher, &reach).is_empty());
+    }
+
+    #[test]
+    fn a_retry_stops_asking_once_the_watches_are_used_up() {
+        struct Counting(usize);
+        impl Directories for Counting {
+            fn watch(&mut self, _: &Path) -> notify::Result<()> {
+                self.0 += 1;
+                Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch))
+            }
+
+            fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+                Ok(())
+            }
+        }
+        let dir = folder_of(&["a", "b", "c", "d"]);
+        let reach = reaching(&[]);
+        let mut tree = Tree::new(dir.path().to_path_buf());
+        tree.unwatched = ["a", "b", "c", "d"]
+            .iter()
+            .map(|name| dir.path().join(name))
+            .collect();
+        let before = tree.unwatched.clone();
+        let mut counting = Counting(0);
+        tree.retry(&mut counting, &reach);
+        assert_eq!(counting.0, 1);
+        assert_eq!(tree.unwatched, before, "the rest are put back");
+    }
+
+    #[test]
+    fn a_folder_on_a_network_file_system_is_never_trusted_to_name_what_changed() {
+        let dir = folder_of(&["notes"]);
+        let ready = |cause: Option<StorageCause>| {
+            let (mut listening, failures) =
+                Listening::by_directory(Recorder::default(), dir.path(), reaching(&[])).unwrap();
+            assert!(failures.is_empty());
+            listening.stored(cause.as_ref());
+            let mut touched = Touched::default();
+            listening.ready(&mut touched);
+            touched.scope().is_none()
+        };
+        // The witness: every directory watched and no remote storage.
+        assert!(!ready(None));
+        assert!(!ready(Some(StorageCause::ICloudDrive)));
+        assert!(ready(Some(StorageCause::NetworkFileSystem("nfs".into()))));
+        assert!(ready(Some(StorageCause::NetworkFileSystem("smbfs".into()))));
     }
 }

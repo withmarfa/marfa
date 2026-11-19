@@ -317,9 +317,11 @@ impl Folder {
             .map_err(|error| {
                 WatchError::Unwatchable(format!("cannot watch {}: {error}", dir.display()))
             })?;
+        let storage = self.storage_cause();
+        listening.stored(storage.as_ref());
         tell(WatchEvent::Watching {
             dir: dir.clone(),
-            storage: self.storage_cause(),
+            storage,
         })
         .map_err(WatchError::Told)?;
         if let Some(said) = unwatchable(&unwatched) {

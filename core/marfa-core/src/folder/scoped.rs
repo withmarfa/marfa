@@ -131,9 +131,6 @@ pub(super) struct Inventory {
     pub(super) dirty: HashSet<String>,
     /// Files nothing sends and no embed names.
     pub(super) skipped: HashSet<String>,
-    /// Files another name links to, which a write through that name changes
-    /// with no event in the folder.
-    pub(super) linked: HashSet<String>,
     pub(super) directories: Vec<Flagged>,
     pub(super) secrets: Vec<String>,
 }
@@ -218,7 +215,7 @@ impl Folder {
                     settings: settings.clone(),
                     catalog: crate::store::catalog_version(&conn)?,
                 };
-            if !kept || !inventory.linked.is_empty() {
+            if !kept {
                 return Ok(None);
             }
             (
