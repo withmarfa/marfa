@@ -16,6 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { cpus } from "node:os";
 import { resolve } from "node:path";
 import { benchmarkEvent, captureUrl } from "../../src/utils/scale/posthog.js";
 import {
@@ -167,6 +168,12 @@ async function sendReport(file: FiguresFile): Promise<void> {
   }
 }
 
+/** The CPU the night ran on, which a slow night is read against. */
+function hostName(): string {
+  const found = cpus();
+  return `${found[0]?.model.trim() ?? "an unknown CPU"}, ${found.length} CPUs`;
+}
+
 export async function finish(): Promise<void> {
   mkdirSync(REPORTS_DIR, { recursive: true });
   const whole: Fragment[] = [];
@@ -184,6 +191,7 @@ export async function finish(): Promise<void> {
       runId: process.env.GITHUB_RUN_ID ?? "local",
       date: new Date().toISOString(),
       profile: profileName(),
+      host: hostName(),
     },
     EXPECTED_STEPS,
     partial,

@@ -241,6 +241,16 @@ impl<W: Watcher> Listening<W> {
             None => Vec::new(),
         }
     }
+
+    /// Watches the folder again where its directory went away and is back,
+    /// which a watch by directory dropped when it left. `None` where the watch
+    /// stands, or the directory is still away; otherwise the directories that
+    /// could not be watched. Events from before are lost, so a pass that
+    /// follows walks.
+    pub(super) fn restore(&mut self) -> Option<Vec<notify::Error>> {
+        let tree = self.tree.as_mut()?;
+        tree.reopen(&mut self.watcher, &self.reach)
+    }
 }
 
 /// The directories watched one by one.
@@ -267,6 +277,21 @@ impl Tree {
         watcher.watch(&self.root)?;
         self.held.insert(self.root.clone());
         Ok(self.sync(watcher, reach))
+    }
+
+    /// Opens the watch again where the root was dropped and is a directory.
+    fn reopen(
+        &mut self,
+        watcher: &mut impl Directories,
+        reach: &Reach,
+    ) -> Option<Vec<notify::Error>> {
+        if self.held.contains(&self.root) || !is_directory(&self.root) {
+            return None;
+        }
+        Some(
+            self.open(watcher, reach)
+                .unwrap_or_else(|error| vec![error]),
+        )
     }
 
     /// Watches the directories a scan enters, and the state directory, which
@@ -733,6 +758,31 @@ mod tests {
             names(&["", ".marfa", "app", "app/src", "notes", "notes/deep"])
         );
         assert_eq!(recorder.asked[0], root);
+    }
+
+    #[test]
+    fn a_watch_by_directory_watches_the_root_again_when_it_comes_back() {
+        let dir = folder_of(&["notes"]);
+        let root = dir.path();
+        let mut recorder = Recorder::default();
+        let mut tree = Tree::new(root.to_path_buf());
+        let reach = reaching(&[]);
+        tree.open(&mut recorder, &reach).unwrap();
+        // A watch that stands is left alone.
+        assert!(tree.reopen(&mut recorder, &reach).is_none());
+        let away = root.with_file_name("away");
+        let moved = notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From)))
+            .add_path(root.to_path_buf());
+        tree.follow(&mut recorder, &reach, &moved);
+        std::fs::rename(root, &away).unwrap();
+        // The witness: with the directory away, nothing is watched anew.
+        assert!(tree.reopen(&mut recorder, &reach).is_none());
+        recorder.asked.clear();
+        std::fs::rename(&away, root).unwrap();
+        let failures = tree.reopen(&mut recorder, &reach).unwrap();
+        assert!(failures.is_empty());
+        assert_eq!(relative(root, &recorder.asked), names(&["", "notes"]));
+        assert!(tree.reopen(&mut recorder, &reach).is_none());
     }
 
     #[test]

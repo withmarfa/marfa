@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::handover::{self, Requests};
 use super::lists::Lists;
+use super::scoped::{Reading, Touched};
 use super::selective::Selection;
 use super::watched::{Listening, Reach, settings_file};
 use super::{
@@ -336,6 +337,8 @@ impl Folder {
         // change on disk or from the server.
         let mut stale = false;
         let mut rate = PassRate::default();
+        self.forget_inventory();
+        let mut touched = Touched::untrusted();
         let mut unread: Option<Wake> = None;
         loop {
             if stop.load(Ordering::SeqCst) {
@@ -380,6 +383,7 @@ impl Folder {
                         .reach
                         .passes_over(&event, dir, |path| self.stands_as_read(path))
                     {
+                        touched.hear(dir, &event);
                         changed = true;
                         gate.changed(delivered);
                         #[cfg(debug_assertions)]
@@ -390,6 +394,7 @@ impl Folder {
                     }
                 }
                 Ok(Wake::File(Err(error), delivered)) => {
+                    touched.distrust();
                     // The watcher may have lost events, so nothing says the
                     // folder is unchanged.
                     changed = true;
@@ -467,7 +472,24 @@ impl Folder {
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
-            let passed = self.pass(full, (asked, refill), &mut telling, tell, health);
+            if let Some(unwatched) = listening.restore() {
+                touched.distrust();
+                if let Some(said) = unwatchable(&unwatched) {
+                    tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
+                }
+            }
+            let scope = touched.scope();
+            let passed = self.pass(
+                full,
+                Touched::reading(&scope),
+                (asked, refill),
+                &mut telling,
+                tell,
+                health,
+            );
+            if passed.is_ok() {
+                touched.taken();
+            }
             if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
                 let failing = health.lock().expect("follow health lock").failing(error);
                 self.health_observe(
@@ -531,6 +553,7 @@ impl Folder {
     fn pass<E>(
         &self,
         full: bool,
+        reading: Reading<'_>,
         (asked, refill): (&AtomicBool, &AtomicBool),
         telling: &mut Telling,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
@@ -554,7 +577,7 @@ impl Folder {
         // Earlier than the sweep's own clock, so a grace that ends after the
         // sweep passed its file over still keeps the ticks running.
         let before_sweep = crate::clock::system_time();
-        let scan = self.scan_watching(full, SETTLE)?;
+        let scan = self.scan_watching_within(full, SETTLE, reading)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
         if scan.root_gone.is_some() {
@@ -571,6 +594,9 @@ impl Folder {
         }
         let generation = health.lock().expect("follow health lock").generation;
         let drain = self.drain_in(true)?;
+        if drain.gave_way > 0 {
+            self.forget_inventory();
+        }
         let reached = match &drain.report.unavailable {
             Some(_) if drain.report.limited => None,
             Some(why) => telling.reach(Some(why.clone())),
@@ -753,6 +779,7 @@ pub(super) struct Passes {
     /// which it does at its start, after each pass and where `stale` says the
     /// settings may have changed.
     every: Option<Duration>,
+    touched: Option<Touched>,
     /// Whether the settings may have changed since they were read.
     stale: bool,
 }
@@ -771,6 +798,7 @@ impl Passes {
         let refill = AtomicBool::new(false);
         let passed = match folder.pass(
             full,
+            Touched::reading(&self.touched.as_ref().and_then(Touched::scope)),
             (&asked, &refill),
             &mut self.telling,
             &mut told,
@@ -786,6 +814,40 @@ impl Passes {
             self.reclaimed.extend(folder.reclaim_space(&[&asked]));
         }
         passed
+    }
+
+    /// Runs a quick pass as one that heard events naming `paths`.
+    pub(super) fn touching(&mut self, folder: &Folder, paths: &[&Path]) -> Result<(), CoreError> {
+        let events: Vec<notify::Event> = paths
+            .iter()
+            .map(|path| {
+                notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                    notify::event::DataChange::Any,
+                )))
+                .add_path(path.to_path_buf())
+            })
+            .collect();
+        self.hearing(folder, &events)
+    }
+
+    /// Runs a quick pass as one that heard these events.
+    pub(super) fn hearing(
+        &mut self,
+        folder: &Folder,
+        events: &[notify::Event],
+    ) -> Result<(), CoreError> {
+        let mut touched = self.touched.take().unwrap_or_default();
+        for event in events {
+            touched.hear(&folder.root, event);
+        }
+        self.touched = Some(touched);
+        let ran = self.run(folder, false);
+        if ran.is_ok()
+            && let Some(touched) = &mut self.touched
+        {
+            touched.taken();
+        }
+        ran
     }
 
     fn every(&self) -> Duration {

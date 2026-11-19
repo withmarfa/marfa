@@ -303,7 +303,15 @@ impl Folder {
         self.pull_with(Some(selection))
     }
 
-    fn pull_with(&self, mut selection: Option<&mut Selection>) -> Result<PullReport> {
+    fn pull_with(&self, selection: Option<&mut Selection>) -> Result<PullReport> {
+        let pulled = self.pull_writing(selection);
+        if !pulled.as_ref().is_ok_and(super::scoped::keeps_the_files) {
+            self.forget_inventory();
+        }
+        pulled
+    }
+
+    fn pull_writing(&self, mut selection: Option<&mut Selection>) -> Result<PullReport> {
         self.refuse_while_waiting()?;
         let mut earlier = PullReport::default();
         let mut attempts = 1;
@@ -1387,6 +1395,7 @@ impl Folder {
         // Landed: the old bytes are no longer the folder's own.
         rendering.bind(&conn, &binding(None))?;
         drop(conn);
+        self.forget_read(&want);
         if let Some(blob) = bytes_of(item, catalog) {
             self.core.let_go_blob(blob);
         }

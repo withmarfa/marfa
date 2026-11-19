@@ -24,6 +24,7 @@ const run = {
   runId: "42",
   date: "2026-11-03T04:43:00.000Z",
   profile: "scale-250k",
+  host: "Example CPU 7763, 4 CPUs",
 };
 
 /** Fragments from every expected step, all within their ceilings. */
@@ -505,6 +506,15 @@ describe("the summary", () => {
     const text = renderSummary(tonight, previous);
     expect(text).toMatch(/5,000 items/);
     expect(text).toMatch(/say little/);
+  });
+
+  it("names the CPU the night ran on in its first line, where a file names one", () => {
+    expect(renderSummary(tonight, null)).toContain(
+      "profile scale-250k, on Example CPU 7763, 4 CPUs.",
+    );
+    const old = renderSummary({ ...tonight, host: "" }, null);
+    expect(old).toContain("profile scale-250k.");
+    expect(old).not.toContain(", on ");
   });
 
   it("names the night it compares with by its date, commit and run", () => {

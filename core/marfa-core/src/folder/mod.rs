@@ -23,6 +23,7 @@ mod refused;
 mod relink;
 mod removal;
 mod scan;
+mod scoped;
 mod selective;
 mod unmatched;
 pub(crate) use first::waiting;
@@ -226,6 +227,9 @@ pub struct Folder {
     health_status: std::sync::Mutex<Option<health::Computed>>,
     /// What the scans of this open last read of each file, by path.
     last_reads: std::sync::Mutex<HashMap<String, health::LastRead>>,
+    /// What a watch's last quick pass found in the folder, which the next
+    /// looks at the paths events named instead of walking again.
+    inventory: std::sync::Mutex<Option<scoped::Inventory>>,
     /// Set by `allow_additions` for the next scan alone and never stored, so
     /// a scan that does not run leaves nothing for a later one to take.
     every_addition: std::sync::atomic::AtomicBool,
@@ -478,6 +482,7 @@ impl Folder {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
         };
@@ -611,6 +616,7 @@ impl Folder {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced,
         })
@@ -660,6 +666,7 @@ impl Folder {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
         })
@@ -1369,11 +1376,20 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
     whole
 }
 
+/// What a scan last read of a file that nothing since has touched.
+struct Unchanged {
+    hash: String,
+    identity: Option<String>,
+}
+
 #[derive(Default)]
 struct Walked {
     files: Vec<PathBuf>,
     opened: HashMap<PathBuf, Captured>,
     unread: HashMap<PathBuf, identity::Identity>,
+    /// Files a status trusts to stand as a scan last read them, which a quick
+    /// pass that heard no event for them leaves unlooked at.
+    unchanged: HashMap<PathBuf, Unchanged>,
     directories: Vec<Flagged>,
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
@@ -1525,6 +1541,8 @@ impl Captured {
     }
 
     fn read_settled(&self, settle: Option<Duration>) -> std::io::Result<Option<Vec<u8>>> {
+        #[cfg(test)]
+        tests::FILES_READ.with(|count| count.set(count.get() + 1));
         let mut file = self.open()?;
         if settle.is_some_and(|settle| self.changed_within(settle)) {
             return Ok(None);
@@ -1615,41 +1633,59 @@ fn walk_at(
                 }
             }
         } else if kind == crate::directory::FileType::RegularFile {
-            if landing::left_behind(&path) {
-                walked.left.push((route.clone(), PathBuf::from(name)));
-            } else if lists.takes(&relative) {
-                match directory.capture_file(entry).and_then(|file| {
-                    let (metadata, looked) = stat_timed(&file)?;
-                    Ok(Captured {
-                        metadata: RefCell::new(metadata),
-                        looked: Cell::new(looked),
-                        route: route.clone(),
-                        name: name.clone(),
-                    })
-                }) {
-                    Ok(captured) => {
-                        let born = identity::born(&captured.metadata.borrow());
-                        if walked.file_birth(root, dir, born) {
-                            walked.opened.insert(path.clone(), captured);
-                        }
-                    }
-                    Err(error) => {
-                        if let Ok(Some((device, inode, born))) = directory.observed_identity(entry)
-                            && let Some(identity) =
-                                identity::Identity::from_parts(device, inode, born)
-                        {
-                            // An identity can prove a move even where unread bytes
-                            // leave the rest of this inventory incomplete.
-                            walked.unread.insert(path.clone(), identity);
-                        }
-                        walked.unreadable(root, dir, &error);
-                    }
+            take_file(
+                (root, dir, directory, route),
+                (&name, path, relative),
+                lists,
+                walked,
+            );
+        }
+    }
+}
+
+/// What the walk makes of a regular file: a file a crashed write left, a file
+/// the folder takes, opened and its metadata captured, or a secret.
+fn take_file(
+    (root, dir, directory, route): (&Path, &Path, &Directory, &WalkRoute),
+    (name, path, relative): (&std::ffi::OsString, PathBuf, String),
+    lists: &Lists,
+    walked: &mut Walked,
+) {
+    let entry = Path::new(name);
+    if landing::left_behind(&path) {
+        walked.left.push((route.clone(), PathBuf::from(name)));
+    } else if lists.takes(&relative) {
+        #[cfg(test)]
+        tests::FILES_CAPTURED.with(|count| count.set(count.get() + 1));
+        match directory.capture_file(entry).and_then(|file| {
+            let (metadata, looked) = stat_timed(&file)?;
+            Ok(Captured {
+                metadata: RefCell::new(metadata),
+                looked: Cell::new(looked),
+                route: route.clone(),
+                name: name.clone(),
+            })
+        }) {
+            Ok(captured) => {
+                let born = identity::born(&captured.metadata.borrow());
+                if walked.file_birth(root, dir, born) {
+                    walked.opened.insert(path.clone(), captured);
                 }
-                walked.files.push(path);
-            } else if lists.secret(&relative) {
-                walked.secrets.push(relative);
+            }
+            Err(error) => {
+                if let Ok(Some((device, inode, born))) = directory.observed_identity(entry)
+                    && let Some(identity) = identity::Identity::from_parts(device, inode, born)
+                {
+                    // An identity can prove a move even where unread bytes
+                    // leave the rest of this inventory incomplete.
+                    walked.unread.insert(path.clone(), identity);
+                }
+                walked.unreadable(root, dir, &error);
             }
         }
+        walked.files.push(path);
+    } else if lists.secret(&relative) {
+        walked.secrets.push(relative);
     }
 }
 
@@ -2693,6 +2729,8 @@ mod refused_edge_tests;
 mod relink_tests;
 #[cfg(test)]
 mod same_name_tests;
+#[cfg(test)]
+mod scoped_pass_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3000,6 +3038,15 @@ mod tests {
 
     fn documents_read() -> usize {
         DOCUMENTS_READ.with(std::cell::Cell::get)
+    }
+
+    thread_local! {
+        /// How many files this thread's walks opened and took the metadata of.
+        pub(super) static FILES_CAPTURED: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+        /// How many files this thread's scans read the bytes of.
+        pub(super) static FILES_READ: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
     }
 
     thread_local! {
@@ -3929,11 +3976,9 @@ mod tests {
     fn settled_notes_in(settings: Value, names: &[&str]) -> (ScannedDir, Folder) {
         let (dir, folder) = scanned_folder_with(settings, None);
         for name in names {
-            std::fs::write(
-                dir.path().join(name),
-                format!("---\ntitle: {name}\n---\nbody\n"),
-            )
-            .unwrap();
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, format!("---\ntitle: {name}\n---\nbody\n")).unwrap();
         }
         assert_eq!(folder.scan().unwrap().created, names.len());
         folder.scan().unwrap();

@@ -520,6 +520,24 @@ pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "", [])
 }
 
+/// Every bound file with a refused change in its record.
+pub fn bound_refused(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
+    bound_where(
+        conn,
+        "WHERE json_valid(writes) AND json_array_length(writes, '$.refused') > 0",
+        [],
+    )
+}
+
+/// The paths bound to an item the copy no longer holds.
+pub fn bound_to_lost_items(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT path FROM folder_files WHERE item_id NOT IN (SELECT id FROM items) ORDER BY path",
+    )?;
+    let rows = statement.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Every bound file whose record waits on the answer of a write.
 pub fn bound_awaiting(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(

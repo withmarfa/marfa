@@ -200,7 +200,16 @@ impl Folder {
                 .iter()
                 .filter_map(|row| Some((row.identity.as_deref()?, row)))
                 .collect(),
-            marked: marks.values().map(identity::Identity::key).collect(),
+            marked: marks
+                .values()
+                .map(identity::Identity::key)
+                .chain(
+                    walked
+                        .unchanged
+                        .values()
+                        .filter_map(|unchanged| unchanged.identity.clone()),
+                )
+                .collect(),
         };
         let limit = catalog.request_limit();
         let mut seen: HashSet<String> = HashSet::new();
@@ -216,7 +225,11 @@ impl Folder {
         for (path, key) in paths.iter().zip(&keys) {
             seen.insert(key.clone());
             let captured = walked.opened.get(path);
-            let found = Found::of(self, key, captured);
+            let unchanged = walked.unchanged.get(path);
+            let found = match unchanged {
+                Some(unchanged) => Found::unchanged(self, key, &unchanged.hash),
+                None => Found::of(self, key, captured),
+            };
             #[cfg(debug_assertions)]
             crate::fault::hold(|| format!("folder-status-read:{}", path.display()));
             if let Some(reads) = reads.as_deref_mut() {
@@ -227,7 +240,10 @@ impl Folder {
                     path,
                     key,
                     &found,
-                    marks.get(path).map(identity::Identity::key),
+                    marks
+                        .get(path)
+                        .map(identity::Identity::key)
+                        .or_else(|| unchanged.and_then(|unchanged| unchanged.identity.clone())),
                     &rows,
                     &catalog,
                 )?;
@@ -267,11 +283,17 @@ impl Folder {
                 .reason
                 .as_deref()
                 .is_some_and(|reason| reason.starts_with(super::OVER_LIMIT_SAID));
-            entry.warning = (!file_item && is_document(path) && !short && !held_for_size)
-                .then(|| found.bytes())
-                .flatten()
-                .and_then(|bytes| near_limit(key, text_of(bytes).ok()?, limit))
-                .map(|flagged| flagged.reason);
+            // A file trusted unchanged is not read for a warning no health
+            // report carries.
+            entry.warning = (!file_item
+                && is_document(path)
+                && !short
+                && !held_for_size
+                && unchanged.is_none())
+            .then(|| found.bytes())
+            .flatten()
+            .and_then(|bytes| near_limit(key, text_of(bytes).ok()?, limit))
+            .map(|flagged| flagged.reason);
             files.push(entry);
         }
         for bound in &snapshot {
@@ -705,6 +727,7 @@ mod tests {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
             unflushed: Default::default(),

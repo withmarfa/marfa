@@ -8,6 +8,7 @@ const file: FiguresFile = {
   runId: "42",
   date: "2026-11-03T04:43:00.000Z",
   profile: "scale-250k",
+  host: "Example CPU 7763, 4 CPUs",
   items: 250_000,
   figures: [
     distribution(

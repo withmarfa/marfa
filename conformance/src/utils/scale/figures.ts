@@ -122,6 +122,9 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 
   // A watch on that folder: an edit reaching the server, and a quiet watch.
   folder_edit_to_server: { ceiling: 2000, issue: 2611 },
+  // CPU seconds the watch and its children use for one counted edit: what
+  // makes a slow runner slow for an edit, shown beside its latency.
+  folder_edit_cpu: recorded,
   folder_watch_cpu: { ceiling: 1, issue: 2608 },
   folder_watch_rss: recorded,
 

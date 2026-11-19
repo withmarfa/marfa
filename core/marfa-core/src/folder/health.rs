@@ -285,9 +285,9 @@ const RACILY_CLEAN: std::time::Duration = std::time::Duration::from_secs(2);
 /// before the read, and the hash of the bytes read.
 #[derive(Debug, Clone)]
 pub(super) struct LastRead {
-    identity: Option<String>,
+    pub(super) identity: Option<String>,
     stat: String,
-    hash: String,
+    pub(super) hash: String,
 }
 
 impl LastRead {
@@ -319,6 +319,9 @@ impl LastRead {
 /// be read, and the bytes themselves only once something asked for them.
 pub(super) struct Found<'a> {
     captured: Option<&'a Captured>,
+    /// Where a file trusted to be unchanged is looked at, if its bytes are
+    /// asked for.
+    later: Option<(&'a Folder, &'a str)>,
     hash: Option<std::result::Result<String, String>>,
     read: std::cell::OnceCell<Option<std::io::Result<Vec<u8>>>>,
 }
@@ -330,6 +333,7 @@ impl<'a> Found<'a> {
     pub(super) fn of(folder: &Folder, key: &str, captured: Option<&'a Captured>) -> Found<'a> {
         let found = Found {
             captured,
+            later: None,
             hash: None,
             read: std::cell::OnceCell::new(),
         };
@@ -349,6 +353,16 @@ impl<'a> Found<'a> {
         Found { hash, ..found }
     }
 
+    /// A file a quick pass heard nothing of, as the scan last read it.
+    pub(super) fn unchanged(folder: &'a Folder, key: &'a str, hash: &str) -> Found<'a> {
+        Found {
+            captured: None,
+            later: Some((folder, key)),
+            hash: Some(Ok(hash.to_string())),
+            read: std::cell::OnceCell::new(),
+        }
+    }
+
     pub(super) fn hash(&self) -> Option<&str> {
         self.hash.as_ref()?.as_deref().ok()
     }
@@ -357,11 +371,15 @@ impl<'a> Found<'a> {
     fn read(&self) -> Option<&std::io::Result<Vec<u8>>> {
         self.read
             .get_or_init(|| {
-                self.captured.map(|captured| {
-                    #[cfg(test)]
+                #[cfg(test)]
+                if self.captured.is_some() || self.later.is_some() {
                     tests::FILES_READ.with(|read| read.set(read.get() + 1));
-                    captured.read()
-                })
+                }
+                match (self.captured, self.later) {
+                    (Some(captured), _) => Some(captured.read()),
+                    (None, Some((folder, key))) => folder.read_unchanged(key),
+                    (None, None) => None,
+                }
             })
             .as_ref()
     }
@@ -676,6 +694,11 @@ impl Folder {
         if !reuse {
             return compute(None, None);
         }
+        // A status from the inventory is not memoised: a memo stands for a full walk.
+        if let Some(walked) = self.inventory_walked() {
+            *self.health_status.lock().expect("health status lock") = None;
+            return compute(None, Some(walked));
+        }
         let kept = self
             .health_status
             .lock()
@@ -728,6 +751,12 @@ impl Folder {
             Found::of(self, key, captured).digest()
         })?;
         Some((Inputs { store, disk }, walked))
+    }
+
+    /// Drops what a scan kept of its read of `key`, which a write to the file
+    /// has made untrue.
+    pub(super) fn forget_read(&self, key: &str) {
+        self.last_reads.lock().expect("last reads lock").remove(key);
     }
 
     /// The hash the scan last read `key` at, where the file is still as it
@@ -944,7 +973,7 @@ impl Folder {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::folder) mod tests {
     use super::super::{FileStatus, Flagged, Paused};
     use super::*;
 
@@ -965,9 +994,19 @@ mod tests {
         FILES_READ.with(|read| read.replace(0))
     }
 
+    /// What a status that takes the files of the last quick pass as they
+    /// stood finds, and what a walk of the folder finds. `None` where there is
+    /// no inventory to take them from.
+    pub(in crate::folder) fn status_both_ways(folder: &Folder) -> Option<(String, String)> {
+        folder.inventory_walked()?;
+        let scoped = folder.health_status(true).0.unwrap();
+        let walked = folder.health_status(false).0.unwrap();
+        Some((format!("{scoped:?}"), format!("{walked:?}")))
+    }
+
     /// Gives the file a modification time a minute back, as one the scan did
     /// not read racily.
-    fn aged(path: &std::path::Path) {
+    pub(in crate::folder) fn aged(path: &std::path::Path) {
         std::fs::File::options()
             .write(true)
             .open(path)
@@ -1581,6 +1620,7 @@ mod tests {
             barred: std::sync::Mutex::new(None),
             health_status: std::sync::Mutex::new(None),
             last_reads: std::sync::Mutex::default(),
+            inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
             root_dir,
