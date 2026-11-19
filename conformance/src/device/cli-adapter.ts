@@ -179,6 +179,8 @@ export interface CliDeviceOptions {
    * it finds the machine's own registry under it.
    */
   home?: string;
+  /** A keychain file in place of the run's, for a device that must meet no sign-in another file kept. */
+  keychain?: string;
 }
 
 export function newStore(label: string): string {
@@ -1247,10 +1249,12 @@ export class CliDevice implements DeviceUnderTest {
     ];
   }
 
-  /** What the binary runs under: the run's keychain, and the registry this
-   *  device names, where it names one. */
+  /** What the binary runs under: the run's keychain or the one this device
+   *  names, and the registry this device names, where it names one. */
   private env(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env, ...keychainEnv() };
+    if (this.options.keychain !== undefined)
+      env.MARFA_KEYCHAIN = this.options.keychain;
     if (this.options.home !== undefined) {
       env.HOME = this.options.home;
       delete env.MARFA_FOLDER_REGISTRY;

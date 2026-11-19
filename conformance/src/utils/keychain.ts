@@ -65,6 +65,25 @@ export function keychainEnv(): NodeJS.ProcessEnv {
   };
 }
 
+/**
+ * A keychain file that holds nothing, for a fixture whose claim is that no
+ * server is named. The run's shared keychain holds the sign-in any other file
+ * kept, and a command that names no server takes the server of the last
+ * sign-in kept, so under it such a fixture is answered by a server another
+ * file started and stopped. Removed with the file's temporary folders.
+ */
+export function emptyKeychain(): string {
+  const folder = tempFolder("marfa-conformance-empty-keychain-");
+  if (process.platform !== "darwin") return join(folder, "none");
+  const path = join(folder, "empty.keychain-db");
+  const password = randomUUID();
+  execFileSync("security", ["create-keychain", "-p", password, path]);
+  // Unlocked and never locking itself: the binary may not ask a person to.
+  execFileSync("security", ["unlock-keychain", "-p", password, path]);
+  execFileSync("security", ["set-keychain-settings", path]);
+  return path;
+}
+
 function keychainFiles(): {
   MARFA_KEYCHAIN: string;
   MARFA_AUTOSTART_ROOT: string;
