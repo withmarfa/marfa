@@ -155,16 +155,19 @@ pub struct Released {
     names: Vec<String>,
 }
 
+/// Each admitted write's number and audit action, in the order the writer runs them.
+type Queue = Arc<Mutex<Vec<(u64, Option<&'static str>)>>>;
+
 #[derive(Debug, Default)]
 pub struct Faults {
     armed: Mutex<Vec<Armed>>,
-    queued: Arc<Mutex<Vec<(u64, Option<&'static str>)>>>,
+    queued: Queue,
     next_queued: AtomicU64,
 }
 
 /// A write the writer has admitted and not yet started, listed until it is dropped.
 pub struct QueuedWrite {
-    queued: Arc<Mutex<Vec<(u64, Option<&'static str>)>>>,
+    queued: Queue,
     number: u64,
 }
 

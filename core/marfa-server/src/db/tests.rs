@@ -291,6 +291,54 @@ async fn a_write_withdrawn_from_the_queue_never_runs() {
 }
 
 #[tokio::test]
+async fn a_write_is_listed_as_queued_from_its_admission_until_it_starts() {
+    let place = folder();
+    let faults = Arc::new(Faults::default());
+    let db = Arc::new(open_with(&place.file, faults.clone()));
+    let (release, released) = mpsc::channel::<()>();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let busy = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            db.write(WRITE, move |tx| {
+                let _ = started.send(());
+                let _ = released.recv();
+                add(tx, 1)
+            })
+            .await
+        })
+    };
+    running.await.unwrap();
+    assert!(faults.queued_writes().is_empty());
+    let named = {
+        let db = db.clone();
+        tokio::spawn(async move { db.write(WRITE, |tx| add(tx, 2)).await })
+    };
+    while faults.queued_writes().is_empty() {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    let own = {
+        let db = db.clone();
+        tokio::spawn(async move { db.write(Write::own(), |tx| add(tx, 3)).await })
+    };
+    while faults.queued_writes().len() < 2 {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    let holding = db
+        .hold_writes(Refusal::new(Code::WriteContention, "held"))
+        .unwrap();
+    db.write(WRITE, |tx| add(tx, 4)).await.unwrap_err();
+    assert_eq!(faults.queued_writes(), [Some("key.create"), None]);
+    release.send(()).unwrap();
+    busy.await.unwrap().unwrap();
+    named.await.unwrap().unwrap();
+    own.await.unwrap().unwrap();
+    drop(holding);
+    assert!(faults.queued_writes().is_empty());
+    assert_eq!(ids(&db).await, [1, 2, 3]);
+}
+
+#[tokio::test]
 async fn a_hold_refuses_a_callers_write_at_once_and_queues_its_own_and_background_writes() {
     let place = folder();
     let db = Arc::new(open(&place.file));
