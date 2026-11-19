@@ -3302,7 +3302,7 @@ fn a_user_service_asks_for_lingering_and_says_the_one_line_when_it_is_refused() 
 
 impl Rig {
     /// `marfa server run` as a child process that outlives the call.
-    fn run_server(&self, env: &[(&str, &str)]) -> std::process::Child {
+    fn run_server(&self, env: &[(&str, &str)]) -> Run {
         self.isolate();
         let mut command = self.command();
         command
@@ -3319,7 +3319,7 @@ impl Rig {
             command.env(name, value);
         }
         let _held = SOCKETS.lock().unwrap();
-        command.spawn().unwrap()
+        Run(command.spawn().unwrap())
     }
 
     fn run_said(&self) -> String {
@@ -3327,7 +3327,43 @@ impl Rig {
     }
 }
 
-/// Waits for the child to end, and gives up (stopping it by its process ID)
+/// A `marfa server run` that leads its own process group. A test that fails
+/// before the run ends would otherwise leave the run and its stand-in server
+/// running after the test process exits.
+struct Run(std::process::Child);
+
+impl std::ops::Deref for Run {
+    type Target = std::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Run {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for Run {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            stop_group(&mut self.0);
+        }
+    }
+}
+
+/// Kills the group a run leads. The run is not yet reaped, so its process ID
+/// still names that group and no other.
+fn stop_group(child: &mut std::process::Child) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", child.id())])
+        .status();
+    let _ = child.wait();
+}
+
+/// Waits for the child to end, and gives up (stopping its process group)
 /// after `seconds`.
 fn ended(child: &mut std::process::Child, seconds: u64) -> Option<std::process::ExitStatus> {
     let until = std::time::Instant::now() + Duration::from_secs(seconds);
@@ -3337,11 +3373,7 @@ fn ended(child: &mut std::process::Child, seconds: u64) -> Option<std::process::
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let _ = Command::new("kill")
-        .arg("-KILL")
-        .arg(child.id().to_string())
-        .status();
-    let _ = child.wait();
+    stop_group(child);
     None
 }
 
