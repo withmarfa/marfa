@@ -5,19 +5,27 @@ import { join } from "node:path";
 import {
   SCRIPTED_INSTANCE,
   answers,
+  certifiedRead,
   refusal,
+  typeCatalog,
   wireItem,
+  wireType,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import { Cli } from "../cli/harness.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { ON_MACOS } from "../../utils/platform.js";
 import type { Outcome } from "../../device/protocol.js";
-import { BUILT_FOR } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  type RecordedRequest,
+} from "../../device/scripted-server.js";
 import {
   KEY,
   folderHarness,
+  hashOf,
   requireBinary,
+  scriptBlob,
   scriptHydration,
   startHarness,
   type FolderHarness,
@@ -224,6 +232,165 @@ describe("a link by id looked up on the server", () => {
     const status = await folder.folder.device().status();
     expect(status.ok ? status.value.hydration : status).toBe("expired");
   });
+});
+
+const LEDGER = "01a00000-0000-7000-8000-00000000001e";
+const BINNED = "01a00000-0000-7000-8000-00000000001b";
+const LEDGER_TYPE = wireType("acme.ledger", {
+  tables: { lines: { columns: { amount: { type: "number" } } } },
+});
+const BYTES = Buffer.from("a file the copy names by its hash");
+
+interface HeldOperation {
+  name: string;
+  /** Scripts what the operation asks for beyond the hydration. */
+  script: (harness: Harness) => void;
+  run: (harness: Harness) => Promise<Outcome<unknown>>;
+  /** The request that carries what the copy holds. */
+  carries: (request: RecordedRequest) => boolean;
+}
+
+const OPERATIONS: HeldOperation[] = [
+  {
+    name: "a pin",
+    script: ({ server }) =>
+      server.copyAnswer(
+        "GET",
+        `/items/${ITEM}`,
+        answers.updated(
+          wireItem({ id: ITEM, properties: { title: "held", body: "held" } }),
+        ),
+      ),
+    run: ({ device }) => device.pin(ITEM),
+    carries: (request) => request.pathname === `/items/${ITEM}`,
+  },
+  {
+    name: "a table hold",
+    script: ({ server }) =>
+      server.answer(
+        "GET",
+        `/items/${LEDGER}/tables`,
+        certifiedRead(
+          {
+            kind: "json",
+            status: 200,
+            body: { data: [{ name: "lines", row_count: 0, bytes: 0 }] },
+          },
+          BUILT_FOR,
+        ),
+      ),
+    run: ({ device }) => device.holdTable("acme.ledger", "lines"),
+    carries: (request) =>
+      request.pathname.startsWith(`/items/${LEDGER}/tables`),
+  },
+  {
+    name: "the bin",
+    script: () => undefined,
+    run: ({ device }) => device.bin(),
+    carries: (request) =>
+      request.pathname === "/items" && request.query.get("state") === "trashed",
+  },
+  {
+    name: "a catch-up",
+    script: () => undefined,
+    run: ({ device }) => device.catchUp(),
+    carries: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
+  {
+    name: "a file fetched by its hash",
+    script: ({ server }) => {
+      scriptBlob(server, BYTES);
+    },
+    run: ({ device }) => device.blob(hashOf(BYTES)),
+    carries: (request) => request.pathname === `/blobs/${hashOf(BYTES)}/url`,
+  },
+];
+
+/** What `operation` sent, and answered, once the copy's address names `instance`. */
+async function sentUnder(operation: HeldOperation, replaced: boolean) {
+  harness = await startHarness("server-reads-held");
+  const { server, device } = harness;
+  let instance = SCRIPTED_INSTANCE;
+  server.copyAnswer("GET", "/", () =>
+    answers.root(Number(BUILT_FOR), instance),
+  );
+  scriptHydration(server, {
+    head: "10",
+    catalog: typeCatalog([LEDGER_TYPE]),
+    items: {
+      "core.note": [
+        { item: { id: ITEM, properties: { title: "held", body: "held" } } },
+        {
+          item: {
+            id: BINNED,
+            state: "trashed",
+            properties: { title: "binned", body: "binned" },
+          },
+        },
+      ],
+      "acme.ledger": [
+        {
+          item: { id: LEDGER, type: "acme.ledger", properties: { title: "l" } },
+        },
+      ],
+    },
+    instance: () => instance,
+  });
+  operation.script(harness);
+  value(await device.hydrate(["core.note", "acme.ledger"], "library"));
+  const from = server.requests.length;
+  if (replaced) instance = REPLACED;
+  const outcome = await operation.run(harness);
+  const sent = server.requests.slice(from);
+  const status = await device.status();
+  await harness.stop();
+  harness = undefined;
+  return {
+    outcome,
+    sent,
+    hydration: status.ok ? status.value.hydration : status,
+  };
+}
+
+async function refusesHeldToAnother(name: string) {
+  const operation = OPERATIONS.find((each) => each.name === name)!;
+  const witness = await sentUnder(operation, false);
+  expect(witness.outcome.ok, JSON.stringify(witness.outcome)).toBe(true);
+  expect(
+    witness.sent.some(operation.carries),
+    "the operation sent nothing for its own instance, so the check below proves nothing",
+  ).toBe(true);
+  expect(witness.hydration).not.toBe("expired");
+
+  const replaced = await sentUnder(operation, true);
+  expect(replaced.outcome.ok, "the operation went on at another instance").toBe(
+    false,
+  );
+  if (!replaced.outcome.ok) {
+    expect(replaced.outcome.refusal.code).toBe("copy_expired");
+    expect(replaced.outcome.refusal.raw).toContain("instance_changed");
+  }
+  expect(
+    replaced.sent.map((request) => `${request.method} ${request.pathname}`),
+    "a request other than the root reached the other instance",
+  ).toEqual(replaced.sent.map(() => "GET /"));
+  expect(replaced.sent.length).toBeGreaterThan(0);
+  expect(replaced.hydration).toBe("expired");
+}
+
+describe("an operation that sends what the copy holds", () => {
+  it("sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin", () =>
+    refusesHeldToAnother("a pin"));
+  it("sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold", () =>
+    refusesHeldToAnother("a table hold"));
+  it("reads no other instance's bin as the copy's own, and expires the copy instance_changed", () =>
+    refusesHeldToAnother("the bin"));
+  it("sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up", () =>
+    refusesHeldToAnother("a catch-up"));
+  it("sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed", () =>
+    refusesHeldToAnother("a file fetched by its hash"));
 });
 
 // This fixture uses a macOS keychain file for the renewable credential.
