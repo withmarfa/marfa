@@ -814,27 +814,36 @@ impl Passes {
     /// Runs a quick pass as one that heard events naming `paths`, which
     /// looks at those alone.
     pub(super) fn touching(&mut self, folder: &Folder, paths: &[&Path]) -> Result<(), CoreError> {
+        let events: Vec<notify::Event> = paths
+            .iter()
+            .map(|path| {
+                notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                    notify::event::DataChange::Any,
+                )))
+                .add_path(path.to_path_buf())
+            })
+            .collect();
+        self.hearing(folder, &events)
+    }
+
+    /// Runs a quick pass as one that heard these events.
+    pub(super) fn hearing(
+        &mut self,
+        folder: &Folder,
+        events: &[notify::Event],
+    ) -> Result<(), CoreError> {
         let mut touched = self.touched.take().unwrap_or_default();
-        for path in paths {
-            let event = notify::Event::new(notify::EventKind::Modify(
-                notify::event::ModifyKind::Data(notify::event::DataChange::Any),
-            ))
-            .add_path(path.to_path_buf());
-            touched.hear(&folder.root, &event);
+        for event in events {
+            touched.hear(&folder.root, event);
         }
         self.touched = Some(touched);
         let ran = self.run(folder, false);
-        if ran.is_ok() {
-            if let Some(touched) = &mut self.touched {
-                touched.taken();
-            }
+        if ran.is_ok()
+            && let Some(touched) = &mut self.touched
+        {
+            touched.taken();
         }
         ran
-    }
-
-    /// Hears an event that says events were lost.
-    pub(super) fn lose_events(&mut self) {
-        self.touched.get_or_insert_with(Touched::default).distrust();
     }
 
     fn every(&self) -> Duration {

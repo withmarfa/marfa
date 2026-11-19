@@ -3976,11 +3976,9 @@ mod tests {
     fn settled_notes_in(settings: Value, names: &[&str]) -> (ScannedDir, Folder) {
         let (dir, folder) = scanned_folder_with(settings, None);
         for name in names {
-            std::fs::write(
-                dir.path().join(name),
-                format!("---\ntitle: {name}\n---\nbody\n"),
-            )
-            .unwrap();
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, format!("---\ntitle: {name}\n---\nbody\n")).unwrap();
         }
         assert_eq!(folder.scan().unwrap().created, names.len());
         folder.scan().unwrap();

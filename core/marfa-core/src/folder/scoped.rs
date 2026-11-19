@@ -18,8 +18,7 @@ use super::pull::PullReport;
 use super::settings::Settings;
 use super::{
     Captured, Flagged, Folder, Lists, Result, STATE_DIR, Unchanged, WalkRoute, Walked, embeds,
-    identity,
-    landing, lists, state, take_file,
+    identity, landing, lists, state, take_file,
 };
 
 /// The most paths one quick pass looks at by name. A burst of changes, a
@@ -156,7 +155,7 @@ pub(super) enum Looked {
     /// A file the folder does not take.
     Ignored,
     Secret,
-    File(PathBuf, Captured),
+    File(PathBuf, Box<Captured>),
 }
 
 /// Whether a pull left every file where the last pass found it, though it may
@@ -257,7 +256,7 @@ impl Folder {
                     }
                 }
                 Some(Looked::File(path, captured)) => {
-                    opened.insert(path.clone(), captured);
+                    opened.insert(path.clone(), *captured);
                     found.push((path, key.clone()));
                 }
             }
@@ -319,7 +318,7 @@ impl Folder {
                     }
                     None => match self.look_at(&lists, inventory, key)? {
                         Looked::File(path, captured) => {
-                            walked.opened.insert(path, captured);
+                            walked.opened.insert(path, *captured);
                         }
                         _ => return None,
                     },
@@ -360,8 +359,8 @@ impl Folder {
         let secret = inventory.secrets.iter().any(|held| held == key);
         let relative = Path::new(key);
         let looked = match self.root_dir.entry_kind(relative) {
-            Ok(kind) if kind == FileType::RegularFile => self.look_at_file(lists, known, key)?,
-            Ok(kind) if kind == FileType::Directory => return None,
+            Ok(FileType::RegularFile) => self.look_at_file(lists, known, key)?,
+            Ok(FileType::Directory) => return None,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if known {
                     // Its directory must stand for the file to be gone.
@@ -468,7 +467,7 @@ impl Folder {
         if linked_elsewhere(&captured.metadata.borrow()) {
             return None;
         }
-        Some(Looked::File(path, captured))
+        Some(Looked::File(path, Box::new(captured)))
     }
 }
 

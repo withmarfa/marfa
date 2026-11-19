@@ -290,10 +290,10 @@ impl Folder {
                 && !short
                 && !held_for_size
                 && unchanged.is_none())
-                .then(|| found.bytes())
-                .flatten()
-                .and_then(|bytes| near_limit(key, text_of(bytes).ok()?, limit))
-                .map(|flagged| flagged.reason);
+            .then(|| found.bytes())
+            .flatten()
+            .and_then(|bytes| near_limit(key, text_of(bytes).ok()?, limit))
+            .map(|flagged| flagged.reason);
             files.push(entry);
         }
         for bound in &snapshot {

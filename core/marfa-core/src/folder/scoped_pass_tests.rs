@@ -85,3 +85,163 @@ fn a_quick_pass_after_one_edit_looks_at_the_same_files_in_a_folder_of_any_size()
     );
     assert_eq!(queued(&folder, "n001.md"), 1);
 }
+
+fn data(path: PathBuf) -> notify::Event {
+    notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
+        notify::event::DataChange::Any,
+    )))
+    .add_path(path)
+}
+
+fn renamed(from: PathBuf, to: PathBuf) -> notify::Event {
+    notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Name(
+        notify::event::RenameMode::Both,
+    )))
+    .add_path(from)
+    .add_path(to)
+}
+
+/// Each file the folder keeps a record of, and what waits to be sent for it,
+/// and each path journaled gone.
+fn kept(folder: &Folder) -> (Vec<(String, usize, bool)>, Vec<String>) {
+    let conn = folder.core.conn().unwrap();
+    let mut rows: Vec<_> = state::every_bound(&conn)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.path, row.writes.queued.len(), row.held.is_some()))
+        .collect();
+    rows.sort();
+    let mut statement = conn
+        .prepare("SELECT path FROM folder_journal ORDER BY path")
+        .unwrap();
+    let journal = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    (rows, journal)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Looks {
+    /// Only the files the events named.
+    Few,
+    /// The folder, as a walk does.
+    All,
+}
+
+/// Makes `change` to a folder of notes and runs a quick pass that heard the
+/// events it returns, and the same change to another run by a walk. The
+/// record each leaves must be the same, and not the one before the change.
+fn finds_what_a_walk_finds(change: impl Fn(&Path) -> Vec<notify::Event>, looks: Looks) {
+    let mut all = names(12);
+    all.push("sub/deep.md".into());
+    let (before, scoped_ran) = {
+        let (dir, folder, _server, mut passes) = watched(&all);
+        counted();
+        let events = change(dir.path());
+        let ran = passes.hearing(&folder, &events);
+        let (captured, _) = counted();
+        match looks {
+            Looks::Few => assert!(captured < 6, "took the metadata of {captured} files"),
+            Looks::All => assert!(captured >= 13, "took the metadata of {captured} files"),
+        }
+        (kept(&folder), format!("{ran:?}"))
+    };
+    let (dir, folder, _server, mut passes) = watched(&all);
+    let unchanged = kept(&folder);
+    change(dir.path());
+    let walked_ran = format!("{:?}", passes.run(&folder, false));
+    assert_eq!(scoped_ran, walked_ran, "the passes ended differently");
+    assert_eq!(before, kept(&folder), "a walk finds something else");
+    assert_ne!(before, unchanged, "the change left no mark to find");
+}
+
+fn rewrite(dir: &Path, name: &str) -> notify::Event {
+    edit(dir, name);
+    data(dir.join(name))
+}
+
+#[test]
+fn one_edit_is_sent() {
+    finds_what_a_walk_finds(|dir| vec![rewrite(dir, "n001.md")], Looks::Few);
+}
+
+#[test]
+fn two_edits_to_different_files_are_both_sent() {
+    finds_what_a_walk_finds(
+        |dir| vec![rewrite(dir, "n001.md"), rewrite(dir, "n007.md")],
+        Looks::Few,
+    );
+}
+
+#[test]
+fn an_edit_in_a_nested_directory_is_sent() {
+    finds_what_a_walk_finds(|dir| vec![rewrite(dir, "sub/deep.md")], Looks::Few);
+}
+
+#[test]
+fn an_edit_and_a_new_file_are_both_sent() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::write(dir.join("fresh.md"), "---\ntitle: fresh\n---\nnew\n").unwrap();
+            vec![rewrite(dir, "n001.md"), data(dir.join("fresh.md"))]
+        },
+        Looks::Few,
+    );
+}
+
+#[test]
+fn a_delete_is_found() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::remove_file(dir.join("n002.md")).unwrap();
+            vec![data(dir.join("n002.md"))]
+        },
+        Looks::Few,
+    );
+}
+
+#[test]
+fn a_rename_within_a_directory_is_found() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::rename(dir.join("n003.md"), dir.join("moved.md")).unwrap();
+            vec![renamed(dir.join("n003.md"), dir.join("moved.md"))]
+        },
+        Looks::Few,
+    );
+}
+
+#[test]
+fn a_rename_across_directories_is_found_by_a_walk() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::rename(dir.join("n003.md"), dir.join("sub/n003.md")).unwrap();
+            vec![renamed(dir.join("n003.md"), dir.join("sub/n003.md"))]
+        },
+        Looks::All,
+    );
+}
+
+#[test]
+fn an_event_naming_only_a_directory_is_found_by_a_walk() {
+    finds_what_a_walk_finds(
+        |dir| {
+            edit(dir, "sub/deep.md");
+            vec![data(dir.join("sub"))]
+        },
+        Looks::All,
+    );
+}
+
+#[test]
+fn events_that_overflowed_are_found_by_a_walk() {
+    finds_what_a_walk_finds(
+        |dir| {
+            edit(dir, "n001.md");
+            vec![notify::Event::new(notify::EventKind::Other).set_flag(notify::event::Flag::Rescan)]
+        },
+        Looks::All,
+    );
+}

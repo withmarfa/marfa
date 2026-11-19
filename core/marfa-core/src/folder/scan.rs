@@ -754,7 +754,7 @@ impl Folder {
                         return Ok(ControlFlow::Break(()));
                     };
                     next.push(paths.len());
-                    walked.opened.insert(path.clone(), captured);
+                    walked.opened.insert(path.clone(), *captured);
                     walked.files.push(path.clone());
                     paths.push(path);
                     in_scope.insert(key.clone());
