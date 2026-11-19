@@ -20,6 +20,8 @@ mod directory_vfs;
 #[path = "directory_vfs_unsupported.rs"]
 mod directory_vfs;
 mod drain;
+#[cfg(test)]
+mod durable_tests;
 mod edge_rules;
 mod edge_writes;
 mod error;

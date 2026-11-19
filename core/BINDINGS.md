@@ -109,6 +109,10 @@ One thread tells every listener, so `changed` must return promptly.
 
 Each binding takes a `Stop` on the calls that can be stopped, such as a hydration, a catch-up, a drain and a read of the server's catalog. Raise it when the app's own cancellation is requested. What a stopped call leaves is in the contract (`device/stop-canceled` and the statements after it).
 
+## What a queued write survives
+
+A call that returns a queued write has synced it to the store's log, so the write is still there after the app is killed. On Linux it also survives a system crash or a power cut. On a Mac, iPhone or iPad the sync does not empty the drive's own cache, so a system crash or a sudden power cut can still lose the last writes; the store stays whole, because each checkpoint empties that cache. The store syncs every commit, including each page of a hydration, so a write or a hydration takes a little longer than it would without the sync.
+
 ## A store another build made
 
 A writer upgrades in place a store an earlier build made, from the first version this build upgrades, and keeps every write its queue holds. A store of a later version, or of one earlier than that, is refused with the error coded `wrong_schema` and left unchanged. `readUnsent` lists each write such a store holds that the server has not taken, in queue order, with its id, its kind as the store names it, its item, its body and its verdict, so an app can show the person what removing it would lose. With the writes it gives a `confirmation`, an opaque string that stands for every field of every listed write, in that order.
