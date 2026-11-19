@@ -438,7 +438,7 @@ describe("webhook host-name lookups", () => {
     }
   }, 120_000);
 
-  it("writes no byte of a delivery whose key is revoked or loses webhooks.manage after the connection is ready, and writes one whose key stands", async () => {
+  it("sends nothing of a delivery whose key is revoked or loses webhooks.manage once its connection is ready, cancels it, and sends one whose key stands", async () => {
     const mint = async (label: string) => {
       const minted = await owner().createKey({
         label,
@@ -459,7 +459,11 @@ describe("webhook host-name lookups", () => {
     const narrowed = await mint("narrowed");
     const standing = await mint("standing");
     await subscribe(revoked.client, "localhost", "revoked");
-    await subscribe(narrowed.client, "localhost", "narrowed");
+    const narrowedHook = await subscribe(
+      narrowed.client,
+      "localhost",
+      "narrowed",
+    );
     await subscribe(standing.client, "localhost", "standing");
     await server.setFault("hold:webhook:connected");
     try {
@@ -486,5 +490,20 @@ describe("webhook host-name lookups", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(receiver.received.map((r) => r.path)).toEqual(["/hook/standing"]);
+
+    // With the permission back, its maker reads the delivery as canceled, never sent.
+    const restored = await owner().updateKey(narrowed.id, {
+      permissions: ["webhooks.manage"],
+    });
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    const rows = await narrowed.client.listWebhookDeliveries(narrowedHook);
+    expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+    expect(rows.data.data).toHaveLength(1);
+    expect(rows.data.data[0]).toMatchObject({
+      status: "canceled",
+      succeeded: false,
+      error:
+        "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.",
+    });
   }, 120_000);
 });
