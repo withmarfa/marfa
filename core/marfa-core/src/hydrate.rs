@@ -1787,16 +1787,15 @@ pub(crate) fn fetch_overflow(
     Ok(edges)
 }
 
-/// Read before the first page so the snapshot has a resume point from before
-/// it.
-/// `http`, its instance confirmed as `instance`, which a head just read
-/// under its credential named.
+/// `instance` must be what a head just read under `http`'s credential named.
 fn confirmed_as(http: &Http, instance: &str) -> Result<Http> {
     let confirmed = http.confirming(&crate::http::Confirmation::new(instance));
     confirmed.admit(instance)?;
     Ok(confirmed)
 }
 
+/// Read before the first page so the snapshot has a resume point from before
+/// it.
 fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
