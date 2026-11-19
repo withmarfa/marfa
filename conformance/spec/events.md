@@ -835,9 +835,9 @@ The server MUST NOT list a delivery it sent from memory in `GET /webhooks/{id}/d
 
 ### `events/attention-memory-once`
 
-When writes land again after the server sent an entry's `attention.raised` from memory, and the failed write that announces it did not commit, the server MUST NOT announce that entry again while it is listed.
+While the server has not restarted since it sent an entry's `attention.raised` from memory, when writes land again and the failed write that announces the entry did not commit, the server MUST NOT announce that entry again while it is listed.
 
-**Reason:** the owner was told once, and a second delivery would read as a second fault.
+**Reason:** the owner was told once, and a second delivery would read as a second fault. What the server sent from memory is not kept across a restart, so after each restart the entry can be sent once more: from the log if writes land, or from memory if they still fail. The notice names no data, so one more is accepted over a record that a failing database cannot keep.
 
 **Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends a fault from memory when the commit of its announcement fails, and not again once writes land`, `› sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
 
