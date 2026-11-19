@@ -28,8 +28,7 @@ pub struct BeneathReport {
 const ATTEMPTS: usize = 3;
 
 impl Folder {
-    /// The path the folder's query narrows beneath, while the file at it has
-    /// no item to name. The folder holds nothing from the server meanwhile.
+    /// The path the query narrows beneath while its file has no item.
     pub fn beneath_waiting(&self) -> Option<String> {
         self.settings()
             .ok()
@@ -71,9 +70,8 @@ impl Folder {
         Ok(None)
     }
 
-    /// Refuses, before the folder sends or writes anything, a query that
-    /// narrows beneath a file no pass could send: the folder would hold
-    /// nothing for good.
+    /// Refuses, before anything is sent or written, a query that narrows
+    /// beneath a file no pass could send.
     pub(super) fn check_beneath_file(&self) -> Result<()> {
         let settings = self.settings()?;
         let Some(path) = settings.pending_beneath() else {
@@ -90,11 +88,9 @@ impl Folder {
         }
     }
 
-    /// Writes the id of the item the file named by `query.beneath` became in
-    /// the path's place, once the server holds that item: the folder's copy
-    /// then moves to what lies beneath it, which the next catch-up reads.
-    /// `None` where the query names no path. Whatever stops it leaves the
-    /// path and a reason in the report; the next pass tries again.
+    /// Writes the id of the item the file became in the place of the path in
+    /// `query.beneath`, once the server holds it. `None` where the query names
+    /// no path; what stops it is reported and the next pass tries again.
     pub(super) fn resolve_beneath(&self) -> Result<Option<BeneathReport>> {
         let Ok(settings) = self.settings() else {
             return Ok(None);
@@ -136,10 +132,9 @@ impl Folder {
         waiting(format!("the file has no item: {why}"))
     }
 
-    /// Replaces the path in the folder's query with `item`, based on the
-    /// version the server holds. A change to the query since, which the door
-    /// refuses as a conflict, is read again: an id already named there is
-    /// accepted, and the path still named is replaced on top of it.
+    /// Replaces the path in the query with `item` on the version the server
+    /// holds. After a version conflict the folder is read again: an id already
+    /// named there is accepted, and a path still named is replaced.
     fn name_beneath(&self, path: &str, item: &str) -> Result<Option<BeneathReport>> {
         let report = |resolved: Option<String>, waiting: Option<String>| {
             Ok(Some(BeneathReport {

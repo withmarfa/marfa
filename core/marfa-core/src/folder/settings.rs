@@ -357,9 +357,8 @@ impl Settings {
         Ok(())
     }
 
-    /// The path of the file the query narrows beneath, while that file has
-    /// no item to name: the folder holds nothing from the server until its
-    /// first sync has sent the file and the path has become the item's id.
+    /// The path of the file the query narrows beneath while that file has no
+    /// item to name.
     pub(crate) fn pending_beneath(&self) -> Option<&str> {
         match marfa_rules::folder::Beneath::of(self.query.beneath.as_deref()?) {
             marfa_rules::folder::Beneath::File(path) => Some(path),
@@ -368,8 +367,7 @@ impl Settings {
     }
 
     /// The query past its types and tier, as a file is judged by it. A path
-    /// that names no item yet narrows nothing here, so a new file is judged
-    /// as the rest of the query judges it.
+    /// with no item yet narrows nothing here.
     pub(crate) fn slice_query(&self) -> crate::slice::SliceQuery {
         crate::slice::SliceQuery {
             states: self.query.state.clone(),
