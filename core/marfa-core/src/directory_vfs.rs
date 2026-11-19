@@ -60,13 +60,16 @@ impl DirectoryVfs {
             .map_err(std::io::Error::from)
     }
 
+    /// An open that cannot make the file is a full volume only where it was
+    /// to make one: a read-only open of a name that is not there fails in
+    /// ordinary use and is no sign of the volume.
     pub(crate) fn open(&self, name: &str, flags: OpenFlags) -> Result<Connection> {
         let conn = Connection::open_with_flags_and_vfs(name, flags, self.name.to_str().unwrap())
             .map_err(|error| {
-                crate::store::on_volume(
-                    error,
-                    Some(crate::file_cache::Place::Held(&self.directory)),
-                )
+                let place = flags
+                    .contains(OpenFlags::SQLITE_OPEN_CREATE)
+                    .then_some(crate::file_cache::Place::Held(&self.directory));
+                crate::store::on_volume(error, place)
             })?;
         // SAFETY: `conn` holds the open handle, and `single_store` matches the callback SQLite expects and reads nothing else.
         unsafe {

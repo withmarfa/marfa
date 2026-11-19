@@ -211,7 +211,7 @@ pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
 /// The file a symbolic link at `store`'s own name leads to, followed as
 /// SQLite follows it, so the store opened through a link has the lock of the
 /// file it reaches. A link in a folder above already reaches one lock.
-fn linked(store: &Path) -> Result<std::path::PathBuf, CoreError> {
+pub(crate) fn linked(store: &Path) -> Result<std::path::PathBuf, CoreError> {
     let unreadable = |path: &Path, error: std::io::Error| {
         CoreError::Store(format!("{} cannot be read: {error}", path.display()))
     };
@@ -311,6 +311,24 @@ mod tests {
         assert!(WriterLock::held_named(&vfs, name).unwrap());
         drop(held);
         assert!(!WriterLock::held_named(&vfs, name).unwrap());
+    }
+
+    #[test]
+    fn a_read_only_open_of_a_missing_file_makes_no_probe_of_the_volume() {
+        use crate::file_cache::PROBED;
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().canonicalize().unwrap().join("state");
+        std::fs::create_dir(&folder).unwrap();
+        let state = crate::directory::Directory::open(&folder).unwrap();
+        let vfs = crate::directory_vfs::DirectoryVfs::new(state.file()).unwrap();
+        PROBED.with_borrow_mut(Vec::clear);
+        assert!(WriterLock::held_named(&vfs, "request-lock").is_err());
+        assert!(PROBED.with_borrow(Vec::is_empty));
+        // The witness: an open that was to make the file, in a folder that
+        // has gone, does probe.
+        std::fs::remove_dir(&folder).unwrap();
+        assert!(WriterLock::claim_named(&vfs, "request-lock", true).is_err());
+        assert_eq!(PROBED.with_borrow(Vec::len), 1);
     }
 
     #[cfg(unix)]

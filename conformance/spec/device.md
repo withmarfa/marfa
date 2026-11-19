@@ -4118,7 +4118,7 @@ If a store was made at another schema version than the one this build makes, the
 
 ### `device/wrong-schema-changes-nothing`
 
-If a device refuses a store `wrong_schema`, then a device MUST change no byte of the store file and no frame of its log beyond what SQLite's own recovery of an interrupted write changes.
+If a device refuses a store `wrong_schema`, then a device MUST leave the store file and the pages its log holds as it found them, apart from what SQLite changes to recover an interrupted write.
 
 **Reason:** a store records its log mode in its header, and a writer that set the mode before it read the version, or that checkpointed the log as it closed, would leave a store it cannot read changed for the build that can.
 
