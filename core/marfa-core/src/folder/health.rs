@@ -1942,33 +1942,50 @@ pub(in crate::folder) mod tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (started, waiting) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut request = Vec::new();
-            let mut bytes = [0; 4096];
-            loop {
-                let read = stream.read(&mut bytes).unwrap();
-                request.extend_from_slice(&bytes[..read]);
-                if read == 0 {
-                    break;
-                }
-                let text = String::from_utf8_lossy(&request);
-                if let Some((headers, body)) = text.split_once("\r\n\r\n") {
-                    let length = headers
-                        .lines()
-                        .find_map(|line| {
-                            line.to_lowercase()
-                                .strip_prefix("content-length: ")
-                                .and_then(|value| value.parse::<usize>().ok())
-                        })
-                        .unwrap_or(0);
-                    if body.len() >= length {
+            let (mut stream, request) = loop {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut bytes = [0; 4096];
+                loop {
+                    let read = stream.read(&mut bytes).unwrap();
+                    request.extend_from_slice(&bytes[..read]);
+                    if read == 0 {
                         break;
                     }
+                    let text = String::from_utf8_lossy(&request);
+                    if let Some((headers, body)) = text.split_once("\r\n\r\n") {
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_lowercase()
+                                    .strip_prefix("content-length: ")
+                                    .and_then(|value| value.parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= length {
+                            break;
+                        }
+                    }
                 }
-            }
+                if !request.starts_with(b"GET / ") {
+                    break (stream, request);
+                }
+                // The report confirms the instance first.
+                let root = format!(
+                    r#"{{"name":"marfa","version":"dev","instance_id":"{}","contract":{},"features":[]}}"#,
+                    crate::scripted::INSTANCE,
+                    crate::contract::CONTRACT_VERSION
+                );
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{root}",
+                    crate::contract::CONTRACT_VERSION,
+                    root.len()
+                );
+            };
             started.send(String::from_utf8(request).unwrap()).unwrap();
             std::thread::sleep(delay);
             let body = if status == 200 {
@@ -1990,6 +2007,46 @@ pub(in crate::folder) mod tests {
             },
             waiting,
         )
+    }
+
+    #[test]
+    fn a_report_names_its_folder_to_no_other_instance_and_expires_the_copy() {
+        for replaced in [false, true] {
+            let server = crate::scripted::Scripted::start();
+            if replaced {
+                server.on(
+                    "/",
+                    vec![crate::scripted::root(
+                        "00000000-0000-7000-8000-0000000000fe",
+                    )],
+                );
+            }
+            let (_dir, folder) = fixture(Some(crate::Server {
+                url: server.url(),
+                key: "k".into(),
+            }));
+            folder.health_observe(false, true, None, None, false);
+            let sent = folder.health_send_inner();
+            let reported = server
+                .paths()
+                .iter()
+                .filter(|path| path.ends_with("/status"))
+                .count();
+            assert_eq!(server.seen("/").len(), 1, "replaced {replaced}");
+            if !replaced {
+                // The witness: the report goes to the copy's own instance.
+                assert_eq!(reported, 1);
+                continue;
+            }
+            match sent {
+                Err(CoreError::CopyExpired { reason, .. }) => {
+                    assert_eq!(reason, crate::http::INSTANCE_CHANGED);
+                }
+                other => panic!("a report to another instance ended {other:?}"),
+            }
+            assert_eq!(reported, 0, "the folder's id reached another instance");
+            assert!(crate::reach::expired(&folder.core.conn().unwrap()).unwrap());
+        }
     }
 
     #[test]

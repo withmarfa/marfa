@@ -522,3 +522,62 @@ fn a_later_pass_adds_what_it_sent_and_leaves_what_it_left() {
     assert_eq!(first.unclaimed_sources, ["a", "b"]);
     assert_eq!(first.retry_after_seconds, Some(5));
 }
+
+#[test]
+fn a_write_resent_after_a_renewal_is_sent_to_no_other_instance() {
+    const OTHER: &str = "00000000-0000-7000-8000-0000000000fe";
+    for replaced in [false, true] {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["first"]);
+        server.on(
+            "/items/first",
+            vec![
+                crate::scripted::refusal(401, "unauthorized"),
+                crate::scripted::json(200, r#"{"ok":true}"#),
+                crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+            ],
+        );
+        server.on("/items", vec![in_the_bin(&[("first", 1)])]);
+        let second = if replaced {
+            OTHER
+        } else {
+            crate::scripted::INSTANCE
+        };
+        server.on(
+            "/",
+            vec![
+                crate::scripted::root(crate::scripted::INSTANCE),
+                crate::scripted::root(second),
+            ],
+        );
+        core.renew_credential_with(Box::new(|_| Ok("fresh".into())));
+        let row = core.queue().unwrap().remove(0);
+        let drained = core.drain();
+        assert_eq!(
+            server.seen("/").len(),
+            2,
+            "replaced {replaced}: {:?}",
+            server.paths()
+        );
+        if !replaced {
+            // The witness: the write is sent again under the new credential.
+            assert_eq!(drained.unwrap().answered, 1);
+            assert_eq!(server.seen("/items/first").len(), 3);
+            continue;
+        }
+        match drained {
+            Err(CoreError::CopyExpired { reason, .. }) => assert_eq!(reason, INSTANCE_CHANGED),
+            other => panic!("a pass that met another instance ended {other:?}"),
+        }
+        assert_eq!(
+            server.seen("/items/first").len(),
+            1,
+            "the write reached the instance that replaced the copy's own"
+        );
+        let conn = core.conn().unwrap();
+        let kept = store::queued_write(&conn, &row.id).unwrap().unwrap();
+        assert_eq!(kept.verdict, None);
+        assert!(store::unsent(&conn, &row.id).unwrap());
+        assert!(reach::expired(&conn).unwrap());
+    }
+}

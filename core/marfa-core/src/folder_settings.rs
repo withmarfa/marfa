@@ -338,8 +338,7 @@ impl Core {
         idempotency_key: Option<&str>,
     ) -> Result<FolderRow> {
         self.lock.refuse_unless_writer()?;
-        let http = self.http()?;
-        crate::catch_up::refuse_another_instance(self, http)?;
+        let http = &crate::catch_up::refuse_another_instance(self, self.http()?)?;
         let key = idempotency_key
             .map(str::to_string)
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
@@ -362,21 +361,21 @@ impl Core {
         }
         let answered: WireItemWithMetadata = serde_json::from_str(&answer.body)
             .map_err(|error| crate::error::unreadable("the folder door's answer", &error))?;
-        self.hold_answered(&answered.item.id);
+        self.hold_answered(&answered.item.id, http);
         FolderRow::of_wire(&answered.item)
     }
 
     /// The write is done whatever this finds: a row it cannot read again now
     /// reaches the copy at its next catch-up, so a failure here is not the
-    /// write's.
-    pub(crate) fn hold_answered(&self, id: &str) {
+    /// write's. `confirmed` is the transport the write was sent on.
+    pub(crate) fn hold_answered(&self, id: &str, confirmed: &crate::http::Http) {
         let Ok(http) = self.http() else { return };
         let (context, purges) = match self.conn().and_then(|conn| {
             if !store::hydrated(&conn)? {
                 return Ok(None);
             }
             Ok(Some((
-                reach::Context::capture(&conn)?,
+                reach::Context::capture(&conn)?.sharing(confirmed.confirmation()),
                 reach::purge_revision(&conn)?,
             )))
         }) {
@@ -743,6 +742,12 @@ mod tests {
         );
         assert_eq!(core.folder(FOLDER).unwrap().unwrap().version, 1);
         assert!(listed(&core).unwrap().is_empty());
+        assert_eq!(server.seen(&format!("/items/{FOLDER}")).len(), 1);
+        assert_eq!(
+            server.seen("/").len(),
+            1,
+            "the write and the read of its answer read the root apart"
+        );
 
         let changed_settings = json!({ "title": "Recipes", "query": { "types": ["user.recipe"] } });
         server.on(

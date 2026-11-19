@@ -461,6 +461,49 @@ fn a_trash_at_another_instance_expires_the_copy_and_sends_nothing() {
 }
 
 #[test]
+fn an_accepted_trash_whose_head_is_asked_of_another_instance_expires_the_copy() {
+    for replaced in [false, true] {
+        let server = Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(Some(&server), dir.path(), &["a"]);
+        let preview = previewed(&core, &server, &["a"], &[]);
+        server.on("/items/trash", vec![scripted::json(200, r#"{"ok":true}"#)]);
+        log_holds(&server, &[("a", 2)]);
+        let second = if replaced {
+            "00000000-0000-7000-8000-0000000000ff"
+        } else {
+            scripted::INSTANCE
+        };
+        server.on(
+            "/",
+            vec![scripted::root(scripted::INSTANCE), scripted::root(second)],
+        );
+        let report = core.trash_items(&preview).unwrap();
+        assert_eq!(server.seen("/items/trash").len(), 1, "replaced {replaced}");
+        if !replaced {
+            // The witness: the head is asked of the copy's own instance.
+            assert!(report.settled, "{report:?}");
+            assert!(!server.seen("/events").is_empty());
+            assert!(!reach::expired(&core.conn().unwrap()).unwrap());
+            continue;
+        }
+        assert!(!report.settled, "{report:?}");
+        assert!(
+            report
+                .behind
+                .as_deref()
+                .is_some_and(|behind| behind.contains("instance")),
+            "{report:?}"
+        );
+        assert!(
+            server.seen("/events").is_empty(),
+            "a cursor reached another instance"
+        );
+        assert!(reach::expired(&core.conn().unwrap()).unwrap());
+    }
+}
+
+#[test]
 fn a_reading_handle_may_preview_and_cannot_trash() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();

@@ -130,6 +130,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
     // Credential renewal uses the exempt authentication endpoints.
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ReachChange::default();
+    pass.confirmation = http.confirmation().cloned();
     let mut report = DrainReport::empty();
     let mut caught_up = false;
     let mut sent = send_queue(
@@ -216,6 +217,6 @@ fn read_limit_refused(core: &Core, http: &Http, stop: &AtomicBool) -> Result<()>
             telemetry::degraded!(&error);
             Ok(())
         }
-        other => other,
+        other => other.map(drop),
     }
 }

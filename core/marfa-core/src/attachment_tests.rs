@@ -757,3 +757,52 @@ fn files_fetched_together_read_the_root_once() {
     assert_eq!(fetched.fetched, 2);
     assert_eq!(server.seen("/").len(), 1);
 }
+
+#[test]
+fn a_long_fetch_by_hash_reads_the_root_again_every_twenty_five_files() {
+    for replaced in [false, true] {
+        let server = Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::stop_tests::copy_in_keyed(&server, dir.path(), "k");
+        note(&core, "note");
+        let mut asked = Vec::new();
+        for at in 0..30 {
+            let bytes = format!("file {at}");
+            let hash = file(&core, &format!("file-{at}"), bytes.as_bytes());
+            attach(&core, &format!("e{at}"), &format!("file-{at}"), "note");
+            serve(&server, bytes.as_bytes());
+            asked.push(format!("/blobs/{hash}/url"));
+        }
+        let second = if replaced {
+            REPLACED
+        } else {
+            scripted::INSTANCE
+        };
+        server.on(
+            "/",
+            vec![scripted::root(scripted::INSTANCE), scripted::root(second)],
+        );
+        let fetched = core.fetch_kept_until(&AtomicBool::new(false));
+        let sent = asked
+            .iter()
+            .filter(|path| !server.seen(path).is_empty())
+            .count();
+        assert_eq!(
+            server.seen("/").len(),
+            2,
+            "replaced {replaced}: {:?}",
+            server.paths()
+        );
+        if !replaced {
+            // The witness: the same fetch, its instance confirmed again.
+            assert_eq!(fetched.unwrap().fetched, 30);
+            assert_eq!(sent, 30);
+            continue;
+        }
+        expired_for_another_instance(&core, &fetched.unwrap_err());
+        assert_eq!(
+            sent, 25,
+            "a hash reached the instance that replaced the first"
+        );
+    }
+}

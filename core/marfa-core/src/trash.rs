@@ -69,8 +69,7 @@ impl Core {
     /// Requires a server; duplicate IDs count once toward the 20-item limit.
     pub fn preview_trash(&self, ids: &[String]) -> Result<TrashPreview> {
         let ids = distinct_ids(ids)?;
-        let http = self.http()?;
-        catch_up::refuse_another_instance(self, http)?;
+        let http = &catch_up::refuse_another_instance(self, self.http()?)?;
         catch_up::write_naming_instance(self, http, |http| http.preview_item_trash(&ids))
     }
 
@@ -129,8 +128,7 @@ impl Core {
                 self.exits_of(&waiting)?
             )));
         }
-        let http = self.http()?;
-        catch_up::refuse_another_instance(self, http)?;
+        let http = &catch_up::refuse_another_instance(self, self.http()?)?;
         let key = uuid::Uuid::now_v7().to_string();
         catch_up::write_naming_instance(self, http, |http| {
             http.trash_items(&named, &preview.digest, &key)

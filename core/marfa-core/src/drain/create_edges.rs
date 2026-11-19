@@ -10,13 +10,13 @@ use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
 
-use super::read_back::{Unreadable, ends_the_pass, names_no_row, unreadable};
+use super::read_back::{ReachChange, Unreadable, ends_the_pass, names_no_row, unreadable};
 use crate::error::CoreError;
 use crate::http::Http;
 use crate::model::{Draft, QueuedWrite, WriteKind, projected_edge_id};
 use crate::wire::{WireEdge, WireItem};
 use crate::{Core, Result};
-use crate::{reach, store, telemetry};
+use crate::{store, telemetry};
 
 const OWED: &str = "create_edges/";
 
@@ -79,13 +79,10 @@ pub(super) fn owe(conn: &rusqlite::Connection, row: &QueuedWrite, item: &WireIte
 
 /// Reads what [`owe`] recorded for `item` and takes the edges it brings. A
 /// read the environment stops leaves the record for the next drain.
-pub(super) fn read(core: &Core, stop: &AtomicBool, item: &str) -> Result<()> {
+pub(super) fn read(core: &Core, pass: &ReachChange, stop: &AtomicBool, item: &str) -> Result<()> {
     let (recorded, context) = {
         let conn = core.conn()?;
-        (
-            store::meta_get(&conn, &key(item))?,
-            reach::Context::capture(&conn)?,
-        )
+        (store::meta_get(&conn, &key(item))?, pass.context(&conn)?)
     };
     let Some(recorded) = recorded else {
         return Ok(());
@@ -204,12 +201,16 @@ pub(super) fn any_owed(conn: &rusqlite::Connection) -> Result<bool> {
 
 /// Every read a record still owes, tried before the queue is sent. One the
 /// environment stops ends the pass, as a read-back does.
-pub(super) fn read_all(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>> {
+pub(super) fn read_all(
+    core: &Core,
+    pass: &ReachChange,
+    stop: &AtomicBool,
+) -> Result<Option<Unreadable>> {
     let items = store::meta_keys(&*core.conn()?, OWED)?;
     for owed in items {
         crate::catch_up::refuse_if_stopped(stop)?;
         let item = &owed[OWED.len()..];
-        match read(core, stop, item) {
+        match read(core, pass, stop, item) {
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);

@@ -1044,3 +1044,91 @@ fn a_pin_sends_no_item_id_to_another_instance_at_the_copys_origin() {
         assert!(expired(&core));
     }
 }
+
+fn no_titles(server: &Scripted) {
+    server.on(
+        "/items/titles",
+        vec![scripted::json(
+            200,
+            r#"{"data":[{"name":"","items":[],"more":false}]}"#,
+        )],
+    );
+}
+
+#[test]
+fn a_link_by_name_sends_no_name_to_another_instance_and_expires_the_copy() {
+    for prefetched in [false, true] {
+        let server = Scripted::start();
+        no_titles(&server);
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+
+        // The witness: the copy's own instance is asked for the name.
+        with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+            assert!(matches!(
+                resolver.resolve("Witness").unwrap(),
+                Resolved::Unmatched
+            ));
+        });
+        assert_eq!(server.seen("/items/titles").len(), 1);
+        assert_eq!(server.seen("/").len(), 1, "the name was not confirmed");
+
+        server.on("/", vec![scripted::root(OTHER)]);
+        let refusal = with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+            if prefetched {
+                resolver.prefetch(["Private"]).unwrap_err()
+            } else {
+                resolver.resolve("Private").unwrap_err()
+            }
+        });
+        instance_changed(&refusal);
+        assert_eq!(
+            server.seen("/items/titles").len(),
+            1,
+            "prefetched {prefetched}: a name reached another instance"
+        );
+        assert!(expired(&core));
+    }
+}
+
+#[test]
+fn a_link_by_name_retried_after_a_renewal_confirms_the_instance_again() {
+    let server = Scripted::start();
+    renewed_once(
+        &server,
+        "/items/titles",
+        scripted::json(200, r#"{"data":[{"name":"","items":[],"more":false}]}"#),
+    );
+    server.on(
+        "/",
+        vec![scripted::root(scripted::INSTANCE), scripted::root(OTHER)],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    renew(&core);
+    let refusal = with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+        resolver.resolve("Private").unwrap_err()
+    });
+    instance_changed(&refusal);
+    assert_eq!(server.seen("/").len(), 2);
+    assert_eq!(
+        server.seen("/items/titles").len(),
+        1,
+        "the retry reached the instance that replaced the first"
+    );
+    assert!(expired(&core));
+}
+
+#[test]
+fn a_resolver_that_met_another_instance_answers_no_later_name() {
+    let server = Scripted::start();
+    no_titles(&server);
+    server.on("/", vec![scripted::root(OTHER)]);
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    with_resolver(&core, &crate::NEVER_STOPPED, |resolver| {
+        instance_changed(&resolver.prefetch(["First"]).unwrap_err());
+        instance_changed(&resolver.resolve("First").unwrap_err());
+    });
+    assert!(server.seen("/items/titles").is_empty());
+}

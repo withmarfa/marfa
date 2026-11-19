@@ -234,8 +234,11 @@ impl Confirmation {
         })
     }
 
-    /// The next request reads the root again, as a reconnect after a lost
-    /// stream does.
+    pub(crate) fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    /// The next request reads the root again.
     pub(crate) fn owe(&self) {
         *self
             .confirmed_under
@@ -869,13 +872,24 @@ impl Http {
         self.confirm_instance()
     }
 
-    /// Takes `served`, a root just read under this credential, as the
-    /// confirmation, so the operation reads it no second time.
-    pub(crate) fn admit(&self, served: &Served) -> Result<(), CoreError> {
+    pub(crate) fn confirmation(&self) -> Option<&Arc<Confirmation>> {
+        self.confirmation.as_ref()
+    }
+
+    /// The next request reads the root again.
+    pub(crate) fn owe_confirmation(&self) {
+        if let Some(confirmation) = &self.confirmation {
+            confirmation.owe();
+        }
+    }
+
+    /// Takes `instance`, named by a root or a log head just read under this
+    /// credential, as the confirmation, so it is read no second time.
+    pub(crate) fn admit(&self, instance: &str) -> Result<(), CoreError> {
         let Some(confirmation) = &self.confirmation else {
             return Ok(());
         };
-        if served.instance_id != confirmation.instance {
+        if instance != confirmation.instance {
             return Err(CoreError::CopyExpired {
                 reason: INSTANCE_CHANGED.into(),
                 server: None,

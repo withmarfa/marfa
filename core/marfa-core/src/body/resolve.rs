@@ -220,6 +220,9 @@ pub(crate) struct Resolver<'a> {
     stop: &'a AtomicBool,
     /// Whether a title lookup call was answered with its results this pass.
     answered: bool,
+    /// What ended the title lookups this pass for the whole copy, such as
+    /// another instance at the origin, answered to every later lookup.
+    ended: Option<crate::error::CoreError>,
 }
 
 impl<'a> Resolver<'a> {
@@ -241,6 +244,7 @@ impl<'a> Resolver<'a> {
             refused_call: None,
             stop,
             answered: false,
+            ended: None,
         }
     }
 
@@ -395,8 +399,13 @@ impl<'a> Resolver<'a> {
     /// failure and the others as they were: after a failure of the network,
     /// or an answer that the server has no title lookup, no more are sent.
     /// A refusal names no name, so only a call that carried one name alone
-    /// leaves it refused; the names of any other refused call wait.
+    /// leaves it refused; the names of any other refused call wait. The
+    /// calls are sent once the server's root names the copy's instance, and
+    /// one that cannot be (`copy_expired`) ends this and every later lookup.
     fn ask(&mut self, asked: Vec<(String, String)>) -> Result<()> {
+        if let Some(ended) = &self.ended {
+            return Err(ended.clone());
+        }
         let (past, asked): (Vec<_>, Vec<_>) = asked
             .into_iter()
             .partition(|(_, sent)| sent.chars().count() > names::MAX_NAME_LENGTH);
@@ -410,20 +419,38 @@ impl<'a> Resolver<'a> {
                 },
             );
         }
+        if asked.is_empty() || !self.online || !self.offered {
+            return Ok(());
+        }
+        let core = self.core;
+        let asking = match core.http() {
+            Ok(http) => crate::catch_up::read_confirming(core, http, |http| {
+                self.ask_pages(Ok(http), &asked)
+            }),
+            Err(error) => self.ask_pages(Err(error), &asked),
+        };
+        if let Err(error) = &asking {
+            self.ended = Some(error.clone());
+        }
+        asking
+    }
+
+    fn ask_pages(
+        &mut self,
+        http: Result<&crate::http::Http>,
+        asked: &[(String, String)],
+    ) -> Result<()> {
         for page in asked.chunks(TITLE_LOOKUP_NAMES) {
             if !self.online || !self.offered {
                 return Ok(());
             }
             let sent: Vec<String> = page.iter().map(|(_, sent)| sent.clone()).collect();
-            let answers = self.core.http().and_then(|http| {
+            let answers = http.as_ref().map_err(Clone::clone).and_then(|http| {
                 crate::catch_up::ask_unless_stopped(self.stop, http, move |http| {
                     http.item_titles(&sent)
                 })
             });
             match answers {
-                Err(crate::error::CoreError::Canceled) => {
-                    return Err(crate::error::CoreError::Canceled);
-                }
                 Ok(answers) => {
                     self.answered = true;
                     for ((key, _), answer) in page.iter().zip(answers) {
@@ -436,6 +463,7 @@ impl<'a> Resolver<'a> {
                         );
                     }
                 }
+                Err(error) if error.is_copy_wide() => return Err(error),
                 Err(error) => {
                     let failure = self.call_failure(error, page.len());
                     for (key, _) in page {

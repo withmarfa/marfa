@@ -495,3 +495,57 @@ fn withdrawing_bytes_sent_again_under_a_new_key_refuses_the_file_sent_before() {
     );
     assert!(!core.release(&file.id).unwrap());
 }
+
+#[test]
+fn bytes_sent_again_after_a_renewal_reach_no_other_instance() {
+    const OTHER: &str = "00000000-0000-7000-8000-0000000000fe";
+    for replaced in [false, true] {
+        let server = Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "first");
+        core.renew_credential_with(Box::new(|_| Ok("fresh".into())));
+        holding_a_catalog(&core);
+        let file = dir.path().join("photo.txt");
+        std::fs::write(&file, b"the bytes of a photo").unwrap();
+        let added = core
+            .add_file(&file, &crate::Attachment::default(), &[])
+            .unwrap();
+        let hash = added.upload.blob.clone().unwrap();
+        server.on(
+            "/blobs",
+            vec![
+                scripted::refusal(401, "unauthorized"),
+                scripted::json(201, &format!(r#"{{"hash":"{hash}","size_bytes":20}}"#)),
+            ],
+        );
+        server.on("/items", vec![scripted::refusal(429, "rate_limited")]);
+        let second = if replaced { OTHER } else { scripted::INSTANCE };
+        server.on(
+            "/",
+            vec![scripted::root(scripted::INSTANCE), scripted::root(second)],
+        );
+        let drained = core.drain();
+        if !replaced {
+            // The witness: the bytes go out again under the new credential.
+            assert_eq!(drained.unwrap().undelivered, 1);
+            assert_eq!(
+                authorizations(&server, "/blobs"),
+                ["Bearer first", "Bearer fresh"]
+            );
+            continue;
+        }
+        match drained {
+            Err(crate::CoreError::CopyExpired { reason, .. }) => {
+                assert_eq!(reason, crate::http::INSTANCE_CHANGED);
+            }
+            other => panic!("a pass that met another instance ended {other:?}"),
+        }
+        assert_eq!(
+            authorizations(&server, "/blobs"),
+            ["Bearer first"],
+            "the bytes reached the instance that replaced the copy's own"
+        );
+        assert!(server.seen("/items").is_empty());
+        assert!(crate::reach::expired(&core.conn().unwrap()).unwrap());
+    }
+}

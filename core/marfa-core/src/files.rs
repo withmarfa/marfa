@@ -24,6 +24,11 @@ use crate::{
 const RATE_LIMIT_WAITED: Duration = Duration::from_secs(60);
 
 const RATE_LIMIT_WAITS: u32 = 3;
+/// A fetch of many files reads the root again after this many files or
+/// bytes, so a long fetch does not send hashes for its whole length on one
+/// confirmation of the instance.
+const CONFIRMED_FILES: usize = 25;
+const CONFIRMED_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Why a fetch that failed with `error` leaves an attachment's bytes unheld,
 /// and whether a fetch of other bytes from the same server would fare the
@@ -814,14 +819,21 @@ impl Core {
         use file_cache::NotHeldReason as Why;
         let mut waits = 0;
         let mut at = 0;
+        let (mut files, mut bytes) = (0, 0);
         while let Some((hex, stated)) = wanted.get(at) {
             catch_up::refuse_if_stopped(stop)?;
+            if files >= CONFIRMED_FILES || bytes >= CONFIRMED_BYTES {
+                http.owe_confirmation();
+                (files, bytes) = (0, 0);
+            }
             let hash = format!("{}{hex}", blob::PREFIX);
+            files += 1;
             let error = match self.fetch_blob(cache, http, &hash, *stated) {
                 Ok(fetched) => {
+                    let size = std::fs::metadata(&fetched.path).map_or(0, |held| held.len());
                     report.fetched += 1;
-                    report.fetched_bytes +=
-                        std::fs::metadata(&fetched.path).map_or(0, |held| held.len());
+                    report.fetched_bytes += size;
+                    bytes += size;
                     at += 1;
                     continue;
                 }

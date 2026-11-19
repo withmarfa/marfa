@@ -300,8 +300,7 @@ impl Core {
         asked: &[&String],
         counted: &Counted,
     ) -> Result<Vec<(i64, Option<StatusGroups>)>> {
-        let http = self.http()?;
-        crate::catch_up::refuse_another_instance(self, http)?;
+        let http = &crate::catch_up::refuse_another_instance(self, self.http()?)?;
         crate::catch_up::write_naming_instance(self, http, |http| http.item_counts(asked, counted))
     }
 }

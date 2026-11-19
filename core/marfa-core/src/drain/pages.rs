@@ -859,11 +859,12 @@ type Held = HashMap<String, (WireItemWithMetadata, serde_json::Value)>;
 /// The copy the reads are made against, and each row's stamp before them.
 fn capture(
     core: &Core,
+    pass: &ReachChange,
     lane: Lane,
     rows: &[&QueuedWrite],
 ) -> Result<(reach::Context, HashMap<String, Option<store::Stamp>>)> {
     let conn = core.conn()?;
-    let context = reach::Context::capture(&conn)?;
+    let context = pass.context(&conn)?;
     let mut before = HashMap::new();
     for row in rows {
         if let Some(id) = lane.minted(row) {
@@ -1045,7 +1046,7 @@ fn settle(
     created: &[(&QueuedWrite, String)],
 ) -> Result<()> {
     let rows: Vec<&QueuedWrite> = created.iter().map(|(row, _)| *row).collect();
-    let (context, before) = capture(core, lane, &rows)?;
+    let (context, before) = capture(core, pass, lane, &rows)?;
     let held = match read(core, stop, &context, lane, &rows) {
         Ok(held) => held,
         Err(error) if error.is_environmental() => {
@@ -1161,7 +1162,7 @@ pub(super) fn settle_owed(
             .map(|(row, _)| row)
             .collect();
         while !left.is_empty() {
-            let (context, before) = capture(core, lane, &left)?;
+            let (context, before) = capture(core, pass, lane, &left)?;
             let held = match read(core, stop, &context, lane, &left) {
                 Ok(held) => held,
                 Err(error) if error.is_environmental() => {
@@ -1669,7 +1670,8 @@ mod tests {
             ],
         );
         let rows: Vec<&QueuedWrite> = edges.iter().collect();
-        let (context, before) = capture(&core, Lane::Edges, &rows).unwrap();
+        let (context, before) =
+            capture(&core, &ReachChange::default(), Lane::Edges, &rows).unwrap();
 
         let held = read(&core, &AtomicBool::new(false), &context, Lane::Edges, &rows).unwrap();
 
@@ -1707,7 +1709,8 @@ mod tests {
             ))],
         );
         let rows: Vec<&QueuedWrite> = edges.iter().collect();
-        let (context, before) = capture(&core, Lane::Edges, &rows).unwrap();
+        let (context, before) =
+            capture(&core, &ReachChange::default(), Lane::Edges, &rows).unwrap();
 
         let held = read(&core, &AtomicBool::new(false), &context, Lane::Edges, &rows).unwrap();
 
@@ -2016,7 +2019,8 @@ mod tests {
         let host = host_of(&server, &edges);
         server.on(&format!("/items/{host}/edges"), listing(&edges));
         let rows: Vec<&QueuedWrite> = edges.iter().collect();
-        let (context, before) = capture(&core, Lane::Edges, &rows).unwrap();
+        let (context, before) =
+            capture(&core, &ReachChange::default(), Lane::Edges, &rows).unwrap();
         let held = read(&core, &AtomicBool::new(false), &context, Lane::Edges, &rows);
         let asked = server.seen(&format!("/items/{host}/edges")).len();
         Listed {
@@ -2051,7 +2055,7 @@ mod tests {
             }],
         );
         let rows: Vec<&QueuedWrite> = edges.iter().collect();
-        let (context, _) = capture(&core, Lane::Edges, &rows).unwrap();
+        let (context, _) = capture(&core, &ReachChange::default(), Lane::Edges, &rows).unwrap();
         let stop = AtomicBool::new(false);
         let ended = std::thread::scope(|scope| {
             scope.spawn(|| {

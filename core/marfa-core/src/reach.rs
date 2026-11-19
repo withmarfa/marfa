@@ -165,14 +165,15 @@ impl Context {
         http.for_reach(&self.fence).confirming(&self.confirmation)
     }
 
-    /// The copy as it is now, for a step of this operation, whose requests
-    /// need no confirmation of their own.
-    pub(crate) fn within(&self, conn: &Connection) -> Result<Self> {
-        self.same_copy(conn)?;
-        Ok(Self {
-            confirmation: Arc::clone(&self.confirmation),
-            ..Self::capture_build(conn)?
-        })
+    /// Takes `confirmation` where it is for this copy's instance, for a read
+    /// that follows a write the same call confirmed.
+    pub(crate) fn sharing(mut self, confirmation: Option<&Arc<Confirmation>>) -> Self {
+        if let Some(confirmation) = confirmation
+            && confirmation.instance() == self.instance
+        {
+            self.confirmation = Arc::clone(confirmation);
+        }
+        self
     }
 
     pub(crate) fn same_copy(&self, conn: &Connection) -> Result<()> {
@@ -532,8 +533,9 @@ mod tests {
             }],
         );
         std::thread::scope(|scope| {
-            let late = scope
-                .spawn(|| crate::catch_up::refuse_another_instance(&core, core.http().unwrap()));
+            let late = scope.spawn(|| {
+                crate::catch_up::refuse_another_instance(&core, core.http().unwrap()).map(drop)
+            });
             server.wait_for("/", 1, std::time::Duration::from_secs(2));
             {
                 let conn = core.conn().unwrap();
@@ -866,6 +868,78 @@ mod tests {
         assert_eq!(requests[0].last_event_id, None);
         assert_eq!(requests[1].reach.as_deref(), Some(FENCE));
         assert_eq!(requests[1].last_event_id.as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn a_hydration_renewed_midway_sends_nothing_more_to_another_instance() {
+        use crate::scripted::*;
+        const REPLACED: &str = "00000000-0000-7000-8000-0000000000fe";
+        for replaced in [false, true] {
+            let server = Scripted::start();
+            let (_dir, core) = core(&server);
+            catalog(&server);
+            core.renew_credential_with(Box::new(|_| Ok("fresh".into())));
+            server.on(
+                "/keys/current",
+                vec![certified(json(
+                    200,
+                    r#"{"type_permissions":{"core.note":"read"}}"#,
+                ))],
+            );
+            server.on(
+                "/items",
+                vec![
+                    refusal(401, "unauthorized"),
+                    certified(json(200, r#"{"data":[],"next_cursor":null}"#)),
+                ],
+            );
+            server.on(
+                "/events",
+                vec![
+                    stream(vec![copy_marker("stream_cursor", "10")], Then::End),
+                    stream(
+                        vec![
+                            copy_marker("stream_cursor", "10"),
+                            copy_marker("stream_live", "10"),
+                        ],
+                        Then::End,
+                    ),
+                ],
+            );
+            let second = if replaced { REPLACED } else { INSTANCE };
+            server.on("/", vec![root(INSTANCE), root(second)]);
+            let hydrated = core.hydrate(&["core.note".into()], crate::SliceTier::Library);
+            assert_eq!(
+                server.seen("/").len(),
+                2,
+                "replaced {replaced}: {:?}",
+                server.paths()
+            );
+            if !replaced {
+                // The witness: the walk goes on under the new credential.
+                hydrated.unwrap();
+                assert_eq!(server.seen("/items").len(), 2);
+                continue;
+            }
+            match hydrated {
+                Err(CoreError::CopyExpired { reason, .. }) => {
+                    assert_eq!(reason, crate::http::INSTANCE_CHANGED);
+                }
+                other => panic!("a hydration that met another instance ended {other:?}"),
+            }
+            let after = server
+                .paths()
+                .into_iter()
+                .skip_while(|path| path != "/items")
+                .skip(1)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                after,
+                ["/"],
+                "a request after the renewal reached another instance"
+            );
+            assert!(!store::hydrated(&core.conn().unwrap()).unwrap());
+        }
     }
 
     #[test]
