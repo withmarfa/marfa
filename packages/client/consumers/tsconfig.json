@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "strict": true,
+    "types": ["node"],
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "files": ["commonjs.cts", "esm.mts"]
+}
