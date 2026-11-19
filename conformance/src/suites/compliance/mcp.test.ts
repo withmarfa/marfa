@@ -965,26 +965,21 @@ describe("the schema and admin endpoints", () => {
           { properties: Record<string, { enum?: unknown[] }> } | undefined;
         return schema?.properties[field]?.enum ?? [];
       };
-      expect(choices("marfa_manage_backups", "action")).toEqual([
-        "take",
-        "adopt_folder",
-      ]);
       expect(choices("marfa_maintain", "action")).toEqual([
         "run_housekeeping",
         "cancel_job",
       ]);
-      expect(choices("marfa_manage_sign_in", "action")).toEqual([
-        "rename_sign_in",
-        "end_sign_in",
-        "rename_passkey",
-        "remove_passkey",
+      expect(choices("marfa_rename_sign_in", "kind")).toEqual([
+        "sign_in",
+        "passkey",
       ]);
+      const withheld =
+        /purge|empty|revoke_app|end_sign|remove|delete_connector|clear|retire|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
+      // The witness: the pattern matches the names of the withheld tasks.
+      expect(withheld.test("marfa_purge_trash")).toBe(true);
+      expect(withheld.test("marfa_adopt_backup_folder")).toBe(true);
       expect(
-        tools
-          .map((tool) => tool.name)
-          .filter((name) =>
-            /restore|claim|recover|password|update_server|clock/.test(name),
-          ),
+        tools.map((tool) => tool.name).filter((name) => withheld.test(name)),
       ).toEqual([]);
     } finally {
       await admin.close();
@@ -1152,8 +1147,8 @@ describe("the schema and admin endpoints", () => {
       "marfa_change_settings",
       "marfa_create",
       "marfa_maintain",
-      "marfa_manage_backups",
       "marfa_manage_webhook",
+      "marfa_take_backup",
     ];
     try {
       const seen = new Set<string>();
@@ -1219,7 +1214,7 @@ describe("a tool the endpoint does not list to the credential", () => {
 });
 
 describe("the owner-task tools' annotations", () => {
-  it("marks each tool that removes or ends something as destructive and each listing tool as read-only", async () => {
+  it("marks narrowing an app and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only", async () => {
     const management = process.env.MARFA_MANAGEMENT_KEY;
     if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const admin = await connectMcp(
@@ -1231,15 +1226,17 @@ describe("the owner-task tools' annotations", () => {
     try {
       const { tools } = await admin.client.listTools();
       const hints = new Map(tools.map((tool) => [tool.name, tool.annotations]));
-      for (const name of [
-        "marfa_purge_trash",
-        "marfa_manage_app",
-        "marfa_manage_sign_in",
-        "marfa_manage_connector",
-        "marfa_drop_file_copy",
-        "marfa_manage_backups",
-      ]) {
+      for (const name of ["marfa_narrow_app", "marfa_maintain"]) {
         expect(hints.get(name)?.destructiveHint, name).toBe(true);
+        expect(hints.get(name)?.readOnlyHint, name).toBe(false);
+      }
+      for (const name of [
+        "marfa_change_settings",
+        "marfa_take_backup",
+        "marfa_make_endpoint",
+        "marfa_rename_sign_in",
+      ]) {
+        expect(hints.get(name)?.destructiveHint, name).toBe(false);
         expect(hints.get(name)?.readOnlyHint, name).toBe(false);
       }
       for (const name of [

@@ -736,8 +736,7 @@ export interface DeviceFlow {
  * `blobs.manage`, `backups.manage`, `sign_ins.manage` and `keys.manage`,
  * which a fixture names when it needs them.
  * The app registers the device grant and the refresh grant, no redirect URI
- * and no response type, unless `options` names others. With `clientId`, an
- * app that registered already asks again, and registers nothing.
+ * and no response type, unless `options` names others.
  */
 export async function startDeviceFlow(
   server: FreshServer,
@@ -746,7 +745,6 @@ export async function startDeviceFlow(
     grantTypes?: readonly string[];
     redirectUris?: readonly string[];
     responseTypes?: readonly string[];
-    clientId?: string;
   } = {},
 ): Promise<DeviceFlow> {
   const owner = TEST_OWNER;
@@ -759,28 +757,25 @@ export async function startDeviceFlow(
     token_endpoint: string;
     scopes_supported: string[];
   };
-  const registered =
-    options.clientId === undefined
-      ? ((await (
-          await fetch(discovery.registration_endpoint, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              client_name: "conformance",
-              application_type: "native",
-              grant_types: options.grantTypes ?? [
-                "urn:ietf:params:oauth:grant-type:device_code",
-                "refresh_token",
-              ],
-              response_types: options.responseTypes ?? [],
-              ...(options.redirectUris === undefined
-                ? {}
-                : { redirect_uris: options.redirectUris }),
-              token_endpoint_auth_method: "none",
-            }),
-          })
-        ).json()) as { client_id: string; scope: string })
-      : { client_id: options.clientId, scope: "" };
+  const registered = (await (
+    await fetch(discovery.registration_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "conformance",
+        application_type: "native",
+        grant_types: options.grantTypes ?? [
+          "urn:ietf:params:oauth:grant-type:device_code",
+          "refresh_token",
+        ],
+        response_types: options.responseTypes ?? [],
+        ...(options.redirectUris === undefined
+          ? {}
+          : { redirect_uris: options.redirectUris }),
+        token_endpoint_auth_method: "none",
+      }),
+    })
+  ).json()) as { client_id: string; scope: string };
 
   const code = (await (
     await fetch(discovery.device_authorization_endpoint, {
@@ -905,15 +900,14 @@ export async function startDeviceFlow(
  * Reached the way a person reaches one: `startDeviceFlow`, the owner's
  * approval, and the client's poll, answered. A token like this is the one
  * credential a fixture can hold that an app holds, so a door that treats an
- * app differently from a key is asserted through it. With `clientId`, the
- * owner approves an app that registered already, again.
+ * app differently from a key is asserted through it.
+ *
  */
 export async function approvedApp(
   server: FreshServer,
   scopes?: readonly string[],
-  clientId?: string,
 ): Promise<{ token: string; clientId: string; refreshToken?: string }> {
-  const flow = await startDeviceFlow(server, scopes, { clientId });
+  const flow = await startDeviceFlow(server, scopes);
   await flow.approve();
   // The code's first poll, so no polling interval applies to it yet.
   const answer = await flow.poll();
