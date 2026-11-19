@@ -79,7 +79,7 @@ pub(super) fn owe(conn: &rusqlite::Connection, row: &QueuedWrite, item: &WireIte
 
 /// Reads what [`owe`] recorded for `item` and takes the edges it brings. A
 /// read the environment stops leaves the record for the next drain.
-pub(super) fn read(core: &Core, item: &str) -> Result<()> {
+pub(super) fn read(core: &Core, stop: &AtomicBool, item: &str) -> Result<()> {
     let (recorded, context) = {
         let conn = core.conn()?;
         (
@@ -96,7 +96,7 @@ pub(super) fn read(core: &Core, item: &str) -> Result<()> {
     // same way.
     let mut read = Vec::with_capacity(owed.len());
     for block in &owed {
-        match listing(&http, item, block) {
+        match listing(&http, stop, item, block) {
             Ok(edges) => read.push(Some(edges)),
             // The item is gone, or no longer one this key may read: neither
             // holds an edge the copy can name.
@@ -209,7 +209,7 @@ pub(super) fn read_all(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadab
     for owed in items {
         crate::catch_up::refuse_if_stopped(stop)?;
         let item = &owed[OWED.len()..];
-        match read(core, item) {
+        match read(core, stop, item) {
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
@@ -228,12 +228,16 @@ pub(super) fn read_all(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadab
 }
 
 /// The listing of `block`'s type from `item`, from its cursor to the end.
-fn listing(http: &Http, item: &str, block: &Owed) -> Result<Vec<WireEdge>> {
+fn listing(http: &Http, stop: &AtomicBool, item: &str, block: &Owed) -> Result<Vec<WireEdge>> {
     let mut edges = Vec::new();
     let mut cursor = block.cursor.clone();
     let mut seen = HashSet::new();
     loop {
-        let page = http.item_edges_page(item, &block.edge_type, cursor.as_deref())?;
+        let page = crate::catch_up::ask_unless_stopped(stop, http, {
+            let (item, edge_type, cursor) =
+                (item.to_string(), block.edge_type.clone(), cursor.clone());
+            move |http| http.item_edges_page(&item, &edge_type, cursor.as_deref())
+        })?;
         edges.extend(page.data);
         match page.next_cursor {
             None => return Ok(edges),

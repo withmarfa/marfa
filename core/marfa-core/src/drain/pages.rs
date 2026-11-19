@@ -886,7 +886,11 @@ fn read(
     let mut held = Held::new();
     for ids in sources.chunks(BULK_GET_LIMIT) {
         crate::catch_up::refuse_if_stopped(stop)?;
-        for (row, whole) in reader.items_by_id_whole(ids)? {
+        let asked = ids.to_vec();
+        let found = crate::catch_up::ask_unless_stopped(stop, &reader, move |http| {
+            http.items_by_id_whole(&asked)
+        })?;
+        for (row, whole) in found {
             held.insert(row.item.id.clone(), (row, whole));
         }
     }
@@ -951,9 +955,16 @@ fn read_rest(http: &Http, stop: &AtomicBool, rows: &[&QueuedWrite], held: &mut H
                 break;
             }
             crate::catch_up::refuse_if_stopped(stop)?;
-            let page = match http.item_edges_page(&source, &edge_type, Some(&at)) {
+            let page = match crate::catch_up::ask_unless_stopped(stop, http, {
+                let (source, edge_type, at) = (source.clone(), edge_type.clone(), at.clone());
+                move |http| http.item_edges_page(&source, &edge_type, Some(&at))
+            }) {
                 Ok(page) => page,
-                Err(error) if error.is_environmental() || ends_the_drain(&error) => {
+                Err(error)
+                    if error.is_environmental()
+                        || ends_the_drain(&error)
+                        || error == CoreError::Canceled =>
+                {
                     return Err(error);
                 }
                 // The walk sends what the listing did not bring.
@@ -1051,7 +1062,7 @@ fn settle(
         if context.check(&*core.conn()?).is_err() {
             continue;
         }
-        settle_one(core, pass, report, standing, lane, row, found)?;
+        settle_one(core, stop, pass, report, standing, lane, row, found)?;
     }
     Ok(())
 }
@@ -1166,7 +1177,7 @@ pub(super) fn settle_owed(
                 }
                 let read = match found(lane, row, &held, &context, &before) {
                     Some(found) => Some(found),
-                    None => match alone(core, pass, lane, row) {
+                    None => match alone(core, stop, pass, lane, row) {
                         Ok(read) => read,
                         Err(error) if error.is_environmental() => {
                             telemetry::degraded!(&error);
@@ -1193,7 +1204,16 @@ pub(super) fn settle_owed(
                     replayed: true,
                     contract_named: true,
                 };
-                settle_success(core, row, &answer, lane.shape(), pass, false, Some(read))?;
+                settle_success(
+                    core,
+                    stop,
+                    row,
+                    &answer,
+                    lane.shape(),
+                    pass,
+                    false,
+                    Some(read),
+                )?;
             }
             // Each round settles at least one write, or the copy changed
             // under every read and the pass ends.
@@ -1216,6 +1236,7 @@ pub(super) fn settle_owed(
 /// applied as a read owed is, and its receipt goes.
 fn alone(
     core: &Core,
+    stop: &AtomicBool,
     pass: &mut ReachChange,
     lane: Lane,
     row: &QueuedWrite,
@@ -1224,7 +1245,7 @@ fn alone(
         store::meta_delete(&*core.conn()?, &receipt_key(&row.id))?;
         return Ok(None);
     };
-    let read = read_owed(core, &owed, Bin::Held, pass, false)?;
+    let read = read_owed(core, stop, &owed, Bin::Held, pass, false)?;
     if lane == Lane::Edges
         && let ReadBack::Edge {
             held: Some(edge), ..
@@ -1267,8 +1288,10 @@ fn edge_in(
     Some((edge, whole))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle_one(
     core: &Core,
+    stop: &AtomicBool,
     pass: &mut ReachChange,
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
@@ -1285,7 +1308,7 @@ fn settle_one(
         replayed: false,
         contract_named: true,
     };
-    let settled = match settle_success(core, row, &answer, shape, pass, true, Some(read)) {
+    let settled = match settle_success(core, stop, row, &answer, shape, pass, true, Some(read)) {
         Ok(settled) => settled,
         Err(error) => {
             // As on the walk: a verdict committed before the error is told
@@ -1956,9 +1979,9 @@ mod tests {
         }
     }
 
-    fn read_listing(listing: impl FnOnce(&[QueuedWrite]) -> Vec<scripted::Answer>) -> Listed {
-        let server = Scripted::start();
-        let (dir, core, edges) = linking(&server, 3);
+    /// The host of `edges`, whose first page of edges holds the first and
+    /// names a cursor, and the door of the rest of the listing.
+    fn host_of(server: &Scripted, edges: &[QueuedWrite]) -> String {
         let host = edges[0].body["from_id"].as_str().unwrap().to_string();
         server.on(
             "/items/bulk-get",
@@ -1974,6 +1997,13 @@ mod tests {
                 .to_string(),
             ))],
         );
+        host
+    }
+
+    fn read_listing(listing: impl FnOnce(&[QueuedWrite]) -> Vec<scripted::Answer>) -> Listed {
+        let server = Scripted::start();
+        let (dir, core, edges) = linking(&server, 3);
+        let host = host_of(&server, &edges);
         server.on(&format!("/items/{host}/edges"), listing(&edges));
         let rows: Vec<&QueuedWrite> = edges.iter().collect();
         let (context, before) = capture(&core, Lane::Edges, &rows).unwrap();
@@ -1995,6 +2025,34 @@ mod tests {
             200,
             &serde_json::json!({ "data": data, "next_cursor": format!("p{at}") }).to_string(),
         ))
+    }
+
+    /// A stop ends the read while a page of the listing waits, rather than
+    /// leaving the edge to the walk as a refused listing does.
+    #[test]
+    fn a_stop_ends_the_read_of_a_listing_while_a_page_of_it_waits() {
+        let server = Scripted::start();
+        let (_dir, core, edges) = linking(&server, 3);
+        let host = host_of(&server, &edges);
+        let listing = format!("/items/{host}/edges");
+        server.on(
+            &listing,
+            vec![scripted::Answer::WaitFor {
+                ready: std::sync::Arc::new(AtomicBool::new(false)),
+                answer: Box::new(listing_page(1, vec![edge_json(&edges[1])])),
+            }],
+        );
+        let rows: Vec<&QueuedWrite> = edges.iter().collect();
+        let (context, _) = capture(&core, Lane::Edges, &rows).unwrap();
+        let stop = AtomicBool::new(false);
+        let ended = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                server.wait_for(&listing, 1, std::time::Duration::from_secs(2));
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            read(&core, &stop, &context, Lane::Edges, &rows)
+        });
+        assert_eq!(ended.err(), Some(CoreError::Canceled));
     }
 
     /// A listing that never ends is read for `LISTING_PAGES` pages, and an

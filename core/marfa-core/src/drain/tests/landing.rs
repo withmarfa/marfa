@@ -66,9 +66,9 @@ fn a_create_drawn_to_a_create_that_lands_on_a_held_row_carries_over_and_draws_to
     });
     let settled = land(
         &core,
+        &crate::NEVER_STOPPED,
         &create,
         &answer,
-        Shape::Item,
         "server",
         "version_conflict".into(),
         &mut ReachChange::default(),
@@ -602,9 +602,9 @@ fn natural_key_landing_admits_source_excluded_row_under_its_moved_pin() {
     });
     let settled = land(
         &core,
+        &crate::NEVER_STOPPED,
         &create,
         &answer,
-        Shape::Item,
         "server",
         "version_conflict".into(),
         &mut ReachChange::default(),
@@ -667,9 +667,9 @@ fn natural_key_receipt_keeps_dependent_work_until_certified_landing() {
     });
     let settled = land(
         &core,
+        &crate::NEVER_STOPPED,
         &create,
         &answer,
-        Shape::Item,
         "server",
         "version_conflict".into(),
         &mut ReachChange::default(),
@@ -708,7 +708,7 @@ fn natural_key_receipt_keeps_dependent_work_until_certified_landing() {
         ))],
     );
     assert!(
-        read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default())
+        read_owed_backs(&core, &crate::NEVER_STOPPED, &mut ReachChange::default())
             .unwrap()
             .is_none()
     );
@@ -791,9 +791,9 @@ fn unfound_landing(
     });
     land(
         &core,
+        &crate::NEVER_STOPPED,
         &create,
         &answer,
-        Shape::Item,
         "server",
         "version_conflict".into(),
         &mut ReachChange::default(),
@@ -843,7 +843,7 @@ fn a_discarded_create_no_read_can_land_refuses_unsent_what_waits_on_it() {
     let reads = server.seen("/items/server").len();
     assert!(reads > 0);
     assert!(
-        read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default())
+        read_owed_backs(&core, &crate::NEVER_STOPPED, &mut ReachChange::default())
             .unwrap()
             .is_none()
     );
@@ -1229,9 +1229,9 @@ fn natural_key_landing_on_a_row_in_the_bin_keeps_waiting() {
     });
     let settled = land(
         &core,
+        &crate::NEVER_STOPPED,
         &create,
         &answer,
-        Shape::Item,
         "server",
         "version_conflict".into(),
         &mut ReachChange::default(),
@@ -1258,7 +1258,7 @@ fn natural_key_landing_on_a_row_in_the_bin_keeps_waiting() {
 
     // A later drain reads the target again for the landing alone.
     assert!(
-        read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default())
+        read_owed_backs(&core, &crate::NEVER_STOPPED, &mut ReachChange::default())
             .unwrap()
             .is_none()
     );

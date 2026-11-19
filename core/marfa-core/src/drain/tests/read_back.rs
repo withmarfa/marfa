@@ -21,7 +21,7 @@ fn a_drain_stopped_before_it_sends_leaves_every_write_queued_and_unsent() {
     assert!(server.seen("/items/a").is_empty());
     assert_eq!(core.queue().unwrap(), before);
     // The witness: not stopped, the same drain reaches the server.
-    core.drain_until(&AtomicBool::new(false)).unwrap();
+    core.drain_until(&crate::NEVER_STOPPED).unwrap();
     assert!(!server.seen("/items/a").is_empty());
     held_in_the_bin(&core, "a", 1);
 }
@@ -270,7 +270,15 @@ fn late_read_back_cannot_install_or_delete_or_settle_new_copy_debt() {
         let owed = store::owed_of(&core.conn().unwrap(), &row)
             .unwrap()
             .unwrap();
-        let read = read_owed(&core, &owed, Bin::Held, &mut ReachChange::default(), false).unwrap();
+        let read = read_owed(
+            &core,
+            &crate::NEVER_STOPPED,
+            &owed,
+            Bin::Held,
+            &mut ReachChange::default(),
+            false,
+        )
+        .unwrap();
         {
             let conn = core.conn().unwrap();
             reach::advance_generation(&conn).unwrap();
