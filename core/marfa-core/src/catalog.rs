@@ -1303,4 +1303,25 @@ mod tests {
         });
         assert_eq!(reads, 2);
     }
+
+    #[test]
+    fn a_catalog_follows_a_change_another_connection_to_the_store_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let mut writing = store::open(&path).unwrap();
+        let reading = store::open(&path).unwrap();
+        store::replace_types(&writing, &types_of(&["acme.a"])).unwrap();
+        assert!(load(&reading).unwrap().known("acme.a"));
+
+        store::replace_types(&writing, &types_of(&["acme.b"])).unwrap();
+        let seen = load(&reading).unwrap();
+        assert!(seen.known("acme.b") && !seen.known("acme.a"));
+
+        let tx = writing.transaction().unwrap();
+        store::replace_types(&tx, &types_of(&["acme.c"])).unwrap();
+        assert!(load(&reading).unwrap().known("acme.b"));
+        tx.rollback().unwrap();
+        assert!(load(&reading).unwrap().known("acme.b"));
+        assert!(load(&writing).unwrap().known("acme.b"));
+    }
 }
