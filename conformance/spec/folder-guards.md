@@ -188,6 +188,28 @@ When a missing file returns before its paused removal is confirmed, a device MUS
 
 **Tests:** `device/folders-contract-b.test.ts › does not confirm a paused deletion for a file put back since the pause`.
 
+### `folder-guards/confirm-renamed-file`
+
+When a missing file returns to its folder under another name before its paused removal is confirmed, a device MUST keep the file's item bound to the returned file.
+
+**Reason:** a confirmation lets go only of what a fresh scan of the whole folder finds under no name, as an ordinary removal does, so a rename stays a rename and the item keeps its ID.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps the item of a paused removal's file that returned under another name`.
+
+### `folder-guards/confirm-unread-folder`
+
+If a paused disk removal is confirmed while part of the folder or a missing file's path cannot be read, then a device MUST leave the missing file's item undeleted.
+
+**Reason:** an unread directory can hold the file under any name, and a path that cannot be checked is not proof that the file is gone.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`.
+
+### `folder-guards/confirm-unread-folder-unsure-count`
+
+If a paused disk removal is confirmed while part of the folder or a missing file's path cannot be read, then a device MUST report the missing file in `unsure`.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`.
+
 ### `folder-guards/confirm-uncertain-file`
 
 When a paused disk removal is confirmed but an unavailable peer folder prevents ruling out a move, a device MUST leave the file’s item undeleted.

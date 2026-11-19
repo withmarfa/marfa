@@ -648,6 +648,70 @@ it("does not confirm a paused deletion for a file put back since the pause", asy
   expect(readFileSync(join(harness.dir, "Note 0.md"))).toEqual(original);
 });
 
+it("keeps the item of a paused removal's file that returned under another name", async () => {
+  harness = await folderHarness("contract-b-confirm-renamed", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const away = tempFolder("contract-b-confirm-renamed-away");
+  for (const n of [0, 1, 2])
+    renameSync(
+      join(harness.dir, `Note ${String(n)}.md`),
+      join(away, `Note ${String(n)}.md`),
+    );
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  renameSync(join(away, "Note 0.md"), join(harness.dir, "moved.md"));
+  const confirmed = await harness.folder.confirm();
+  // The two files gone under every name are the witness that the
+  // confirmation lets go of what it proves gone.
+  expect(confirmed.ok && confirmed.value.deleted).toBe(2);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok &&
+      queued.value
+        .filter((r) => r.kind === "delete_item")
+        .map((r) => r.item_id)
+        .sort(),
+  ).toEqual([row(1).item.id, row(2).item.id]);
+  const status = await harness.folder.status();
+  expect(
+    status.ok && status.value.files.find((f) => f.path === "moved.md")?.item_id,
+  ).toBe(row(0).item.id);
+});
+
+it("keeps a paused removal unsure while part of the folder cannot be read", async () => {
+  harness = await folderHarness("contract-b-confirm-unread", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  for (const n of [0, 1, 2]) rmSync(join(harness.dir, `Note ${String(n)}.md`));
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  const sealed = join(harness.dir, "sealed");
+  mkdirSync(sealed);
+  chmodSync(sealed, 0o000);
+  try {
+    const confirmed = await harness.folder.confirm();
+    expect(confirmed.ok && confirmed.value.deleted).toBe(0);
+    expect(
+      confirmed.ok && confirmed.value.unsure.map((f) => f.path).sort(),
+    ).toEqual(["Note 0.md", "Note 1.md", "Note 2.md"]);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((r) => r.kind === "delete_item"),
+    ).toEqual([]);
+  } finally {
+    chmodSync(sealed, 0o700);
+  }
+  const rescanned = await harness.folder.scan();
+  expect(rescanned.ok && rescanned.value.paused).toBe(3);
+  const released = await harness.folder.confirm();
+  expect(released.ok && released.value.deleted).toBe(3);
+});
+
 it.each(["include", "ignore"] as const)(
   "refuses an invalid %s pattern before admission",
   async (list) => {
