@@ -1025,12 +1025,12 @@ describe("where backups may go", () => {
   it("refuses a write to /config that would set both object_store_bucket and backup_path, and keeps what was stored", async () => {
     const server = await bootFreshServer("backup-folder-both", DISK);
     try {
-      const { operator } = clientsFor(server);
-      const taken = await operator.patchConfig({ backup_path: folder });
+      const { operator, local } = clientsFor(server);
+      const taken = await local.patchConfig({ backup_path: folder });
       expect(taken.status, JSON.stringify(taken.error)).toBe(200);
 
       const errors = refusedPaths(
-        await operator.patchConfig({ object_store_bucket: "a-bucket" }),
+        await local.patchConfig({ object_store_bucket: "a-bucket" }),
       );
       expect(errors.map((error) => error.path)).toEqual([
         "object_store_bucket",
@@ -1053,7 +1053,7 @@ describe("where backups may go", () => {
     });
     const outside = tempFolder("marfa-backup-outside-");
     try {
-      const { operator } = clientsFor(server);
+      const { operator, local } = clientsFor(server);
       const data = dirname(server.sqlitePath);
       const linked = join(outside, "into-the-blobs");
       symlinkSync(blobs, linked);
@@ -1063,7 +1063,7 @@ describe("where backups may go", () => {
         [join(linked, "backups"), "inside the blob folder"],
       ] as const) {
         const errors = refusedPaths(
-          await operator.patchConfig({ backup_path: path }),
+          await local.patchConfig({ backup_path: path }),
         );
         expect(
           errors.map((error) => error.path),
@@ -1077,7 +1077,7 @@ describe("where backups may go", () => {
       });
 
       // The witness: a folder outside both is taken.
-      const taken = await operator.patchConfig({ backup_path: `${outside}/` });
+      const taken = await local.patchConfig({ backup_path: `${outside}/` });
       expect(taken.status, JSON.stringify(taken.error)).toBe(200);
       expect((taken.data as Record<string, unknown>).backup_path).toBe(outside);
     } finally {
@@ -1092,9 +1092,9 @@ describe("where backups may go", () => {
     const parent = tempFolder("marfa-backup-later-");
     const missing = join(parent, "not mounted");
     try {
-      const { operator, working } = clientsFor(server);
+      const { operator, working, local } = clientsFor(server);
       const owner = ownerOf(server);
-      const set = await operator.patchConfig({ backup_path: missing });
+      const set = await local.patchConfig({ backup_path: missing });
       expect(set.status, JSON.stringify(set.error)).toBe(200);
 
       const unusable = await waitFor(

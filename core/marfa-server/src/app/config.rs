@@ -16,7 +16,9 @@ use super::sign_in_check;
 use super::sources;
 use super::{App, instance, stored};
 use crate::settings::registry::{
-    ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ENTRIES, Entry, SIGN_IN_ADDRESS,
+    ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ENTRIES, Entry, OBJECT_STORE_BUCKET,
+    OBJECT_STORE_ENDPOINT, OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION,
+    OBJECT_STORE_SECRET_ACCESS_KEY, SIGN_IN_ADDRESS,
 };
 use crate::settings::sealed::Sealer;
 use crate::settings::together::{self, Breach};
@@ -27,6 +29,17 @@ const CONFIRMATION: &str = "confirm_sign_in_address_change";
 const SKIP_CHECK: &str = "skip_sign_in_address_check";
 /// Names the secrets that are set; a body may send it back, and it sets nothing.
 const SECRETS_SET: &str = "secrets_set";
+/// Where the instance's files and backups go.
+const DESTINATION: [&Entry; 6] = [
+    BACKUP_PATH.entry,
+    OBJECT_STORE_BUCKET.entry,
+    OBJECT_STORE_ENDPOINT.entry,
+    OBJECT_STORE_REGION.entry,
+    OBJECT_STORE_PATH_STYLE.entry,
+    OBJECT_STORE_PREFIX.entry,
+];
+/// The settings a stored secret was given for.
+const SIGNED_FOR: [&Entry; 2] = [OBJECT_STORE_ENDPOINT.entry, OBJECT_STORE_BUCKET.entry];
 
 /// How a write treats what its body leaves out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -284,6 +297,8 @@ struct Plan {
     rewrites_addresses: bool,
     /// The body removes the row of `enforcement` without naming it.
     drops_levers: bool,
+    /// The store moves, so the secret given for the old one is removed.
+    drops_secret: bool,
     before: Rows,
     after: Rows,
 }
@@ -376,12 +391,23 @@ impl Plan {
                 None => after.remove(key),
             };
         }
+        let secret = OBJECT_STORE_SECRET_ACCESS_KEY.entry.key;
+        let drops_secret = !request.names(secret)
+            && after.contains_key(secret)
+            && SIGNED_FOR
+                .iter()
+                .any(|entry| before.get(entry.key) != after.get(entry.key));
+        if drops_secret {
+            ops.insert(secret.to_string(), None);
+            after.remove(secret);
+        }
         Plan {
             ops: ops.into_iter().collect(),
             name,
             touched,
             rewrites_addresses,
             drops_levers,
+            drops_secret,
             before,
             after,
         }
@@ -429,6 +455,28 @@ impl Plan {
                 .get(ALLOW_PRIVATE_ADDRESSES)
         };
         allowed(&self.before) != allowed(&self.after)
+    }
+
+    /// Judged on the stored rows, so fixing a row that does not read counts as a change.
+    fn destination_change(&self) -> bool {
+        DESTINATION
+            .iter()
+            .any(|entry| self.before.get(entry.key) != self.after.get(entry.key))
+    }
+
+    /// Whether the change needs a recent sign-in beyond moving the sign-in address.
+    fn needs_step_up(&self, app: &App) -> bool {
+        self.private_addresses_change(app) || self.destination_change()
+    }
+
+    /// The fields the write changes, for the audit record.
+    fn audited(&self, request: &Request) -> Vec<&'static str> {
+        let mut fields = request.field_names();
+        if self.drops_secret {
+            fields.push(OBJECT_STORE_SECRET_ACCESS_KEY.entry.key);
+            fields.sort_unstable();
+        }
+        fields
     }
 
     /// What the change does to the addresses, and whether it needs a person to
@@ -589,7 +637,7 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
-/// Refuses as the write would, then checks the new sign-in address and names the one that passed.
+/// Refuses as the write would, then checks the backup folder and the new sign-in address.
 async fn check_sign_in(
     app: &Arc<App>,
     caller: &Caller,
@@ -602,25 +650,26 @@ async fn check_sign_in(
         ));
     }
     let reading = app.clone();
-    let (request, private_change, moved) = app
+    let (request, step_up, moved) = app
         .db
         .read(move |tx| {
             let plan = Plan::of(&request, rows_of(stored::rows(tx)?));
-            let private_change = plan.private_addresses_change(&reading);
+            let step_up = plan.needs_step_up(&reading);
             let moved = plan
                 .judge(&reading)
                 .and_then(|()| plan.addresses_at(&reading, tx));
-            Ok((request, private_change, moved))
+            Ok((request, step_up, moved))
         })
         .await?;
     let at = app.clock.stamp();
-    if private_change {
+    if step_up {
         caller.require_step_up(Permission::ConfigManage, &at)?;
     }
     let moved = moved?;
     if moved.sign_in_moves {
         caller.require_step_up(Permission::ConfigManage, &at)?;
     }
+    check_backup_path(app, &request).await?;
     if !moved.confirm {
         return Ok((request, None));
     }
@@ -638,7 +687,6 @@ async fn check_sign_in(
 
 pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
     request.check_identity(app)?;
-    check_backup_path(app, &request).await?;
     let (request, answered) = check_sign_in(app, caller, request).await?;
     let writing = app.clone();
     let working = app.clone();
@@ -650,7 +698,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 let tx = unit.tx();
                 let before = rows_of(stored::rows(tx)?);
                 let plan = Plan::of(&request, before);
-                if plan.private_addresses_change(&writing) {
+                if plan.needs_step_up(&writing) {
                     unit.caller
                         .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
@@ -678,7 +726,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                 if let Some(name) = &plan.name {
                     instance::set_name(tx, name.as_deref())?;
                 }
-                unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
+                unit.audit_set("config", Some(json!({ "fields": plan.audited(&request) })))?;
                 let staged = stored::stage(tx, &writing)?;
                 let name = instance::stored_name(tx)?;
                 let mut answer = document(&writing, &plan.after, name);

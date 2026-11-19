@@ -894,3 +894,211 @@ async fn the_root_answers_the_request_cap_as_it_stands_with_no_restart() {
         json!(2048)
     );
 }
+
+/// One value for each setting that says where files and backups go, other than its default.
+fn destinations(folder: &str) -> [(&'static str, Value); 6] {
+    [
+        ("backup_path", json!(folder)),
+        ("object_store_bucket", json!("a-bucket")),
+        ("object_store_endpoint", json!("https://store.example")),
+        ("object_store_region", json!("eu-west-2")),
+        ("object_store_path_style", json!(false)),
+        ("object_store_prefix", json!("elsewhere")),
+    ]
+}
+
+#[tokio::test]
+async fn a_key_never_changes_where_files_and_backups_go() {
+    let instance = Instance::start(&[]).await;
+    let key = instance.manager().await;
+    let folder = TempDir::new().unwrap();
+    let folder = folder.path().to_str().unwrap().to_string();
+
+    let other = json!({ "trash_retention_days": 30 });
+    let witness = instance.as_key(&key, Method::PATCH, other).await;
+    assert_eq!(witness.status, StatusCode::OK, "{}", witness.text);
+
+    for (name, value) in destinations(&folder) {
+        let refused = instance
+            .as_key(&key, Method::PATCH, json!({ name: value }))
+            .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{name}: {}",
+            refused.text
+        );
+        assert_eq!(refused.code(), "app_sign_in_required", "{name}");
+        assert_eq!(instance.row(name).await, None, "{name}");
+
+        let put = json!({ name: value, "trash_retention_days": 30 });
+        let refused = instance.as_key(&key, Method::PUT, put).await;
+        assert_eq!(
+            refused.code(),
+            "app_sign_in_required",
+            "PUT {name}: {}",
+            refused.text
+        );
+        assert_eq!(instance.row(name).await, None, "PUT {name}");
+
+        let local = instance.patch(json!({ name: value })).await;
+        assert_eq!(local.status, StatusCode::OK, "{name}: {}", local.text);
+        let stored = instance.row(name).await;
+        assert!(stored.is_some(), "{name}");
+
+        let restated = json!({ name: value, "trash_retention_days": 30 });
+        let restated = instance.as_key(&key, Method::PATCH, restated).await;
+        assert_eq!(restated.status, StatusCode::OK, "{name}: {}", restated.text);
+        let whole = json!({ name: value, "trash_retention_days": 30 });
+        let whole = instance.as_key(&key, Method::PUT, whole).await;
+        assert_eq!(whole.status, StatusCode::OK, "PUT {name}: {}", whole.text);
+
+        let cleared = instance
+            .as_key(&key, Method::PATCH, json!({ name: null }))
+            .await;
+        assert_eq!(
+            cleared.code(),
+            "app_sign_in_required",
+            "null {name}: {}",
+            cleared.text
+        );
+        let omitted = json!({ "trash_retention_days": 30 });
+        let omitted = instance.as_key(&key, Method::PUT, omitted).await;
+        assert_eq!(
+            omitted.code(),
+            "app_sign_in_required",
+            "omitted {name}: {}",
+            omitted.text
+        );
+        assert_eq!(instance.row(name).await, stored, "{name}");
+
+        let local = instance.patch(json!({ name: null })).await;
+        assert_eq!(local.status, StatusCode::OK, "{name}: {}", local.text);
+    }
+}
+
+#[tokio::test]
+async fn a_destination_change_between_the_check_and_the_write_is_judged_on_what_the_write_commits()
+{
+    let instance = Instance::start(&[]).await;
+    let key = instance.manager().await;
+    let prefix = "object_store_prefix";
+    let set = instance.patch(json!({ prefix: "first" })).await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.text);
+    let unchanged = json!({ prefix: "first" });
+    let unchanged = instance.as_key(&key, Method::PATCH, unchanged).await;
+    assert_eq!(unchanged.status, StatusCode::OK, "{}", unchanged.text);
+
+    instance
+        .app
+        .faults
+        .set("hold:write", Some("config.update"))
+        .unwrap();
+    let write = instance.as_key(&key, Method::PATCH, json!({ prefix: "first" }));
+    let moved = async {
+        let mut held = false;
+        for _ in 0..500 {
+            if instance.app.faults.list().iter().any(|f| f.waiting > 0) {
+                held = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert!(held, "the write never reached its hold");
+        instance
+            .app
+            .db
+            .write(Write::own(), |tx| {
+                tx.execute(
+                    "UPDATE settings SET value = 'second' WHERE key = 'object_store_prefix'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        instance.app.faults.clear(Some("hold:write"));
+    };
+    let (written, ()) = tokio::join!(write, moved);
+    assert_eq!(written.status, StatusCode::FORBIDDEN, "{}", written.text);
+    assert_eq!(written.code(), "app_sign_in_required");
+    assert_eq!(instance.row(prefix).await.as_deref(), Some("second"));
+}
+
+#[tokio::test]
+async fn moving_the_store_removes_its_secret_unless_the_write_sets_one() {
+    let instance = Instance::start(&[]).await;
+    let secret = "object_store_secret_access_key";
+    let key_id = "object_store_access_key_id";
+    let store = json!({
+        "object_store_bucket": "a-bucket",
+        "object_store_endpoint": "https://store.example",
+        key_id: "the-key",
+        secret: "the-secret",
+    });
+    let set = instance.patch(store).await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.text);
+    let first = instance.row(secret).await;
+    assert!(first.is_some());
+
+    for kept in [
+        json!({ "object_store_region": "eu-west-2" }),
+        json!({ "object_store_prefix": "elsewhere" }),
+        json!({ "object_store_path_style": false }),
+        json!({ "object_store_endpoint": "HTTPS://Store.Example/" }),
+        json!({ "object_store_bucket": "a-bucket", key_id: "another-key" }),
+    ] {
+        let label = kept.to_string();
+        let written = instance.patch(kept).await;
+        assert_eq!(written.status, StatusCode::OK, "{label}: {}", written.text);
+        assert_eq!(instance.row(secret).await, first, "{label}");
+    }
+
+    let moved = instance
+        .patch(json!({ "object_store_endpoint": "https://other.example" }))
+        .await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+    assert_eq!(moved.body.get("secrets_set"), None, "{}", moved.text);
+    assert_eq!(instance.row(secret).await, None);
+    assert_eq!(instance.row(key_id).await.as_deref(), Some("another-key"));
+    let audited = instance
+        .call(Method::GET, "/audit?action=config.update&limit=1", None)
+        .await;
+    assert_eq!(
+        audited.body["data"][0]["details"]["fields"],
+        json!(["object_store_endpoint", secret]),
+        "{}",
+        audited.text
+    );
+
+    let given = json!({ "object_store_endpoint": "https://third.example", secret: "new" });
+    let given = instance.patch(given).await;
+    assert_eq!(given.status, StatusCode::OK, "{}", given.text);
+    assert!(instance.row(secret).await.is_some());
+
+    let bucket = instance
+        .patch(json!({ "object_store_bucket": "b-bucket" }))
+        .await;
+    assert_eq!(bucket.status, StatusCode::OK, "{}", bucket.text);
+    assert_eq!(instance.row(secret).await, None);
+
+    let again = instance.patch(json!({ secret: "again" })).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text);
+    let whole = json!({
+        "object_store_bucket": "b-bucket",
+        "object_store_endpoint": "https://third.example",
+        "object_store_region": "eu-west-2",
+        "object_store_prefix": "elsewhere",
+        "object_store_path_style": false,
+        key_id: "another-key",
+    });
+    let restated = instance.call(Method::PUT, "/config", Some(whole)).await;
+    assert_eq!(restated.status, StatusCode::OK, "{}", restated.text);
+    assert!(instance.row(secret).await.is_some());
+
+    let omitted = json!({ "object_store_bucket": "b-bucket" });
+    let omitted = instance.call(Method::PUT, "/config", Some(omitted)).await;
+    assert_eq!(omitted.status, StatusCode::OK, "{}", omitted.text);
+    assert_eq!(instance.row("object_store_endpoint").await, None);
+    assert_eq!(instance.row(secret).await, None);
+}

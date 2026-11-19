@@ -861,7 +861,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
     managementKey = management.body.key;
   }
   if (status.body.claimed !== true && hookFreeRun()) {
-    // Through the private local process: changing `allow_private_addresses` needs no recent sign-in there.
+    // Through the private local process: these settings need no recent sign-in there.
     const set = await controlRequest(controlSocket, "/config", {
       method: "PATCH",
       body: {

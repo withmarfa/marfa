@@ -71,7 +71,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "blobs.manage":
     "Managing blob bytes and copies across the instance, without granting item content access.",
   "config.manage":
-    "Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and the stored settings, such as the addresses, the object store, the backup destination and the heartbeat and error notice settings. A secret setting can be set or removed but is never read back, and a `PUT` that leaves it out keeps it.",
+    "Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and the stored settings, such as the addresses, the object store, the backup destination and the heartbeat and error notice settings. A secret setting can be set or removed but is never read back. A `PUT` keeps unnamed secrets, except `object_store_secret_access_key` when its bucket or endpoint changes. Changing `backup_path` or an `object_store_` setting other than the access key ID and the secret needs a recent sign-in, as `allow_private_addresses` does.",
   "connectors.manage":
     "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.",
   "grants.manage": "Listing, narrowing and revoking other apps' access.",

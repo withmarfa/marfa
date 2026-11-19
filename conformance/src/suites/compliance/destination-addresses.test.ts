@@ -102,7 +102,7 @@ describe("where the server may send", () => {
         expect(same.status, JSON.stringify(same.error)).toBe(200);
         // A private destination stored while the switch is on does not turn
         // the key's refusal into a judgment of the settings.
-        await setFrom(operator, {
+        await setFrom(socketOf(server), {
           object_store_endpoint: "http://127.0.0.1:9",
         });
         const off = await operator.patchConfig({ [SWITCH]: false });
@@ -125,7 +125,7 @@ describe("where the server may send", () => {
     async () => {
       const server = await bootFreshServer("switch-literals", PUBLIC_ONLY);
       try {
-        const { operator } = clientsFor(server);
+        const socket = socketOf(server);
         const keys = [
           "heartbeat_url",
           "error_webhook_url",
@@ -140,7 +140,7 @@ describe("where the server may send", () => {
         ];
         for (const key of keys) {
           for (const host of hosts) {
-            const refused = await operator.patchConfig({
+            const refused = await socket.patchConfig({
               [key]: `http://${host}/hush-${key}`,
             });
             expect(refused.status, `${key} ${host}`).toBe(400);
@@ -150,11 +150,10 @@ describe("where the server may send", () => {
             expect(said).not.toContain(`hush-${key}`);
           }
           // The witness: the same setting takes a name, which a lookup judges.
-          await setFrom(operator, { [key]: "http://receiver.example.test/" });
-          await setFrom(operator, { [key]: null });
+          await setFrom(socket, { [key]: "http://receiver.example.test/" });
+          await setFrom(socket, { [key]: null });
         }
 
-        const socket = socketOf(server);
         await setFrom(socket, {
           [SWITCH]: true,
           object_store_endpoint: "http://127.0.0.1:9",
@@ -288,12 +287,13 @@ describe("where the server may send", () => {
           object_store_path_style: true,
           object_store_prefix: `fixture-${randomUUID()}`,
         };
-        const literal = await operator.patchConfig({
+        const socket = socketOf(server);
+        const literal = await socket.patchConfig({
           ...store,
           object_store_endpoint: endpoint,
         });
         expect(literal.status).toBe(400);
-        await setFrom(operator, {
+        await setFrom(socket, {
           ...store,
           object_store_endpoint: byName(endpoint),
         });
@@ -303,7 +303,7 @@ describe("where the server may send", () => {
         });
         expect(unusable.status).toBe("failing");
 
-        await setFrom(socketOf(server), { [SWITCH]: true });
+        await setFrom(socket, { [SWITCH]: true });
         await waitFor("the object store to be in use", async () => {
           const said = await backups();
           return said.destination === "bucket" &&
@@ -343,6 +343,7 @@ describe("where the server may send", () => {
       });
       try {
         const { operator, working } = clientsFor(server);
+        const socket = socketOf(server);
         const backups = async () => {
           const answer = await operator.rawRequest<{
             backups: Record<string, unknown>;
@@ -364,7 +365,7 @@ describe("where the server may send", () => {
           object_store_endpoint: named,
           object_store_path_style: false,
         };
-        await setFrom(operator, {
+        await setFrom(socket, {
           ...settings,
           object_store_prefix: `fixture-${randomUUID()}`,
         });
@@ -377,7 +378,7 @@ describe("where the server may send", () => {
         // The witness: the same store, its host judged public, is taken.
         await server.setFault(`${host}=${PUBLIC_ADDRESS}>127.0.0.1`);
         const prefix = `fixture-${randomUUID()}`;
-        await setFrom(operator, { ...settings, object_store_prefix: prefix });
+        await setFrom(socket, { ...settings, object_store_prefix: prefix });
         await waitFor("the object store to be in use", async () => {
           const said = await backups();
           return said.destination === "bucket" &&
