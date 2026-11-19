@@ -996,6 +996,113 @@ fn a_lookup_stopped_while_the_root_is_read_sends_no_item_request_however_soon_th
     }
 }
 
+/// A follow of a copy whose stream open waits on `held`, answered `first`
+/// once released, which is just after the stop where `stopped`, and `then`
+/// after. Answers the
+/// paths the open then sent and how many renewals started, once the open's
+/// request has ended, or, where nothing stops it, once the stream is opened.
+#[cfg(debug_assertions)]
+fn a_follows_open_held_at(
+    held: &str,
+    [first, then]: [scripted::Answer; 2],
+    stopped: bool,
+) -> (Vec<&'static str>, usize) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    let renewals = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&renewals);
+    core.renew_credential_with(Box::new(move |_| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Ok("fresh".into())
+    }));
+    crate::fault::observe(true);
+    let ended_before = crate::fault::reached("request-ended");
+    let let_go_before = crate::fault::reached("request-let-go");
+    let ready = Arc::new(AtomicBool::new(false));
+    let before = server.seen(held).len();
+    let wait = scripted::Answer::WaitFor {
+        ready: Arc::clone(&ready),
+        answer: Box::new(first),
+    };
+    server.on(held, vec![wait, then]);
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let following = scope.spawn(|| core.follow(&stop, false, |_| {}));
+        server.wait_for(held, before + 1, std::time::Duration::from_secs(10));
+        if stopped {
+            stop.store(true, Ordering::SeqCst);
+        }
+        ready.store(true, Ordering::SeqCst);
+        if !stopped {
+            server.wait_for("/events", 1, std::time::Duration::from_secs(10));
+            stop.store(true, Ordering::SeqCst);
+        }
+        following.join().unwrap().unwrap();
+    });
+    if stopped {
+        until("the open's request never ended", || {
+            crate::fault::reached("request-ended") == ended_before + 1
+        });
+        assert_eq!(crate::fault::reached("request-let-go"), let_go_before + 1);
+    }
+    let sent = ["/types", "/edge-types", "/events"]
+        .into_iter()
+        .filter(|path| !server.seen(path).is_empty())
+        .collect();
+    (sent, renewals.load(Ordering::SeqCst))
+}
+
+#[cfg(debug_assertions)]
+fn root() -> [scripted::Answer; 2] {
+    [
+        scripted::root(scripted::INSTANCE),
+        scripted::root(scripted::INSTANCE),
+    ]
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_follow_stopped_while_its_open_reads_the_root_sends_no_catalog_or_stream_request() {
+    let (sent, renewals) = a_follows_open_held_at("/", root(), false);
+    assert_eq!(sent, ["/types", "/edge-types", "/events"]);
+    assert_eq!(renewals, 0);
+    let (sent, renewals) = a_follows_open_held_at("/", root(), true);
+    assert_eq!(
+        sent,
+        Vec::<&str>::new(),
+        "a request was sent after the stop"
+    );
+    assert_eq!(renewals, 0);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_follow_stopped_while_its_open_reads_the_catalog_opens_no_stream() {
+    let types = || scripted::certified(scripted::types(&[("core.note", None)]));
+    let (sent, _) = a_follows_open_held_at("/types", [types(), types()], false);
+    assert_eq!(sent, ["/types", "/edge-types", "/events"]);
+    let (sent, _) = a_follows_open_held_at("/types", [types(), types()], true);
+    assert_eq!(sent, ["/types"], "a request was sent after the stop");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_follow_stopped_while_its_open_is_refused_starts_no_renewal() {
+    let refused = || {
+        [
+            scripted::refusal(401, "unauthorized"),
+            scripted::certified(scripted::types(&[("core.note", None)])),
+        ]
+    };
+    let (_, renewals) = a_follows_open_held_at("/types", refused(), false);
+    assert_eq!(renewals, 1, "the witness renewed no credential");
+    let (sent, renewals) = a_follows_open_held_at("/types", refused(), true);
+    assert_eq!(renewals, 0, "a renewal started after the stop");
+    assert_eq!(sent, ["/types"]);
+}
+
 #[test]
 fn a_core_dropped_after_a_stopped_root_read_leaves_the_copy_to_open_as_the_writer() {
     let server = Scripted::start();

@@ -1467,7 +1467,7 @@ fn follow_paced(
                 report.reconnects += 1;
             }
             asked = true;
-            let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
+            let Some(reached) = reach(&http, &cursor, stop) else {
                 break;
             };
             let (fetched, frames) = match reached {
@@ -2125,37 +2125,23 @@ fn mark_synced_while_live(
 /// The catalog and the stream of the instance the copy was built from.
 type Reached = Result<(WireCatalog, Receiver<io::Result<Frame>>)>;
 
-/// `None` when `stop` was set first.
-fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
-    let (sender, answer) = mpsc::sync_channel::<Reached>(1);
-    let asked = http.to_let_go();
-    let http = asked.clone();
+/// `None` when `stop` was set first. The stream's open is a stoppable read:
+/// its thread asks this one before each request and renewal.
+fn reach(http: &Http, cursor: &str, stop: &AtomicBool) -> Option<Reached> {
+    if stop.load(Ordering::Relaxed) {
+        return None;
+    }
     let cursor = cursor.to_string();
-    let ends_by = EndsBy::here();
-    thread::spawn(inheriting(move || {
-        let _ends_by = EndsBy::hold(ends_by);
-        let reached = (|| {
-            http.confirm_again()?;
-            let catalog = http.catalog()?;
-            let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
-            Ok((catalog, frames))
-        })();
-        let _ = sender.send(reached);
-    }));
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            asked.let_go();
-            return None;
-        }
-        match answer.recv_timeout(poll) {
-            Ok(reached) => return Some(reached),
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => {
-                return Some(Err(CoreError::Network(
-                    "the request for the event stream ended with no answer".into(),
-                )));
-            }
-        }
+    let reached = Pending::start(http, move |http| {
+        http.confirm_again()?;
+        let catalog = http.catalog()?;
+        let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
+        Ok((catalog, frames))
+    })
+    .answer(stop);
+    match reached {
+        Err(CoreError::Canceled) if stop.load(Ordering::Relaxed) => None,
+        reached => Some(reached),
     }
 }
 
