@@ -325,7 +325,18 @@ it("sets one setting by name as the kind it holds, and removes it", async () => 
   await keyed.json(["config", "set", "enrichment_ocr_enabled", "false"]);
   expect((await setting("enrichment_ocr_enabled")).stored).toBe(false);
 
-  await keyed.json(["config", "set", "object_store_region", "eu-west-2"]);
+  // Where files go is changed by a person who signed in just now, or locally.
+  const region = ["config", "set", "object_store_region", "eu-west-2"];
+  const keyedRegion = await keyed.run(region);
+  expect(keyedRegion.code).toBe(1);
+  expect(keyedRegion.stderr).toContain("a person does it from an app");
+  expect(keyedRegion.stderr).toContain("private local command");
+  const keyedRegionJson = await keyed.refused(region);
+  expect(keyedRegionJson.envelope.error.server?.code).toBe(
+    "app_sign_in_required",
+  );
+  expect((await setting("object_store_region")).stored).toBeNull();
+  await local.json(region);
   expect((await setting("object_store_region")).stored).toBe("eu-west-2");
 
   // A value of another kind, and a name nobody lists, send nothing.
@@ -346,7 +357,8 @@ it("sets one setting by name as the kind it holds, and removes it", async () => 
   expect(after.stored).toBeNull();
   expect(after.value).toBe(before.value);
   await keyed.json(["config", "unset", "enrichment_ocr_enabled"]);
-  await keyed.json(["config", "unset", "object_store_region"]);
+  await local.json(["config", "unset", "object_store_region"]);
+  expect((await setting("object_store_region")).stored).toBeNull();
 });
 
 it("reads a secret setting from standard input and refuses it as an argument", async () => {

@@ -143,10 +143,10 @@ describe("a destination set through /config", () => {
       const first = tempFolder("marfa-destination-first-");
       const second = tempFolder("marfa-destination-second-");
       try {
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const owner = ownerOf(server);
         const id = await instanceIdOf(server);
-        const set = await operator.patchConfig({ backup_path: first });
+        const set = await local.patchConfig({ backup_path: first });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         await waitFor("the first folder to be in use", async () =>
           (await backups(server)).destination === "folder" ? true : undefined,
@@ -155,7 +155,7 @@ describe("a destination set through /config", () => {
         await server.setFault("hold:backup:put");
         const running = owner.runBackup();
         await server.waitForHold("hold:backup:put");
-        const moved = await operator.patchConfig({ backup_path: second });
+        const moved = await local.patchConfig({ backup_path: second });
         expect(moved.status, JSON.stringify(moved.error)).toBe(200);
         await waitFor("the second folder to be in use", async () => {
           const stores = (await operator.listBlobStores()).data.data;
@@ -250,8 +250,8 @@ describe("a destination set through /config", () => {
     async () => {
       const server = await bootFreshServer("destination-untidy", DISK);
       try {
-        const { operator } = clientsFor(server);
-        const set = await operator.patchConfig({
+        const { operator, local } = clientsFor(server);
+        const set = await local.patchConfig({
           object_store_endpoint: "http://127.0.0.1:9/",
           object_store_prefix: "/fixtures/untidy/",
           object_store_region: "  eu-west-1 ",
@@ -264,7 +264,7 @@ describe("a destination set through /config", () => {
         });
 
         const carried = "http://keyid:hush-hush@127.0.0.1:9";
-        const refused = await operator.patchConfig({
+        const refused = await local.patchConfig({
           object_store_endpoint: carried,
         });
         expect(refused.status).toBe(400);
@@ -276,7 +276,7 @@ describe("a destination set through /config", () => {
           object_store_endpoint: "http://127.0.0.1:9",
         });
 
-        const blank = await operator.patchConfig({
+        const blank = await local.patchConfig({
           object_store_endpoint: "   ",
           object_store_region: "",
         });
@@ -298,7 +298,7 @@ describe("a destination set through /config", () => {
     async () => {
       const server = await bootFreshServer("destination-region", DISK);
       try {
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         for (const plain of [
           "auto",
           "us-east-1",
@@ -308,7 +308,7 @@ describe("a destination set through /config", () => {
           "-a",
           "a-",
         ]) {
-          const set = await operator.patchConfig({
+          const set = await local.patchConfig({
             object_store_region: plain,
           });
           expect(set.status, JSON.stringify(set.error)).toBe(200);
@@ -318,7 +318,7 @@ describe("a destination set through /config", () => {
           ...withEachOtherCharacter(/[A-Za-z0-9_-]/),
           "a".repeat(64),
         ]) {
-          const refused = await operator.patchConfig({
+          const refused = await local.patchConfig({
             object_store_region: odd,
           });
           expect(refused.status, odd).toBe(400);
@@ -332,7 +332,7 @@ describe("a destination set through /config", () => {
         // The rule takes some of these and refuses others.
         const answers = new Set<number>();
         for (const name of hyphenatedNames()) {
-          const answer = await operator.patchConfig({
+          const answer = await local.patchConfig({
             object_store_region: name,
           });
           answers.add(answer.status);
@@ -344,13 +344,13 @@ describe("a destination set through /config", () => {
           }
         }
         expect([...answers].sort()).toEqual([200, 400]);
-        const padded = await operator.patchConfig({
+        const padded = await local.patchConfig({
           object_store_region: "  eu-west-1 ",
         });
         expect(padded.status, JSON.stringify(padded.error)).toBe(200);
         expect(padded.data).toMatchObject({ object_store_region: "eu-west-1" });
         for (const blank of ["", "   "]) {
-          const cleared = await operator.patchConfig({
+          const cleared = await local.patchConfig({
             object_store_region: blank,
           });
           expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
@@ -368,8 +368,8 @@ describe("a destination set through /config", () => {
     async () => {
       const server = await bootFreshServer("destination-bucket", DISK);
       try {
-        const { operator } = clientsFor(server);
-        const endpoint = await operator.patchConfig({
+        const { operator, local } = clientsFor(server);
+        const endpoint = await local.patchConfig({
           object_store_endpoint: "http://127.0.0.1:9/",
         });
         expect(endpoint.status, JSON.stringify(endpoint.error)).toBe(200);
@@ -380,7 +380,7 @@ describe("a destination set through /config", () => {
           "tenant:bucket",
           "My_Old_Bucket",
         ]) {
-          const set = await operator.patchConfig({
+          const set = await local.patchConfig({
             object_store_bucket: valid,
           });
           expect(set.status, JSON.stringify(set.error)).toBe(200);
@@ -393,7 +393,7 @@ describe("a destination set through /config", () => {
           "b\u00fccket",
           "b".repeat(256),
         ]) {
-          const refused = await operator.patchConfig({
+          const refused = await local.patchConfig({
             object_store_bucket: odd,
           });
           expect(refused.status, odd).toBe(400);
@@ -404,13 +404,13 @@ describe("a destination set through /config", () => {
         expect((await operator.getConfig()).data).toMatchObject({
           object_store_bucket: "My_Old_Bucket",
         });
-        const padded = await operator.patchConfig({
+        const padded = await local.patchConfig({
           object_store_bucket: "  my.bucket ",
         });
         expect(padded.status, JSON.stringify(padded.error)).toBe(200);
         expect(padded.data).toMatchObject({ object_store_bucket: "my.bucket" });
         for (const blank of ["", "   "]) {
-          const cleared = await operator.patchConfig({
+          const cleared = await local.patchConfig({
             object_store_bucket: blank,
           });
           expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
@@ -622,7 +622,7 @@ describe("a stored store setting that does not read", () => {
         await server.restart(() => {
           storeSettingRow(server.sqlitePath, unreadable.key, unreadable.value);
         });
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const after = (await operator.listBlobStores()).data.data;
         expect(
           after.find((store) => store.id === bucket.id)!.detached_at,
@@ -640,7 +640,7 @@ describe("a stored store setting that does not read", () => {
         expect(existsSync(diskPath(server, hash))).toBe(true);
         expect((await operator.downloadBlob(hash)).status).toBe(200);
 
-        const set = await operator.patchConfig({ [unreadable.key]: null });
+        const set = await local.patchConfig({ [unreadable.key]: null });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         await waitFor("the object store to be in use again", async () => {
           const said = await backups(server);
@@ -686,7 +686,7 @@ describe("a stored store setting that does not read", () => {
           storeSettingRow(server.sqlitePath, unreadable.key, unreadable.value);
           rmSync(blobFolder(server), { recursive: true, force: true });
         });
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const told = await storeConcerns(server);
         expect(told).toHaveLength(1);
         expect(told[0]!.description).toContain(unreadable.key);
@@ -699,7 +699,7 @@ describe("a stored store setting that does not read", () => {
         )!;
         expect(kept.detached_at).toBeNull();
 
-        const set = await operator.patchConfig({ [unreadable.key]: null });
+        const set = await local.patchConfig({ [unreadable.key]: null });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         const served = await waitFor("the file to be served", async () => {
           const download = await operator.downloadBlob(hash);
@@ -723,8 +723,8 @@ describe("a stored store setting that does not read", () => {
         MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
       });
       try {
-        const { operator, working } = clientsFor(server);
-        const named = await operator.patchConfig({
+        const { operator, working, local } = clientsFor(server);
+        const named = await local.patchConfig({
           object_store_bucket: "marfa",
           object_store_endpoint: "http://127.0.0.1:9/",
         });
@@ -744,7 +744,7 @@ describe("a stored store setting that does not read", () => {
         }
         expect((await operator.downloadBlob(hash)).status).toBe(200);
 
-        const cleared = await operator.patchConfig({
+        const cleared = await local.patchConfig({
           object_store_bucket: "",
         });
         expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
@@ -821,7 +821,7 @@ describe("a stored store setting that does not read", () => {
             unreadablePath.value,
           );
         });
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const told = await storeConcerns(server);
         expect(told).toHaveLength(1);
         expect(told[0]!.description).toContain(unreadablePath.key);
@@ -831,7 +831,7 @@ describe("a stored store setting that does not read", () => {
         expect(existsSync(diskPath(server, hash))).toBe(true);
         expect((await operator.downloadBlob(hash)).status).toBe(200);
 
-        const set = await operator.patchConfig({ [unreadablePath.key]: null });
+        const set = await local.patchConfig({ [unreadablePath.key]: null });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         await waitFor("the setting to be taken", async () =>
           (await storeConcerns(server)).length === 0 ? true : undefined,
@@ -878,7 +878,7 @@ describe("a stored store setting that does not read", () => {
 
         rmdirSync(folder);
         renameSync(away, folder);
-        const { operator, working } = clientsFor(server);
+        const { operator, working, local } = clientsFor(server);
         expect((await operator.downloadBlob(hash)).status).toBe(200);
         const later = await working.uploadBlob(
           bytesOf("sent once the folder is back", 100),
@@ -889,7 +889,7 @@ describe("a stored store setting that does not read", () => {
         expect(held.result).toMatchObject({ purged: 0 });
         expect((await operator.downloadBlob(hash)).status).toBe(200);
 
-        const set = await operator.patchConfig({ [unreadablePath.key]: null });
+        const set = await local.patchConfig({ [unreadablePath.key]: null });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         await waitFor("the setting to be taken", async () =>
           (await storeConcerns(server)).length === 0 ? true : undefined,
@@ -925,7 +925,7 @@ describe("a stored store setting that does not read", () => {
           renameSync(folder, away);
           mkdirSync(folder);
         });
-        const set = await clientsFor(server).operator.patchConfig({
+        const set = await clientsFor(server).local.patchConfig({
           [unreadablePath.key]: null,
         });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
@@ -994,8 +994,8 @@ describe("a stored store setting that does not read", () => {
           storeSettingRow(server.sqlitePath, unreadable.key, unreadable.value);
           rmSync(folder, { recursive: true, force: true });
         });
-        const { operator } = clientsFor(server);
-        const other = await operator.patchConfig({
+        const { operator, local } = clientsFor(server);
+        const other = await local.patchConfig({
           [unreadable.key]: null,
           object_store_prefix: `fixture-${randomUUID()}`,
         });
@@ -1007,7 +1007,7 @@ describe("a stored store setting that does not read", () => {
         const taken = await server.image();
         image = taken;
 
-        const back = await operator.patchConfig({
+        const back = await local.patchConfig({
           object_store_prefix: store.MARFA_OBJECT_STORE_PREFIX,
         });
         expect(back.status, JSON.stringify(back.error)).toBe(200);

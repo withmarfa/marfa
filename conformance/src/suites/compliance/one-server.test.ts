@@ -298,7 +298,14 @@ describe("a blob folder that returns to a server started without it", () => {
     "stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends",
     async () => {
       const started = await startedWithoutItsFolder("one-server-beaten");
-      const { server, folder, away, operator, working: client } = started;
+      const {
+        server,
+        folder,
+        away,
+        operator,
+        working: client,
+        local,
+      } = started;
       try {
         await rename(away, folder);
         const holder = await bootFreshServer("one-server-holder", {
@@ -308,7 +315,7 @@ describe("a blob folder that returns to a server started without it", () => {
         try {
           await expectNothingStored(started);
           // With a destination that can be used, only the blob folder stops the backup.
-          const set = await operator.patchConfig({
+          const set = await local.patchConfig({
             backup_path: tempFolder("marfa-one-server-backups-"),
           });
           expect(set.status, JSON.stringify(set.error)).toBe(200);

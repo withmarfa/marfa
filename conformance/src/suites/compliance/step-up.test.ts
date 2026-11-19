@@ -27,9 +27,10 @@ import { TEST_OWNER } from "../../utils/target.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
- * The four acts that ask the owner to have signed in within five minutes:
+ * Four of the acts that ask the owner to have signed in within five minutes:
  * restoring an archive, restoring a backup, moving the sign-in address and
- * changing `allow_private_addresses`. An app's token meets them by the time
+ * changing `allow_private_addresses`. Changing where files and backups go is
+ * held in `destination-step-up.test.ts`. An app's token meets them by the time
  * its owner last signed in, a key never does, and the private socket keeps
  * them. The owner's sessions, the clock and the sign-in address are the
  * subject, so the file boots a server of its own, with a backup folder.

@@ -108,7 +108,7 @@ describe("a secret setting", () => {
       const folder = tempFolder("marfa-secret-backups-");
       const server = await bootFreshServer("secret-witness", DISK);
       try {
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const witness = `witness-${randomUUID()}`;
         const beat = `https://beat-${randomUUID()}.example.test/`;
         const visible = `visible-${randomUUID()}`;
@@ -127,7 +127,7 @@ describe("a secret setting", () => {
         };
 
         const set = keep(
-          await operator.patchConfig({
+          await local.patchConfig({
             [SECRET]: witness,
             heartbeat_url: beat,
             backup_path: folder,
@@ -196,7 +196,8 @@ describe("a secret setting", () => {
         // An object store the secret cannot open is logged, and the log names
         // the store's bucket, which is no secret, and never the secret.
         const bucket = `witness-bucket-${randomUUID()}`;
-        await setFrom(operator, {
+        await setFrom(local, {
+          [SECRET]: witness,
           backup_path: null,
           object_store_bucket: bucket,
           object_store_endpoint: endpoint,

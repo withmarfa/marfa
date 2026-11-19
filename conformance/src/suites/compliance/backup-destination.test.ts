@@ -80,7 +80,7 @@ async function setTo(
   server: FreshServer,
   settings: Record<string, string | boolean>,
 ): Promise<void> {
-  const written = await clientsFor(server).operator.patchConfig(settings);
+  const written = await clientsFor(server).local.patchConfig(settings);
   expect(written.status, JSON.stringify(written.error)).toBe(200);
 }
 

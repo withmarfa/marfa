@@ -54,7 +54,7 @@ async function stores(): Promise<{ attached: string[]; recorded: string[] }> {
 }
 
 async function name(path: string): Promise<void> {
-  const set = await clientsFor(server!).operator.patchConfig({
+  const set = await clientsFor(server!).local.patchConfig({
     backup_path: path,
   });
   expect(set.status, JSON.stringify(set.error)).toBe(200);
