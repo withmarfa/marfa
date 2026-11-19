@@ -1,5 +1,6 @@
 //! Previewing and trashing several items at once.
 
+use crate::guard::guarded;
 use crate::{Core, MarfaError};
 
 /// What trashing items would take, as the server read it.
@@ -110,18 +111,20 @@ impl From<TrashPreview> for marfa_core::TrashPreview {
     }
 }
 
-#[uniffi::export]
-impl Core {
-    /// Requires a server; duplicate IDs count once toward the 20-item limit.
-    pub fn preview_trash(&self, ids: Vec<String>) -> Result<TrashPreview, MarfaError> {
-        Ok(self.inner.preview_trash(&ids)?.into())
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        /// Requires a server; duplicate IDs count once toward the 20-item limit.
+        pub fn preview_trash(&self, ids: Vec<String>) -> Result<TrashPreview, MarfaError> {
+            Ok(self.inner.preview_trash(&ids)?.into())
+        }
 
-    /// Never queued: the digest binds the request to the previewed state.
-    /// A write to an item it holds throws `Validation` with the code
-    /// `item_being_removed` until it returns.
-    pub fn trash_items(&self, preview: TrashPreview) -> Result<TrashReport, MarfaError> {
-        Ok(self.inner.trash_items(&preview.into())?.into())
+        /// Never queued: the digest binds the request to the previewed state.
+        /// A write to an item it holds throws `Validation` with the code
+        /// `item_being_removed` until it returns.
+        pub fn trash_items(&self, preview: TrashPreview) -> Result<TrashReport, MarfaError> {
+            Ok(self.inner.trash_items(&preview.into())?.into())
+        }
     }
 }
 

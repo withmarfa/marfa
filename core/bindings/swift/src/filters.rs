@@ -2,6 +2,7 @@
 //! edits a saved one, without writing the server's grammar by hand.
 
 use crate::MarfaError;
+use crate::guard::guarded;
 
 /// The conditions of a filter and the one word that joins them. The grammar
 /// joins every condition with `AND` or every one with `OR`, never both.
@@ -92,25 +93,28 @@ pub enum FilterValue {
     Bool { value: bool },
 }
 
-/// The expression's text in the listing grammar, refused with the server's
-/// `validation_error` where the server would refuse it.
-#[uniffi::export]
-pub fn encode_filter(expression: FilterExpression) -> Result<String, MarfaError> {
-    Ok(marfa_core::FilterExpression::from(expression)
-        .encode()
-        .map_err(marfa_core::CoreError::from)?)
+guarded! {
+    /// The expression's text in the listing grammar, refused with the server's
+    /// `validation_error` where the server would refuse it.
+    pub fn encode_filter(expression: FilterExpression) -> Result<String, MarfaError> {
+        Ok(marfa_core::FilterExpression::from(expression)
+            .encode()
+            .map_err(marfa_core::CoreError::from)?)
+    }
 }
 
-/// The expression a text in the listing grammar holds, refused with the
-/// server's `validation_error` and message where the server refuses it.
-#[uniffi::export]
-pub fn decode_filter(text: String) -> Result<FilterExpression, MarfaError> {
-    Ok(marfa_core::FilterExpression::decode(&text)
-        .map_err(marfa_core::CoreError::from)?
-        .into())
+guarded! {
+    /// The expression a text in the listing grammar holds, refused with the
+    /// server's `validation_error` and message where the server refuses it.
+    pub fn decode_filter(text: String) -> Result<FilterExpression, MarfaError> {
+        Ok(marfa_core::FilterExpression::decode(&text)
+            .map_err(marfa_core::CoreError::from)?
+            .into())
+    }
 }
 
 /// The operators the grammar takes on a field.
+// unguarded: lists operators from a table, with no error in its answer to carry a fault.
 #[uniffi::export]
 pub fn filter_operators(field: FilterField) -> Vec<FilterOperator> {
     marfa_core::FilterField::from(field)

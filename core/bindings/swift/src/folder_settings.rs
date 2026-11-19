@@ -10,6 +10,7 @@ use marfa_core::folder::settings::{
 };
 use serde_json::{Map, Value};
 
+use crate::guard::guarded;
 use crate::{Core, Found, ItemState, JsonObject, Listing, MarfaError, SliceTier, Sort, Tier};
 
 /// What a folder holds and what a new file in it takes: the settings a
@@ -163,94 +164,96 @@ pub struct FolderRow {
     pub settings: FolderSettings,
 }
 
-#[uniffi::export]
-impl Core {
-    /// `None` where a whole copy does not hold it; part way through a
-    /// hydration, one that has not arrived is `MarfaError.HydrationIncomplete`.
-    /// A row that is not a folder, or one naming a setting no folder follows,
-    /// is `MarfaError.Invalid`.
-    pub fn folder(&self, id: String) -> Result<Option<FolderRow>, MarfaError> {
-        self.inner.folder(&id)?.map(row).transpose()
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        /// `None` where a whole copy does not hold it; part way through a
+        /// hydration, one that has not arrived is `MarfaError.HydrationIncomplete`.
+        /// A row that is not a folder, or one naming a setting no folder follows,
+        /// is `MarfaError.Invalid`.
+        pub fn folder(&self, id: String) -> Result<Option<FolderRow>, MarfaError> {
+            self.inner.folder(&id)?.map(row).transpose()
+        }
 
-    /// The listed items that match the folder's query. A
-    /// query the slice cannot answer whole is `MarfaError.Invalid`, never
-    /// answered in part; a folder the copy does not hold is
-    /// `MarfaError.NotFound` with the code `not_held`. While a hydration
-    /// fills the copy, the answer is marked partial.
-    pub fn list_in_folder(
-        &self,
-        id: String,
-        sort: Sort,
-        limit: Option<u32>,
-        offset: Option<u32>,
-    ) -> Result<Listing, MarfaError> {
-        Ok(crate::listing(
-            self.inner.list_in_folder_kept(
+        /// The listed items that match the folder's query. A
+        /// query the slice cannot answer whole is `MarfaError.Invalid`, never
+        /// answered in part; a folder the copy does not hold is
+        /// `MarfaError.NotFound` with the code `not_held`. While a hydration
+        /// fills the copy, the answer is marked partial.
+        pub fn list_in_folder(
+            &self,
+            id: String,
+            sort: Sort,
+            limit: Option<u32>,
+            offset: Option<u32>,
+        ) -> Result<Listing, MarfaError> {
+            Ok(crate::listing(
+                self.inner.list_in_folder_kept(
+                    &id,
+                    sort.named(&marfa_core::ListFilters::default())
+                        .unwrap_or_default(),
+                    limit,
+                    offset,
+                )?,
+            ))
+        }
+
+        /// Refused as `list_in_folder` refuses.
+        pub fn search_in_folder(
+            &self,
+            query: String,
+            id: String,
+            limit: u32,
+        ) -> Result<Found, MarfaError> {
+            Ok(crate::found(self.inner.search_in_folder_kept(
+                &query,
                 &id,
-                sort.named(&marfa_core::ListFilters::default())
-                    .unwrap_or_default(),
-                limit,
-                offset,
-            )?,
-        ))
-    }
+                limit as usize,
+            )?))
+        }
 
-    /// Refused as `list_in_folder` refuses.
-    pub fn search_in_folder(
-        &self,
-        query: String,
-        id: String,
-        limit: u32,
-    ) -> Result<Found, MarfaError> {
-        Ok(crate::found(self.inner.search_in_folder_kept(
-            &query,
-            &id,
-            limit as usize,
-        )?))
-    }
+        /// Sent to the folder door at once and never queued: with no server
+        /// reachable it fails, and nothing waits to be sent. `settings.title` is
+        /// required. A repeat under the same `idempotency_key` is answered with
+        /// the first folder.
+        pub fn create_folder(
+            &self,
+            settings: FolderSettings,
+            idempotency_key: Option<String>,
+        ) -> Result<FolderRow, MarfaError> {
+            let settings = core_settings(settings)?;
+            let body = object(serde_json::to_value(&settings).map_err(encoding)?);
+            row(self
+                .inner
+                .create_folder(&body, idempotency_key.as_deref())?)
+        }
 
-    /// Sent to the folder door at once and never queued: with no server
-    /// reachable it fails, and nothing waits to be sent. `settings.title` is
-    /// required. A repeat under the same `idempotency_key` is answered with
-    /// the first folder.
-    pub fn create_folder(
-        &self,
-        settings: FolderSettings,
-        idempotency_key: Option<String>,
-    ) -> Result<FolderRow, MarfaError> {
-        let settings = core_settings(settings)?;
-        let body = object(serde_json::to_value(&settings).map_err(encoding)?);
-        row(self
-            .inner
-            .create_folder(&body, idempotency_key.as_deref())?)
-    }
+        /// Sent as `create_folder` is, based on `version`. A setting changed
+        /// since `version` is `MarfaError.Server` with status 409 and the code
+        /// `version_conflict`; a revoked folder is `MarfaError.Validation` with
+        /// the code `invalid_transition`.
+        pub fn change_folder(
+            &self,
+            id: String,
+            change: FolderSettingsChange,
+            version: i64,
+            idempotency_key: Option<String>,
+        ) -> Result<FolderRow, MarfaError> {
+            let body = change_body(change)?;
+            row(self
+                .inner
+                .change_folder(&id, &body, version, idempotency_key.as_deref())?)
+        }
 
-    /// Sent as `create_folder` is, based on `version`. A setting changed
-    /// since `version` is `MarfaError.Server` with status 409 and the code
-    /// `version_conflict`; a revoked folder is `MarfaError.Validation` with
-    /// the code `invalid_transition`.
-    pub fn change_folder(
-        &self,
-        id: String,
-        change: FolderSettingsChange,
-        version: i64,
-        idempotency_key: Option<String>,
-    ) -> Result<FolderRow, MarfaError> {
-        let body = change_body(change)?;
-        row(self
-            .inner
-            .change_folder(&id, &body, version, idempotency_key.as_deref())?)
-    }
-
-    /// Final: a revoked folder changes no more, and a second revoke is
-    /// `MarfaError.Validation` with the code `invalid_transition`.
-    pub fn revoke_folder(
-        &self,
-        id: String,
-        idempotency_key: Option<String>,
-    ) -> Result<FolderRow, MarfaError> {
-        row(self.inner.revoke_folder(&id, idempotency_key.as_deref())?)
+        /// Final: a revoked folder changes no more, and a second revoke is
+        /// `MarfaError.Validation` with the code `invalid_transition`.
+        pub fn revoke_folder(
+            &self,
+            id: String,
+            idempotency_key: Option<String>,
+        ) -> Result<FolderRow, MarfaError> {
+            row(self.inner.revoke_folder(&id, idempotency_key.as_deref())?)
+        }
     }
 }
 

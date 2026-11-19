@@ -1,5 +1,6 @@
 //! Local view reads and writes through the server's view door.
 
+use crate::guard::guarded;
 use crate::{Completeness, Core, Found, ItemState, JsonObject, JsonValue, Listing, MarfaError};
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -37,95 +38,97 @@ fn row(value: marfa_core::ViewRow) -> ViewRow {
     }
 }
 
-#[uniffi::export]
-impl Core {
-    pub fn create_view(
-        &self,
-        settings: JsonObject,
-        idempotency_key: Option<String>,
-    ) -> Result<ViewRow, MarfaError> {
-        Ok(row(self.inner.create_view(
-            &settings.into_map()?,
-            idempotency_key.as_deref(),
-        )?))
-    }
+guarded! {
+    #[uniffi::export]
+    impl Core {
+        pub fn create_view(
+            &self,
+            settings: JsonObject,
+            idempotency_key: Option<String>,
+        ) -> Result<ViewRow, MarfaError> {
+            Ok(row(self.inner.create_view(
+                &settings.into_map()?,
+                idempotency_key.as_deref(),
+            )?))
+        }
 
-    pub fn change_view(
-        &self,
-        id: String,
-        changes: JsonObject,
-        version: i64,
-        idempotency_key: Option<String>,
-    ) -> Result<ViewRow, MarfaError> {
-        Ok(row(self.inner.change_view(
-            &id,
-            &changes.into_map()?,
-            version,
-            idempotency_key.as_deref(),
-        )?))
-    }
+        pub fn change_view(
+            &self,
+            id: String,
+            changes: JsonObject,
+            version: i64,
+            idempotency_key: Option<String>,
+        ) -> Result<ViewRow, MarfaError> {
+            Ok(row(self.inner.change_view(
+                &id,
+                &changes.into_map()?,
+                version,
+                idempotency_key.as_deref(),
+            )?))
+        }
 
-    pub fn delete_view(
-        &self,
-        id: String,
-        idempotency_key: Option<String>,
-    ) -> Result<(), MarfaError> {
-        Ok(self.inner.delete_view(&id, idempotency_key.as_deref())?)
-    }
+        pub fn delete_view(
+            &self,
+            id: String,
+            idempotency_key: Option<String>,
+        ) -> Result<(), MarfaError> {
+            Ok(self.inner.delete_view(&id, idempotency_key.as_deref())?)
+        }
 
-    pub fn list_views(&self) -> Result<Views, MarfaError> {
-        let rows = self.inner.list_views()?;
-        Ok(Views {
-            views: rows.rows.into_iter().map(row).collect(),
-            completeness: rows.completeness.into(),
-        })
-    }
+        pub fn list_views(&self) -> Result<Views, MarfaError> {
+            let rows = self.inner.list_views()?;
+            Ok(Views {
+                views: rows.rows.into_iter().map(row).collect(),
+                completeness: rows.completeness.into(),
+            })
+        }
 
-    pub fn view(&self, id: String) -> Result<Option<ViewRow>, MarfaError> {
-        Ok(self.inner.view(&id)?.map(row))
-    }
+        pub fn view(&self, id: String) -> Result<Option<ViewRow>, MarfaError> {
+            Ok(self.inner.view(&id)?.map(row))
+        }
 
-    pub fn list_in_view(
-        &self,
-        id: String,
-        limit: Option<u32>,
-        offset: Option<u32>,
-    ) -> Result<Listing, MarfaError> {
-        Ok(crate::listing(
-            self.inner.list_in_view_kept(&id, limit, offset)?,
-        ))
-    }
+        pub fn list_in_view(
+            &self,
+            id: String,
+            limit: Option<u32>,
+            offset: Option<u32>,
+        ) -> Result<Listing, MarfaError> {
+            Ok(crate::listing(
+                self.inner.list_in_view_kept(&id, limit, offset)?,
+            ))
+        }
 
-    pub fn search_in_view(
-        &self,
-        query: String,
-        id: String,
-        limit: u32,
-    ) -> Result<Found, MarfaError> {
-        Ok(crate::found(self.inner.search_in_view_kept(
-            &query,
-            &id,
-            limit as usize,
-        )?))
-    }
+        pub fn search_in_view(
+            &self,
+            query: String,
+            id: String,
+            limit: u32,
+        ) -> Result<Found, MarfaError> {
+            Ok(crate::found(self.inner.search_in_view_kept(
+                &query,
+                &id,
+                limit as usize,
+            )?))
+        }
 
-    pub fn view_groups(
-        &self,
-        id: String,
-        time_zone: Option<String>,
-    ) -> Result<ViewGroups, MarfaError> {
-        let rows = self.inner.view_groups(&id, time_zone.as_deref())?;
-        Ok(ViewGroups {
-            groups: rows
-                .rows
-                .into_iter()
-                .map(|group| ViewGroup {
-                    key: group.key.into(),
-                    count: group.count,
-                })
-                .collect(),
-            completeness: rows.completeness.into(),
-        })
+        pub fn view_groups(
+            &self,
+            id: String,
+            time_zone: Option<String>,
+        ) -> Result<ViewGroups, MarfaError> {
+            let rows = self.inner.view_groups(&id, time_zone.as_deref())?;
+            Ok(ViewGroups {
+                groups: rows
+                    .rows
+                    .into_iter()
+                    .map(|group| ViewGroup {
+                        key: group.key.into(),
+                        count: group.count,
+                    })
+                    .collect(),
+                completeness: rows.completeness.into(),
+            })
+        }
     }
 }
 

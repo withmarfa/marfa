@@ -142,6 +142,37 @@ pub fn waiting(point: &str) -> usize {
 }
 
 #[cfg(debug_assertions)]
+impl crate::Core {
+    /// Panics on another thread while it holds the connection's lock, as a
+    /// fault inside a call would. A debug build only.
+    pub fn poison_connection(&self) {
+        let conn = std::sync::Arc::clone(&self.conn);
+        let ended = std::thread::spawn(move || {
+            let _held = conn.lock();
+            panic!("the connection was poisoned on purpose");
+        })
+        .join();
+        debug_assert!(ended.is_err());
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+mod poison_tests {
+    use crate::{Core, CoreError};
+
+    #[test]
+    fn a_connection_poisoned_by_a_panic_answers_every_call_with_a_fault() {
+        let core = Core::open_in_memory(None).unwrap();
+        assert!(core.status().is_ok(), "the witness: the core answers first");
+        core.poison_connection();
+        match core.status() {
+            Err(CoreError::Fault(said)) => assert!(said.contains("poisoned"), "{said}"),
+            other => panic!("a poisoned connection was answered {other:?}"),
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
 mod scoped {
     use std::cell::RefCell;
     use std::marker::PhantomData;

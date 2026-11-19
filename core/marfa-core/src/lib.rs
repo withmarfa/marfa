@@ -426,9 +426,7 @@ impl Core {
     }
 
     pub(crate) fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
-        let mut conn = self.conn.lock().map_err(|_| {
-            CoreError::Store("the connection was poisoned by an earlier panic".into())
-        })?;
+        let mut conn = self.conn.lock().map_err(|_| CoreError::poisoned())?;
         if self.handle() == Handle::Writer && store::lapsed(&conn)? {
             let tx = conn.transaction()?;
             reach::expire(&tx)?;
