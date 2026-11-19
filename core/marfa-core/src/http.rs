@@ -166,6 +166,8 @@ pub struct Http {
     renewing: Arc<Mutex<()>>,
     /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
+    /// Asked before each request and renewal whether the caller still wants the read.
+    wanted: Option<Wanted>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     /// Keeps what `keep` writes through, the writer lock among it, alive.
     /// `to_let_go` drops it, so a transport left running frees the lock.
@@ -262,6 +264,9 @@ pub type Renew = Box<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
 
 /// Handed the header a renewal replaced and the one that replaced it.
 pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Whether the caller of a read still wants its answer.
+pub(crate) type Wanted = Arc<dyn Fn() -> bool + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
@@ -764,6 +769,7 @@ impl Http {
             renewed: Arc::new(OnceLock::new()),
             renewing: Arc::new(Mutex::new(())),
             let_go: Arc::new(AtomicBool::new(false)),
+            wanted: None,
             relocation: Arc::new(OnceLock::new()),
             keeps: None,
             reach: None,
@@ -828,6 +834,15 @@ impl Http {
         Self {
             let_go: Arc::new(AtomicBool::new(false)),
             keeps: None,
+            ..self.clone()
+        }
+    }
+
+    /// This transport for a read whose requests and renewals start only while
+    /// `wanted` answers true.
+    pub(crate) fn wanted_while(&self, wanted: Wanted) -> Self {
+        Self {
+            wanted: Some(wanted),
             ..self.clone()
         }
     }
@@ -1049,13 +1064,18 @@ impl Http {
 
     /// A read run on a thread of its own, such as a hydration's next page and
     /// the edges past its rows' blocks, may send several requests; once its
-    /// caller has let it go, none after the one in flight is sent.
+    /// caller has let it go or no longer wants it, none after the one in
+    /// flight is sent.
     fn refuse_if_let_go(&self) -> Result<(), CoreError> {
-        if self.let_go.load(Ordering::SeqCst) {
+        if self.let_go.load(Ordering::SeqCst) || !self.still_wanted() {
             Err(CoreError::Canceled)
         } else {
             Ok(())
         }
+    }
+
+    fn still_wanted(&self) -> bool {
+        self.wanted.as_ref().is_none_or(|wanted| wanted())
     }
 
     pub(crate) fn authorization(&self) -> String {
@@ -1107,6 +1127,9 @@ impl Http {
         }
         // A call that waited here may have been stopped while another
         // renewal ran.
+        if !self.still_wanted() {
+            return Err(CoreError::Canceled);
+        }
         if let Some(before) = before {
             before(Stage::Renewal)?;
         }

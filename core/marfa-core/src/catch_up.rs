@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1194,8 +1194,17 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
 /// stopped, or dropped before its answer came, is let go.
 pub(crate) struct Pending<T> {
     http: Http,
-    answer: Receiver<Result<T>>,
+    answer: Receiver<Sent<T>>,
+    /// Raised once the caller waits in `answer`, where it answers `Wanted`.
+    waiting: Arc<AtomicBool>,
     answered: bool,
+}
+
+enum Sent<T> {
+    Answer(Result<T>),
+    /// Asks the caller whether it still wants the read, which the caller
+    /// answers from its own `stop` at once.
+    Wanted(SyncSender<bool>),
 }
 
 impl<T: Send + 'static> Pending<T> {
@@ -1204,30 +1213,49 @@ impl<T: Send + 'static> Pending<T> {
         read: impl FnOnce(&Http) -> Result<T> + Send + 'static,
     ) -> Self {
         let http = http.to_let_go();
-        let reading = http.clone();
-        let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
+        let (sender, answer) = mpsc::sync_channel::<Sent<T>>(1);
+        let sender = Arc::new(sender);
+        let waiting = Arc::new(AtomicBool::new(false));
+        let reading = http.wanted_while({
+            let (asks, waiting) = (Arc::downgrade(&sender), Arc::clone(&waiting));
+            Arc::new(move || {
+                // A caller not yet waiting checks `stop` itself; an ended read has none.
+                let Some(asks) = asks.upgrade().filter(|_| waiting.load(Ordering::SeqCst)) else {
+                    return true;
+                };
+                let (reply, replied) = mpsc::sync_channel(1);
+                asks.send(Sent::Wanted(reply)).is_ok() && replied.recv().unwrap_or(false)
+            })
+        });
         let ends_by = EndsBy::here();
         thread::spawn(inheriting(move || {
             let _ends_by = EndsBy::hold(ends_by);
-            if sender.send(read(&reading)).is_err() {
+            if sender.send(Sent::Answer(read(&reading))).is_err() {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "answer-dropped");
             }
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "request-ended");
         }));
         Self {
             http,
             answer,
+            waiting,
             answered: false,
         }
     }
 
     pub(crate) fn answer(mut self, stop: &AtomicBool) -> Result<T> {
+        self.waiting.store(true, Ordering::SeqCst);
         loop {
             refuse_if_stopped(stop)?;
             match self.answer.recv_timeout(PACE.stop_poll) {
-                Ok(read) => {
+                Ok(Sent::Answer(read)) => {
                     self.answered = true;
                     return read;
+                }
+                Ok(Sent::Wanted(reply)) => {
+                    let _ = reply.send(!stop.load(Ordering::SeqCst));
                 }
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => {
@@ -1244,6 +1272,10 @@ impl<T: Send + 'static> Pending<T> {
 impl<T> Drop for Pending<T> {
     fn drop(&mut self) {
         if !self.answered {
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "request-let-go");
+            // Closed first, so a read asking under the renewal lock hears no.
+            drop(std::mem::replace(&mut self.answer, mpsc::sync_channel(0).1));
             self.http.let_go();
         }
     }
@@ -1483,7 +1515,7 @@ fn follow_paced(
                 report.reconnects += 1;
             }
             asked = true;
-            let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
+            let Some(reached) = reach(&http, &cursor, stop) else {
                 break;
             };
             let (fetched, frames) = match reached {
@@ -2141,37 +2173,23 @@ fn mark_synced_while_live(
 /// The catalog and the stream of the instance the copy was built from.
 type Reached = Result<(WireCatalog, Receiver<io::Result<Frame>>)>;
 
-/// `None` when `stop` was set first.
-fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
-    let (sender, answer) = mpsc::sync_channel::<Reached>(1);
-    let asked = http.to_let_go();
-    let http = asked.clone();
+/// `None` when `stop` was set first. The stream's open is a stoppable read:
+/// its thread asks this one before each request and renewal.
+fn reach(http: &Http, cursor: &str, stop: &AtomicBool) -> Option<Reached> {
+    if stop.load(Ordering::Relaxed) {
+        return None;
+    }
     let cursor = cursor.to_string();
-    let ends_by = EndsBy::here();
-    thread::spawn(inheriting(move || {
-        let _ends_by = EndsBy::hold(ends_by);
-        let reached = (|| {
-            http.confirm_again()?;
-            let catalog = http.catalog()?;
-            let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
-            Ok((catalog, frames))
-        })();
-        let _ = sender.send(reached);
-    }));
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            asked.let_go();
-            return None;
-        }
-        match answer.recv_timeout(poll) {
-            Ok(reached) => return Some(reached),
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => {
-                return Some(Err(CoreError::Network(
-                    "the request for the event stream ended with no answer".into(),
-                )));
-            }
-        }
+    let reached = Pending::start(http, move |http| {
+        http.confirm_again()?;
+        let catalog = http.catalog()?;
+        let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
+        Ok((catalog, frames))
+    })
+    .answer(stop);
+    match reached {
+        Err(CoreError::Canceled) if stop.load(Ordering::Relaxed) => None,
+        reached => Some(reached),
     }
 }
 
