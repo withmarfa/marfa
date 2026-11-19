@@ -1886,8 +1886,7 @@ describe("the working copy belongs to one server", () => {
     });
     const store = harness.device.store;
     const log = `${store}-wal`;
-    // The store and the frames of its log. SQLite leaves a log with no frames
-    // beside a store it has read, and that holds nothing of the store.
+    // An empty log holds nothing of the store, so it counts as no log.
     const held = () => ({
       store: readFileSync(store).toString("hex"),
       log: existsSync(log) ? readFileSync(log).toString("hex") || null : null,

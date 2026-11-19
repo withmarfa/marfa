@@ -908,8 +908,7 @@ pub(crate) fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
 
 /// The refusal of a store at version `found`, with what it holds.
 pub(crate) fn refused(conn: &Connection, found: i64) -> CoreError {
-    // A writer's connection checkpoints the log into the store as it closes,
-    // which would change a store this build refuses.
+    // Closing would otherwise checkpoint the log into a store this build refuses.
     let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true);
     CoreError::WrongSchema {
         path: String::new(),
