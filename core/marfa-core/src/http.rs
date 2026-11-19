@@ -166,8 +166,8 @@ pub struct Http {
     renewing: Arc<Mutex<()>>,
     /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
-    /// Asked under the renewal lock whether the caller still wants the read,
-    /// which `let_go` alone answers only once the caller has looked at its stop.
+    /// Asked before each request and renewal whether the caller still wants
+    /// the read: `let_go` is raised only once the caller looks at its stop.
     wanted: Option<Wanted>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     /// Keeps what `keep` writes through, the writer lock among it, alive.
@@ -839,8 +839,8 @@ impl Http {
         }
     }
 
-    /// This transport for a read whose renewal starts only while `wanted`
-    /// answers true.
+    /// This transport for a read whose requests and renewals start only while
+    /// `wanted` answers true.
     pub(crate) fn wanted_while(&self, wanted: Wanted) -> Self {
         Self {
             wanted: Some(wanted),

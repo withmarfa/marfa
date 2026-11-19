@@ -1171,14 +1171,13 @@ impl<T: Send + 'static> Pending<T> {
         let reading = http.wanted_while({
             let (asks, waiting) = (Arc::downgrade(&sender), Arc::clone(&waiting));
             Arc::new(move || {
-                // A caller not yet waiting reads its stop itself when it does.
-                if !waiting.load(Ordering::SeqCst) {
+                // A caller not yet waiting reads its stop itself when it does,
+                // and a read already ended has no caller left to ask.
+                let Some(asks) = asks.upgrade().filter(|_| waiting.load(Ordering::SeqCst)) else {
                     return true;
-                }
+                };
                 let (reply, replied) = mpsc::sync_channel(1);
-                asks.upgrade()
-                    .is_some_and(|asks| asks.send(Sent::Wanted(reply)).is_ok())
-                    && replied.recv().unwrap_or(false)
+                asks.send(Sent::Wanted(reply)).is_ok() && replied.recv().unwrap_or(false)
             })
         });
         let ends_by = EndsBy::here();
@@ -1231,10 +1230,7 @@ impl<T> Drop for Pending<T> {
             // A read asking whether it is wanted may hold the renewal lock
             // `let_go` waits for, so the question is closed first: it then
             // hears no.
-            drop(std::mem::replace(
-                &mut self.answer,
-                mpsc::sync_channel(0).1,
-            ));
+            drop(std::mem::replace(&mut self.answer, mpsc::sync_channel(0).1));
             self.http.let_go();
         }
     }

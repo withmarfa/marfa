@@ -902,7 +902,10 @@ fn a_lookup_stopped_before_its_caller_looks_again_starts_no_renewal_of_its_own()
         } else {
             assert_eq!(started, 2, "the waiting lookup did not renew: {ended:?}");
             assert_eq!(sent, 3);
-            assert!(ended.iter().any(|ended| matches!(ended, Ok(None))), "{ended:?}");
+            assert!(
+                ended.iter().any(|ended| matches!(ended, Ok(None))),
+                "{ended:?}"
+            );
         }
     }
 }
