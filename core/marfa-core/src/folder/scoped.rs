@@ -17,7 +17,8 @@ use notify::event::{ModifyKind, RenameMode};
 use super::pull::PullReport;
 use super::settings::Settings;
 use super::{
-    Captured, Flagged, Folder, Lists, Result, STATE_DIR, WalkRoute, Walked, embeds, identity,
+    Captured, Flagged, Folder, Lists, Result, STATE_DIR, Unchanged, WalkRoute, Walked, embeds,
+    identity,
     landing, lists, state, take_file,
 };
 
@@ -284,6 +285,65 @@ impl Folder {
             opened,
             vanished,
         }))
+    }
+
+    /// The folder as the last quick pass left it, for a status that has no
+    /// need to take the metadata of every file again: a file the scan read and
+    /// no event has named since stands as it read it, and any other is looked
+    /// at. `None` where only a walk will do.
+    pub(super) fn inventory_walked(&self) -> Option<Walked> {
+        let lists = self.settings().ok()?.lists().ok()?;
+        let guard = self.inventory.lock().expect("inventory lock");
+        let inventory = guard.as_ref()?;
+        let mut walked = Walked::default();
+        let mut identities = HashSet::new();
+        {
+            let last = self.last_reads.lock().expect("last reads lock");
+            for key in &inventory.keys {
+                let path = self.root.join(key);
+                match last.get(key) {
+                    Some(read) => {
+                        // A file two names share is told apart by a walk alone.
+                        if let Some(identity) = &read.identity
+                            && !identities.insert(identity.clone())
+                        {
+                            return None;
+                        }
+                        walked.unchanged.insert(
+                            path.clone(),
+                            Unchanged {
+                                hash: read.hash.clone(),
+                                identity: read.identity.clone(),
+                            },
+                        );
+                    }
+                    None => match self.look_at(&lists, inventory, key)? {
+                        Looked::File(path, captured) => {
+                            walked.opened.insert(path, captured);
+                        }
+                        _ => return None,
+                    },
+                }
+                walked.files.push(path);
+            }
+        }
+        walked.files.sort();
+        walked.directories = inventory.directories.clone();
+        Some(walked)
+    }
+
+    /// The bytes of a file a status trusted unchanged, which it needed after
+    /// all.
+    pub(super) fn read_unchanged(&self, key: &str) -> Option<std::io::Result<Vec<u8>>> {
+        let lists = self.settings().ok()?.lists().ok()?;
+        let looked = {
+            let guard = self.inventory.lock().expect("inventory lock");
+            self.look_at(&lists, guard.as_ref()?, key)
+        };
+        match looked? {
+            Looked::File(_, captured) => Some(captured.read()),
+            _ => None,
+        }
     }
 
     /// What the path `key` is now, as a walk would find it, or `None` where

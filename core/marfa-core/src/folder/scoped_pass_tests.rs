@@ -1,7 +1,8 @@
 //! A quick pass that heard which paths changed looks at those, whatever the
 //! size of the folder, and sends each change a walk would have found.
 
-use super::tests::{FILES_CAPTURED, FILES_READ, ScannedDir, watched_notes};
+use super::health::tests::aged;
+use super::tests::{FILES_CAPTURED, FILES_READ, ScannedDir, settle, watched_notes};
 use super::*;
 use crate::scripted::{Scripted, refusal};
 
@@ -22,7 +23,7 @@ fn names(count: usize) -> Vec<String> {
 /// away for now: a pass sends the edit and the test reads what it queued.
 fn watched(names: &[String]) -> (ScannedDir, Folder, Scripted, watch::Passes) {
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let (dir, folder, server, passes) = watched_notes(&refs);
+    let (dir, folder, server, mut passes) = watched_notes(&refs);
     let conn = folder.core.conn().unwrap();
     for name in names {
         let item = state::bound_at(&conn, name).unwrap().unwrap().item_id;
@@ -32,6 +33,12 @@ fn watched(names: &[String]) -> (ScannedDir, Folder, Scripted, watch::Passes) {
         );
     }
     drop(conn);
+    // As files a scan read some time ago, which a status takes as they were.
+    for name in names {
+        aged(&dir.path().join(name));
+    }
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
     (dir, folder, server, passes)
 }
 

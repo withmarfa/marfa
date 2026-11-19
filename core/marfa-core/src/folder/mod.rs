@@ -1376,11 +1376,20 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
     whole
 }
 
+/// What a scan last read of a file that nothing since has touched.
+struct Unchanged {
+    hash: String,
+    identity: Option<String>,
+}
+
 #[derive(Default)]
 struct Walked {
     files: Vec<PathBuf>,
     opened: HashMap<PathBuf, Captured>,
     unread: HashMap<PathBuf, identity::Identity>,
+    /// Files a status trusts to stand as a scan last read them, which a quick
+    /// pass that heard no event for them leaves unlooked at.
+    unchanged: HashMap<PathBuf, Unchanged>,
     directories: Vec<Flagged>,
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.

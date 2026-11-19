@@ -285,9 +285,9 @@ const RACILY_CLEAN: std::time::Duration = std::time::Duration::from_secs(2);
 /// before the read, and the hash of the bytes read.
 #[derive(Debug, Clone)]
 pub(super) struct LastRead {
-    identity: Option<String>,
+    pub(super) identity: Option<String>,
     stat: String,
-    hash: String,
+    pub(super) hash: String,
 }
 
 impl LastRead {
@@ -319,6 +319,9 @@ impl LastRead {
 /// be read, and the bytes themselves only once something asked for them.
 pub(super) struct Found<'a> {
     captured: Option<&'a Captured>,
+    /// Where a file trusted to be unchanged is looked at, if its bytes are
+    /// asked for.
+    later: Option<(&'a Folder, &'a str)>,
     hash: Option<std::result::Result<String, String>>,
     read: std::cell::OnceCell<Option<std::io::Result<Vec<u8>>>>,
 }
@@ -330,6 +333,7 @@ impl<'a> Found<'a> {
     pub(super) fn of(folder: &Folder, key: &str, captured: Option<&'a Captured>) -> Found<'a> {
         let found = Found {
             captured,
+            later: None,
             hash: None,
             read: std::cell::OnceCell::new(),
         };
@@ -349,6 +353,16 @@ impl<'a> Found<'a> {
         Found { hash, ..found }
     }
 
+    /// A file a quick pass heard nothing of, as the scan last read it.
+    pub(super) fn unchanged(folder: &'a Folder, key: &'a str, hash: &str) -> Found<'a> {
+        Found {
+            captured: None,
+            later: Some((folder, key)),
+            hash: Some(Ok(hash.to_string())),
+            read: std::cell::OnceCell::new(),
+        }
+    }
+
     pub(super) fn hash(&self) -> Option<&str> {
         self.hash.as_ref()?.as_deref().ok()
     }
@@ -357,11 +371,15 @@ impl<'a> Found<'a> {
     fn read(&self) -> Option<&std::io::Result<Vec<u8>>> {
         self.read
             .get_or_init(|| {
-                self.captured.map(|captured| {
-                    #[cfg(test)]
+                #[cfg(test)]
+                if self.captured.is_some() || self.later.is_some() {
                     tests::FILES_READ.with(|read| read.set(read.get() + 1));
-                    captured.read()
-                })
+                }
+                match (self.captured, self.later) {
+                    (Some(captured), _) => Some(captured.read()),
+                    (None, Some((folder, key))) => folder.read_unchanged(key),
+                    (None, None) => None,
+                }
             })
             .as_ref()
     }
@@ -676,6 +694,13 @@ impl Folder {
         if !reuse {
             return compute(None, None);
         }
+        // A quick pass that looked at the files its events named has no
+        // use for the memo of a walk of them all, and takes the metadata of
+        // no other.
+        if let Some(walked) = self.inventory_walked() {
+            *self.health_status.lock().expect("health status lock") = None;
+            return compute(None, Some(walked));
+        }
         let kept = self
             .health_status
             .lock()
@@ -944,7 +969,7 @@ impl Folder {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::folder) mod tests {
     use super::super::{FileStatus, Flagged, Paused};
     use super::*;
 
@@ -967,7 +992,7 @@ mod tests {
 
     /// Gives the file a modification time a minute back, as one the scan did
     /// not read racily.
-    fn aged(path: &std::path::Path) {
+    pub(in crate::folder) fn aged(path: &std::path::Path) {
         std::fs::File::options()
             .write(true)
             .open(path)
