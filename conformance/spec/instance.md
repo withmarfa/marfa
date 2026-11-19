@@ -2628,11 +2628,11 @@ When the server starts, the server MUST hold no fault.
 
 ## Telemetry
 
-Telemetry has two parts, each with settings of its own. Traces and log records are on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Exception reports to PostHog's error tracking are on when the stored settings `posthog_host` and `posthog_project_token` are both set, and follow them without a restart. One part being off leaves the other as it was. `OTEL_SDK_DISABLED` set to `true` in any case turns both parts off; any other value, including `1`, leaves them as they were. With none of these set, the server sends nothing about itself.
+Telemetry has two parts, each set by stored settings and followed without a restart. Traces and log records go to the OTLP receiver `otel_exporter_otlp_endpoint` names. Exception reports go to PostHog's error tracking while `posthog_host` and `posthog_project_token` are both set. One part being off leaves the other as it was. `telemetry_enabled` set to `false` turns both parts off and keeps every telemetry setting as it is. With none of these set, the server sends nothing about itself. The server reads no `OTEL_*` environment variable, so a platform's variable never overrides what the owner stored.
 
 ### `instance/telemetry-exception-report`
 
-When `posthog_host` and `posthog_project_token` are set, `OTEL_SDK_DISABLED` is not `true`, the effective reporting preference `error_reporting_enabled` is on, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
+When `posthog_host` and `posthog_project_token` are set, `telemetry_enabled` and the effective reporting preference `error_reporting_enabled` are on, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the OTLP settings are.
 
 **Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. The stored `error_reporting_enabled` choice defaults to on.
 
@@ -2654,7 +2654,7 @@ When the server sends exception reports, the server MUST post them as one batch 
 
 ### `instance/telemetry-exception-trace`
 
-Where `OTEL_EXPORTER_OTLP_ENDPOINT` is set and `OTEL_SDK_DISABLED` is not `true`, when the server sends an exception report of a request, the server MUST name the request's trace and span as the properties `$trace_id` and `$span_id`.
+Where `otel_exporter_otlp_endpoint` is set and `telemetry_enabled` is on, when the server sends an exception report of a request, the server MUST name the request's trace and span as the properties `$trace_id` and `$span_id`.
 
 **Reason:** error tracking then leads to the trace of the request that failed. A fault outside a request, such as a job's, has no request trace and names none.
 
@@ -2666,19 +2666,59 @@ While the effective reporting preference `error_reporting_enabled` is off, the s
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are not sent when MARFA_ERROR_REPORTING_ENABLED is false`.
 
-### `instance/telemetry-disabled`
+### `instance/telemetry-switch-off`
 
-When `OTEL_SDK_DISABLED` is `true` in any case, the server MUST export no trace, no log record and no exception report.
+While `telemetry_enabled` is off, the server MUST export no trace, no log record and no exception report.
 
-**Tests:** `compliance/telemetry-exception-alone.test.ts › are not sent, nor is anything else, when OTEL_SDK_DISABLED is true`.
+**Reason:** an owner pauses telemetry without clearing the endpoints and headers, which are secrets and are never shown back.
 
-### `instance/telemetry-disabled-only-true`
+**Tests:** `compliance/telemetry-settings.test.ts › send nothing while telemetry_enabled is false, and send again once it is true, with no setting written again`.
 
-If `OTEL_SDK_DISABLED` holds a value other than `true` in any case, then the server MUST export traces, log records and exception reports as the other telemetry settings say.
+### `instance/telemetry-follows-settings`
 
-**Reason:** OpenTelemetry's own rule, which operators' tools follow: only `true` disables the SDK, so `1` does not.
+When a write to `/config` changes a telemetry setting, the server MUST export each trace and log record that ends after the write is answered as the settings then say, without a restart.
 
-**Tests:** `compliance/telemetry-exception-alone.test.ts › are still sent, with traces and logs, when OTEL_SDK_DISABLED is any value but true, 1 included`.
+**Reason:** an owner sets telemetry up, moves it to another collector or changes a credential from any app, and sees the next request reach it. The telemetry settings are `telemetry_enabled`, the three OTLP endpoints, the three OTLP header settings, `otel_sample_ratio`, `otel_service_name` and `otel_resource_attributes`.
+
+**Tests:** `compliance/telemetry-settings.test.ts › send the next trace and log record with the endpoint and headers a write to /config just set, with no restart`.
+
+### `instance/telemetry-headers`
+
+When the server exports a trace or a log record, the server MUST send it with the headers `otel_exporter_otlp_headers` names, each replaced by the one of the same name that the signal's own header setting, `otel_exporter_otlp_traces_headers` or `otel_exporter_otlp_logs_headers`, names.
+
+**Tests:** `compliance/telemetry-settings.test.ts › send the next trace and log record with the endpoint and headers a write to /config just set, with no restart`.
+
+### `instance/telemetry-environment-ignored`
+
+If the server's environment sets an `OTEL_*` variable, then the server MUST export traces, log records and exception reports as its stored settings say, as it would with the variable unset.
+
+**Reason:** a platform sets the standard variables for its own tools, and the owner's stored choice must not be overridden by one they may not know is there.
+
+**Tests:** `compliance/telemetry-settings.test.ts › send as the stored settings say whatever OTEL_* variables the environment sets, and warn of each by name`.
+
+### `instance/telemetry-environment-warned`
+
+When the server starts with an `OTEL_*` variable set, the server MUST log one warning that names the variable and does not hold its value.
+
+**Reason:** the owner learns that the variable does nothing, and which stored setting does what it was meant to. The value can be a credential.
+
+**Tests:** `compliance/telemetry-settings.test.ts › send as the stored settings say whatever OTEL_* variables the environment sets, and warn of each by name`.
+
+### `instance/telemetry-signal-needs-base`
+
+If a write to `/config` would leave `otel_exporter_otlp_traces_endpoint` or `otel_exporter_otlp_logs_endpoint` set while `otel_exporter_otlp_endpoint` is not, then the server MUST answer `400 validation_error` naming one of them, without changing the stored configuration.
+
+**Reason:** a signal's own endpoint is used beside the base, so one alone would send nothing, which an owner would take for telemetry that is on.
+
+**Tests:** `compliance/telemetry-settings.test.ts › refuse a signal endpoint without the base, and a value outside its rule, without repeating a secret`.
+
+### `instance/telemetry-setting-refused`
+
+If a write to `/config` sets an OTLP endpoint, an OTLP header setting, `otel_resource_attributes` or `otel_sample_ratio` to a value outside the rule its row gives, then the server MUST answer `400 validation_error` naming the setting, with no part of the value in the refusal.
+
+**Reason:** the endpoints and headers are secrets, and an endpoint can carry a credential in its query.
+
+**Tests:** `compliance/telemetry-settings.test.ts › refuse a signal endpoint without the base, and a value outside its rule, without repeating a secret`.
 
 ### `instance/posthog-host-refused`
 
@@ -2706,7 +2746,7 @@ When a `GET` or `HEAD` request answered with a `2xx` status or `304` in under on
 
 ### `instance/telemetry-instance-id`
 
-Where traces and log records are exported, the server MUST carry the instance's `instance_id` as the resource attribute `service.instance.id` of every log record and span it exports, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+Where traces and log records are exported, the server MUST carry the instance's `instance_id` as the resource attribute `service.instance.id` of every log record and span it exports, unless `otel_resource_attributes` names `service.instance.id`, which stands in its place.
 
 **Reason:** instances sending to one collector, such as an owner's, a demo and a test, cannot otherwise be told apart. The id is the one the root answers, so an operator finds the instance an export came from by it. The instance's configured `name` is not carried, because it can change while the server runs and can be personal.
 
@@ -2714,7 +2754,7 @@ Where traces and log records are exported, the server MUST carry the instance's 
 
 ### `instance/telemetry-exception-id`
 
-Where exceptions go to error tracking, the server MUST carry the instance's `instance_id` as the property `service.instance.id` of every exception it sends once it has read its id, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+Where exceptions go to error tracking, the server MUST carry the instance's `instance_id` as the property `service.instance.id` of every exception it sends once it has read its id, unless `otel_resource_attributes` names `service.instance.id`, which stands in its place.
 
 **Reason:** the id is in the database, which opens after the server starts, so an exception captured before it opens goes unnamed.
 
@@ -2722,21 +2762,21 @@ Where exceptions go to error tracking, the server MUST carry the instance's `ins
 
 ### `instance/telemetry-attributes`
 
-Where anything is exported, the server MUST carry each attribute `OTEL_RESOURCE_ATTRIBUTES` names as a resource attribute of every log record and span it exports and as a property of every exception it sends, in place of its own attribute of the same name.
+Where anything is exported, the server MUST carry each attribute `otel_resource_attributes` names as a resource attribute of every log record and span it exports and as a property of every exception it sends, in place of its own attribute of the same name.
 
-**Reason:** the operator is the one who knows what the instance is for, and the standard variable is how an instance marks itself apart, as `deployment.environment=staging` does.
+**Reason:** the operator is the one who knows what the instance is for, and this setting is how an instance marks itself apart, as `deployment.environment=staging` does.
 
 **Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`, `› names the instance and the environment in an exception`.
 
 ### `instance/telemetry-service-name`
 
-Where anything is exported and `OTEL_SERVICE_NAME` is set, the server MUST carry it as the resource attribute `service.name`, whatever `OTEL_RESOURCE_ATTRIBUTES` names.
+Where anything is exported and `otel_service_name` is set, the server MUST carry it as the resource attribute `service.name`, whatever `otel_resource_attributes` names.
 
 **Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`.
 
 ### `instance/telemetry-service-version`
 
-Where anything is exported, the server MUST carry its release version as the resource attribute `service.version` of every log record and span it exports and as a property of every exception it sends, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.version`, which stands in its place.
+Where anything is exported, the server MUST carry its release version as the resource attribute `service.version` of every log record and span it exports and as a property of every exception it sends, unless `otel_resource_attributes` names `service.version`, which stands in its place.
 
 **Reason:** a fault is read against the release that made it, and an upgrade shows as a new version on what follows.
 
@@ -2744,9 +2784,9 @@ Where anything is exported, the server MUST carry its release version as the res
 
 ### `instance/telemetry-no-environment`
 
-If `OTEL_RESOURCE_ATTRIBUTES` names neither `deployment.environment` nor `deployment.environment.name`, then the server MUST NOT carry either on anything it exports.
+If `otel_resource_attributes` names neither `deployment.environment` nor `deployment.environment.name`, then the server MUST NOT carry either on anything it exports.
 
-**Reason:** the server cannot tell an owner's instance from a test one, so any value it chose would be wrong for some. A test or development server marks itself with `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=test`.
+**Reason:** the server cannot tell an owner's instance from a test one, so any value it chose would be wrong for some. A test or development server marks itself with `deployment.environment=test` in `otel_resource_attributes`.
 
 **Tests:** `compliance/telemetry-identity.test.ts › names no environment of its own when the operator names none`.
 
@@ -2806,7 +2846,7 @@ If a setting that does not hold a secret is outside its rule, then the server MU
 
 If a setting that holds a secret is outside its rule, then the server MUST NOT print its value anywhere in its refusal.
 
-**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `MARFA_KEY_SALT`, `MARFA_AUTH_SECRET` and the `OTEL_EXPORTER_OTLP_*` endpoints and headers, since an address can carry a credential.
+**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `MARFA_KEY_SALT`, `MARFA_AUTH_SECRET`, and under test hooks the seeds of the OTLP endpoints and headers, since an address can carry a credential.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s and no other setting, when it is %s`, `› refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
 
@@ -2865,8 +2905,18 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `object_store_secret_access_key` | None               | A secret: text of 1 to 4096 characters with no whitespace around it, or empty                       | The secret access key for the object store. A write that changes `object_store_bucket` or `object_store_endpoint` removes it, unless the write sets it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `posthog_host`                   | None               | A secret: an `https` URL, or an `http` URL on this machine, with no user name or password, or empty | The PostHog host the server sends a report of each unhandled fault to, at `i/v1/analytics/events` under it, while `error_reporting_enabled` is true. It needs `posthog_project_token` set too. When empty, no exception report is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `posthog_project_token`          | None               | A secret: 1 to 256 visible ASCII characters with no spaces, or empty                                | The PostHog project token the server sends its exception reports with. It needs `posthog_host` set too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `telemetry_enabled` | `true` | `true` or `false` | Whether the server sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. When `false`, it sends none of them and keeps every telemetry setting as it is. |
+| `otel_exporter_otlp_endpoint` | None | A secret: an absolute `http` or `https` URL, or empty | The base URL of the OTLP receiver. When set, the server exports traces to `v1/traces` and log records to `v1/logs` under it, keeping its query. When empty, no trace or log record is exported. |
+| `otel_exporter_otlp_traces_endpoint` | None | A secret: an absolute `http` or `https` URL, or empty | The URL traces are posted to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. |
+| `otel_exporter_otlp_logs_endpoint` | None | A secret: an absolute `http` or `https` URL, or empty | The URL log records are posted to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. |
+| `otel_exporter_otlp_headers` | None | A secret: comma-separated `key=value` HTTP headers with percent-encoded values, of at most 8192 bytes, or empty | The headers sent with every OTLP export. |
+| `otel_exporter_otlp_traces_headers` | None | A secret: comma-separated `key=value` HTTP headers with percent-encoded values, of at most 8192 bytes, or empty | The headers sent with trace exports. One here replaces the one of the same name in `otel_exporter_otlp_headers`. |
+| `otel_exporter_otlp_logs_headers` | None | A secret: comma-separated `key=value` HTTP headers with percent-encoded values, of at most 8192 bytes, or empty | The headers sent with log exports. One here replaces the one of the same name in `otel_exporter_otlp_headers`. |
+| `otel_sample_ratio` | `0.05` | A number from 0 to 1 | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it. |
+| `otel_service_name` | None | Text of 1 to 255 characters, or empty | The service name on everything exported, in place of a `service.name` in `otel_resource_attributes`. When both are empty, it is `marfa-server`. Kept by this machine and carried by no archive. |
+| `otel_resource_attributes` | None | Comma-separated `key=value` pairs with percent-encoded values, of at most 4096 bytes, or empty | Attributes added to everything exported. One named here replaces the server's own of the same name, such as `service.version`. Kept by this machine and carried by no archive. |
 | `heartbeat_url`                  | None               | A secret: an absolute `http` or `https` URL, or empty                                               | The URL the server requests on a schedule while `heartbeat_enabled` is true, so that something else can notice when the requests stop. When empty, there is no heartbeat.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `allow_private_addresses`        | `false`            | `true` or `false`                                                                                   | Whether the server may send to loopback, private and other addresses that are not public: webhooks, `heartbeat_url`, `posthog_host` and `object_store_endpoint`. Changing it needs a sign-in from the last five minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `allow_private_addresses`        | `false`            | `true` or `false`                                                                                   | Whether the server may send to loopback, private and other addresses that are not public: webhooks, `heartbeat_url`, `posthog_host`, the three OTLP endpoints and `object_store_endpoint`. Changing it needs a sign-in from the last five minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `enrichment_enabled`             | `true`             | `true` or `false`                                                                                   | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `enrichment_ocr_enabled`         | `true`             | `true` or `false`                                                                                   | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `enrichment_max_blob_bytes`      | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                                                           | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -3221,7 +3271,7 @@ When a stored setting changes, the server MUST use the effective choice for futu
 
 ## Secret settings
 
-A stored setting the table gives as a secret holds a credential: `object_store_secret_access_key` and `posthog_project_token`, and `heartbeat_url` and `posthog_host`, whose address is itself the credential. It is written through `PUT /config` and `PATCH /config` like any stored setting, and never read back.
+A stored setting the table gives as a secret holds a credential: `object_store_secret_access_key`, `posthog_project_token` and the three OTLP header settings, and `heartbeat_url`, `posthog_host` and the three OTLP endpoints, whose address can itself be the credential. It is written through `PUT /config` and `PATCH /config` like any stored setting, and never read back.
 
 ### `instance/secret-sealed`
 
@@ -3415,7 +3465,7 @@ When a write to `/config` sets `heartbeat_url`, the server MUST list the `heartb
 
 ## Where the server may send
 
-The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `posthog_host` and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
+The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `posthog_host`, the three OTLP endpoints and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
 
 ### `instance/private-addresses-local`
 
@@ -3561,7 +3611,7 @@ Where `allow_private_addresses` is `false` and the server has never attached an 
 
 ## Start-only settings
 
-The environment variables below are read once, when the server starts. Each is named `MARFA_` and what it sets, except the `OTEL_*` settings, which keep OpenTelemetry's standard names because operators' tools already set them.
+The environment variables below are read once, when the server starts. Each is named `MARFA_` and what it sets.
 
 | Setting                              | Default                                              | Allowed values                                                     | What it sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -3584,16 +3634,6 @@ The environment variables below are read once, when the server starts. Each is n
 | `MARFA_TRUSTED_PROXY_HEADER`         | None                                                 | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address, believed only from a peer inside `MARFA_TRUSTED_PROXY_CIDRS`, which it needs. While it is set, `X-Forwarded-For` is ignored.                                                                                                                                                                                                                                                                                                                      |
 | `MARFA_KEY_SALT`                     | None. Generated on first start into `marfa.secrets`. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Unset, the server uses the salt in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                                                          |
 | `MARFA_AUTH_SECRET`                  | None. Generated on first start into `marfa.secrets`. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Unset, the server uses the secret in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                  |
-| `MARFA_OTEL_SAMPLE_RATIO`            | `0.05`                                               | Decimal number, 0 to 1                                             | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.                                                                                                                                                                                                                                                                                                                                              |
-| `OTEL_SDK_DISABLED`                  | `false`                                              | `true` in any case, or any other value                             | `true` in any case turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value, including `1`, leaves them as they are.                                                                                                                                                                                                                                                                                                                                                       |
-| `OTEL_SERVICE_NAME`                  | `marfa-server`                                       | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `OTEL_RESOURCE_ATTRIBUTES`           | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `service.version`.                                                                                                                                                                                                                                                                                                                                                                       |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`        | None                                                 | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns traces and logs on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, no trace or log is exported; exception reports have stored settings of their own (`posthog_host`).                                                                                                                                                                                                                                                                          |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | None                                                 | Absolute `http` or `https` URL                                     | The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`   | None                                                 | Absolute `http` or `https` URL                                     | The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `OTEL_EXPORTER_OTLP_HEADERS`         | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with every OTLP export, as `key=value` pairs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `OTEL_EXPORTER_OTLP_TRACES_HEADERS`  | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with trace exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `OTEL_EXPORTER_OTLP_LOGS_HEADERS`    | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with log exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ### `instance/secrets-generated`
 

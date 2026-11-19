@@ -5,9 +5,11 @@ use std::path::{Component, Path, PathBuf};
 use super::registry::{
     ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED,
     HEARTBEAT_URL, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT, OBJECT_STORE_PATH_STYLE,
-    POSTHOG_HOST, POSTHOG_PROJECT_TOKEN, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS,
-    VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, POSTHOG_HOST, POSTHOG_PROJECT_TOKEN, Setting, Snapshot,
+    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
+use super::sealed::Secret;
 use super::start::Fixed;
 use crate::app::addresses::Address;
 use crate::app::blobs::s3::virtual_host;
@@ -84,14 +86,27 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "destinations_are_public",
-        description: "While allow_private_addresses is false, heartbeat_url, posthog_host and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
+        description: "While allow_private_addresses is false, heartbeat_url, posthog_host, otel_exporter_otlp_endpoint, otel_exporter_otlp_traces_endpoint, otel_exporter_otlp_logs_endpoint and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
         keys: &[
             "allow_private_addresses",
             "heartbeat_url",
             "posthog_host",
+            "otel_exporter_otlp_endpoint",
+            "otel_exporter_otlp_traces_endpoint",
+            "otel_exporter_otlp_logs_endpoint",
             "object_store_endpoint",
         ],
         judge: destinations_are_public,
+    },
+    Together {
+        name: "otlp_signal_needs_base",
+        description: "otel_exporter_otlp_traces_endpoint and otel_exporter_otlp_logs_endpoint can be set only while otel_exporter_otlp_endpoint is set.",
+        keys: &[
+            "otel_exporter_otlp_endpoint",
+            "otel_exporter_otlp_traces_endpoint",
+            "otel_exporter_otlp_logs_endpoint",
+        ],
+        judge: otlp_signal_needs_base,
     },
     Together {
         name: "virtual_host_is_a_host",
@@ -252,15 +267,18 @@ fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
         return Vec::new();
     }
     let switch_named = judged.names(ALLOW_PRIVATE_ADDRESSES.entry.key);
+    let secret = |setting: Setting<Option<Secret>>| {
+        (
+            setting.entry.key,
+            after.get(setting).map(|url| url.expose().to_string()),
+        )
+    };
     [
-        (
-            HEARTBEAT_URL.entry.key,
-            after.get(HEARTBEAT_URL).map(|url| url.expose().to_string()),
-        ),
-        (
-            POSTHOG_HOST.entry.key,
-            after.get(POSTHOG_HOST).map(|url| url.expose().to_string()),
-        ),
+        secret(HEARTBEAT_URL),
+        secret(POSTHOG_HOST),
+        secret(OTEL_EXPORTER_OTLP_ENDPOINT),
+        secret(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
+        secret(OTEL_EXPORTER_OTLP_LOGS_ENDPOINT),
         (
             OBJECT_STORE_ENDPOINT.entry.key,
             after.get(OBJECT_STORE_ENDPOINT),
@@ -279,6 +297,45 @@ fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
                 .to_string(),
     })
     .collect()
+}
+
+/// A row that must be set again counts as unset. Names the signal's key, or the base's where the
+/// write removes the base.
+fn otlp_signal_needs_base(judged: &Judged) -> Vec<Breach> {
+    let after = judged.after;
+    let base = OTEL_EXPORTER_OTLP_ENDPOINT.entry;
+    if after.secret_set(base) {
+        return Vec::new();
+    }
+    let lonely: Vec<&'static str> = [
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.entry,
+        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.entry,
+    ]
+    .into_iter()
+    .filter(|signal| after.secret_set(signal))
+    .map(|signal| signal.key)
+    .collect();
+    let named: Vec<&'static str> = lonely
+        .iter()
+        .copied()
+        .filter(|key| judged.names(key))
+        .collect();
+    if !named.is_empty() {
+        return named
+            .into_iter()
+            .map(|path| Breach {
+                path,
+                message: format!("needs {} set too", base.key),
+            })
+            .collect();
+    }
+    match lonely.first() {
+        Some(signal) => vec![Breach {
+            path: base.key,
+            message: format!("cannot be removed while {signal} is set; remove it too"),
+        }],
+        None => Vec::new(),
+    }
 }
 
 fn one_backup_destination(judged: &Judged) -> Vec<Breach> {

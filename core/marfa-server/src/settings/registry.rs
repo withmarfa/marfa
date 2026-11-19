@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use marfa_telemetry::host::{Capture, capture_url};
+use marfa_telemetry::identity;
 use serde_json::Value as Json;
 
 #[cfg(feature = "test-hooks")]
@@ -42,6 +43,18 @@ pub enum Rule {
     Prefix,
     /// An absolute path with no `..` in it, or nothing.
     Folder,
+    /// `key=value` HTTP headers, comma-separated and percent-encoded, of at most `max` bytes, or
+    /// nothing.
+    Headers {
+        max: usize,
+    },
+    /// `key=value` resource attributes, comma-separated and percent-encoded, of at most `max`
+    /// bytes, or nothing.
+    Attributes {
+        max: usize,
+    },
+    /// A decimal number from 0 to 1.
+    Ratio,
 }
 
 /// Where a setting's value is kept.
@@ -218,6 +231,7 @@ impl Entry {
                 return Address::parse(text).map(|address| Value::Address(Some(address)));
             }
             Rule::Addresses => return addresses::parse_list(text).map(Value::Addresses),
+            Rule::Ratio => return rule::ratio(text.trim()).map(|ratio| Value::Ratio(Ratio(ratio))),
             _ if text.is_empty() || (!self.is_secret() && text.trim().is_empty()) => None,
             // A secret is used as written, so whitespace around it would be part of it.
             _ if self.is_secret() && text != text.trim() => {
@@ -264,6 +278,25 @@ impl Entry {
             }
             Rule::Prefix => Some(prefix(text.trim())?),
             Rule::Folder => Some(folder(text.trim())?),
+            Rule::Headers { max } => {
+                if text.len() > max || !identity::headers(text).1 {
+                    return Err(format!(
+                        "must be comma-separated key=value headers with percent-encoded values, \
+                         of at most {max} bytes"
+                    ));
+                }
+                Some(text.to_string())
+            }
+            Rule::Attributes { max } => {
+                let kept = text.trim();
+                if kept.len() > max || identity::attributes(kept).is_none() {
+                    return Err(format!(
+                        "must be comma-separated key=value pairs with percent-encoded values, \
+                         of at most {max} bytes"
+                    ));
+                }
+                Some(kept.to_string())
+            }
         };
         Ok(if self.is_secret() {
             Value::Secret(text_value.map(Secret::new))
@@ -330,6 +363,15 @@ impl Entry {
                 "a folder such as marfa or a/b, of letters, digits, `.`, `_` and `-`".to_string()
             }
             Rule::Folder => "an absolute path such as /srv/backups, or nothing".to_string(),
+            Rule::Headers { max } => format!(
+                "comma-separated key=value headers with percent-encoded values, of at most {max} \
+                 bytes, or nothing"
+            ),
+            Rule::Attributes { max } => format!(
+                "comma-separated key=value pairs with percent-encoded values, of at most {max} \
+                 bytes, or nothing"
+            ),
+            Rule::Ratio => "a number from 0 to 1".to_string(),
         }
     }
 
@@ -345,6 +387,10 @@ impl Entry {
         let text = match (self.rule, value) {
             (Rule::Whole { .. }, Json::Number(number)) => whole_text(number),
             (Rule::Boolean, Json::Bool(flag)) => flag.to_string(),
+            (Rule::Ratio, Json::Number(number)) => match number.as_f64() {
+                Some(ratio) => ratio.to_string(),
+                None => return Err(wrong_type()),
+            },
             (Rule::Address, Json::String(text)) => text.clone(),
             (Rule::Addresses, Json::Array(items)) if items.iter().all(Json::is_string) => {
                 value.to_string()
@@ -358,7 +404,9 @@ impl Entry {
                 | Rule::Url
                 | Rule::CaptureHost
                 | Rule::Prefix
-                | Rule::Folder,
+                | Rule::Folder
+                | Rule::Headers { .. }
+                | Rule::Attributes { .. },
                 Json::String(text),
             ) if !self.is_secret() => text.clone(),
             _ => return Err(wrong_type()),
@@ -463,7 +511,20 @@ pub enum Value {
     Addresses(Vec<Address>),
     Text(Option<String>),
     Secret(Option<Secret>),
+    Ratio(Ratio),
 }
+
+/// A share from 0 to 1, compared bit for bit so that a value equals itself.
+#[derive(Clone, Copy, Debug)]
+pub struct Ratio(pub f64);
+
+impl PartialEq for Ratio {
+    fn eq(&self, other: &Ratio) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for Ratio {}
 
 // Lets the rule judge a fraction or a negative as it judges text.
 fn whole_text(number: &serde_json::Number) -> String {
@@ -491,6 +552,7 @@ impl Value {
                 .as_ref()
                 .map_or(Json::Null, |text| Json::from(text.as_str())),
             Value::Secret(_) => Json::Null,
+            Value::Ratio(Ratio(ratio)) => Json::from(*ratio),
         }
     }
 
@@ -513,6 +575,7 @@ impl Value {
             Value::Text(text) => text.clone().unwrap_or_default(),
             // A secret's row is sealed by the one who writes it.
             Value::Secret(_) => String::new(),
+            Value::Ratio(Ratio(ratio)) => ratio.to_string(),
         }
     }
 }
@@ -525,6 +588,15 @@ impl Kind for u64 {
     fn from_value(value: &Value) -> Option<u64> {
         match value {
             Value::Whole(number) => Some(*number),
+            _ => None,
+        }
+    }
+}
+
+impl Kind for f64 {
+    fn from_value(value: &Value) -> Option<f64> {
+        match value {
+            Value::Ratio(Ratio(ratio)) => Some(*ratio),
             _ => None,
         }
     }
@@ -632,6 +704,7 @@ const BYTES_OR_NONE: Rule = Rule::Whole {
     min: 0,
     max: rule::TERABYTE,
 };
+const OTLP_HEADERS: Rule = Rule::Headers { max: 8192 };
 const COUNT: Rule = Rule::Whole {
     min: 1,
     max: rule::MILLION,
@@ -660,12 +733,22 @@ registry! {
     HEARTBEAT_URL: Option<Secret> = "heartbeat_url", Rule::Url, "", "Where the server sends its heartbeat, a GET request on the housekeeping schedule, so that something else can notice when the requests stop.", Secret;
     POSTHOG_HOST: Option<Secret> = "posthog_host", Rule::CaptureHost, "", "The PostHog host the server sends a report of each of its own faults to, for PostHog's error tracking. It needs posthog_project_token set too.", Secret;
     POSTHOG_PROJECT_TOKEN: Option<Secret> = "posthog_project_token", Rule::Token { max: 256 }, "", "The PostHog project token the server's fault reports are sent with. It needs posthog_host set too.", Secret;
-    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, posthog_host and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
+    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, posthog_host, the three OTLP endpoints and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";
     RATE_LIMIT_WINDOW_SECONDS: u64 = "rate_limit_window_seconds", UP_TO_A_DAY, "60", "How long one rate-limit window lasts, in seconds.";
     ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own faults to posthog_host.";
+    TELEMETRY_ENABLED: bool = "telemetry_enabled", Rule::Boolean, "true", "Whether the server sends telemetry about itself: traces and log records to the OTLP endpoints, and fault reports to posthog_host. When off, it sends none of them and keeps every telemetry setting as it is.";
+    OTEL_EXPORTER_OTLP_ENDPOINT: Option<Secret> = "otel_exporter_otlp_endpoint", Rule::Url, "", "The base URL of the OTLP receiver the server sends its traces and log records to, under `v1/traces` and `v1/logs`. Leave it empty to send neither.", Secret;
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Option<Secret> = "otel_exporter_otlp_traces_endpoint", Rule::Url, "", "The URL traces are posted to, used as written, in place of the one under otel_exporter_otlp_endpoint, which must also be set.", Secret;
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: Option<Secret> = "otel_exporter_otlp_logs_endpoint", Rule::Url, "", "The URL log records are posted to, used as written, in place of the one under otel_exporter_otlp_endpoint, which must also be set.", Secret;
+    OTEL_EXPORTER_OTLP_HEADERS: Option<Secret> = "otel_exporter_otlp_headers", OTLP_HEADERS, "", "The headers sent with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values.", Secret;
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS: Option<Secret> = "otel_exporter_otlp_traces_headers", OTLP_HEADERS, "", "The headers sent with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in otel_exporter_otlp_headers.", Secret;
+    OTEL_EXPORTER_OTLP_LOGS_HEADERS: Option<Secret> = "otel_exporter_otlp_logs_headers", OTLP_HEADERS, "", "The headers sent with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in otel_exporter_otlp_headers.", Secret;
+    OTEL_SAMPLE_RATIO: f64 = "otel_sample_ratio", Rule::Ratio, "0.05", "The share of traces exported, from 0 to 1. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.";
+    OTEL_SERVICE_NAME: Option<String> = "otel_service_name", Rule::Text { max: 255 }, "", "The service name on everything the server exports, in place of a `service.name` in otel_resource_attributes. Leave both empty for `marfa-server`.", Machine;
+    OTEL_RESOURCE_ATTRIBUTES: Option<String> = "otel_resource_attributes", Rule::Attributes { max: 4096 }, "", "Attributes added to everything the server exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces the server's own of the same name, such as `service.version`.", Machine;
     AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
     UNAPPROVED_APP_RETENTION_HOURS: u64 = "unapproved_app_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "1", "How many hours an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
     REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
@@ -1111,6 +1194,64 @@ mod tests {
         assert!(restored.exception_receiver().is_none());
     }
 
+    #[test]
+    fn the_telemetry_settings_take_their_rules_and_refuse_without_repeating_a_secret() {
+        let ratio = OTEL_SAMPLE_RATIO.entry;
+        for (given, kept) in [("0", "0"), ("1", "1"), ("0.25", "0.25"), (" 0.5 ", "0.5")] {
+            assert_eq!(ratio.row_text(given), Ok(kept.to_string()), "{given}");
+        }
+        for refused in ["-0.1", "1.0001", ".5", "1e-1", "NaN", "inf", ""] {
+            assert!(ratio.row_text(refused).is_err(), "{refused}");
+        }
+        assert_eq!(
+            ratio.row_text_of_json(&Json::from(0.0000001)),
+            Ok("0.0000001".into())
+        );
+        assert!(ratio.row_text_of_json(&Json::from("0.5")).is_err());
+        assert!(ratio.row_text_of_json(&Json::from(1.5)).is_err());
+        assert_eq!(ratio.default_json(), Json::from(0.05));
+
+        let headers = OTEL_EXPORTER_OTLP_HEADERS.entry;
+        let kept = |text: &str| {
+            headers
+                .secret_text(&Json::from(text))
+                .map(|secret| secret.map(|secret| secret.expose().to_string()))
+        };
+        assert_eq!(
+            kept("authorization=Bearer%20secret,x-team=core"),
+            Ok(Some("authorization=Bearer%20secret,x-team=core".into()))
+        );
+        assert_eq!(kept(""), Ok(None));
+        for refused in [
+            "hush",
+            "authorization=hush%zz",
+            "bad key=hush",
+            " authorization=hush",
+            &format!("a={}", "hush".repeat(2048)),
+        ] {
+            let refusal = kept(refused).expect_err(refused);
+            assert!(!refusal.contains("hush"), "{refusal}");
+        }
+
+        let attributes = OTEL_RESOURCE_ATTRIBUTES.entry;
+        assert_eq!(
+            attributes.row_text(" deployment.environment=test "),
+            Ok("deployment.environment=test".into())
+        );
+        assert!(attributes.row_text("team").is_err());
+        assert!(
+            attributes
+                .row_text(&format!("a={}", "b".repeat(4096)))
+                .is_err()
+        );
+
+        let endpoint = OTEL_EXPORTER_OTLP_ENDPOINT.entry;
+        assert!(endpoint.hides_value());
+        assert!(endpoint.named_without_value());
+        assert!(!attributes.carried() && !OTEL_SERVICE_NAME.entry.carried());
+        assert!(TELEMETRY_ENABLED.entry.carried() && ratio.carried());
+    }
+
     /// `a<c>b` for each printable ASCII character `allowed` does not take.
     fn with_each_other_character(allowed: fn(char) -> bool) -> Vec<String> {
         (' '..='~')
@@ -1268,6 +1409,7 @@ mod tests {
             Rule::Whole { .. } => "integer",
             Rule::Boolean => "boolean",
             Rule::Addresses => "array",
+            Rule::Ratio => "number",
             _ => "string",
         };
         let kind = if nullable {
@@ -1284,7 +1426,15 @@ mod tests {
                     problems.push(format!("{key}: range against {min} to {max}"));
                 }
             }
-            Rule::Text { max } | Rule::Token { max } if schema["maxLength"] != max => {
+            Rule::Ratio if schema["minimum"] != 0 || schema["maximum"] != 1 => {
+                problems.push(format!("{key}: range against 0 to 1"));
+            }
+            Rule::Text { max }
+            | Rule::Token { max }
+            | Rule::Headers { max }
+            | Rule::Attributes { max }
+                if schema["maxLength"] != max =>
+            {
                 problems.push(format!("{key}: maxLength against {max}"));
             }
             Rule::Region if schema["maxLength"] != REGION_LONGEST => {

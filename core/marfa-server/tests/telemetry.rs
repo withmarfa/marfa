@@ -13,7 +13,6 @@ use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::App;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
-use marfa_server::telemetry::Config;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -156,6 +155,8 @@ fn request(method: Method, path: &str, token: Option<&str>, body: Value) -> Requ
 
 impl Instance {
     async fn start(pairs: &[(&str, &str)]) -> (Instance, marfa_server::telemetry::Guard) {
+        // Log records reach the exporter through the process's one subscriber.
+        marfa_server::log::init();
         let dir = TempDir::new().unwrap();
         let database = dir.path().join("marfa.db");
         let blobs = dir.path().join("blobs");
@@ -169,15 +170,10 @@ impl Instance {
         ];
         all.extend_from_slice(pairs);
         let environment = Environment::from_pairs(&all);
-        let mut problems = Vec::new();
-        let telemetry = Config::read(&environment, &mut problems);
-        assert!(problems.is_empty(), "{problems:?}");
         let app = App::start(Settings::read(environment).unwrap())
             .await
             .unwrap();
-        let guard = app
-            .telemetry
-            .start(&telemetry, &app.instance_id, &app.settings.live());
+        let guard = app.telemetry.start(&app.instance_id, &app.settings);
         let control = control(app.clone());
         let (_, minted) = send(
             &control,
@@ -232,12 +228,22 @@ impl Instance {
         )
         .await
     }
+
+    async fn configure_as(&self, request_id: &str, body: Value) -> StatusCode {
+        let mut call = request(Method::PATCH, "/config", None, body);
+        call.headers_mut()
+            .insert("x-request-id", request_id.parse().unwrap());
+        send(&control(self.app.clone()), call).await.0
+    }
 }
 
-/// An OTLP collector at `host`, which a fault reaches with no PostHog setting.
+/// The seeds of an OTLP collector at `host`, which a fault reaches with no PostHog setting.
 fn settings(host: &str, other: &[(&'static str, String)]) -> Vec<(String, String)> {
     let mut pairs = vec![
-        ("OTEL_EXPORTER_OTLP_ENDPOINT".to_string(), host.to_string()),
+        (
+            "MARFA_OTEL_EXPORTER_OTLP_ENDPOINT".to_string(),
+            host.to_string(),
+        ),
         ("MARFA_OTEL_SAMPLE_RATIO".to_string(), "0".to_string()),
         // The receiver listens on loopback.
         (
@@ -434,6 +440,19 @@ async fn a_receiver_that_never_answers_changes_nothing_for_a_request() {
         started.elapsed()
     );
 
+    // Retiring an exporter stuck on the silent receiver holds up no write.
+    let (other, _) = receiver(true);
+    let swapping = Instant::now();
+    let (status, answer) = instance
+        .configure(json!({ "otel_exporter_otlp_endpoint": other }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert!(
+        swapping.elapsed() < Duration::from_millis(500),
+        "{:?}",
+        swapping.elapsed()
+    );
+
     let stopping = Instant::now();
     guard.stop(Duration::from_secs(1));
     assert!(
@@ -441,4 +460,265 @@ async fn a_receiver_that_never_answers_changes_nothing_for_a_request() {
         "{:?}",
         stopping.elapsed()
     );
+}
+
+/// Each trace or log post's request ids among `ids`, with the header `name` it carried.
+fn sent_with(received: &Received, prefix: &str, ids: &[&str], name: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for (path, head, body) in received.lock().unwrap().iter() {
+        if !path.starts_with(prefix) {
+            continue;
+        }
+        let carried = head
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split_once(':'))
+            .find(|(held, _)| held.trim().eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.trim().to_string())
+            .unwrap_or_default();
+        for id in ids {
+            if body.contains(&format!("\"{id}\"")) {
+                found.push((id.to_string(), carried.clone()));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+fn pair(id: &str, header: &str) -> (String, String) {
+    (id.to_string(), header.to_string())
+}
+
+#[tokio::test]
+async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart() {
+    let (host, received) = receiver(false);
+    let (instance, guard) = Instance::start(&[
+        ("MARFA_OTEL_SAMPLE_RATIO", "1"),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
+    ])
+    .await;
+    instance.write_note("unset").await;
+    let (status, answer) = instance
+        .configure(json!({
+            "otel_exporter_otlp_endpoint": host,
+            "otel_exporter_otlp_headers": "authorization=Bearer%20one",
+        }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    instance.write_note("first").await;
+    // A span that starts before the change ends into the exporter the change built.
+    let swapped = instance
+        .configure_as(
+            "swap",
+            json!({ "otel_exporter_otlp_headers": "authorization=Bearer%20two" }),
+        )
+        .await;
+    assert_eq!(swapped, StatusCode::OK);
+    instance.write_note("second").await;
+    instance
+        .configure(json!({ "telemetry_enabled": false }))
+        .await;
+    instance.write_note("switched-off").await;
+    instance
+        .configure(json!({ "telemetry_enabled": true }))
+        .await;
+    instance.write_note("again").await;
+    guard.stop(Duration::from_secs(10));
+
+    let ids = ["unset", "first", "swap", "second", "switched-off", "again"];
+    for prefix in ["/v1/traces", "/v1/logs"] {
+        assert_eq!(
+            sent_with(&received, prefix, &ids, "authorization"),
+            [
+                pair("again", "Bearer two"),
+                pair("first", "Bearer one"),
+                pair("second", "Bearer two"),
+                pair("swap", "Bearer two"),
+            ],
+            "{prefix}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_endpoint_that_is_not_public_is_refused_and_sent_nothing_until_allowed() {
+    let (host, received) = receiver(false);
+    let (instance, guard) = Instance::start(&[("MARFA_OTEL_SAMPLE_RATIO", "1")]).await;
+    let (status, answer) = instance
+        .configure(json!({ "otel_exporter_otlp_endpoint": host }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(!answer.to_string().contains(&host), "{answer}");
+    // A name that leads to this machine is taken, and judged again as each export is sent.
+    let by_name = host.replace("127.0.0.1", "localhost");
+    let (status, answer) = instance
+        .configure(json!({ "otel_exporter_otlp_endpoint": by_name }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    instance.write_note("private-refused").await;
+    instance
+        .configure(json!({ "allow_private_addresses": true }))
+        .await;
+    instance.write_note("private-allowed").await;
+    guard.stop(Duration::from_secs(10));
+    assert_eq!(
+        sent_with(
+            &received,
+            "/v1/traces",
+            &["private-refused", "private-allowed"],
+            "host"
+        )
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>(),
+        ["private-allowed"]
+    );
+}
+
+#[tokio::test]
+async fn a_signal_endpoint_needs_the_base_and_a_bad_value_is_refused_without_being_shown() {
+    let (instance, guard) = Instance::start(&[("MARFA_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let refused = |answer: &Value| answer.to_string();
+    let (status, answer) = instance
+        .configure(json!({ "otel_exporter_otlp_traces_endpoint": "http://127.0.0.1:9/in" }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused(&answer).contains("otel_exporter_otlp_traces_endpoint"),
+        "{answer}"
+    );
+    assert!(
+        refused(&answer).contains("needs otel_exporter_otlp_endpoint"),
+        "{answer}"
+    );
+    let (status, _) = instance
+        .configure(json!({
+            "otel_exporter_otlp_endpoint": "http://127.0.0.1:9",
+            "otel_exporter_otlp_traces_endpoint": "http://127.0.0.1:9/in",
+        }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, answer) = instance
+        .configure(json!({ "otel_exporter_otlp_endpoint": null }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        refused(&answer).contains("cannot be removed while"),
+        "{answer}"
+    );
+    for (key, value) in [
+        ("otel_exporter_otlp_endpoint", json!("ftp://secret-host/x")),
+        ("otel_exporter_otlp_endpoint", json!("secret-host:4318")),
+        (
+            "otel_exporter_otlp_headers",
+            json!("authorization=secret%zz"),
+        ),
+        (
+            "otel_exporter_otlp_headers",
+            json!("secret-without-a-value"),
+        ),
+        ("otel_resource_attributes", json!("team")),
+        ("otel_sample_ratio", json!(1.0001)),
+        ("otel_sample_ratio", json!(-0.5)),
+        ("otel_sample_ratio", json!("0.5")),
+    ] {
+        let (status, answer) = instance.configure(json!({ key: value })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{key} {value}: {answer}");
+        assert!(refused(&answer).contains(key), "{answer}");
+        assert!(!refused(&answer).contains("secret"), "{answer}");
+    }
+    let (status, answer) = instance
+        .configure(json!({ "otel_sample_ratio": 0.25, "otel_resource_attributes": "team=a%20b" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["otel_sample_ratio"], 0.25);
+    assert_eq!(answer["otel_resource_attributes"], "team=a%20b");
+    assert!(
+        answer.get("otel_exporter_otlp_endpoint").is_none(),
+        "{answer}"
+    );
+    guard.stop(Duration::from_secs(1));
+}
+
+/// The OpenTelemetry crates read some standard variables of their own; the server's settings
+/// must win over every one. Runs its own runtime, since the variables are set before any thread
+/// starts.
+#[test]
+fn a_platform_variable_never_overrides_the_stored_settings() {
+    let (host, received) = receiver(false);
+    let (planted_host, planted) = receiver(false);
+    let planted_variables = [
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", planted_host.as_str()),
+        ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", planted_host.as_str()),
+        ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=planted"),
+        ("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "x-planted=traces"),
+        ("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "x-planted=logs"),
+        ("OTEL_EXPORTER_OTLP_TIMEOUT", "1"),
+        ("OTEL_TRACES_SAMPLER", "always_off"),
+        ("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "0"),
+        ("OTEL_BSP_SCHEDULE_DELAY", "600000"),
+        ("OTEL_BLRP_SCHEDULE_DELAY", "600000"),
+        ("OTEL_SDK_DISABLED", "true"),
+        ("OTEL_SERVICE_NAME", "planted"),
+        ("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=planted"),
+    ];
+    for (name, value) in planted_variables {
+        // SAFETY: no other thread runs yet; the receivers' threads read no environment.
+        unsafe { std::env::set_var(name, value) };
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (instance, guard) = Instance::start(&[
+            ("MARFA_OTEL_SAMPLE_RATIO", "1"),
+            ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true"),
+        ])
+        .await;
+        instance
+            .configure(json!({
+                "otel_exporter_otlp_endpoint": host,
+                "otel_exporter_otlp_headers": "authorization=stored",
+            }))
+            .await;
+        instance.write_note("planted-around").await;
+        // The batch delays are the server's own: both arrive long before the planted ones.
+        let arrived = |prefix: &str| {
+            !sent_with(&received, prefix, &["planted-around"], "authorization").is_empty()
+        };
+        let waiting = Instant::now();
+        while !(arrived("/v1/traces") && arrived("/v1/logs")) {
+            assert!(
+                waiting.elapsed() < Duration::from_secs(20),
+                "nothing arrived"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        guard.stop(Duration::from_secs(5));
+    });
+
+    for prefix in ["/v1/traces", "/v1/logs"] {
+        assert_eq!(
+            sent_with(&received, prefix, &["planted-around"], "authorization"),
+            [pair("planted-around", "stored")],
+            "{prefix}"
+        );
+        assert!(
+            sent_with(&received, prefix, &["planted-around"], "x-planted")
+                .iter()
+                .all(|(_, value)| value.is_empty())
+        );
+    }
+    let everything: String = received
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, head, body)| format!("{head}{body}"))
+        .collect();
+    assert!(!everything.contains("planted\""), "{everything}");
+    assert!(!everything.contains("deployment.environment"));
+    assert!(everything.contains("marfa.request_id"));
+    assert!(planted.lock().unwrap().is_empty());
 }

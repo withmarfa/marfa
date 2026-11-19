@@ -3,11 +3,15 @@
 use marfa_rules::environment::COMMAND_LINE;
 
 use super::Environment;
-use super::registry::ENTRIES;
+use super::registry::{ENTRIES, TELEMETRY_ENABLED};
 use super::rule;
 use super::start_only::DECLARED;
 
 const PREFIXES: [&str; 1] = ["MARFA_"];
+
+/// OpenTelemetry's standard names, which the server reads none of: its telemetry is stored
+/// settings, so a platform's variable never overrides the owner.
+const OTEL_PREFIX: &str = "OTEL_";
 
 /// Naming one of these wrongly makes the server generate a replacement, which ends every key
 /// or every sign-in.
@@ -153,8 +157,20 @@ fn meant(name: &str, known: &[Known], hooks_on: bool) -> Option<Meant> {
     }
 }
 
-/// Every `MARFA_` name the environment holds that no setting reads, and any other name
-/// a letter or two from a secret's, by name.
+/// The stored setting an OpenTelemetry name stands for, where one does.
+fn otel_meant(name: &str) -> Option<Meant> {
+    if name == "OTEL_SDK_DISABLED" {
+        return Some(Meant::Stored(TELEMETRY_ENABLED.entry.key));
+    }
+    let lower = name.to_ascii_lowercase();
+    ENTRIES
+        .iter()
+        .find(|entry| entry.key == lower)
+        .map(|entry| Meant::Stored(entry.key))
+}
+
+/// Every `MARFA_` and `OTEL_` name the environment holds that no setting reads, and any other
+/// name a letter or two from a secret's, by name.
 pub fn find(environment: &Environment) -> Vec<Unknown> {
     let known = known();
     let hooks_on = hooks_on(environment);
@@ -163,6 +179,14 @@ pub fn find(environment: &Environment) -> Vec<Unknown> {
         .filter(|name| !known.iter().any(|held| held.name == *name))
         .filter(|name| !COMMAND_LINE.contains(name))
         .filter_map(|name| {
+            if name.starts_with(OTEL_PREFIX) {
+                return Some(Unknown {
+                    name: name.to_string(),
+                    meant: otel_meant(name),
+                    generated: None,
+                    prefixed: true,
+                });
+            }
             let upper = name.to_ascii_uppercase();
             let prefixed = PREFIXES.iter().any(|prefix| upper.starts_with(prefix));
             let near = GENERATED
@@ -249,20 +273,37 @@ mod tests {
     }
 
     #[test]
-    fn only_marfa_names_are_judged() {
-        assert_eq!(
-            found(&[
-                ("PATH", "/usr/bin"),
-                ("OTEL_SDK_DISABLED", "true"),
-                ("S3_BUCKET", "x")
-            ]),
-            []
-        );
+    fn only_marfa_and_opentelemetry_names_are_judged() {
+        assert_eq!(found(&[("PATH", "/usr/bin"), ("S3_BUCKET", "x")]), []);
         let names: Vec<_> = found(&[("MARFA_NOT_A_SETTING", "x")])
             .into_iter()
             .map(|entry| entry.name)
             .collect();
         assert_eq!(names, ["MARFA_NOT_A_SETTING"]);
+    }
+
+    #[test]
+    fn an_opentelemetry_name_is_warned_of_and_names_the_stored_setting_it_stands_for() {
+        let found = found(&[
+            ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=planted"),
+            ("OTEL_SDK_DISABLED", "true"),
+            ("OTEL_TRACES_SAMPLER", "always_off"),
+        ]);
+        let sentences: Vec<String> = found.iter().map(Unknown::sentence).collect();
+        assert_eq!(
+            sentences,
+            [
+                "OTEL_EXPORTER_OTLP_HEADERS is not a setting the server reads; \
+                 otel_exporter_otlp_headers is a stored setting, set it through \
+                 `marfa config update` or `PATCH /config`",
+                "OTEL_SDK_DISABLED is not a setting the server reads; telemetry_enabled is a \
+                 stored setting, set it through `marfa config update` or `PATCH /config`",
+                "OTEL_TRACES_SAMPLER is not a setting the server reads",
+            ]
+        );
+        assert!(found.iter().all(|entry| entry.prefixed));
+        assert!(refusals(&found).is_empty());
+        assert!(!sentences.join("\n").contains("planted"));
     }
 
     #[test]
