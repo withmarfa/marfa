@@ -6,8 +6,8 @@ mod memory;
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -659,7 +659,7 @@ fn raised_event(concern: &Concern) -> Event<'static> {
 }
 
 /// What an announcing write did: the entries it announced and the marks it settled.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Written {
     raised: usize,
     failed_runs: usize,
@@ -668,6 +668,27 @@ struct Written {
 
 fn key_of(concern: &Concern) -> Key {
     (concern.kind.to_string(), concern.reference.clone())
+}
+
+/// The entries an announcing write's job chose to announce from the log, decided on the state
+/// it would commit, so a failed write sends from memory only what it would have announced.
+#[derive(Clone, Default)]
+struct Chosen(Arc<Mutex<Option<Vec<Concern>>>>);
+
+impl Chosen {
+    /// Set empty as the job starts, then to its choice before it records any entry.
+    fn choose(&self, concerns: Vec<Concern>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(concerns);
+    }
+
+    /// What a failed write sends from memory: what its job chose, or `unread` if it never ran.
+    fn or(self, unread: Vec<Concern>) -> Vec<Concern> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .unwrap_or(unread)
+    }
 }
 
 /// Records a new entry, announcing it unless memory sent it; one still on its way waits.
@@ -708,9 +729,9 @@ fn forget_gone(app: &App, gathered: &Gathered) {
     });
 }
 
-/// Writes only when an entry is new or gone, decided again in the write unless a newer check looked.
-async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
-    forget_gone(app, gathered);
+/// The new entries, read before the write; `None` when no entry is gone and every new one is
+/// already on its way from memory.
+async fn to_write(app: &Arc<App>, gathered: &Gathered) -> Result<Option<Vec<Concern>>> {
     let looking = gathered.clone();
     let standing = app.attention.reported.references(app.clock.now_ms());
     let (fresh, gone) = app
@@ -720,56 +741,30 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
             Ok((fresh, !forgotten(tx, &looking, &standing)?.is_empty()))
         })
         .await?;
-    let told = app.attention.told.clone();
+    let told = &app.attention.told;
     let waiting = |concern: &Concern| {
         matches!(
             told.get(concern.kind, &concern.reference),
             Some(Mark::Pending(_))
         )
     };
-    if !gone && fresh.iter().all(waiting) {
+    Ok((gone || !fresh.iter().all(waiting)).then_some(fresh))
+}
+
+/// Writes only when an entry is new or gone, decided again in the write unless a newer check looked.
+async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
+    forget_gone(app, gathered);
+    let Some(fresh) = to_write(app, gathered).await? else {
         return Ok(0);
-    }
-    let (writing, looked) = (gathered.clone(), app.attention.looked.clone());
-    let reported = app.attention.reported.clone();
-    let written = app
-        .write(&Caller::Server, WRITE_ACTION, move |unit| {
-            let mut written = Written::default();
-            if looked.load(Ordering::Acquire) > writing.order {
-                return Ok(written);
-            }
-            let tx = unit.tx();
-            let now_ms = unit.instant.ms();
-            for (kind, reference) in forgotten(tx, &writing, &reported.references(now_ms))? {
-                tx.execute(
-                    "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
-                    params![kind, reference],
-                )?;
-            }
-            let marks = told.snapshot();
-            // A failed commit that landed left its row, and the log delivers that entry.
-            let rows: HashSet<Key> = announced(tx)?.into_iter().collect();
-            for (key, mark) in &marks {
-                if let Mark::Sent(serial) = mark
-                    && rows.contains(key)
-                {
-                    written.settled.push((key.clone(), *serial));
-                }
-            }
-            for concern in unannounced(tx, &writing)? {
-                let mark = marks.get(&key_of(concern)).copied();
-                record_new(unit, concern, mark, &mut written)?;
-            }
-            Ok(written)
-        })
-        .await;
-    let written = match written {
+    };
+    let chosen = Chosen::default();
+    let written = match write_new(app, gathered, chosen.clone()).await {
         Ok(written) => written,
         Err(refused) => {
             if database_failed(&refused)
                 && app.attention.looked.load(Ordering::Acquire) <= gathered.order
             {
-                send_from_memory(app, &fresh);
+                send_from_memory(app, &chosen.or(fresh));
             }
             return Err(refused);
         }
@@ -782,6 +777,52 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
         }
     }
     Ok(written.raised)
+}
+
+async fn write_new(app: &Arc<App>, gathered: &Gathered, chosen: Chosen) -> Result<Written> {
+    let (writing, looked) = (gathered.clone(), app.attention.looked.clone());
+    let reported = app.attention.reported.clone();
+    let told = app.attention.told.clone();
+    app.write(&Caller::Server, WRITE_ACTION, move |unit| {
+        let mut written = Written::default();
+        chosen.choose(Vec::new());
+        if looked.load(Ordering::Acquire) > writing.order {
+            return Ok(written);
+        }
+        let tx = unit.tx();
+        let now_ms = unit.instant.ms();
+        for (kind, reference) in forgotten(tx, &writing, &reported.references(now_ms))? {
+            tx.execute(
+                "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
+                params![kind, reference],
+            )?;
+        }
+        let marks = told.snapshot();
+        // A failed commit that landed left its row, and the log delivers that entry.
+        let rows: HashSet<Key> = announced(tx)?.into_iter().collect();
+        for (key, mark) in &marks {
+            if let Mark::Sent(serial) = mark
+                && rows.contains(key)
+            {
+                written.settled.push((key.clone(), *serial));
+            }
+        }
+        let new: Vec<(&Concern, Option<Mark>)> = unannounced(tx, &writing)?
+            .into_iter()
+            .map(|concern| (concern, marks.get(&key_of(concern)).copied()))
+            .collect();
+        chosen.choose(
+            new.iter()
+                .filter(|(_, mark)| mark.is_none())
+                .map(|(concern, _)| (*concern).clone())
+                .collect(),
+        );
+        for (concern, mark) in new {
+            record_new(unit, concern, mark, &mut written)?;
+        }
+        Ok(written)
+    })
+    .await
 }
 
 /// Whether an announcing write failed in the database, refused or at its commit.
@@ -809,35 +850,47 @@ fn raise_fault(app: &Arc<App>, entry: Entry) {
     app.attention.told.forget(FAULT, &entry.reference);
     tokio::spawn(async move {
         let concern = fault_concern(&entry);
-        let told = app.attention.told.clone();
-        let writing = concern.clone();
-        let first_ms = entry.first_ms;
-        let written = app
-            .write(&Caller::Server, WRITE_ACTION, move |unit| {
-                let mut written = Written::default();
-                let tx = unit.tx();
-                if let Some(at) = announced_at(tx, &writing.reference)? {
-                    if Stamp::read(&at)?.ms() >= first_ms {
-                        return Ok(written);
-                    }
-                    tx.execute(
-                        "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
-                        params![FAULT, writing.reference],
-                    )?;
-                }
-                let mark = told.get(FAULT, &writing.reference);
-                record_new(unit, &writing, mark, &mut written)?;
-                Ok(written)
-            })
-            .await;
-        match written {
+        let chosen = Chosen::default();
+        match write_fault(&app, concern.clone(), entry.first_ms, chosen.clone()).await {
             Ok(written) => app.attention.told.settle(&written.settled),
-            Err(refused) if database_failed(&refused) => send_from_memory(&app, &[concern]),
+            Err(refused) if database_failed(&refused) => {
+                send_from_memory(&app, &chosen.or(vec![concern]));
+            }
             Err(refused) => {
                 tracing::warn!(error = %refused, "A fault's attention entry was not announced");
             }
         }
     });
+}
+
+async fn write_fault(
+    app: &Arc<App>,
+    concern: Concern,
+    first_ms: i64,
+    chosen: Chosen,
+) -> Result<Written> {
+    let told = app.attention.told.clone();
+    app.write(&Caller::Server, WRITE_ACTION, move |unit| {
+        let mut written = Written::default();
+        chosen.choose(Vec::new());
+        let tx = unit.tx();
+        if let Some(at) = announced_at(tx, &concern.reference)? {
+            if Stamp::read(&at)?.ms() >= first_ms {
+                return Ok(written);
+            }
+            tx.execute(
+                "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
+                params![FAULT, concern.reference],
+            )?;
+        }
+        let mark = told.get(FAULT, &concern.reference);
+        if mark.is_none() {
+            chosen.choose(vec![concern.clone()]);
+        }
+        record_new(unit, &concern, mark, &mut written)?;
+        Ok(written)
+    })
+    .await
 }
 
 impl App {
@@ -893,6 +946,107 @@ pub async fn check(app: Arc<App>, _run: Run) -> Result<Report> {
 mod tests {
     use super::super::blobs::disk::Place;
     use super::*;
+    use crate::settings::{Environment, Settings};
+
+    async fn started() -> (tempfile::TempDir, Arc<App>) {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    fn met_fault(app: &App) -> Entry {
+        let place = faults::Place::Job("backup");
+        app.attention
+            .reported
+            .record(Kind::Database, &place, app.clock.now_ms())
+            .unwrap()
+    }
+
+    fn looking(app: &App, concerns: Vec<Concern>) -> Gathered {
+        let order = app.attention.begun.fetch_add(1, Ordering::AcqRel) + 1;
+        app.attention.looked.fetch_max(order, Ordering::AcqRel);
+        Gathered {
+            concerns,
+            unknown: Vec::new(),
+            order,
+        }
+    }
+
+    fn health(reference: &str) -> Concern {
+        Concern {
+            kind: "health",
+            failed_run: false,
+            reference: reference.to_string(),
+            title: String::new(),
+            description: String::new(),
+        }
+    }
+
+    fn keys(concerns: &[Concern]) -> Vec<Key> {
+        concerns.iter().map(key_of).collect()
+    }
+
+    #[tokio::test]
+    async fn a_failed_check_sends_from_memory_no_entry_a_fault_announced_after_its_read() {
+        let (_dir, app) = started().await;
+        let entry = met_fault(&app);
+        let fault = fault_concern(&entry);
+        let disk = health("disk");
+        let gathered = looking(&app, vec![fault.clone(), disk.clone()]);
+        let fresh = to_write(&app, &gathered).await.unwrap().unwrap();
+        assert_eq!(keys(&fresh), keys(&[fault.clone(), disk.clone()]));
+
+        let raised = write_fault(&app, fault.clone(), entry.first_ms, Chosen::default())
+            .await
+            .unwrap();
+        assert_eq!(raised.raised, 1, "the fault is announced from the log");
+
+        app.faults.set("fail:commit", Some(WRITE_ACTION)).unwrap();
+        let chosen = Chosen::default();
+        let refused = write_new(&app, &gathered, chosen.clone())
+            .await
+            .unwrap_err();
+        assert!(database_failed(&refused));
+        assert_eq!(keys(&chosen.or(fresh)), keys(&[disk]));
+    }
+
+    #[tokio::test]
+    async fn a_fault_whose_commit_fails_after_a_check_announced_it_sends_nothing_from_memory() {
+        let (_dir, app) = started().await;
+        let entry = met_fault(&app);
+        let fault = fault_concern(&entry);
+        let gathered = looking(&app, vec![fault.clone()]);
+        let written = write_new(&app, &gathered, Chosen::default()).await.unwrap();
+        assert_eq!(
+            written.raised, 1,
+            "the check announces the fault from the log"
+        );
+
+        app.faults.set("fail:commit", Some(WRITE_ACTION)).unwrap();
+        let chosen = Chosen::default();
+        let refused = write_fault(&app, fault.clone(), entry.first_ms, chosen.clone())
+            .await
+            .unwrap_err();
+        assert!(database_failed(&refused));
+        assert!(chosen.or(vec![fault.clone()]).is_empty());
+
+        // The witness: a write refused before its job sends the entry from memory.
+        app.faults.set("refuse:write", None).unwrap();
+        let chosen = Chosen::default();
+        let refused = write_fault(&app, fault.clone(), entry.first_ms, chosen.clone())
+            .await
+            .unwrap_err();
+        assert!(database_failed(&refused));
+        assert_eq!(keys(&chosen.or(vec![fault.clone()])), keys(&[fault]));
+    }
 
     #[test]
     fn a_backup_files_area_left_unlocked_asks_for_a_look_and_a_locked_one_does_not() {
