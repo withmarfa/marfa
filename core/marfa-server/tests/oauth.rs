@@ -1522,9 +1522,7 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_chain() {
     assert_eq!(instance.count(CHAINS).await, 0);
 }
 
-/// Answers each client's first refresh token and the one a refresh ten days
-/// later gave, with the clock then past the first one's expiry and short of
-/// the second's.
+/// Cleanup runs after the first token expires while its successor is still live.
 async fn renewed_past_the_first_expiry(
     instance: &Instance,
     clients: &[&str],

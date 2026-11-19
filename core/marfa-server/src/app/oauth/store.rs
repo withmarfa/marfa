@@ -866,8 +866,7 @@ pub fn rotate_refresh_token(tx: &Connection, id: &str, now: Stamp) -> Result<()>
     Ok(())
 }
 
-/// Whether the token's chain has not ended and its newest refresh token has not expired, as the
-/// clean-up also judges it.
+/// Keep the expiry boundary in step with credential cleanup.
 pub fn chain_lives(tx: &Connection, token: &RefreshToken, now: Stamp) -> Result<bool> {
     let newest = match token.rotated_at {
         None => Some((token.ended_at, token.expires_at)),
