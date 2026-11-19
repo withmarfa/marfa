@@ -706,6 +706,70 @@ When a folder query names `beneath`, a device MUST include the named item and it
 
 **Tests:** `device/folders-contract-a.test.ts › materializes only readable copy items reached by a beneath query`, `device/folders.test.ts › holds exactly what its query matches`.
 
+### `folder-setup/beneath-file-one-pass`
+
+When a folder's query names `beneath` as the path of a file the folder holds, a device MUST, in the sync that sends that file, replace the path in the folder's query with the id of the file's item and pull the items beneath it.
+
+**Reason:** a project that is a file of the folder has no item until the folder sends it, so a folder narrowed beneath it is set up in one pass, with no stand-in item and no later change to the folder's settings. A file that already carries the id of a live item takes that item.
+
+**Tests:** `device/folders-beneath-file-live.test.ts › sets up a folder beneath a project its own file names in one pass, and writes nothing from outside the project`, `device/folders-beneath-file-live.test.ts › sends a project file that has no item yet and names its item, holding nothing from outside until then`, `device/folders-beneath-file.test.ts › names the project's item once its file is sent, and pulls what lies beneath in the same pass`.
+
+### `folder-setup/beneath-file-holds-nothing`
+
+While a folder's query names `beneath` as a path whose file has no item the server holds, a device MUST NOT write a file for an item the server holds.
+
+**Reason:** a copy narrowed beneath nothing would otherwise hold everything the rest of the query matches, which is what the narrowing is there to prevent.
+
+**Tests:** `device/folders-beneath-file-live.test.ts › sets up a folder beneath a project its own file names in one pass, and writes nothing from outside the project`, `device/folders-beneath-file-live.test.ts › sends a project file that has no item yet and names its item, holding nothing from outside until then`, `device/folders-beneath-file.test.ts › holds nothing from the server while the change is not sent, and finishes at the next pass`.
+
+### `folder-setup/beneath-file-missing-refused`
+
+If a folder's query names `beneath` as a path that no file the folder sends is at, then a device MUST refuse the sync, naming the path.
+
+**Reason:** a path the folder could never send would leave the folder holding nothing for good.
+
+**Tests:** `device/folders-beneath-file-live.test.ts › refuses to set up a folder beneath a file that is not there, naming it, and changes nothing`, `device/folders-beneath-file.test.ts › refuses a first sync that names a file the folder does not have, writing and sending nothing`.
+
+### `folder-setup/beneath-file-missing-changes-nothing`
+
+If a device refuses a sync because the file its folder's query names in `beneath` is missing, then a device MUST NOT send a write or write a file.
+
+**Tests:** `device/folders-beneath-file-live.test.ts › refuses to set up a folder beneath a file that is not there, naming it, and changes nothing`, `device/folders-beneath-file.test.ts › refuses a first sync that names a file the folder does not have, writing and sending nothing`.
+
+### `folder-setup/beneath-file-path-match`
+
+When a folder's query names `beneath` as a path, a device MUST take the file it holds at a path that differs only in case or Unicode form as the file the path names.
+
+**Reason:** two names are the same path when they differ only in case or Unicode form, as the folder compares them everywhere else (`folder-setup/first-sync-plan`).
+
+**Tests:** `device/folders-beneath-file.test.ts › takes the file the query names for the one the folder holds, as the folder compares paths`.
+
+### `folder-setup/beneath-file-conflict-named`
+
+When the folder door refuses a device's change of `query.beneath` with `409 version_conflict` and the folder's query now names an item, a device MUST NOT send another change.
+
+**Tests:** `device/folders-beneath-file.test.ts › reads the folder again when %s between its read and its change`.
+
+### `folder-setup/beneath-file-conflict-retried`
+
+When the folder door refuses a device's change of `query.beneath` with `409 version_conflict` and the folder's query still names the path, a device MUST send the change again on the version it read after the refusal.
+
+**Tests:** `device/folders-beneath-file.test.ts › reads the folder again when %s between its read and its change`.
+
+### `folder-setup/beneath-file-resumed`
+
+When a device could not send its change of `query.beneath` to the item of the file, a device MUST send it at the next sync, before it pulls anything.
+
+**Reason:** a sync stopped between sending the file and changing the query leaves the path in the query, and the next sync finishes it.
+
+**Tests:** `device/folders-beneath-file.test.ts › holds nothing from the server while the change is not sent, and finishes at the next pass`.
+
+### `folder-setup/beneath-file-waits`
+
+While a folder's query names `beneath` as a path whose file has no item, the CLI MUST report the path as `beneath_waiting` in the folder's status.
+
+**Tests:** `device/folders-beneath-file.test.ts › holds nothing from the server while the change is not sent, and finishes at the next pass`.
+
 ### `folder-setup/search-default-types`
 
 When a folder query names no types or names `*`, a device MUST admit every readable type except `system.*`.
