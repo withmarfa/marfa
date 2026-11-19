@@ -23,9 +23,53 @@ pub enum RenewalError {
     /// endpoint that did not answer. Queued writes stay queued, the call
     /// throws `Network`, and the next refusal asks the renewer again.
     Unavailable { message: String },
-    /// Any other failure. The call throws `Invalid` with `message`, queued
-    /// writes stay queued, and the next refusal asks the renewer again.
+    /// The renewal failed for `reason` without ending the sign-in. The call
+    /// throws `RenewalRefused` with `reason` and `message`, queued writes stay
+    /// queued, and the next refusal asks the renewer again.
+    Refused {
+        reason: RenewalFailure,
+        message: String,
+    },
+    /// A failure of the renewer's own that no `RenewalFailure` names. The
+    /// call throws `Invalid` with `message`, queued writes stay queued, and
+    /// the next refusal asks the renewer again.
     Failed { message: String },
+}
+
+/// Why a renewal failed without ending the sign-in, as a closed set an app
+/// can word. `message` on the error is for logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RenewalFailure {
+    /// The server refused the renewal and the sign-in still stands, as a
+    /// token endpoint's `invalid_request`, `invalid_scope` or
+    /// `unauthorized_client` says.
+    Refused,
+    /// The token endpoint answered a redirect, which the renewer does not
+    /// follow.
+    Redirected,
+    /// The renewer could not read the answer, or the server is not a sign-in
+    /// server.
+    Unreadable,
+}
+
+impl From<RenewalFailure> for marfa_core::RenewalFailure {
+    fn from(reason: RenewalFailure) -> Self {
+        match reason {
+            RenewalFailure::Refused => Self::Refused,
+            RenewalFailure::Redirected => Self::Redirected,
+            RenewalFailure::Unreadable => Self::Unreadable,
+        }
+    }
+}
+
+impl From<marfa_core::RenewalFailure> for RenewalFailure {
+    fn from(reason: marfa_core::RenewalFailure) -> Self {
+        match reason {
+            marfa_core::RenewalFailure::Refused => Self::Refused,
+            marfa_core::RenewalFailure::Redirected => Self::Redirected,
+            marfa_core::RenewalFailure::Unreadable => Self::Unreadable,
+        }
+    }
 }
 
 impl std::fmt::Display for RenewalError {
@@ -33,6 +77,7 @@ impl std::fmt::Display for RenewalError {
         match self {
             RenewalError::Ended { message }
             | RenewalError::Unavailable { message }
+            | RenewalError::Refused { message, .. }
             | RenewalError::Failed { message } => f.write_str(message),
         }
     }
@@ -69,6 +114,9 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for RenewalError {
 ///   differs from it, as when a copy was opened with a token since renewed.
 /// - Throw `Ended`, and delete the refresh token, on a token endpoint's
 ///   `invalid_grant` or `invalid_client`.
+/// - Throw `Refused` with the `RenewalFailure` that fits, and keep the
+///   refresh token, when the endpoint refuses the renewal any other way,
+///   answers a redirect or answers what the renewer cannot read.
 /// - Give the token request a time limit, and throw `Unavailable` when it
 ///   times out or there is no network: stopping a watch waits for a renewal
 ///   under way.
@@ -177,6 +225,10 @@ impl Renewal {
                 Err(self.signed_out())
             }
             Err(RenewalError::Unavailable { message }) => Err(CoreError::Network(message)),
+            Err(RenewalError::Refused { reason, message }) => Err(CoreError::RenewalRefused {
+                reason: reason.into(),
+                message,
+            }),
             Err(RenewalError::Failed { message }) => Err(CoreError::Invalid(message)),
         }
     }
@@ -238,6 +290,53 @@ mod tests {
             renewal.renewed("stale"),
             Err(CoreError::Invalid(_))
         ));
+        assert_eq!(renewal.renewed("stale"), Ok("fresh".into()));
+    }
+
+    #[test]
+    fn each_refusal_reason_reaches_the_core_as_its_own_error_that_keeps_the_queue() {
+        use marfa_core::RenewalFailure as Core;
+        let reasons = [
+            (RenewalFailure::Refused, Core::Refused),
+            (RenewalFailure::Redirected, Core::Redirected),
+            (RenewalFailure::Unreadable, Core::Unreadable),
+        ];
+        let (renewal, renewer) = renewal(
+            reasons
+                .iter()
+                .map(|(reason, _)| {
+                    Err(RenewalError::Refused {
+                        reason: *reason,
+                        message: "said".into(),
+                    })
+                })
+                .chain([Ok("fresh".into())])
+                .collect(),
+        );
+        for (_, expected) in reasons {
+            let refused = renewal.renewed("stale").unwrap_err();
+            assert_eq!(
+                refused,
+                CoreError::RenewalRefused {
+                    reason: expected,
+                    message: "said".into()
+                }
+            );
+            let crossed = CoreError::RenewalFailed(Box::new(refused));
+            assert_eq!(crossed.code(), "renewal_refused");
+            assert!(!crossed.is_environmental());
+            assert!(!crossed.is_signed_out());
+            assert!(!crossed.is_unreachable());
+            let app = MarfaError::from(crossed);
+            assert!(
+                matches!(&app, MarfaError::RenewalRefused { reason, message }
+                    if marfa_core::RenewalFailure::from(*reason) == expected && message == "said"),
+                "{app:?}"
+            );
+            assert_eq!(app.code(), "renewal_refused");
+        }
+        // The witness: each refusal asked the renewer again, which still had a token.
+        assert_eq!(renewer.1.lock().unwrap().len(), 3);
         assert_eq!(renewal.renewed("stale"), Ok("fresh".into()));
     }
 

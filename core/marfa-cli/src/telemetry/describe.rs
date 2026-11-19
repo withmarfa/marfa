@@ -128,6 +128,7 @@ fn core_error(error: &CoreError) -> &'static str {
         }
         CoreError::Canceled => "the operation was stopped before it finished",
         CoreError::FirstSyncWaiting => "a folder's first sync waits for confirmation",
+        CoreError::RenewalRefused { .. } => "the app could not renew the credential",
         CoreError::Invalid(_) => "a value was not accepted",
         CoreError::NotAnswerable(_) => "the copy does not hold what a count needs",
         CoreError::Fault(_) => "the core stopped on an internal fault",

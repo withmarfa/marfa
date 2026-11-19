@@ -27,7 +27,7 @@ mod views;
 pub use counts::{Counted, ItemCount, StatusGroups};
 pub use instance::{InstanceDescription, instance_description};
 pub use json::{JsonMember, JsonObject, JsonValue};
-pub use renewal::{CredentialRenewer, RenewalError};
+pub use renewal::{CredentialRenewer, RenewalError, RenewalFailure};
 use tables::ChangedTable;
 pub use trash::{TrashPreview, TrashPreviewItem, TrashTaken};
 
@@ -1597,6 +1597,15 @@ pub enum MarfaError {
     FirstSyncWaiting {
         message: String,
     },
+    /// The app's `CredentialRenewer` threw `Refused`: the renewal failed for
+    /// `reason` and the sign-in still stands, which is neither the app's own
+    /// bad arguments nor a network failure. Queued writes stay queued and the
+    /// next refusal asks the renewer again. `message` is the renewer's own
+    /// text, for logs.
+    RenewalRefused {
+        reason: RenewalFailure,
+        message: String,
+    },
     Invalid {
         message: String,
     },
@@ -1648,6 +1657,7 @@ impl MarfaError {
             | MarfaError::ServerTooOld { message, .. }
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
+            | MarfaError::RenewalRefused { message, .. }
             | MarfaError::Invalid { message }
             | MarfaError::NotAnswerable { message }
             | MarfaError::Fault { message } => message,
@@ -1696,6 +1706,7 @@ impl MarfaError {
             MarfaError::ServerTooOld { .. } => marfa_core::CoreErrorKind::ServerTooOld,
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
+            MarfaError::RenewalRefused { .. } => marfa_core::CoreErrorKind::RenewalRefused,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
             MarfaError::NotAnswerable { .. } => marfa_core::CoreErrorKind::NotAnswerable,
             MarfaError::Fault { .. } => marfa_core::CoreErrorKind::Fault,
@@ -1865,6 +1876,10 @@ impl From<marfa_core::CoreError> for MarfaError {
             },
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
+            E::RenewalRefused { reason, .. } => MarfaError::RenewalRefused {
+                reason: reason.into(),
+                message,
+            },
             E::Invalid(_) => MarfaError::Invalid { message },
             E::NotAnswerable(_) => MarfaError::NotAnswerable { message },
             E::Fault(_) => MarfaError::Fault { message },
@@ -3573,6 +3588,10 @@ mod tests {
                 served: "0.0.74".into(),
                 oldest: "0.0.78".into(),
             },
+            E::RenewalRefused {
+                reason: marfa_core::RenewalFailure::Refused,
+                message: text(),
+            },
             E::Invalid(text()),
             E::NotAnswerable(text()),
             E::Fault(text()),
@@ -4061,6 +4080,14 @@ mod tests {
                 }
                 .into(),
                 "ServerTooOld",
+            ),
+            (
+                E::RenewalRefused {
+                    reason: marfa_core::RenewalFailure::Redirected,
+                    message: text(),
+                }
+                .into(),
+                "RenewalRefused",
             ),
             (E::Invalid(text()).into(), "Invalid"),
             (E::Fault(text()).into(), "Fault"),
@@ -5196,6 +5223,45 @@ mod tests {
             server.sent_since(from).last().unwrap().2.as_deref(),
             Some("Bearer fresh")
         );
+    }
+
+    #[test]
+    fn a_refused_renewal_reaches_the_app_as_its_own_error_keeps_the_writes_and_is_asked_again() {
+        let server = quiet();
+        let renewer = Renewing::answering(vec![
+            Err(RenewalError::Refused {
+                reason: RenewalFailure::Unreadable,
+                message: "the answer was not a token".into(),
+            }),
+            Err(RenewalError::Refused {
+                reason: RenewalFailure::Redirected,
+                message: "the token endpoint redirected".into(),
+            }),
+            Ok("fresh".into()),
+        ]);
+        let (_dir, core) = expired_with_writes(&server, &renewer);
+        let before = format!("{:?}", core.queue().unwrap());
+
+        for reason in [RenewalFailure::Unreadable, RenewalFailure::Redirected] {
+            let error = core.drain(None).unwrap_err();
+            assert!(
+                matches!(&error, MarfaError::RenewalRefused { reason: said, message }
+                    if *said == reason && !message.is_empty()),
+                "{error:?}"
+            );
+            assert_eq!(error.code(), "renewal_refused");
+            assert_eq!(format!("{:?}", core.queue().unwrap()), before);
+        }
+        assert_eq!(
+            renewer.asked().len(),
+            2,
+            "a refused renewal was not asked again"
+        );
+
+        // The witness: the renewer's next answer is a token, and the drain then sends.
+        let report = core.drain(None).unwrap();
+        assert_eq!(report.undelivered, 0, "{report:?}");
+        assert_eq!(renewer.asked().len(), 3);
     }
 
     struct Heard {

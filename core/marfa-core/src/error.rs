@@ -102,6 +102,14 @@ pub enum CoreError {
     /// Client boundaries expose the cause; drain preserves this provenance.
     #[error("{0}")]
     RenewalFailed(Box<CoreError>),
+    /// The app's renewer could not renew and said why, which is neither the
+    /// sign-in ending nor the network failing. Not environmental, not signed
+    /// out, and the queued writes stay queued.
+    #[error("{message}")]
+    RenewalRefused {
+        reason: RenewalFailure,
+        message: String,
+    },
     #[error("signed out of {origin}: sign in again")]
     SignedOut { origin: String },
     #[error("credential storage is unavailable: {0}")]
@@ -235,6 +243,19 @@ pub enum CoreError {
     Fault(String),
 }
 
+/// Why a renewal failed without ending the sign-in, as a closed set an app
+/// can word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenewalFailure {
+    /// The server refused the renewal and the sign-in still stands, as with
+    /// `invalid_request`, `invalid_scope` or `unauthorized_client`.
+    Refused,
+    /// The token endpoint answered a redirect, which is not followed.
+    Redirected,
+    /// The answer could not be read, or the server is not a sign-in server.
+    Unreadable,
+}
+
 /// One list drives the match and the set of codes, so a variant added to
 /// `CoreError` fails to compile until it has a code, and the code then joins
 /// `CODES`, which the command line's help is held to list.
@@ -312,6 +333,7 @@ codes! {
     ServerTooOld: CoreError::ServerTooOld { .. } => "server_too_old",
     Canceled: CoreError::Canceled => "canceled",
     FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",
+    RenewalRefused: CoreError::RenewalRefused { .. } => "renewal_refused",
     Invalid: CoreError::Invalid(_) => "invalid",
     NotAnswerable: CoreError::NotAnswerable(_) => "not_answerable",
     Fault: CoreError::Fault(_) => "fault",

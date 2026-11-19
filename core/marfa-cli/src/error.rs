@@ -446,6 +446,7 @@ impl CliError {
                 | CoreError::ServerTooOld { .. }
                 | CoreError::FirstSyncWaiting
                 | CoreError::Invalid(_)
+                | CoreError::RenewalRefused { .. }
                 | CoreError::NotAnswerable(_) => Exit::Refused,
                 CoreError::Unauthorized { .. } | CoreError::SignedOut { .. } => Exit::Credential,
                 CoreError::Io(_)

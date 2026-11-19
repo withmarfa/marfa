@@ -1653,6 +1653,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::Unnamed { .. }
         | E::Redirected { .. }
         | E::SignedOut { .. }
+        | E::RenewalRefused { .. }
         | E::NoServer
         | E::NoCursor
         | E::HydrationIncomplete
@@ -1750,6 +1751,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             vec![("served", json!(served)), ("oldest", json!(oldest))]
         }
         E::RenewalFailed(_)
+        | E::RenewalRefused { .. }
         | E::Io(_)
         | E::Network(_)
         | E::ConnectionRefused { .. }
