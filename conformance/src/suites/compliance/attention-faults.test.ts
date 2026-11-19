@@ -18,12 +18,15 @@ import {
 
 /**
  * A fault the server meets is an entry in what needs the owner's attention,
- * announced as it happens. While the database fails a write, the entry goes
- * from memory to the webhooks that may hear it. The fixture makes each fault
- * with a target fault (`conformance/TARGET-INTERFACE.md`, "Faults"): a
- * `fail:audit` that fails one write, or `refuse:write` that fails every write
- * until it is cleared. The list is the instance's own and a fault fails
- * writes for everyone, so the file boots a server of its own.
+ * announced as it happens. When the write that announces a new entry fails in
+ * the database, the entry goes from memory to the webhooks that may hear it.
+ * The fixture makes each failure with a target fault
+ * (`conformance/TARGET-INTERFACE.md`, "Faults"): a `fail:audit` that fails one
+ * write, `refuse:write` that fails every write until it is cleared, a
+ * `fail:commit` or `fail:commit-full` that fails a commit, and
+ * `fail:commit-landed` that fails a commit which lands. The list is the
+ * instance's own and a fault fails writes for everyone, so the file boots a
+ * server of its own.
  */
 let server: FreshServer;
 let writer: string;
@@ -366,6 +369,200 @@ it(
     expect(deliveries.map((delivery) => delivery.id)).not.toContain(
       bodyOf(told[0]!).delivery_id,
     );
+  },
+);
+
+/** Makes `request` fail as its write records its audit entry `action`. */
+async function failAt(action: string, request: () => Promise<number>) {
+  await server.setFault(`fail:audit=${action}`);
+  try {
+    expect(await request()).toBe(500);
+  } finally {
+    await server.clearFault("fail:audit");
+  }
+}
+
+const configure = async () =>
+  (
+    await controlRequest(server.controlSocket, "/config", {
+      method: "PATCH",
+      body: { allow_private_addresses: true },
+    })
+  ).status;
+
+const mintFails = async () =>
+  (
+    await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: { label: "faults", source: `faults-${randomUUID()}` },
+    })
+  ).status;
+
+it(
+  "sends a fault from memory when the commit of its announcement fails, and not again once writes land",
+  // The faults it makes stay listed, so a second run would find none new.
+  { retry: 0 },
+  async () => {
+    const reference = "database:POST /keys";
+    // The database fails the commit with an I/O error, which lands nothing.
+    await server.setFault("fail:commit=attention.check@always");
+    try {
+      await failAt("key.create", mintFails);
+      const delivered = await receiver.waitFor(about(reference, "good"));
+      expectSignedBy(delivered, good.secret);
+      const body = bodyOf(delivered);
+      expect(Object.keys(body).sort()).toEqual([...ENTRY].sort());
+      expect(body.attention).toEqual({
+        kind: "fault",
+        reference,
+        description: DESCRIPTION,
+      });
+      expect((await faults()).map((entry) => entry.reference)).toContain(
+        reference,
+      );
+    } finally {
+      await server.clearFault("fail:commit");
+    }
+
+    // Writes land again: a check records the entry and announces nothing.
+    await faults();
+    const sentinel = "database:PATCH /config";
+    await failAt("config.update", configure);
+    const logged = await receiver.waitFor(about(sentinel, "good"));
+    expect(bodyOf(logged).event_id).toEqual(expect.any(String));
+    expect(receiver.received.filter(about(reference, "good"))).toHaveLength(1);
+  },
+);
+
+it(
+  "sends a fault from memory and once more from the log when the commit of its announcement fails but lands",
+  // The faults it makes stay listed, so a second run would find none new.
+  { retry: 0 },
+  async () => {
+    const reference = "database:POST /webhooks";
+    await server.setFault("fail:commit-landed=attention.check@always");
+    try {
+      await failAt("webhook.create", async () => {
+        const made = await fetch(`${server.apiUrl}/webhooks`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${good.key.key}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            url: receiver.hookUrl("never"),
+            events: ["attention.raised"],
+          }),
+        });
+        return made.status;
+      });
+      await waitFor(
+        "the fault from memory and from the log",
+        async () =>
+          receiver.received.filter(about(reference, "good")).length >= 2 ||
+          undefined,
+        60_000,
+      );
+    } finally {
+      await server.clearFault("fail:commit-landed");
+    }
+    const told = receiver.received.filter(about(reference, "good"));
+    const fromLog = told.filter((received) => "event_id" in bodyOf(received));
+    expect(fromLog).toHaveLength(1);
+    for (const received of told) expectSignedBy(received, good.secret);
+
+    await faults();
+    const sentinel = "database:PATCH /webhooks/{id}";
+    await failAt("webhook.update", async () => {
+      const changed = await fetch(`${server.apiUrl}/webhooks/${good.id}`, {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${good.key.key}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ events: ["attention.raised"] }),
+      });
+      return changed.status;
+    });
+    await receiver.waitFor(about(sentinel, "good"));
+    expect(receiver.received.filter(about(reference, "good"))).toHaveLength(2);
+  },
+);
+
+it(
+  "sends the health entry from memory while the database volume is full, and lists no fault for the refused write",
+  // It leaves the disk entry recorded and its faults listed.
+  { retry: 0 },
+  async () => {
+    const refused = "database:DELETE /items/{id}";
+    const disk = "disk";
+    const deleteNote = async () =>
+      (
+        await fetch(`${server.apiUrl}/items/${note}`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${writer}` },
+        })
+      ).status;
+    await server.setFault("free:database=0");
+    try {
+      await server.setFault("fail:commit-full=item.delete");
+      try {
+        expect(await deleteNote()).toBe(507);
+      } finally {
+        await server.clearFault("fail:commit-full");
+      }
+      await server.setFault("fail:commit-full=attention.check@always");
+      try {
+        const listed = await controlRequest(server.controlSocket, "/attention");
+        expect(listed.status).toBe(200);
+        const entries = (listed.body as unknown as { data: Concern[] }).data;
+        expect(entries).toContainEqual(
+          expect.objectContaining({ kind: "health", reference: disk }),
+        );
+        expect(entries.map((entry) => entry.reference)).not.toContain(refused);
+        const delivered = await receiver.waitFor(
+          (received: Received) =>
+            received.path.endsWith("/good") &&
+            (
+              bodyOf(received).attention as {
+                kind?: string;
+                reference?: string;
+              }
+            )?.reference === disk,
+        );
+        expectSignedBy(delivered, good.secret);
+        expect(bodyOf(delivered)).toMatchObject({
+          event_type: "attention.raised",
+          attention: {
+            kind: "health",
+            reference: disk,
+            description: "A part of the server is degraded or down.",
+          },
+        });
+        expect("event_id" in bodyOf(delivered)).toBe(false);
+      } finally {
+        await server.clearFault("fail:commit-full");
+      }
+
+      // Writes land again while the disk is still short: the entry is
+      // recorded and not announced. The witness: a fault at the same route
+      // is listed, and is the sentinel.
+      await controlRequest(server.controlSocket, "/attention");
+      await failAt("item.delete", deleteNote);
+      expect((await faults()).map((entry) => entry.reference)).toContain(
+        refused,
+      );
+      await receiver.waitFor(about(refused, "good"));
+      const told = receiver.received.filter(
+        (received) =>
+          received.path.endsWith("/good") &&
+          (bodyOf(received).attention as { kind?: string; reference?: string })
+            ?.reference === disk,
+      );
+      expect(told).toHaveLength(1);
+    } finally {
+      await server.clearFault("free:database");
+    }
   },
 );
 

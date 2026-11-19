@@ -793,17 +793,17 @@ The server MUST NOT send a `ConnectorRunFailed` exception report for an entry of
 
 **Tests:** `compliance/connector-fault-reports.test.ts › sends one ConnectorRunFailed report for a connector's failed run, naming nothing of it, and none for problems or silence`.
 
-## A fault while the database fails
+## A new entry while the database fails
 
-When a fault's entry cannot be written because the database fails, the server sends its `attention.raised` from memory, straight to the webhooks that may hear it. The event is in no log, so an open stream does not receive it and `Last-Event-ID` cannot replay it. The delivery is not recorded, so no delivery list shows it and nothing can redeliver it. The subscriptions the server sends to are the ones its last committed state gave, so a server that starts while its database fails sends to none, and while reads fail too, `GET /attention` answers only through the private local listener, since a credential cannot be read.
+When the write that announces a new entry in what needs the owner's attention fails in the database, the server sends the entry's `attention.raised` from memory, straight to the webhooks that may hear it. This covers a fault's entry and every entry a check finds, such as the health entry for a full volume. The event is in no log, so it carries no `event_id`, an open stream does not receive it and `Last-Event-ID` cannot replay it. The delivery is not recorded, so no delivery list shows it and nothing redelivers it. The subscriptions the server sends to are the ones its last committed state gave, so a server that starts while its database cannot be read has none, and the entry waits for the log. The `attention-check` housekeeping job is claimed by a write, so while every write fails, only a fault or a read of `GET /attention` finds a new entry. While reads fail too, `GET /attention` answers only through the private local listener, since a credential cannot be read.
 
 ### `events/attention-memory`
 
-While the database fails a write, when the server cannot write the announcement of a new entry of kind `fault` and the write certainly did not commit, the server MUST deliver the entry's `attention.raised` to each active webhook subscribed to it whose maker holds `webhooks.manage` and `instance.read`.
+When the write that announces a new entry in what needs the owner's attention fails because the database refuses it or fails its commit, the server MUST deliver the entry's `attention.raised` to each active webhook subscribed to it whose maker holds `webhooks.manage` and `instance.read`.
 
-**Reason:** the database failing is the fault an owner most needs to hear of, and a connector reading Marfa cannot tell them, so only the server can. A write whose outcome is unknown sends nothing from memory, because if it landed, the event is delivered from the log once the database answers.
+**Reason:** the database failing is the fault an owner most needs to hear of, and a connector reading Marfa cannot tell them, so only the server can. A full volume and a disk that fails both fail a write at its commit.
 
-**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`.
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends a fault from memory when the commit of its announcement fails, and not again once writes land`, `› sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
 
 ### `events/attention-memory-reader`
 
@@ -835,11 +835,19 @@ The server MUST NOT list a delivery it sent from memory in `GET /webhooks/{id}/d
 
 ### `events/attention-memory-once`
 
-When writes land again after the server sent an entry's `attention.raised` from memory, the server MUST NOT announce that entry again while it is listed.
+When writes land again after the server sent an entry's `attention.raised` from memory, and the failed write that announces it did not commit, the server MUST NOT announce that entry again while it is listed.
 
 **Reason:** the owner was told once, and a second delivery would read as a second fault.
 
-**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`.
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends a fault from memory when the commit of its announcement fails, and not again once writes land`, `› sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
+
+### `events/attention-memory-landed`
+
+If the commit of the write that announces a new entry fails but lands, then the server MUST NOT deliver that entry's `attention.raised` to a webhook more than twice, once from memory and once from the log.
+
+**Reason:** the server cannot tell at the time whether a failed commit landed, and the notice names no data, so one repeated notice is accepted over silence.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory and once more from the log when the commit of its announcement fails but lands`.
 
 ### `events/attention-memory-logged`
 

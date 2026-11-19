@@ -158,6 +158,14 @@ When the server reports an unhandled fault (`errors/client-closed-request` says 
 
 **Tests:** `compliance/attention-faults.test.ts › lists a fault once for where it happened, with a fixed description, counting each time it happens`.
 
+### `instance/attention-fault-no-room`
+
+When the server answers a request `507 insufficient_storage`, the server MUST NOT include an entry of kind `fault` for it in `GET /attention`.
+
+**Reason:** a volume with no room is the host's condition, not a fault in the server, and the health entry for the disk tells the owner of it (`events/attention-memory`).
+
+**Tests:** `compliance/attention-faults.test.ts › sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
+
 ### `instance/attention-fault-description`
 
 The server MUST give an entry of kind `fault` the description `The server met a fault it did not expect, and the request or job it was doing failed. If this keeps happening, report it to the Marfa project with the server's log from that time.`
