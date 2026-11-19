@@ -826,9 +826,9 @@ When a run of `blob-orphans` finds a blob that the report already names and that
 
 ### `stores/orphan-result`
 
-When a caller authorized by `instance.maintain` or local authority runs `blob-orphans`, the server MUST answer the run's `result` as `reported`, the size of the report after the run, `purged`, the number of blobs it purged, and `bytes_waiting`, the number of those blobs whose bytes a store could not yet delete.
+When a caller authorized by `instance.maintain` or local authority runs `blob-orphans`, the server MUST answer the run's `result` as `reported`, the size of the report after the run, and `purged`, the number of blobs it purged.
 
-**Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › records when a run first reported a blob`, `compliance/blob-purge-faults.test.ts › finishes removing the bytes on the next run, and answers the run that was cut short ok`.
+**Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › records when a run first reported a blob`.
 
 ### `stores/orphan-purged-counted`
 

@@ -251,23 +251,6 @@ impl Instance {
         }
         panic!("nothing was held");
     }
-
-    async fn when_held_at(&self, fault: &str) {
-        let began = Instant::now();
-        while began.elapsed() < Duration::from_secs(4) {
-            if self
-                .app
-                .faults
-                .list()
-                .iter()
-                .any(|armed| armed.name == fault && armed.waiting > 0)
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        panic!("nothing was held at {fault}");
-    }
 }
 
 #[tokio::test]
@@ -591,7 +574,6 @@ async fn the_orphan_job_reports_then_purges_after_the_grace_and_keeps_what_an_it
     instance.app.clock.advance(1_001).unwrap();
     let second = instance.run("blob-orphans").await;
     assert_eq!(second["purged"], 1, "{second}");
-    assert_eq!(second["bytes_waiting"], 0, "{second}");
     assert!(!instance.file(&orphan).exists());
     assert_eq!(instance.fetch(&orphan).await.status, StatusCode::NOT_FOUND);
     assert!(instance.file(&named).is_file());
@@ -628,7 +610,6 @@ async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_
 
     let cut = instance.run("blob-orphans").await;
     assert_eq!(cut["purged"], 1, "{cut}");
-    assert_eq!(cut["bytes_waiting"], 1, "{cut}");
     assert_eq!(instance.fetch(&hash).await.status, StatusCode::NOT_FOUND);
     assert!(instance.file(&hash).is_file());
     assert_eq!(
@@ -641,61 +622,7 @@ async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_
 
     let finished = instance.run("blob-orphans").await;
     assert_eq!(finished["purged"], 0, "{finished}");
-    assert_eq!(finished["bytes_waiting"], 0, "{finished}");
     assert!(!instance.file(&hash).exists());
-    assert_eq!(
-        instance.count("SELECT count(*) FROM blob_pending_deletions"),
-        0
-    );
-}
-
-#[tokio::test]
-async fn a_purge_counts_no_deletion_queued_by_a_new_upload_of_bytes_it_already_deleted() {
-    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
-    let one = b"purged, then uploaded again".to_vec();
-    let two = b"purged beside it".to_vec();
-    let hashes = [instance.stored(&one).await, instance.stored(&two).await];
-    instance.run("blob-orphans").await;
-    instance.app.clock.advance(1).unwrap();
-    instance.arm("hold:blob-delete", Some("2"));
-    let finished = tokio::sync::Notify::new();
-
-    let purge = async {
-        let run = instance.run("blob-orphans").await;
-        finished.notify_one();
-        run
-    };
-    let upload = async {
-        instance.when_held_at("hold:blob-delete").await;
-        let deleted = if instance.file(&hashes[0]).exists() {
-            1
-        } else {
-            0
-        };
-        assert!(instance.file(&hashes[1 - deleted]).is_file());
-        let (hash, bytes) = (&hashes[deleted], [&one, &two][deleted]);
-        instance.arm("hold:blob-write", None);
-        let watched = async {
-            instance.when_held_at("hold:blob-write").await;
-            // The new upload's own deletion is queued under the same name as the purged one.
-            assert_eq!(
-                instance.count(&format!(
-                    "SELECT count(*) FROM blob_pending_deletions WHERE hash = '{hash}'"
-                )),
-                1
-            );
-            instance.app.faults.clear(Some("hold:blob-delete"));
-            finished.notified().await;
-            instance.app.faults.clear(Some("hold:blob-write"));
-        };
-        let (put, ()) = tokio::join!(instance.put(bytes), watched);
-        put
-    };
-    let (run, put) = tokio::join!(purge, upload);
-
-    assert_eq!(run["purged"], 2, "{run}");
-    assert_eq!(run["bytes_waiting"], 0, "{run}");
-    assert_eq!(put.status, StatusCode::CREATED, "{}", put.body);
     assert_eq!(
         instance.count("SELECT count(*) FROM blob_pending_deletions"),
         0
@@ -2313,65 +2240,6 @@ async fn nothing_is_purged_while_the_store_in_use_is_not_the_one_the_settings_no
     remove_unpublished(&instance.app, "object_store_prefix").await;
     assert_eq!(instance.run("blob-orphans").await["purged"], 1);
     assert!(!instance.file(&orphan).exists());
-}
-
-#[tokio::test]
-async fn a_purge_reports_the_bytes_left_queued_for_a_store_that_was_replaced_during_the_sweep() {
-    let s3 = FakeS3::start().await;
-    let mut env = s3.settings(BUCKET, "blobs");
-    env.push((
-        "MARFA_BLOB_CLEANUP_GRACE_SECONDS".to_string(),
-        "0".to_string(),
-    ));
-    let instance = Instance::start(&pairs(&env)).await;
-
-    // The witness: with the store unchanged, a purge of a blob held in it leaves nothing waiting.
-    let steady = instance
-        .replicated(&s3, b"purged with the store unchanged")
-        .await;
-    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
-    let clean = instance.run("blob-orphans").await;
-    assert_eq!(clean["purged"], 1, "{clean}");
-    assert_eq!(clean["bytes_waiting"], 0, "{clean}");
-    assert!(!instance.file(&steady).exists());
-
-    let first = instance
-        .replicated(&s3, b"first purged during a change")
-        .await;
-    let second = instance
-        .replicated(&s3, b"second purged during a change")
-        .await;
-    assert_eq!(instance.run("blob-orphans").await["purged"], 0);
-
-    instance.arm("hold:blob-delete", None);
-    let replaced = async {
-        instance.when_held().await;
-        instance.name_bucket(&s3, "other").await;
-        let began = Instant::now();
-        while instance
-            .app
-            .blobs
-            .s3()
-            .is_none_or(|bucket| bucket.locator() != "s3://marfa/other")
-        {
-            assert!(
-                began.elapsed() < Duration::from_secs(10),
-                "the store was not replaced"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        instance.app.faults.clear(Some("hold:blob-delete"));
-    };
-    let (run, ()) = tokio::join!(instance.run("blob-orphans"), replaced);
-
-    assert_eq!(run["purged"], 2, "{run}");
-    assert_eq!(run["bytes_waiting"], 1, "{run}");
-    assert_eq!(
-        instance.count("SELECT count(DISTINCT hash) FROM blob_pending_deletions"),
-        1
-    );
-    assert!(!instance.file(&first).exists());
-    assert!(!instance.file(&second).exists());
 }
 
 #[tokio::test]

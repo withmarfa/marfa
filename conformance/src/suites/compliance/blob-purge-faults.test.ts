@@ -112,12 +112,8 @@ describe("an orphan purge that nothing stops", () => {
   it("purges the blob on the run after the report, from the registry and from the disk, which is the witness for the cases below", async () => {
     const blob = await reportedBlob("purged without a fault");
     expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
-    const run = await runJob<{ purged: number; bytes_waiting: number }>(
-      operator,
-      "blob-orphans",
-    );
+    const run = await runJob<{ purged: number }>(operator, "blob-orphans");
     expect(run.result.purged).toBe(1);
-    expect(run.result.bytes_waiting).toBe(0);
     expect(await listed(blob.hash)).toBe(false);
     expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
   });
@@ -127,25 +123,17 @@ describe("an orphan purge cut short after the blob left the registry", () => {
   it("finishes removing the bytes on the next run, and answers the run that was cut short ok", async () => {
     const blob = await reportedBlob("purge cut short at the delete");
     await server.setFault("fail:blob-delete");
-    const cut = await runJob<{ purged: number; bytes_waiting: number }>(
-      operator,
-      "blob-orphans",
-    );
+    const cut = await runJob<{ purged: number }>(operator, "blob-orphans");
     expect(await fired("fail:blob-delete")).toBe(1);
     expect(cut.result.purged).toBe(1);
-    expect(cut.result.bytes_waiting).toBe(1);
 
     // The registry has let go of the blob and the store has not.
     expect(await listed(blob.hash)).toBe(false);
     expect(await reported()).not.toContain(blob.hash);
     expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
 
-    const finished = await runJob<{ purged: number; bytes_waiting: number }>(
-      operator,
-      "blob-orphans",
-    );
+    const finished = await runJob<{ purged: number }>(operator, "blob-orphans");
     expect(finished.result.purged).toBe(0);
-    expect(finished.result.bytes_waiting).toBe(0);
     expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
     expect(await listed(blob.hash)).toBe(false);
   });

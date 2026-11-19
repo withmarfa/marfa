@@ -55,7 +55,7 @@ macro_rules! point_list {
         HOLD_BLOB_HAS = Hold "blob-has" None;
         HOLD_BLOB_READ = Hold "blob-read" Nth;
         HOLD_BLOB_WRITE = Hold "blob-write" None;
-        HOLD_BLOB_DELETE = Hold "blob-delete" Nth;
+        HOLD_BLOB_DELETE = Hold "blob-delete" None;
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         HOLD_STORES_RECORD = Hold "stores-record" None;
         HOLD_STORES_SWAP = Hold "stores-swap" None;
