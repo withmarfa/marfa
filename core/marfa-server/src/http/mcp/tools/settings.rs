@@ -123,15 +123,18 @@ pub async fn change(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
         }
     }
     if let Some(Value::Object(settings)) = arguments.get("settings") {
+        if let Some(key) = settings
+            .keys()
+            .find(|key| withheld().contains(&key.as_str()))
+        {
+            return Err(Stop::coded(
+                "app_sign_in_required",
+                format!(
+                    "{key} is not changed from a tool. The owner changes it from the command line, or from an app after a recent sign-in. Nothing changed."
+                ),
+            ));
+        }
         for (key, value) in settings {
-            if withheld().contains(&key.as_str()) {
-                return Err(Stop::coded(
-                    "app_sign_in_required",
-                    format!(
-                        "{key} is not changed from a tool. The owner changes it from the command line, or from an app after a recent sign-in. Nothing changed."
-                    ),
-                ));
-            }
             if key == "name" || key == "enforcement" || !ENTRIES.iter().any(|e| e.key == key) {
                 return Err(Stop::invalid(format!(
                     "{key} is not a setting. Read the keys with marfa_settings."
