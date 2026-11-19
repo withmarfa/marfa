@@ -343,9 +343,6 @@ pub async fn replicate_one(
 
 /// Why the object store failed, in words that name no address or key; the log has the rest.
 pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
-    if crate::app::outbound::store::refused_as_private(error) {
-        return "the object store's address is not public, and allow_private_addresses is false";
-    }
     match error.kind() {
         io::ErrorKind::TimedOut => "the object store did not answer in time",
         io::ErrorKind::NotFound => "the bucket or the file was not found",
@@ -414,7 +411,6 @@ fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
 
 /// Keep a failed settle visible even when file copying succeeds.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
-    app.blobs.recheck().await;
     let unsettled = match app.settle_stores(super::Retry::Settle).await {
         Ok(()) => None,
         Err(refused) => {
@@ -744,7 +740,6 @@ fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
 
 /// Purges only what an earlier run reported at least the grace ago and nothing names now.
 pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
-    app.blobs.recheck().await;
     if (app.blobs.trouble().is_some() || !app.blobs.settled())
         && let Err(refused) = app.settle_stores(super::Retry::Trouble).await
     {

@@ -5341,8 +5341,6 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             detached_at: string | null;
-            /** @description Why the address check refused the attached object store, or `null` when there is no recorded refusal for this store. */
-            unusable_reason: string | null;
         };
         /** @description An error response. */
         BlobNotFoundRefusal: {
@@ -22062,8 +22060,7 @@ export interface operations {
                      *           "kind": "disk",
                      *           "locator": "/var/lib/marfa/blobs",
                      *           "attached_at": "2026-10-03T09:34:00.198Z",
-                     *           "detached_at": null,
-                     *           "unusable_reason": null
+                     *           "detached_at": null
                      *         }
                      *       ],
                      *       "next_cursor": null,

@@ -1243,14 +1243,13 @@ fn record_columns(record: &Value) -> Cols {
     }
     if record.get("locator").is_some() && record.get("attached_at").is_some() {
         return Cols::new(
-            &["id", "kind", "where", "attached", "detached", "unusable"],
+            &["id", "kind", "where", "attached", "detached"],
             vec![
                 owned("id"),
                 owned("kind"),
                 owned("locator"),
                 owned("attached_at"),
                 owned("detached_at"),
-                owned("unusable_reason"),
             ],
         );
     }
@@ -2043,16 +2042,6 @@ pub(crate) mod tests {
         assert_eq!(
             stores,
             "id  kind  where        attached\ns1  disk  /data/blobs  2026-01-01T00:00:00.000Z"
-        );
-        let unusable = describe(&json!({"data": [{
-            "id": "s2", "kind": "s3", "locator": "s3://b/p",
-            "attached_at": "2026-01-01T00:00:00.000Z", "detached_at": null,
-            "unusable_reason": "Not public.",
-        }], "next_cursor": null, "min_copies": 1}))
-        .unwrap();
-        assert_eq!(
-            unusable,
-            "id  kind  where     attached                  unusable\ns2  s3    s3://b/p  2026-01-01T00:00:00.000Z  Not public."
         );
         let batches = describe(&json!({"data": [
             {"id": "b2", "at": "2026-01-02T00:00:00.000Z", "rows": 2, "undoes": "b1"},

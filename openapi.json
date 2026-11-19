@@ -6527,13 +6527,6 @@
             ],
             "description": "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it.",
             "example": "2026-10-03T09:30:00.000Z"
-          },
-          "unusable_reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why the address check refused the attached object store, or `null` when there is no recorded refusal for this store."
           }
         },
         "required": [
@@ -6541,8 +6534,7 @@
           "kind",
           "locator",
           "attached_at",
-          "detached_at",
-          "unusable_reason"
+          "detached_at"
         ],
         "description": "A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket."
       },
@@ -37331,8 +37323,7 @@
                       "kind": "disk",
                       "locator": "/var/lib/marfa/blobs",
                       "attached_at": "2026-10-03T09:34:00.198Z",
-                      "detached_at": null,
-                      "unusable_reason": null
+                      "detached_at": null
                     }
                   ],
                   "next_cursor": null,

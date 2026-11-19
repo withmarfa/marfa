@@ -6,7 +6,7 @@ Where a blob's bytes live, and the rules that keep them. A store is a place byte
 
 ### `stores/list`
 
-When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `attached_at`, `detached_at` and `unusable_reason`.
+When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `attached_at` and `detached_at`.
 
 **Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`, `› lists each store with the time it was first attached`.
 
@@ -172,7 +172,7 @@ When the folder of the disk store that `stores/unread-setting-store-kept` keeps 
 
 ### `stores/attached-follows-settings`
 
-When a run of `blob-replicate` ends with the outcome `succeeded`, the server MUST list as attached in `GET /blobs/stores`, beside the disk, only the store that the last write to `/config` to change `backup_path` or an `object_store_` setting names, and none where the server could not attach that store.
+When a run of `blob-replicate` ends with the outcome `succeeded`, the server MUST list as attached in `GET /blobs/stores`, beside the disk, only the store that the last write to `/config` to change `backup_path` or an `object_store_` setting names, and none where that store cannot be used.
 
 **Reason:** an attach that ends after a later write has changed the settings would otherwise leave the server keeping copies and backups in a store the owner no longer names.
 
@@ -386,7 +386,7 @@ While no attached object store holds a blob, the server MUST answer `GET /blobs/
 
 ### `stores/link-store-once-held`
 
-Where an attached object store holds a blob, while the server does not answer `GET /health` as `instance/object-store-private-unusable` requires, the server MUST answer `GET /blobs/{hash}/url` with a `url` whose host is the store's rather than the instance's and that serves the bytes byte-identical with no credential.
+Where an attached object store holds a blob, the server MUST answer `GET /blobs/{hash}/url` with a `url` whose host is the store's rather than the instance's and that serves the bytes byte-identical with no credential.
 
 **Reason:** a link is made by the store that holds the bytes, so the bytes do not pass through the instance.
 
@@ -404,13 +404,13 @@ When `blob-replicate` has run to `remaining: 0`, the server MUST list a copy in 
 
 ### `stores/replicate-from-any-store`
 
-While the server does not answer `GET /health` as `instance/object-store-private-unusable` requires, when a run of `blob-replicate` finds a blob that an attached store lacks and another attached store holds, the server MUST copy it from the store that holds it, whichever of the disk and the object store that is.
+When a run of `blob-replicate` finds a blob that an attached store lacks and another attached store holds, the server MUST copy it from the store that holds it, whichever of the disk and the object store that is.
 
 **Tests:** `compliance/blob-rules.test.ts › replicates every blob to the object store and records the copies, and the link becomes the store's own`, `› stamps a good copy and strikes a corrupt one, which replication then restores`, `› removes a dropped copy's bytes from its store`.
 
 ### `stores/replicate-own-copy`
 
-While the server does not answer `GET /health` as `instance/object-store-private-unusable` requires, when a run of `blob-replicate` finds an attached object store whose copy of a blob is an object the server did not write, the server MUST write its own copy of the blob to that store.
+When a run of `blob-replicate` finds an attached object store whose copy of a blob is an object the server did not write, the server MUST write its own copy of the blob to that store.
 
 **Reason:** a copy whose object the server did not write does not count toward `min_copies` (`stores/held-not-live`).
 
@@ -456,7 +456,7 @@ When a run of `blob-replicate` copies at least one blob and leaves some it could
 
 ### `stores/replicate-upload-wakes`
 
-While the server does not answer `GET /health` as `instance/object-store-private-unusable` requires, when a credential that may upload sends `POST /blobs` and the server answers `201`, the server MUST replicate the blob to the other attached stores without a request and without waiting for the job's interval.
+When a credential that may upload sends `POST /blobs` and the server answers `201`, the server MUST replicate the blob to the other attached stores without a request and without waiting for the job's interval.
 
 **Tests:** `compliance/blob-rules.test.ts › replicates an upload on its own, each copy with its own recorded time`.
 
@@ -740,7 +740,7 @@ When `GET /blobs/{hash}` or a link the instance serves reads the bytes of a blob
 
 ### `stores/read-no-answer`
 
-While the server does not answer `GET /health` as `instance/object-store-private-unusable` requires, if a store that holds a recorded copy of a blob does not begin to answer a read of the bytes for `GET /blobs/{hash}` or a link the instance serves within 15 seconds, then the server MUST read the bytes from another attached store that holds a recorded copy.
+If a store that holds a recorded copy of a blob does not begin to answer a read of the bytes for `GET /blobs/{hash}` or a link the instance serves within 15 seconds, then the server MUST read the bytes from another attached store that holds a recorded copy.
 
 **Reason:** the bound is on the first byte, not the whole body, so a large blob read over a slow link is not cut off.
 
@@ -748,7 +748,7 @@ While the server does not answer `GET /health` as `instance/object-store-private
 
 ### `stores/integrity-strike-restored`
 
-While the server does not answer `GET /health` as `instance/object-store-private-unusable` requires, when a run of `blob-integrity` has struck a copy of a blob that another attached store holds, the server MUST copy the blob back to the struck store on the next run of `blob-replicate`.
+When a run of `blob-integrity` has struck a copy of a blob that another attached store holds, the server MUST copy the blob back to the struck store on the next run of `blob-replicate`.
 
 **Tests:** `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`.
 
