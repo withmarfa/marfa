@@ -59,11 +59,10 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         let cache = app.catalog_handle();
         app.write(&Caller::Server, GRANT_REVOKED, move |unit| {
             let tx = unit.tx();
-            let Some(found) = store::refresh_token_by_digest(tx, &digest)?.filter(|found| {
-                found.client_id == client.id
-                    && found.rotated_at.is_none()
-                    && found.ended_at.is_none()
-            }) else {
+            // Ending a chain or a grant stamps `ended_at` on every token of it, rotated ones too.
+            let Some(found) = store::refresh_token_by_digest(tx, &digest)?
+                .filter(|found| found.client_id == client.id && found.ended_at.is_none())
+            else {
                 return Ok(());
             };
             if !grant::end(unit, &cache, &client.id, &found.owner_id)? {

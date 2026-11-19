@@ -85,6 +85,30 @@ async function grantedClients(): Promise<string[]> {
   return body.data.map((grant) => grant.client_id);
 }
 
+function revokeRefresh(app: App, refreshToken: string) {
+  return post("/oauth/revoke", {
+    token: refreshToken,
+    token_type_hint: "refresh_token",
+    client_id: app.clientId,
+  });
+}
+
+/** The id `GET /grants` lists for the app's grant. */
+async function grantIdOf(app: App): Promise<string> {
+  const response = await fetch(`${server.apiUrl}/grants`, {
+    headers: { authorization: `Bearer ${server.workingKey}` },
+  });
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as {
+    data: { id: string; client_id: string }[];
+  };
+  const grant = body.data.find((listed) => listed.client_id === app.clientId);
+  if (grant === undefined) {
+    throw new Error(`no grant listed for ${app.clientId}`);
+  }
+  return grant.id;
+}
+
 describe("refresh tokens", () => {
   it("are issued only to an authorization that asked for offline_access", async () => {
     const app = await registerApp(server, `${NOTES} offline_access`);
@@ -615,5 +639,123 @@ describe("revocation", () => {
       ),
     );
     expect(asked?.pathname, String(asked)).toBe("/auth/consent");
+  });
+
+  it("of a refresh token a refresh already rotated ends the app's grant and its newest refresh token", async () => {
+    const app = await registerApp(server, `${NOTES} offline_access`);
+    const first = await connect(
+      server,
+      origin,
+      cookie,
+      app,
+      `${NOTES} offline_access`,
+    );
+    const rotated = await refresh(app, first.refresh_token!);
+    expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+    expect(await itemsStatus(server, rotated.body.access_token!)).toBe(200);
+    expect(await grantedClients()).toContain(app.clientId);
+
+    const revoked = await revokeRefresh(app, first.refresh_token!);
+    expect(revoked.status).toBe(200);
+    expect(await itemsStatus(server, rotated.body.access_token!)).toBe(401);
+    const newest = await refresh(app, rotated.body.refresh_token!);
+    expect(newest.status).toBe(400);
+    expect(newest.body.error).toBe("invalid_grant");
+    expect(await grantedClients()).not.toContain(app.clientId);
+  });
+
+  it("of the newest refresh token after a rotation ends the app's grant", async () => {
+    const app = await registerApp(server, `${NOTES} offline_access`);
+    const first = await connect(
+      server,
+      origin,
+      cookie,
+      app,
+      `${NOTES} offline_access`,
+    );
+    const rotated = await refresh(app, first.refresh_token!);
+    expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+
+    const revoked = await revokeRefresh(app, rotated.body.refresh_token!);
+    expect(revoked.status).toBe(200);
+    expect(await itemsStatus(server, rotated.body.access_token!)).toBe(401);
+    const again = await refresh(app, rotated.body.refresh_token!);
+    expect(again.status).toBe(400);
+    expect(await grantedClients()).not.toContain(app.clientId);
+  });
+
+  it("of a refresh token from before the person revoked the grant and approved the app again leaves the new approval", async () => {
+    const app = await registerApp(server, `${NOTES} offline_access`);
+    const scope = `${NOTES} offline_access`;
+    const before = await connect(server, origin, cookie, app, scope);
+    const beforeRotated = await refresh(app, before.refresh_token!);
+    expect(beforeRotated.status, JSON.stringify(beforeRotated.body)).toBe(200);
+    const grantId = await grantIdOf(app);
+    const ended = await fetch(`${server.apiUrl}/grants/${grantId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    expect(ended.status).toBe(200);
+    const after = await connect(server, origin, cookie, app, scope);
+    expect(await grantIdOf(app)).toBe(grantId);
+
+    for (const old of [
+      before.refresh_token!,
+      beforeRotated.body.refresh_token!,
+    ]) {
+      expect((await revokeRefresh(app, old)).status).toBe(200);
+    }
+    expect(await grantIdOf(app)).toBe(grantId);
+    expect(await itemsStatus(server, after.access_token!)).toBe(200);
+    const renewed = await refresh(app, after.refresh_token!);
+    expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
+    expect(await itemsStatus(server, renewed.body.access_token!)).toBe(200);
+
+    // The witness: a token of the new approval still ends it.
+    expect((await revokeRefresh(app, renewed.body.refresh_token!)).status).toBe(
+      200,
+    );
+    expect(await itemsStatus(server, renewed.body.access_token!)).toBe(401);
+    expect(await grantedClients()).not.toContain(app.clientId);
+  });
+
+  it("of a refresh token whose chain a replay ended leaves the grant and its other sign-ins", async () => {
+    const app = await registerApp(server, `${NOTES} offline_access`);
+    const scope = `${NOTES} offline_access`;
+    const replayedChain = await connect(server, origin, cookie, app, scope);
+    const other = await connect(server, origin, cookie, app, scope);
+    expect((await refresh(app, replayedChain.refresh_token!)).status).toBe(200);
+    expect((await refresh(app, replayedChain.refresh_token!)).status).toBe(400);
+
+    expect(
+      (await revokeRefresh(app, replayedChain.refresh_token!)).status,
+    ).toBe(200);
+    expect(await grantedClients()).toContain(app.clientId);
+    expect(await itemsStatus(server, other.access_token!)).toBe(200);
+    const renewed = await refresh(app, other.refresh_token!);
+    expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
+  });
+
+  it("of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing", async () => {
+    const app = await registerApp(server, `${NOTES} offline_access`);
+    const otherApp = await registerApp(server, `${NOTES} offline_access`);
+    const scope = `${NOTES} offline_access`;
+    const first = await connect(server, origin, cookie, app, scope);
+    const rotated = await refresh(app, first.refresh_token!);
+    expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+
+    for (const held of [first.refresh_token!, rotated.body.refresh_token!]) {
+      expect((await revokeRefresh(otherApp, held)).status).toBe(200);
+    }
+    expect(
+      (await revokeRefresh(app, `marfa_rt_${"0".repeat(64)}`)).status,
+    ).toBe(200);
+    expect((await revokeRefresh(app, "not a token")).status).toBe(200);
+    expect(await grantedClients()).toContain(app.clientId);
+    expect(await itemsStatus(server, rotated.body.access_token!)).toBe(200);
+
+    // The witness: the app's own rotated token ends the grant.
+    expect((await revokeRefresh(app, first.refresh_token!)).status).toBe(200);
+    expect(await itemsStatus(server, rotated.body.access_token!)).toBe(401);
   });
 });
