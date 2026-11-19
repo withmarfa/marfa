@@ -6,7 +6,11 @@ import { Readable } from "node:stream";
 import { afterAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
-import type { Outcome, QueuedWrite } from "../../device/protocol.js";
+import type {
+  DrainReport,
+  Outcome,
+  QueuedWrite,
+} from "../../device/protocol.js";
 import { ownerOf } from "../../utils/backups.js";
 import {
   bootFreshServer,
@@ -150,12 +154,21 @@ async function note(
 ): Promise<{ id: string; version: number }> {
   const made = await client.createItem({
     type: "core.note",
-    source: "server-restored-live",
     tier: "library",
     properties: { title },
   });
   expect(made.ok, JSON.stringify(made.error)).toBe(true);
   return { id: made.data.item.id, version: made.data.item.version };
+}
+
+/**
+ * Drains the queue and clears the writes the server answered, so the queue
+ * holds only what the copy queues after.
+ */
+async function sent(device: CliDevice): Promise<DrainReport> {
+  const report = value(await device.drain());
+  value(await device.forget());
+  return report;
 }
 
 async function made(device: CliDevice, title: string): Promise<string> {
@@ -208,7 +221,7 @@ describe("a server restored behind work this device sent it", () => {
       value(await w.device.catchUp());
       const image = await w.original.image();
       const id = await made(w.device, "made since the backup");
-      expect(value(await w.device.drain()).answered).toBe(1);
+      expect((await sent(w.device)).answered).toBe(1);
       expect(await title(w.client(), id)).toBe("made since the backup");
 
       await w.restore(image);
@@ -266,7 +279,7 @@ describe("a server restored behind work this device sent it", () => {
       value(await w.device.catchUp());
       const image = await w.original.image();
       const id = await made(w.device, "taken back by the stream");
-      value(await w.device.drain());
+      await sent(w.device);
       // The stream carries the item's own event, which shows the server holds
       // it, and moves the cursor past the head the restored log ends at.
       value(await w.device.catchUp());
@@ -332,7 +345,7 @@ describe("a server restored behind work this device sent it", () => {
           version: held.version,
         }),
       );
-      expect(value(await w.device.drain()).answered).toBe(1);
+      expect((await sent(w.device)).answered).toBe(1);
 
       await w.restore(image);
       expect(await title(w.client(), held.id)).toBe("before the backup");
@@ -370,7 +383,7 @@ describe("a server restored behind work this device sent it", () => {
       ).toEqual([edgeId]);
       const image = await w.original.image();
       value(await w.device.deleteEdge(edgeId));
-      expect(value(await w.device.drain()).answered).toBe(1);
+      expect((await sent(w.device)).answered).toBe(1);
 
       await w.restore(image);
       expect((await w.client().getEdge(edgeId)).status).toBe(200);
@@ -432,7 +445,7 @@ describe("an archive restore and a backup restore", () => {
       });
       const owner = ownerOf(w.original);
       value(await w.device.catchUp());
-      const archive = await owner.exportArchive({ state: "any" });
+      const archive = await w.client().exportArchive();
       expect(archive.ok, JSON.stringify(archive.error)).toBe(true);
       const backup = await owner.runBackup();
       expect(backup.ok, JSON.stringify(backup.error)).toBe(true);
