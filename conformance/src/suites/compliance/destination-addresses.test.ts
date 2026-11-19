@@ -18,10 +18,15 @@ import {
   storeByName,
 } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
+import {
+  COLLECTOR_BUDGET_MS,
+  COLLECTOR_TEST_TIMEOUT_MS,
+  startFaultSinks,
+} from "../../utils/fault-sinks.js";
 
 /**
- * While `allow_private_addresses` is off, the heartbeat, the error webhook
- * and the object store reach only public addresses, as webhooks do, and only
+ * While `allow_private_addresses` is off, the heartbeat, the error webhook,
+ * the PostHog host and the object store reach only public addresses, as webhooks do, and only
  * the private local process turns it on. Every receiver here, and the run's
  * object store, listens on loopback; a receiver named `localhost` is a name
  * that leads there, which only a lookup can judge.
@@ -121,7 +126,7 @@ describe("where the server may send", () => {
   );
 
   it(
-    "refuses a heartbeat_url, error_webhook_url or object_store_endpoint written as a private address while the switch is off",
+    "refuses a heartbeat_url, error_webhook_url, posthog_host or object_store_endpoint written as a private address while the switch is off",
     async () => {
       const server = await bootFreshServer("switch-literals", PUBLIC_ONLY);
       try {
@@ -129,8 +134,15 @@ describe("where the server may send", () => {
         const keys = [
           "heartbeat_url",
           "error_webhook_url",
+          "posthog_host",
           "object_store_endpoint",
         ];
+        // The PostHog host is https and set with its token, so the switch is
+        // the one rule it can break.
+        const scheme = (key: string) =>
+          key === "posthog_host" ? "https" : "http";
+        const alongside = (key: string, value: unknown) =>
+          key === "posthog_host" ? { posthog_project_token: value } : {};
         const hosts = [
           "127.0.0.1:9",
           "[::1]:9",
@@ -141,7 +153,8 @@ describe("where the server may send", () => {
         for (const key of keys) {
           for (const host of hosts) {
             const refused = await socket.patchConfig({
-              [key]: `http://${host}/hush-${key}`,
+              [key]: `${scheme(key)}://${host}/hush-${key}`,
+              ...alongside(key, "phc_fixture"),
             });
             expect(refused.status, `${key} ${host}`).toBe(400);
             const said = JSON.stringify(refused.error);
@@ -150,8 +163,11 @@ describe("where the server may send", () => {
             expect(said).not.toContain(`hush-${key}`);
           }
           // The witness: the same setting takes a name, which a lookup judges.
-          await setFrom(socket, { [key]: "http://receiver.example.test/" });
-          await setFrom(socket, { [key]: null });
+          await setFrom(socket, {
+            [key]: `${scheme(key)}://receiver.example.test/`,
+            ...alongside(key, "phc_fixture"),
+          });
+          await setFrom(socket, { [key]: null, ...alongside(key, null) });
         }
 
         await setFrom(socket, {
@@ -252,6 +268,60 @@ describe("where the server may send", () => {
       }
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "sends no exception report to a name that leads to a private address until the switch is on",
+    async () => {
+      const sinks = await startFaultSinks();
+      const server = await bootFreshServer("switch-posthog", {
+        ...PUBLIC_ONLY,
+        OTEL_SDK_DISABLED: "false",
+      });
+      try {
+        const { operator, working } = clientsFor(server);
+        const fail = async (requestId: string) => {
+          await server.setFault("fail:audit=item.create");
+          const failed = await working.rawRequest("/items", {
+            method: "POST",
+            headers: { "X-Request-ID": requestId },
+            body: {
+              type: "core.note",
+              properties: { body: `fails ${randomUUID()}` },
+            },
+          });
+          await server.clearFault();
+          expect(failed.status).toBe(500);
+        };
+        await setFrom(operator, {
+          posthog_host: byName(sinks.env().MARFA_POSTHOG_HOST!),
+          posthog_project_token: "phc_fixture",
+        });
+        const unsent = `posthog-unsent-${randomUUID()}`;
+        await fail(unsent);
+
+        // The witness: reports go out in order, so the one sent once the
+        // switch is on arrives after the first would have.
+        await setFrom(socketOf(server), { [SWITCH]: true });
+        const sent = `posthog-sent-${randomUUID()}`;
+        await fail(sent);
+        await waitFor(
+          "the exception sent once the switch is on",
+          async () =>
+            sinks
+              .sentExceptions()
+              .find((event) => event.properties.request_id === sent),
+          COLLECTOR_BUDGET_MS,
+        );
+        expect(
+          sinks.sentExceptions().map((event) => event.properties.request_id),
+        ).toEqual([sent]);
+      } finally {
+        await server.stop();
+        await sinks.close();
+      }
+    },
+    COLLECTOR_TEST_TIMEOUT_MS,
   );
 
   it(

@@ -271,6 +271,8 @@ const SEEDED_BY_NAME: Record<string, "text" | "boolean"> = {
   MARFA_OBJECT_STORE_SECRET_ACCESS_KEY: "text",
   MARFA_HEARTBEAT_URL: "text",
   MARFA_ERROR_WEBHOOK_URL: "text",
+  MARFA_POSTHOG_HOST: "text",
+  MARFA_POSTHOG_PROJECT_TOKEN: "text",
   MARFA_ALLOW_PRIVATE_ADDRESSES: "boolean",
 };
 
@@ -619,6 +621,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   // A throwaway server reports nothing, whatever the shell sets; a setting the
   // caller names below still wins.
   silenceTelemetry(env);
+  // Whatever a test server does send says it came from one.
+  env.OTEL_RESOURCE_ATTRIBUTES = "deployment.environment=test";
   // What the caller names wins over every default above, but for the tuning,
   // which adds to the defaults, and only where the hooks are on.
   const defaultTuning = env.MARFA_TEST_TUNING;

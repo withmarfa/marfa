@@ -6397,7 +6397,7 @@ export interface components {
              */
             enrichment_ocr_enabled: boolean;
             /**
-             * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies.
+             * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.
              * @default true
              */
             error_reporting_enabled: boolean;
@@ -6481,7 +6481,7 @@ export interface components {
              */
             object_store_access_key_id?: string;
             /**
-             * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+             * @description `true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
              * @default false
              */
             allow_private_addresses: boolean;
@@ -34899,7 +34899,7 @@ export interface operations {
                      */
                     enrichment_ocr_enabled?: boolean;
                     /**
-                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies.
+                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.
                      * @default true
                      */
                     error_reporting_enabled?: boolean;
@@ -34987,7 +34987,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
                      * @default false
                      */
                     allow_private_addresses?: boolean;
@@ -35003,6 +35003,14 @@ export interface operations {
                      * @description The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
                      */
                     error_webhook_url?: string;
+                    /**
+                     * Format: uri
+                     * @description The PostHog host Marfa sends a report of each of its own faults to, for PostHog's error tracking. It must be an `https` URL, or an `http` URL on this machine, with no user name or password, and it needs `posthog_project_token` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     * @example https://eu.i.posthog.com
+                     */
+                    posthog_host?: string;
+                    /** @description The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    posthog_project_token?: string;
                     /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
                     secrets_set?: string[];
                     /**
@@ -35381,7 +35389,7 @@ export interface operations {
                      */
                     enrichment_ocr_enabled?: boolean | null;
                     /**
-                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url` or an exception receiver configured where Marfa runs. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies. `null` removes it, so the server's default applies.
                      * @default true
                      */
                     error_reporting_enabled?: boolean | null;
@@ -35474,7 +35482,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string | null;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
                      * @default false
                      */
                     allow_private_addresses?: boolean | null;
@@ -35490,6 +35498,14 @@ export interface operations {
                      * @description The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it.
                      */
                     error_webhook_url?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The PostHog host Marfa sends a report of each of its own faults to, for PostHog's error tracking. It must be an `https` URL, or an `http` URL on this machine, with no user name or password, and it needs `posthog_project_token` set too. Marfa never returns it. `null` or an empty string removes it.
+                     * @example https://eu.i.posthog.com
+                     */
+                    posthog_host?: string | null;
+                    /** @description The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. `null` or an empty string removes it. */
+                    posthog_project_token?: string | null;
                     /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
                     secrets_set?: string[];
                     /**
@@ -35872,7 +35888,7 @@ export interface operations {
                      *         },
                      *         {
                      *           "name": "reporting_needs_a_receiver",
-                     *           "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set.",
+                     *           "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: error_webhook_url, or posthog_host with posthog_project_token, and heartbeat_url.",
                      *           "keys": [
                      *             "error_reporting_enabled",
                      *             "heartbeat_enabled"
@@ -37892,7 +37908,7 @@ export interface operations {
                         settings_skipped: number;
                         /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
                         settings_dropped: string[];
-                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
+                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is set: `heartbeat_enabled` and `error_reporting_enabled`. */
                         settings_without_receiver: string[];
                         /** @description The archive's enforcement settings Marfa stored, each one the instance didn't store. */
                         enforcement_added: ("strict_mode" | "source_allowlist" | "source_filter")[];
@@ -38688,7 +38704,7 @@ export interface operations {
                         settings_skipped: number;
                         /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
                         settings_dropped: string[];
-                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
+                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is set: `heartbeat_enabled` and `error_reporting_enabled`. */
                         settings_without_receiver: string[];
                         /** @description The archive's enforcement settings Marfa stored, each one the instance didn't store. */
                         enforcement_added: ("strict_mode" | "source_allowlist" | "source_filter")[];

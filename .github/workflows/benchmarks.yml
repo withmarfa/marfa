@@ -331,8 +331,8 @@ jobs:
         working-directory: conformance
         env:
           GH_TOKEN: ${{ github.token }}
-          MARFA_POSTHOG_HOST: ${{ secrets.MARFA_POSTHOG_HOST }}
-          MARFA_POSTHOG_PROJECT_TOKEN: ${{ secrets.MARFA_POSTHOG_PROJECT_TOKEN }}
+          BENCHMARK_POSTHOG_HOST: ${{ secrets.MARFA_POSTHOG_HOST }}
+          BENCHMARK_POSTHOG_PROJECT_TOKEN: ${{ secrets.MARFA_POSTHOG_PROJECT_TOKEN }}
           MARFA_SCALE_SEND_REPORT: ${{ inputs.send_report }}
         run: pnpm scale finish
 

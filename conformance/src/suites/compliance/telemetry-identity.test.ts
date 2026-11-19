@@ -6,12 +6,14 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { CAPTURE_V1 } from "../../utils/fault-sinks.js";
 
 /**
  * What the server's telemetry says about where it came from: the instance's
- * own id on every log record, span and exception, the attributes and service
- * name the operator set in place of the server's own, and the environment an
- * error notification names.
+ * own id and the server's version on every log record, span and exception,
+ * the attributes and service name the operator set in place of the server's
+ * own, no environment the operator did not name, and the environment an
+ * error notification names. Which requests leave a log record is here too.
  *
  * **A server of its own, with a receiver the fixture runs.** The receiver is
  * the OTLP collector for the log records and spans, the PostHog host for the
@@ -46,7 +48,7 @@ beforeAll(async () => {
         const path = request.url ?? "";
         if (path.startsWith("/v1/traces")) traces.push(parsed);
         else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
-        else if (path.startsWith("/batch")) trackedErrors.push(parsed);
+        else if (path.startsWith(CAPTURE_V1)) trackedErrors.push(parsed);
         else notifications.push(parsed);
       } finally {
         response
@@ -64,6 +66,15 @@ beforeAll(async () => {
   }
   base = `http://127.0.0.1:${String(address.port)}`;
   server = await bootFreshServer("telemetry-identity", {
+    ...reporting(),
+    OTEL_SERVICE_NAME: SERVICE,
+    OTEL_RESOURCE_ATTRIBUTES: `deployment.environment=${ENVIRONMENT},team=a%20b`,
+  });
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+/** Every report pointed at the receiver, and every trace kept. */
+function reporting(): Record<string, string> {
+  return {
     MARFA_ERROR_WEBHOOK_URL: `${base}/errors`,
     OTEL_SDK_DISABLED: "false",
     OTEL_EXPORTER_OTLP_ENDPOINT: base,
@@ -71,10 +82,8 @@ beforeAll(async () => {
     MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
     // Every trace, so a request that succeeds is exported too.
     MARFA_OTEL_SAMPLE_RATIO: "1",
-    OTEL_SERVICE_NAME: SERVICE,
-    OTEL_RESOURCE_ATTRIBUTES: `deployment.environment=${ENVIRONMENT},team=a%20b`,
-  });
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  };
+}
 
 afterAll(async () => {
   await server?.stop();
@@ -108,6 +117,14 @@ type Batches = {
   resource: { attributes?: OtlpAttribute[] };
 }[];
 
+function plainAttributes(
+  list: OtlpAttribute[] | undefined,
+): Record<string, string | undefined> {
+  return Object.fromEntries(
+    (list ?? []).map((a) => [a.key, a.value.stringValue]),
+  );
+}
+
 /** The resource attributes of each batch the collector was sent. */
 function resourcesOf(
   sent: Record<string, unknown>[],
@@ -115,13 +132,53 @@ function resourcesOf(
 ): Record<string, string | undefined>[] {
   return sent.flatMap((batch) =>
     (batch[field] as Batches).map((entry) =>
-      Object.fromEntries(
-        (entry.resource.attributes ?? []).map((a) => [
-          a.key,
-          a.value.stringValue,
-        ]),
+      plainAttributes(entry.resource.attributes),
+    ),
+  );
+}
+
+/** The `request_id` of each log record the collector was sent. */
+function loggedRequestIds(): (string | undefined)[] {
+  type Logs = {
+    scopeLogs: { logRecords: { attributes?: OtlpAttribute[] }[] }[];
+  }[];
+  return logRecords.flatMap((batch) =>
+    (batch.resourceLogs as Logs).flatMap((resource) =>
+      resource.scopeLogs.flatMap((scope) =>
+        scope.logRecords.map(
+          (record) => plainAttributes(record.attributes).request_id,
+        ),
       ),
     ),
+  );
+}
+
+type Event = {
+  event: string;
+  properties: Record<string, string | undefined>;
+};
+
+/** The exception sent for the request `requestId`, once it has arrived. */
+function exceptionOf(requestId: string): Promise<Event> {
+  return until("the exception sent to error tracking", () =>
+    (trackedErrors as unknown as { batch: Event[] }[])
+      .flatMap((batch) => batch.batch)
+      .find(
+        (entry) =>
+          entry.event === "$exception" &&
+          entry.properties.request_id === requestId,
+      ),
+  );
+}
+
+/** What `target` was exported, told apart by its instance id. */
+function resourcesFrom(
+  id: string,
+): { field: string; resource: Record<string, string | undefined> }[] {
+  return (["resourceSpans", "resourceLogs"] as const).flatMap((field) =>
+    resourcesOf(field === "resourceSpans" ? traces : logRecords, field)
+      .filter((resource) => resource["service.instance.id"] === id)
+      .map((resource) => ({ field, resource })),
   );
 }
 
@@ -149,11 +206,17 @@ async function faulted(target: FreshServer, requestId: string): Promise<void> {
   expect((await post(requestId)).status).toBe(500);
 }
 
-async function instanceId(): Promise<string> {
-  const response = await fetch(`${server!.apiUrl}/`, {
+async function described(
+  target: FreshServer = server!,
+): Promise<{ instance_id: string; version: string }> {
+  const response = await fetch(`${target.apiUrl}/`, {
     headers: { Accept: "application/json" },
   });
-  return ((await response.json()) as { instance_id: string }).instance_id;
+  return (await response.json()) as { instance_id: string; version: string };
+}
+
+async function instanceId(): Promise<string> {
+  return (await described()).instance_id;
 }
 
 describe("what a server's telemetry says of where it came from", () => {
@@ -161,8 +224,8 @@ describe("what a server's telemetry says of where it came from", () => {
     "names the instance's id on every log record and span it exports",
     async () => {
       const id = await instanceId();
-      // A request makes a span, and its log line is a record.
-      expect((await fetch(`${server!.apiUrl}/health`)).status).toBe(200);
+      // A request makes a span, and a refused one's log line is a record.
+      expect((await fetch(`${server!.apiUrl}/items`)).status).toBe(401);
       await until("an exported span", () =>
         traces.length > 0 ? true : undefined,
       );
@@ -211,21 +274,7 @@ describe("what a server's telemetry says of where it came from", () => {
       const requestId = "telemetry-identity-faulted";
       await faulted(server!, requestId);
 
-      type Event = {
-        event: string;
-        properties: Record<string, string | undefined>;
-      };
-      const exception = await until(
-        "the exception sent to error tracking",
-        () =>
-          (trackedErrors as unknown as { batch: Event[] }[])
-            .flatMap((batch) => batch.batch)
-            .find(
-              (entry) =>
-                entry.event === "$exception" &&
-                entry.properties.request_id === requestId,
-            ),
-      );
+      const exception = await exceptionOf(requestId);
       expect(exception.properties["service.instance.id"]).toBe(id);
       expect(exception.properties["deployment.environment"]).toBe(ENVIRONMENT);
       expect(exception.properties["service.name"]).toBe(SERVICE);
@@ -237,6 +286,154 @@ describe("what a server's telemetry says of where it came from", () => {
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
+
+  it(
+    "names its version on every log record, span and exception, unless the operator names one",
+    async () => {
+      const { instance_id: id, version } = await described();
+      const requestId = "telemetry-identity-version";
+      await faulted(server!, requestId);
+      expect((await exceptionOf(requestId)).properties["service.version"]).toBe(
+        version,
+      );
+      const own = await until("this server's exports", () => {
+        const found = resourcesFrom(id);
+        return found.some(({ field }) => field === "resourceSpans") &&
+          found.some(({ field }) => field === "resourceLogs")
+          ? found
+          : undefined;
+      });
+      for (const { field, resource } of own) {
+        expect(resource["service.version"], field).toBe(version);
+      }
+
+      const named = await bootFreshServer("telemetry-identity-version", {
+        ...reporting(),
+        OTEL_RESOURCE_ATTRIBUTES: "service.version=9.8.7",
+      });
+      try {
+        const namedId = (await described(named)).instance_id;
+        const namedRequest = "telemetry-identity-named-version";
+        await faulted(named, namedRequest);
+        expect(
+          (await exceptionOf(namedRequest)).properties["service.version"],
+        ).toBe("9.8.7");
+        const theirs = await until("the named server's exports", () => {
+          const found = resourcesFrom(namedId);
+          return found.some(({ field }) => field === "resourceSpans") &&
+            found.some(({ field }) => field === "resourceLogs")
+            ? found
+            : undefined;
+        });
+        for (const { field, resource } of theirs) {
+          expect(resource["service.version"], field).toBe("9.8.7");
+        }
+      } finally {
+        await named.stop();
+      }
+    },
+    COLLECTOR_TEST_TIMEOUT_MS + FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "names no environment of its own when the operator names none",
+    async () => {
+      // The witness: this fixture's own server names the environment it was
+      // given, on what it exports and on the exception.
+      const witness = "telemetry-identity-environment-witness";
+      await faulted(server!, witness);
+      expect(
+        (await exceptionOf(witness)).properties["deployment.environment"],
+      ).toBe(ENVIRONMENT);
+
+      const unnamed = await bootFreshServer("telemetry-identity-unnamed", {
+        ...reporting(),
+        OTEL_RESOURCE_ATTRIBUTES: "",
+      });
+      try {
+        const id = (await described(unnamed)).instance_id;
+        const requestId = "telemetry-identity-unnamed";
+        await faulted(unnamed, requestId);
+        const exception = await exceptionOf(requestId);
+        expect(exception.properties).not.toHaveProperty(
+          "deployment.environment",
+        );
+        expect(exception.properties).not.toHaveProperty(
+          "deployment.environment.name",
+        );
+        const exported = await until("the unnamed server's exports", () => {
+          const found = resourcesFrom(id);
+          return found.some(({ field }) => field === "resourceSpans") &&
+            found.some(({ field }) => field === "resourceLogs")
+            ? found
+            : undefined;
+        });
+        for (const { field, resource } of exported) {
+          expect(resource, field).not.toHaveProperty("deployment.environment");
+          expect(resource, field).not.toHaveProperty(
+            "deployment.environment.name",
+          );
+        }
+      } finally {
+        await unnamed.stop();
+      }
+    },
+    COLLECTOR_TEST_TIMEOUT_MS + FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "exports no log record of a health check or a quick read that went well, and does of a failed read and a write",
+    async () => {
+      const ask = (
+        path: string,
+        requestId: string,
+        init: RequestInit = {},
+      ): Promise<Response> =>
+        fetch(`${server!.apiUrl}${path}`, {
+          ...init,
+          headers: {
+            Authorization: `Bearer ${server!.workingKey}`,
+            "Content-Type": "application/json",
+            "X-Request-ID": requestId,
+          },
+        });
+      const quiet = ["quiet-health", "quiet-list", "quiet-head"];
+      expect((await ask("/health", quiet[0]!)).status).toBe(200);
+      expect((await ask("/items?limit=1", quiet[1]!)).status).toBe(200);
+      expect(
+        (await ask("/items?limit=1", quiet[2]!, { method: "HEAD" })).status,
+      ).toBe(200);
+      // The witnesses, sent after: a read that failed and a write.
+      const failed = await ask("/items/no-such-item", "loud-missing");
+      expect(failed.ok, String(failed.status)).toBe(false);
+      const write = await ask("/items", "loud-write", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "core.note",
+          properties: { body: "telemetry identity" },
+        }),
+      });
+      expect(write.status).toBe(201);
+
+      await until("the witnesses' log records", () =>
+        ["loud-missing", "loud-write"].every((id) =>
+          loggedRequestIds().includes(id),
+        )
+          ? true
+          : undefined,
+      );
+      const logged = loggedRequestIds();
+      for (const id of quiet) expect(logged, id).not.toContain(id);
+
+      // Each still has its line in the request log on standard output.
+      const output = await server!.output();
+      for (const id of [...quiet, "loud-missing", "loud-write"]) {
+        expect(output, id).toContain(`"request_id":"${id}"`);
+      }
+    },
+    COLLECTOR_TEST_TIMEOUT_MS,
+  );
+
   it(
     "names deployment.environment.name in an error notification before deployment.environment",
     async () => {

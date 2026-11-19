@@ -137,11 +137,11 @@ async function sendReport(file: FiguresFile): Promise<void> {
     );
     return;
   }
-  const host = process.env.MARFA_POSTHOG_HOST;
-  const token = process.env.MARFA_POSTHOG_PROJECT_TOKEN;
+  const host = process.env.BENCHMARK_POSTHOG_HOST;
+  const token = process.env.BENCHMARK_POSTHOG_PROJECT_TOKEN;
   if (!host || !token) {
     console.log(
-      "::notice::MARFA_POSTHOG_HOST or MARFA_POSTHOG_PROJECT_TOKEN is not set; the night was not sent to PostHog.",
+      "::notice::BENCHMARK_POSTHOG_HOST or BENCHMARK_POSTHOG_PROJECT_TOKEN is not set; the night was not sent to PostHog.",
     );
     return;
   }
