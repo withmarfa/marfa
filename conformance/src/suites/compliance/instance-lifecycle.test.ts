@@ -484,10 +484,10 @@ describe("starting with a setting outside its rule", () => {
       'MARFA_ENRICHMENT_ENABLED must be true or false (also 1/0, yes/no, on/off) (got "maybe")',
     ],
     [
-      "OTEL_RESOURCE_ATTRIBUTES",
+      "MARFA_OTEL_RESOURCE_ATTRIBUTES",
       "a list with a pair that has no value",
       "team",
-      'OTEL_RESOURCE_ATTRIBUTES must be comma-separated key=value pairs with percent-encoded values (got "team")',
+      'MARFA_OTEL_RESOURCE_ATTRIBUTES must be comma-separated key=value pairs with percent-encoded values, of at most 4096 bytes (got "team")',
     ],
   ];
 
@@ -500,7 +500,7 @@ describe("starting with a setting outside its rule", () => {
         MARFA_AUDIT_RETENTION_DAYS: "36500",
         MARFA_EVENT_LOG_RETENTION_DAYS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
-        OTEL_RESOURCE_ATTRIBUTES: "team=a%20b",
+        MARFA_OTEL_RESOURCE_ATTRIBUTES: "team=a%20b",
         MARFA_VERSION_RECENT_DAYS: "40",
         MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "40",
         MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "40",

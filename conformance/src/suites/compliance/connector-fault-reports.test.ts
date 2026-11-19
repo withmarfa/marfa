@@ -28,7 +28,7 @@ const DAY_MS = 86_400_000;
 
 beforeAll(async () => {
   sinks = await startFaultSinks();
-  server = await bootFreshServer("connector-fault-reports", sinks.env());
+  server = await bootFreshServer("connector-fault-reports", sinks.serverEnv());
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {

@@ -618,10 +618,12 @@ async function startServer(args: BootOptions): Promise<Started> {
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
-  // caller names below still wins.
+  // caller names below still wins. The server reads no `OTEL_*` name, so the
+  // switch meant for the command line is not passed to it.
   silenceTelemetry(env);
+  delete env.OTEL_SDK_DISABLED;
   // Whatever a test server does send says it came from one.
-  env.OTEL_RESOURCE_ATTRIBUTES = "deployment.environment=test";
+  if (hooks) env.MARFA_OTEL_RESOURCE_ATTRIBUTES = "deployment.environment=test";
   // What the caller names wins over every default above, but for the tuning,
   // which adds to the defaults, and only where the hooks are on.
   const defaultTuning = env.MARFA_TEST_TUNING;

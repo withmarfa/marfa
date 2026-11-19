@@ -1682,7 +1682,7 @@ const CLOUDFLARE_FILE: &str =
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
 MARFA_TRUSTED_PROXY_CIDRS=172.30.0.1/32
-OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
+MARFA_MAX_CONNECTIONS=512
 ";
 
 const NATIVE_CLOUDFLARE_FILE: &str =
@@ -1690,7 +1690,7 @@ const NATIVE_CLOUDFLARE_FILE: &str =
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
 MARFA_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
-OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
+MARFA_MAX_CONNECTIONS=512
 ";
 
 #[test]
