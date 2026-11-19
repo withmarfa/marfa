@@ -1,9 +1,9 @@
 //! A system stop cannot be staged here, so these read the setting back from
 //! an opened writer. `durable_commit_bench` runs only with
-//! `MARFA_DURABLE_BENCH` set:
+//! `MARFA_TEST_DURABLE_BENCH` set:
 //!
 //! ```sh
-//! MARFA_DURABLE_BENCH=1 cargo test --release -p marfa-core durable_commit_bench -- --nocapture
+//! MARFA_TEST_DURABLE_BENCH=1 cargo test --release -p marfa-core durable_commit_bench -- --nocapture
 //! ```
 
 use std::path::Path;
@@ -66,7 +66,7 @@ fn bench_row(index: usize) -> Value {
 
 #[test]
 fn durable_commit_bench() {
-    if std::env::var_os("MARFA_DURABLE_BENCH").is_none() {
+    if std::env::var_os("MARFA_TEST_DURABLE_BENCH").is_none() {
         return;
     }
     const ITEMS: usize = 10_000;
