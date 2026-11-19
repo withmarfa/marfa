@@ -40,10 +40,12 @@ Every command accepts these.
 
 When `marfa device catch-up` fails, the refusal says whether the catch-up had already changed the catalog the copy holds; the copy keeps that change. With --json, the refusal carries this as "catalog_changed" beside "exit".
 
+When the server refuses a command, the refusal ends with the server's `X-Request-ID` on a line of its own, `Request ID: <id>`; quote it when you report the problem. With --json the refusal carries it as "server.request_id". A failure the command line met without a server's answer shows none.
+
 With --json a refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line:
 
 ```text
-{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
+{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
 where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
@@ -3120,7 +3122,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `items`. With `--view`, a copy that is not whole is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `data` and `next_cursor`, which holds the items. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device items list [OPTIONS]
@@ -3167,7 +3169,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Many items by id, read from one snapshot of the copy, each once and in the order named.
 
-An id the copy does not hold is left out, and so is an item in the bin unless `--include-bin`. Under --json the answer is `items` beside `completeness`, as `items list` answers; while a hydration fills the copy it is `partial`, since an item left out may be still to arrive.
+An id the copy does not hold is left out, and so is an item in the bin unless `--include-bin`. Under --json the answer is `data`, `next_cursor` and `completeness`, as `items list` answers; while a hydration fills the copy `completeness` is `partial`, since an item left out may be still to arrive.
 
 ```text
 marfa device items bulk-get [OPTIONS] <IDS>...
@@ -3802,7 +3804,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Full-text search over the local copy, best match first.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `hits`. With `--view`, a copy that is not whole is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `data` and `next_cursor`, which holds the hits. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device search [OPTIONS] <QUERY>
@@ -4757,7 +4759,7 @@ Examples:
 marfa docs search "restore an archive" --limit 5
 marfa docs topics
 marfa docs build/files
-marfa docs cli --section "Use another keychain file"
+marfa docs reference/cli --section "Use another keychain file"
 ```
 
 ### marfa docs search

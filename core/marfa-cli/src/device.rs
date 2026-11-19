@@ -201,8 +201,8 @@ pub enum DeviceCommand {
     /// copy, and until a hydration has filled it again, the search covers
     /// the items the copy holds and says it is stale. Each is said on
     /// standard error, and under --json as `completeness`, `partial`,
-    /// `stale` or `complete`, beside `hits`. With `--view`, a copy that is
-    /// not whole is refused.
+    /// `stale` or `complete`, beside `data` and `next_cursor`, which holds
+    /// the hits. With `--view`, a copy that is not whole is refused.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -492,7 +492,8 @@ pub enum ItemsCommand {
     /// and until a hydration has filled it again, the list holds the items
     /// the copy holds and says it is stale. Each is said on standard error,
     /// and under --json as `completeness`, `partial`, `stale` or `complete`,
-    /// beside `items`. With `--view`, a copy that is not whole is refused.
+    /// beside `data` and `next_cursor`, which holds the items. With `--view`,
+    /// a copy that is not whole is refused.
     List(ListArgs),
     /// One item by id, with its properties and tags.
     ///
@@ -506,9 +507,10 @@ pub enum ItemsCommand {
     /// in the order named.
     ///
     /// An id the copy does not hold is left out, and so is an item in the
-    /// bin unless `--include-bin`. Under --json the answer is `items` beside
-    /// `completeness`, as `items list` answers; while a hydration fills the
-    /// copy it is `partial`, since an item left out may be still to arrive.
+    /// bin unless `--include-bin`. Under --json the answer is `data`,
+    /// `next_cursor` and `completeness`, as `items list` answers; while a
+    /// hydration fills the copy `completeness` is `partial`, since an item
+    /// left out may be still to arrive.
     #[command(name = "bulk-get")]
     BulkGet {
         /// The item ids.

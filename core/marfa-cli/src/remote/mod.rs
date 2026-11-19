@@ -300,6 +300,7 @@ fn renewal_error(error: CliError) -> CoreError {
             message,
             retry_after_seconds,
             details,
+            ..
         } => CoreError::RateLimited {
             code,
             message,
@@ -872,8 +873,9 @@ impl Remote {
         status: u16,
         text: &str,
         retry_after_seconds: Option<u64>,
+        request_id: Option<String>,
     ) -> CliError {
-        let mut error = refused(status, text, retry_after_seconds);
+        let mut error = refused(status, text, retry_after_seconds, request_id);
         if self.local
             && !request.proving
             && let CliError::Refused {
@@ -908,7 +910,13 @@ impl Remote {
             }
         };
         if !(200..300).contains(&reply.status) {
-            return Err(self.refusal(request, reply.status, &text, reply.retry_after_seconds));
+            return Err(self.refusal(
+                request,
+                reply.status,
+                &text,
+                reply.retry_after_seconds,
+                reply.request_id.clone(),
+            ));
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);
@@ -935,9 +943,13 @@ impl Remote {
             ReplyBody::Stream(reader) => {
                 Ok((reply.content_type, Box::new(Watched::new(reader, idle))))
             }
-            ReplyBody::Text(text) => {
-                Err(self.refusal(request, reply.status, &text, reply.retry_after_seconds))
-            }
+            ReplyBody::Text(text) => Err(self.refusal(
+                request,
+                reply.status,
+                &text,
+                reply.retry_after_seconds,
+                reply.request_id.clone(),
+            )),
         }
     }
 }
@@ -1022,7 +1034,12 @@ struct EnvelopeError {
     details: Option<Value>,
 }
 
-pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CliError {
+pub fn refused(
+    status: u16,
+    text: &str,
+    retry_after_seconds: Option<u64>,
+    request_id: Option<String>,
+) -> CliError {
     let (code, message, details) = match serde_json::from_str::<Envelope>(text) {
         Ok(envelope) => (
             envelope.error.code,
@@ -1057,6 +1074,7 @@ pub fn refused(status: u16, text: &str, retry_after_seconds: Option<u64>) -> Cli
         message,
         retry_after_seconds,
         details,
+        request_id,
     }
 }
 
@@ -1228,6 +1246,7 @@ mod tests {
                 code: "invalid_scope".into(),
                 message: "refused scope".into(),
                 retry_after_seconds: None,
+                request_id: None,
                 details: None,
             },
             CliError::Refused {
@@ -1235,6 +1254,7 @@ mod tests {
                 code: "invalid_scope".into(),
                 message: "refused scope".into(),
                 retry_after_seconds: None,
+                request_id: None,
                 details: Some(Box::new(
                     serde_json::json!({ "required_scope": "items.read" }),
                 )),
@@ -1244,6 +1264,7 @@ mod tests {
                 code: "rate_limited".into(),
                 message: "slow down".into(),
                 retry_after_seconds: Some(30),
+                request_id: None,
                 details: None,
             },
         ];
@@ -1317,6 +1338,7 @@ mod tests {
                     message,
                     retry_after_seconds,
                     details,
+                    ..
                 } => {
                     assert_eq!((*status, code.as_str()), (400, "invalid_scope"));
                     assert_eq!(message, "scope refused");
@@ -1339,6 +1361,7 @@ mod tests {
             422,
             r#"{"error":{"code":"bulk_atomic_rollback","message":"entry 3","details":{"index":3}}}"#,
             None,
+            None,
         ) {
             CliError::Refused {
                 status,
@@ -1359,6 +1382,7 @@ mod tests {
             400,
             r#"{"error":"invalid_grant","error_description":"revoked"}"#,
             None,
+            None,
         ) {
             CliError::Refused { code, message, .. } => {
                 assert_eq!(
@@ -1368,7 +1392,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        match refused(502, "<html>bad gateway</html>", Some(3)) {
+        match refused(502, "<html>bad gateway</html>", Some(3), None) {
             CliError::Refused {
                 code,
                 message,
@@ -2145,6 +2169,30 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        door.received();
+    }
+
+    #[test]
+    fn a_refusal_carries_the_request_id_the_server_sent_and_none_without_one() {
+        let body = r#"{"error":{"code":"forbidden","message":"no"}}"#;
+        let door = Door::open(vec![
+            Answer::json("403 Forbidden", body).with_header("X-Request-ID", "req-7"),
+            Answer::json("403 Forbidden", body),
+        ]);
+        let remote = remote_at(&door, Some("marfa_k1_x"));
+        let sent = remote.json(&Request::get(&["items"])).unwrap_err();
+        assert_eq!(sent.request_id(), Some("req-7"));
+        let envelope = sent.envelope();
+        assert_eq!(envelope["error"]["server"]["request_id"], "req-7");
+        assert!(
+            !envelope["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("req-7")
+        );
+        let unsent = remote.json(&Request::get(&["items"])).unwrap_err();
+        assert_eq!(unsent.request_id(), None);
+        assert!(unsent.envelope()["error"]["server"]["request_id"].is_null());
         door.received();
     }
 

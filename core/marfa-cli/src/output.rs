@@ -1253,6 +1253,34 @@ fn record_columns(record: &Value) -> Cols {
             ],
         );
     }
+    if record.get("client_id").is_some()
+        && record.get("granted_at").is_some()
+        && record.get("scopes").is_some()
+    {
+        return Cols::new(
+            &["id", "name", "approved"],
+            vec![
+                owned("id"),
+                scalar_text(&record["client_name"]),
+                owned("granted_at"),
+            ],
+        );
+    }
+    if record.get("action").is_some() && record.get("actor").is_some() {
+        let actor = record
+            .get("actor")
+            .filter(|actor| !actor.is_null())
+            .map_or("unknown", |actor| field(actor, "name"));
+        return Cols::new(
+            &["id", "action", "when", "actor"],
+            vec![
+                owned("id"),
+                owned("action"),
+                owned("created_at"),
+                actor.to_string(),
+            ],
+        );
+    }
     let kind = ["type", "action"]
         .iter()
         .map(|name| owned(name))
@@ -1524,9 +1552,11 @@ pub fn link_candidates(answers: &[marfa_core::LinkCandidates]) -> String {
 pub(crate) mod tests {
     use std::collections::HashMap;
 
-    use super::{answered_words, counts, describe, edges_from, snippet_text};
+    use super::{
+        answered_words, counts, describe, edges_from, printable, printable_lines, snippet_text,
+    };
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     pub(crate) fn verdict(kind: WriteKind, verdict: Option<Verdict>) -> DrainVerdict {
         DrainVerdict {
@@ -2110,6 +2140,62 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_app_grant_shows_its_name_and_when_it_was_approved() {
+        let text = describe(&json!({
+            "data": [
+                {"id": "g1", "kind": "app", "client_id": "c1", "client_name": "Reader",
+                 "origins": [], "scopes": ["core.note:read"], "status": "active",
+                 "granted_at": "2026-10-03T09:30:00.000Z", "last_used_at": null},
+                {"id": "g2", "kind": "app", "client_id": "c2", "client_name": null,
+                 "origins": [], "scopes": [], "status": "active",
+                 "granted_at": "2026-10-04T09:30:00.000Z", "last_used_at": null},
+            ],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "id  name    approved\n\
+             g1  Reader  2026-10-03T09:30:00.000Z\n\
+             g2  -       2026-10-04T09:30:00.000Z"
+        );
+    }
+
+    #[test]
+    fn an_audit_entry_shows_who_acted_and_the_server_by_its_name() {
+        let entry = |id: &str, actor: Value| {
+            json!({"actor": actor, "id": id, "created_at": "2026-10-03T10:09:45.373Z",
+                   "key_id": null, "action": "config.update", "resource_type": "config",
+                   "resource_id": null, "client_ip": null, "details": {}})
+        };
+        let text = describe(&json!({
+            "data": [
+                entry("a1", json!({"kind": "key", "id": "k1", "name": "CRM sync"})),
+                entry("a2", json!({"kind": "server", "id": "server", "name": "Marfa"})),
+                entry("a3", Value::Null),
+            ],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "id  action         when                      actor\n\
+             a1  config.update  2026-10-03T10:09:45.373Z  CRM sync\n\
+             a2  config.update  2026-10-03T10:09:45.373Z  Marfa\n\
+             a3  config.update  2026-10-03T10:09:45.373Z  unknown"
+        );
+    }
+
+    #[test]
+    fn a_log_tail_keeps_its_line_breaks_and_escapes_every_other_control_character() {
+        assert_eq!(
+            printable_lines("ends:\nfirst\n\u{1b}[2Jsecond\r\u{202e}"),
+            "ends:\nfirst\n\\u{1b}[2Jsecond\\u{d}\\u{202e}"
+        );
+        assert_eq!(printable("a\nb"), "a\\u{a}b");
+    }
+
+    #[test]
     fn a_connector_run_shows_its_outcome_time_and_summary() {
         let text = describe(&json!({
             "data": [{
@@ -2164,7 +2250,7 @@ pub fn printable_value(value: &Value) -> Value {
 }
 
 /// `printable` for each line of `text`, keeping the line breaks between them.
-fn printable_lines(text: &str) -> String {
+pub fn printable_lines(text: &str) -> String {
     text.lines().map(printable).collect::<Vec<_>>().join("\n")
 }
 

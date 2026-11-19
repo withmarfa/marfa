@@ -214,6 +214,35 @@ fn a_refusal_under_the_device_rules_leaves_by_four() {
     assert_eq!(stdout, "");
     assert!(stderr.starts_with("marfa: "), "{stderr}");
     assert!(!stderr.contains('{'), "{stderr}");
+    assert!(stderr.contains("--reader"), "{stderr}");
+    assert!(!stderr.contains("another process"), "{stderr}");
+}
+
+#[test]
+fn a_local_list_and_search_print_data_next_cursor_and_completeness() {
+    let store = scratch("local-keys");
+    let db = store.to_str().unwrap();
+    let (code, _, stderr) = run(&["--json", "device", "--db", db, "status"]);
+    assert_eq!(code, 0, "{stderr}");
+    for words in [
+        vec!["items", "list"],
+        vec!["items", "bulk-get", "absent"],
+        vec!["search", "words"],
+    ] {
+        let mut args = vec!["--json", "device", "--db", db];
+        args.extend(&words);
+        let (code, stdout, stderr) = run(&args);
+        assert_eq!(code, 0, "{words:?}: {stderr}");
+        let answer: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+        let mut keys: Vec<&str> = answer
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["completeness", "data", "next_cursor"], "{words:?}");
+    }
 }
 
 #[test]

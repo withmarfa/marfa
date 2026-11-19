@@ -11,7 +11,7 @@ use clap::{Arg, ArgAction, Command, CommandFactory};
 use crate::Cli;
 use crate::error::{
     CATCH_UP_FAILED, DRAIN_EXITS, Exit, JSON_REFUSAL, JSON_REFUSAL_CODES, JSON_REFUSAL_SHAPE,
-    codes, exit_codes_help,
+    REQUEST_ID_SAID, codes, exit_codes_help,
 };
 
 const REGENERATE: &str = "MARFA_WRITE_COMMANDS=1 cargo test -p marfa-cli --bin marfa reference";
@@ -412,6 +412,7 @@ fn exit_codes(out: &mut String) {
         &[
             Block::Text(sentence(DRAIN_EXITS)),
             Block::Text(sentence(CATCH_UP_FAILED)),
+            Block::Text(REQUEST_ID_SAID.to_owned()),
             Block::Text(JSON_REFUSAL.to_owned()),
             Block::Verbatim(JSON_REFUSAL_SHAPE.to_owned()),
         ],

@@ -141,6 +141,9 @@ pub enum CoreError {
         "this is a reading handle: another process holds the writer handle for this store, and one store has one writer"
     )]
     ReadingHandle,
+    /// A handle opened to read only, so no other process need hold the writer.
+    #[error("this handle was opened to read only, so it cannot write")]
+    OpenedToRead,
     #[error("{}", wrong_schema(path, reason, *unsent, folder.as_ref()))]
     WrongSchema {
         path: String,
@@ -320,7 +323,7 @@ codes! {
     NoCursor: CoreError::NoCursor => "no_cursor",
     HydrationIncomplete: CoreError::HydrationIncomplete => "hydration_incomplete",
     NoCatalog: CoreError::NoCatalog => "no_catalog",
-    ReadingHandle: CoreError::ReadingHandle => "reading_handle",
+    ReadingHandle: CoreError::ReadingHandle | CoreError::OpenedToRead => "reading_handle",
     WrongSchema: CoreError::WrongSchema { .. } => "wrong_schema",
     StoreDamaged: CoreError::StoreDamaged { .. } => "store_damaged",
     UnsentDiffers: CoreError::UnsentDiffers { .. } => "unsent_differs",

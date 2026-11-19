@@ -619,6 +619,8 @@ pub struct Reply<B = ReplyBody> {
     /// which hands it on.
     pub contract: Option<String>,
     pub location: Option<String>,
+    /// The server's `X-Request-ID`, which a report of a problem can quote.
+    pub request_id: Option<String>,
     pub body: B,
 }
 
@@ -678,6 +680,7 @@ impl NormalizedType {
 
 /// Sent on every request but the reads of the root and of `/health`, which say which contract a server speaks.
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
+const REQUEST_ID_HEADER: &str = "X-Request-ID";
 pub const INSTANCE_HEADER: &str = "X-Marfa-Instance-Id";
 
 fn names_contract(call: &Call) -> bool {
@@ -2199,6 +2202,7 @@ impl Http {
             retry_after_seconds: reply.retry_after_seconds,
             contract: reply.contract,
             location: reply.location,
+            request_id: reply.request_id,
             body,
         })
     }
@@ -2326,6 +2330,7 @@ impl Http {
             .to_string();
         let contract = header(&response, CONTRACT_HEADER);
         let location = header(&response, "Location");
+        let request_id = header(&response, REQUEST_ID_HEADER);
         if call.stream && !(200..300).contains(&status) {
             let duration = self
                 .agent
@@ -2349,6 +2354,7 @@ impl Http {
             retry_after_seconds,
             contract,
             location,
+            request_id,
             body,
         })
     }

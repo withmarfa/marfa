@@ -769,6 +769,7 @@ fn a_refusal_for_one_row_names_the_column_not_the_batch_place() {
         code: "validation_error".into(),
         message: message.into(),
         retry_after_seconds: None,
+        request_id: None,
         details: Some(Box::new(json!({
             "operation": 0,
             "errors": [{ "path": path, "message": "Expected a number" }],

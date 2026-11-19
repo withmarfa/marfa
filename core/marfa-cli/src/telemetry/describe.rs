@@ -52,6 +52,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::DocsSectionNotFound { .. } => "the docs page has no section of that name",
         CliError::DocsUnreachable { .. } => "the docs site could not be read",
         CliError::Redirected { .. } => "the server answered with a redirect, which is not followed",
+        CliError::OpenedWithReader => "the working copy was opened to read only",
     }
 }
 
@@ -108,6 +109,7 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::HydrationIncomplete => "the working copy's hydration did not complete",
         CoreError::NoCatalog => "the working copy has never held the server's type catalog",
         CoreError::ReadingHandle => "another process holds the working copy's writer handle",
+        CoreError::OpenedToRead => "the working copy was opened to read only",
         CoreError::WrongSchema { .. } => "the working copy was made by another build",
         CoreError::StoreDamaged { .. } => "the working copy's store cannot be read",
         CoreError::UnsentDiffers { .. } => {
@@ -160,6 +162,7 @@ mod tests {
             code: secret.into(),
             message: secret.into(),
             retry_after_seconds: None,
+            request_id: None,
             details: Some(Box::new(serde_json::json!({ "field": secret }))),
         };
         let echoed = CliError::not_held(&format!("item-{secret}"));

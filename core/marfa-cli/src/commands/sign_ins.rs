@@ -196,6 +196,7 @@ fn end_chosen(kinds: &[Kind], keep: &[String], remote: &Remote) -> Result<Outcom
                     .join(", ")
             ),
             retry_after_seconds: None,
+            request_id: None,
             details: None,
         });
     }
