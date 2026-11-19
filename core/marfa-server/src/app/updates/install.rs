@@ -4,15 +4,17 @@ use std::ffi::{CString, OsStr};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use marfa_rules::environment::SERVICE;
+use marfa_rules::environment::{INSTALL_DIR, SERVICE};
 
 pub const IMAGE: &str = "ghcr.io/withmarfa/marfa-server";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Install {
-    /// A service that restarts the server on failure, with programs it may replace.
+    /// A service that restarts the server on failure, run by `marfa server run --dir` for the
+    /// install folder `dir`, with programs it may replace.
     Service {
         programs: PathBuf,
+        dir: PathBuf,
     },
     Container,
     Other,
@@ -20,6 +22,8 @@ pub enum Install {
 
 pub struct Facts<'a> {
     pub service: Option<&'a str>,
+    /// What `marfa server run --dir` set for `INSTALL_DIR`.
+    pub install_dir: Option<&'a Path>,
     pub exe: &'a Path,
     pub container: bool,
     pub writable: &'a dyn Fn(&Path) -> bool,
@@ -35,8 +39,9 @@ pub fn detect_with(facts: &Facts<'_>) -> Install {
         .exe
         .components()
         .any(|part| part.as_os_str() == OsStr::new("Cellar"));
-    match programs {
-        Some(programs)
+    let supervised = facts.install_dir.filter(|dir| dir.is_absolute());
+    match (programs, supervised) {
+        (Some(programs), Some(dir))
             if managed
                 && !under_homebrew
                 && programs.join("marfa").is_file()
@@ -44,6 +49,7 @@ pub fn detect_with(facts: &Facts<'_>) -> Install {
         {
             Install::Service {
                 programs: programs.to_path_buf(),
+                dir: dir.to_path_buf(),
             }
         }
         _ => Install::Other,
@@ -61,8 +67,10 @@ pub fn detect() -> Install {
         return Install::Other;
     };
     let service = std::env::var(SERVICE).ok();
+    let install_dir = std::env::var_os(INSTALL_DIR).map(PathBuf::from);
     detect_with(&Facts {
         service: service.as_deref(),
+        install_dir: install_dir.as_deref(),
         exe: &exe,
         container: Path::new("/.dockerenv").exists() || Path::new("/run/.containerenv").exists(),
         writable: &writable,
@@ -91,6 +99,7 @@ mod tests {
     fn detect_in(service: Option<&str>, exe: &Path, container: bool, can_write: bool) -> Install {
         detect_with(&Facts {
             service,
+            install_dir: Some(Path::new("/srv/marfa")),
             exe,
             container,
             writable: &move |_| can_write,
@@ -123,7 +132,8 @@ mod tests {
             assert_eq!(
                 detect_in(Some(manager), &exe, false, true),
                 Install::Service {
-                    programs: dir.clone()
+                    programs: dir.clone(),
+                    dir: PathBuf::from("/srv/marfa"),
                 }
             );
         }
@@ -165,6 +175,28 @@ mod tests {
     }
 
     #[test]
+    fn a_server_no_counting_marfa_started_never_swaps_its_programs() {
+        let dir = folder("unsupervised", true);
+        let exe = dir.join("marfa-server");
+        let with = |install_dir: Option<&Path>| {
+            detect_with(&Facts {
+                service: Some("launchd"),
+                install_dir,
+                exe: &exe,
+                container: false,
+                writable: &|_| true,
+            })
+        };
+        assert!(
+            matches!(with(Some(Path::new("/srv/marfa"))), Install::Service { .. }),
+            "the witness: started by marfa server run, it can swap them"
+        );
+        assert_eq!(with(None), Install::Other);
+        assert_eq!(with(Some(Path::new("relative"))), Install::Other);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_folder_the_account_cannot_write_is_not_writable_and_its_own_is() {
         let dir = folder("writable", true);
         assert!(writable(&dir));
@@ -176,6 +208,7 @@ mod tests {
     fn only_an_install_that_cannot_swap_names_a_step() {
         let service = Install::Service {
             programs: PathBuf::from("/x"),
+            dir: PathBuf::from("/srv/marfa"),
         };
         assert_eq!(step(&service, "0.0.75"), None);
         assert!(

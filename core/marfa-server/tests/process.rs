@@ -230,101 +230,56 @@ fn a_second_server_on_the_same_files_and_socket_is_refused_for_the_database() {
     assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
 }
 
-/// The programs an update swapped in, with the old ones beside them, and its record.
-fn swapped(dir: &Path, schema: Option<u64>) -> PathBuf {
+/// The programs an update swapped in, with the old server beside them, and its record.
+fn swapped(dir: &Path) -> PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    for name in ["marfa-server", "marfa"] {
-        std::fs::write(bin.join(name), "new").unwrap();
-        std::fs::write(bin.join(format!(".{name}.previous")), "old").unwrap();
+    for (name, text) in [
+        ("marfa-server", "new"),
+        (".marfa-server.previous", "old"),
+        ("marfa", "old"),
+        (".marfa.next", "new"),
+    ] {
+        std::fs::write(bin.join(name), text).unwrap();
     }
     let record = dir.join("update");
     std::fs::create_dir_all(&record).unwrap();
     let pending = serde_json::json!({
         "from": "0.0.74",
         "to": env!("CARGO_PKG_VERSION"),
-        "schema": schema,
-        "starts": 0,
+        "schema": null,
+        "starts": 1,
         "programs": bin,
     });
     std::fs::write(record.join("pending.json"), pending.to_string()).unwrap();
     bin
 }
 
-fn starts_counted(dir: &Path) -> Option<u64> {
-    let text = std::fs::read(dir.join("update").join("pending.json")).ok()?;
-    serde_json::from_slice::<serde_json::Value>(&text).ok()?["starts"].as_u64()
-}
-
-fn program_text(bin: &Path, name: &str) -> String {
-    std::fs::read_to_string(bin.join(name)).unwrap()
-}
-
 #[test]
-fn a_new_release_that_exits_before_serving_is_put_back_by_its_second_start() {
+fn a_server_that_fails_to_start_leaves_counting_and_putting_back_to_marfa_server_run() {
     let dir = TempDir::new().unwrap();
-    let bin = swapped(dir.path(), None);
-    for (round, counted) in [(1, Some(1)), (2, None)] {
+    let bin = swapped(dir.path());
+    let record = dir.path().join("update").join("pending.json");
+    let before = std::fs::read(&record).unwrap();
+    for _ in 0..3 {
         let output = program(dir.path())
             .env("MARFA_PORT", "soon")
             .output()
             .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+    }
+    assert_eq!(std::fs::read(&record).unwrap(), before);
+    for (name, text) in [
+        ("marfa-server", "new"),
+        ("marfa", "old"),
+        (".marfa.next", "new"),
+    ] {
         assert_eq!(
-            output.status.code(),
-            Some(if round == 1 { 1 } else { 75 }),
-            "round {round}"
+            std::fs::read_to_string(bin.join(name)).unwrap(),
+            text,
+            "{name}"
         );
-        assert_eq!(starts_counted(dir.path()), counted, "round {round}");
     }
-    for name in ["marfa-server", "marfa"] {
-        assert_eq!(program_text(&bin, name), "old", "{name}");
-    }
-    let last = std::fs::read_to_string(dir.path().join("update").join("last.json")).unwrap();
-    assert!(last.contains("rolled_back"), "{last}");
-}
-
-#[test]
-fn a_new_release_that_fails_after_the_claim_is_put_back_by_its_second_start() {
-    let dir = TempDir::new().unwrap();
-    let other = TempDir::new().unwrap();
-    let taken = Server::start(other.path());
-    // The failed start opens the database, so the record holds the schema it already has.
-    let mut made = Server::start(dir.path());
-    made.signal("-TERM");
-    made.wait();
-    let output = program(dir.path())
-        .arg("--can-open")
-        .arg(dir.path().join("marfa.db"))
-        .output()
-        .unwrap();
-    let said: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let bin = swapped(dir.path(), Some(said["schema"].as_u64().unwrap()));
-    for (round, status, counted) in [(1, 1, Some(1)), (2, 75, None)] {
-        let output = program(dir.path())
-            .env("MARFA_PORT", taken.port.to_string())
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(status), "round {round}");
-        assert_eq!(starts_counted(dir.path()), counted, "round {round}");
-    }
-    assert_eq!(program_text(&bin, "marfa-server"), "old");
-}
-
-#[test]
-fn a_second_server_the_claim_refuses_is_not_counted_as_a_start_of_the_new_release() {
-    let dir = TempDir::new().unwrap();
-    let bin = swapped(dir.path(), None);
-    let first = Server::start(dir.path());
-    assert_eq!(
-        starts_counted(dir.path()),
-        Some(1),
-        "the witness: the server that took the claim counted"
-    );
-    let output = program(dir.path()).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(starts_counted(dir.path()), Some(1));
-    assert_eq!(program_text(&bin, "marfa-server"), "new");
-    assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
 }
 
 #[test]

@@ -131,7 +131,6 @@ fn listen(
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let fixed = accepted.fixed();
     let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
-    let before = database.clone();
     // Before the claim, so a second server on these files is refused for them, not the socket.
     let (kept, held) = blocking(move || {
         crate::private_files::make_data_folder(&database)?;
@@ -139,12 +138,6 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     })
     .await?;
     let mut claim = Claim::take(&fixed.control_socket)?;
-    // After the claim, so a second server the claim refuses is not counted as a start.
-    if blocking(move || Ok(updates::before_start(&before))).await? == updates::Start::Restart {
-        claim.release();
-        drop(held);
-        return Ok(updates::RESTART_STATUS);
-    }
     let app = App::start_kept(accepted, kept, held).await?;
     let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
     let mut signals = Signals::install()?;

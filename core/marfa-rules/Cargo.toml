@@ -1,6 +1,6 @@
 [package]
 name = "marfa-rules"
-description = "Marfa's pure rules: what a client and a server both judge, with no storage, network or runtime."
+description = "Marfa's pure rules: what a client and a server both judge, with no database, network or runtime."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

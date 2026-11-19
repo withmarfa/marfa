@@ -11,7 +11,7 @@ use serde::Deserialize;
 use url::Url;
 
 use super::feed::{Feed, RELEASE_HOSTS};
-use super::pending::{self, Folder, PROGRAMS, Pending};
+use super::pending::{self, Folder, MARFA, PROGRAMS, Pending, SERVER};
 use super::release::Asset;
 use crate::db::volume;
 
@@ -31,6 +31,8 @@ pub struct Job {
     pub archive: Asset,
     pub checksums: Asset,
     pub programs: PathBuf,
+    /// The install folder `marfa server run --dir` named.
+    pub dir: PathBuf,
     pub database: PathBuf,
     pub record: Folder,
 }
@@ -109,13 +111,16 @@ fn set_executable(path: &Path) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
 }
 
-struct Ran {
-    status: Option<i32>,
-    stdout: String,
-    stderr: String,
+pub(super) struct Ran {
+    pub status: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
 }
 
-fn run_within(program: &Path, arguments: &[&std::ffi::OsStr]) -> Result<Ran, std::io::Error> {
+pub(super) fn run_within(
+    program: &Path,
+    arguments: &[&std::ffi::OsStr],
+) -> Result<Ran, std::io::Error> {
     let mut child = Command::new(program)
         .args(arguments)
         .stdin(Stdio::null())
@@ -173,8 +178,25 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
             ));
         }
     }
+    let checked = run_within(
+        &staging.join(MARFA),
+        &[
+            "server".as_ref(),
+            "run".as_ref(),
+            "--dir".as_ref(),
+            job.dir.as_os_str(),
+            "--check".as_ref(),
+        ],
+    )
+    .map_err(|error| format!("The downloaded marfa could not check this install: {error}."))?;
+    if checked.status != Some(0) {
+        return Err(format!(
+            "The downloaded marfa will not run this install, so nothing was changed. {}",
+            checked.stderr.trim()
+        ));
+    }
     let asked = run_within(
-        &staging.join("marfa-server"),
+        &staging.join(SERVER),
         &["--can-open".as_ref(), job.database.as_os_str()],
     )
     .map_err(|error| {
@@ -205,21 +227,9 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
     }
 }
 
-/// Some file systems and Linux's `protected_hardlinks` refuse the link, so a copy stands in.
-pub(super) fn keep_aside(
-    live: &Path,
-    kept: &Path,
-    link: impl Fn(&Path, &Path) -> std::io::Result<()>,
-) -> std::io::Result<()> {
-    if link(live, kept).is_ok() {
-        return Ok(());
-    }
-    fs::copy(live, kept)?;
-    set_executable(kept)
-}
-
-/// Swaps each program in, undoing the steps done when one fails. The old program stays under its
-/// name until the new one replaces it in one step, so neither is ever missing.
+/// Puts in only the new `marfa-server`, keeping the old one beside it, and stages the new
+/// `marfa` as `.marfa.next`: the running release's `marfa server run` supervises the new server
+/// until it settles. Undoes what it did when a step fails.
 pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     let pending = Pending {
         from: job.from.clone(),
@@ -231,43 +241,78 @@ pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(),
     job.record
         .keep_pending(&pending)
         .map_err(|error| format!("The update's record could not be kept: {error}."))?;
-    let mut aside: Vec<&str> = Vec::new();
-    let undo = |aside: &[&str], what: &str, error: std::io::Error| {
-        for name in aside.iter().rev() {
-            let kept = pending::previous_of(&job.programs, name);
-            // A program still in place shares its inode with the copy, and renaming one link
+    let (live, kept, next) = (
+        job.programs.join(SERVER),
+        pending::previous_of(&job.programs, SERVER),
+        pending::next_marfa(&job.programs),
+    );
+    let undo = |what: &str, error: std::io::Error, server_kept: bool| {
+        let _ = fs::remove_file(&next);
+        if server_kept {
+            // A server still in place shares its inode with the copy, and renaming one link
             // onto another does nothing.
-            let _ = fs::rename(&kept, job.programs.join(name));
+            let _ = fs::rename(&kept, &live);
             let _ = fs::remove_file(&kept);
         }
-        job.record.clear_pending();
+        let _ = job.record.clear_pending();
         format!(
             "The programs could not be swapped ({what}: {error}), so the running release stays."
         )
     };
-    for name in PROGRAMS {
-        let (live, kept) = (
-            job.programs.join(name),
-            pending::previous_of(&job.programs, name),
-        );
-        match fs::remove_file(&kept) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                return Err(undo(&aside, "clearing the last copy", error));
-            }
-            _ => {}
-        }
-        keep_aside(&live, &kept, |from, to| fs::hard_link(from, to))
-            .map_err(|error| undo(&aside, "keeping the old program", error))?;
-        aside.push(name);
-        fs::rename(staging.join(name), &live)
-            .map_err(|error| undo(&aside, "placing the new program", error))?;
-    }
+    fs::rename(staging.join(MARFA), &next)
+        .map_err(|error| undo("staging the new marfa", error, false))?;
+    pending::keep_aside(&live, &kept, |from, to| fs::hard_link(from, to))
+        .map_err(|error| undo("keeping the old program", error, false))?;
+    fs::rename(staging.join(SERVER), &live)
+        .map_err(|error| undo("placing the new program", error, true))?;
     let _ = File::open(&job.programs).and_then(|folder| folder.sync_all());
     Ok(())
 }
 
+/// The lock held from unpacking to the swap: one update at a time moves these programs, and
+/// none while another has swapped them and not settled.
+pub(super) fn claim(job: &Job) -> Result<File, String> {
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(job.programs.join(pending::LOCK))
+        .map_err(|error| {
+            format!(
+                "A lock for the update could not be made beside the programs in {}: {error}.",
+                job.programs.display()
+            )
+        })?;
+    if lock.try_lock().is_err() {
+        return Err(format!(
+            "Another update of the programs in {} is under way.",
+            job.programs.display()
+        ));
+    }
+    match job.record.pending() {
+        Ok(None) => {}
+        Ok(Some(pending)) => {
+            return Err(format!(
+                "The update to release {} has not settled yet.",
+                pending.to
+            ));
+        }
+        Err(error) => return Err(format!("The update's record could not be read: {error}.")),
+    }
+    let next = pending::next_marfa(&job.programs);
+    if next.exists() {
+        return Err(format!(
+            "Another server using the programs in {} has swapped in a release that has not settled. If no server using them is updating, remove {}.",
+            job.programs.display(),
+            next.display()
+        ));
+    }
+    Ok(lock)
+}
+
 /// Blocks. On `Ok` the new programs are in place; on `Err` the running release is as it was.
 pub fn run(feed: &Feed, job: &Job, stage: &dyn Fn(&'static str)) -> Result<(), String> {
+    let _claim = claim(job)?;
     let staging = job.programs.join(format!(".marfa-update-{}", job.version));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir(&staging).map_err(|error| {

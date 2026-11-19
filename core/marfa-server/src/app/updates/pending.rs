@@ -1,308 +1,257 @@
-//! The record of a swap across the restart, and the outcome the owner reads.
+//! The record of a swap as the server reads and settles it. `marfa server run` counts the new
+//! release's starts and puts the old one back when it does not stay up.
 
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+pub use marfa_rules::update_record::{
+    Folder, LOCK, MARFA, Outcome, Pending, SERVER, finish_swap, keep_aside, next_marfa,
+    previous_of, put_back,
+};
 
 use crate::settings::DatabasePath;
 
-/// The programs an update replaces, in the order it replaces them.
-pub const PROGRAMS: [&str; 2] = ["marfa-server", "marfa"];
+/// The programs a release carries.
+pub const PROGRAMS: [&str; 2] = [SERVER, MARFA];
 
-const PENDING: &str = "pending.json";
-const LAST: &str = "last.json";
-
-/// A swap that the new release has not yet settled.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pending {
-    pub from: String,
-    pub to: String,
-    pub schema: Option<u32>,
-    pub starts: u32,
-    pub programs: PathBuf,
+pub fn record_of(database: &DatabasePath) -> Option<Folder> {
+    database.file().map(|file| Folder::beside(&file))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Outcome {
-    Succeeded,
-    Failed,
-    RolledBack,
-}
-
-impl Outcome {
-    pub fn word(self) -> &'static str {
-        match self {
-            Outcome::Succeeded => "succeeded",
-            Outcome::Failed => "failed",
-            Outcome::RolledBack => "rolled_back",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Last {
-    pub outcome: String,
-    pub release: String,
-    pub finished_at: String,
-    pub reason: Option<String>,
-}
-
-pub fn previous_of(programs: &Path, name: &str) -> PathBuf {
-    programs.join(format!(".{name}.previous"))
-}
-
-#[derive(Clone, Debug)]
-pub struct Folder(PathBuf);
-
-impl Folder {
-    pub fn of(database: &DatabasePath) -> Option<Folder> {
-        database
-            .file()
-            .map(|_| Folder(database.folder().join("update")))
-    }
-
-    fn write(&self, name: &str, text: &str) -> std::io::Result<()> {
-        fs::create_dir_all(&self.0)?;
-        let temporary = self.0.join(format!("{name}.partial"));
-        let mut file = File::create(&temporary)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, self.0.join(name))?;
-        File::open(&self.0)?.sync_all()
-    }
-
-    fn read<T: for<'a> Deserialize<'a>>(&self, name: &str) -> Option<T> {
-        serde_json::from_slice(&fs::read(self.0.join(name)).ok()?).ok()
-    }
-
-    pub fn pending(&self) -> Option<Pending> {
-        self.read(PENDING)
-    }
-
-    pub fn keep_pending(&self, pending: &Pending) -> std::io::Result<()> {
-        let text = serde_json::to_string(pending).map_err(std::io::Error::other)?;
-        self.write(PENDING, &text)
-    }
-
-    pub fn clear_pending(&self) {
-        let _ = fs::remove_file(self.0.join(PENDING));
-    }
-
-    pub fn last(&self) -> Option<Last> {
-        self.read(LAST)
-    }
-
-    /// `at` is the time as the server's clock writes it.
-    pub fn end(&self, at: &str, outcome: Outcome, version: &str, reason: Option<String>) {
-        let last = Last {
-            outcome: outcome.word().to_string(),
-            release: version.to_string(),
-            finished_at: at.to_string(),
-            reason,
-        };
-        let kept = serde_json::to_string(&last)
-            .map_err(std::io::Error::other)
-            .and_then(|text| self.write(LAST, &text));
-        if let Err(error) = kept {
-            tracing::warn!("The outcome of an update could not be kept: {error}");
-        }
+/// Keeps how an update ended; a record that cannot be written is logged, since the update has
+/// already ended either way.
+pub fn end(record: &Folder, at: &str, outcome: Outcome, release: &str, reason: Option<String>) {
+    if let Err(error) = record.end(at, outcome, release, reason) {
+        tracing::warn!("The outcome of an update could not be kept: {error}");
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Start {
-    Proceed,
-    Restart,
+pub enum Settled {
+    /// No update of this release waits to settle.
+    Nothing,
+    Succeeded,
+    /// The old programs are back, and the server ends so that they start.
+    PutBack,
+    Failed,
 }
 
-pub fn put_back(programs: &Path) -> std::io::Result<()> {
-    for name in PROGRAMS.iter().rev() {
-        let kept = previous_of(programs, name);
-        if kept.exists() {
-            fs::rename(&kept, programs.join(name))?;
-        }
-    }
-    File::open(programs)?.sync_all()
-}
-
-/// Counts the starts of an unsettled release; the second puts the old one back.
-pub fn on_start(
+/// Settles the update to `running` once it has stayed up: puts the new `marfa` in place, then
+/// ends the update as `succeeded` only when both programs report the release. `reports` gives
+/// what a program prints for `--version`, or `None` when it does not run.
+pub fn settle(
     record: &Folder,
     running: &str,
     at: &str,
     schema_now: &dyn Fn() -> Option<u32>,
-) -> Start {
-    let Some(mut pending) = record.pending() else {
-        return Start::Proceed;
+    reports: &dyn Fn(&Path) -> Option<String>,
+) -> Settled {
+    let pending = match record.pending() {
+        Ok(Some(pending)) if pending.to == running => pending,
+        Ok(_) => return Settled::Nothing,
+        Err(error) => {
+            tracing::warn!("The update's record could not be read: {error}");
+            return Settled::Nothing;
+        }
     };
-    if pending.to != running {
-        record.clear_pending();
-        if pending.from == running {
-            record.end(
-                at,
-                Outcome::RolledBack,
-                &pending.to,
-                Some(format!("The service started release {running} again.")),
-            );
+    let (from, to, programs) = (&pending.from, &pending.to, &pending.programs);
+    let finished = finish_swap(programs);
+    let said = PROGRAMS.map(|name| (name, reports(&programs.join(name))));
+    let whole = said
+        .iter()
+        .all(|(name, said)| said.as_deref() == Some(format!("{name} {to}").as_str()));
+    if finished.is_ok() && whole {
+        if let Err(error) = record.clear_pending() {
+            tracing::warn!("The settled update's record could not be cleared: {error}");
+            return Settled::Nothing;
         }
-        return Start::Proceed;
+        end(record, at, Outcome::Succeeded, to, None);
+        return Settled::Succeeded;
     }
-    if pending.starts == 0 {
-        pending.starts = 1;
-        if let Err(error) = record.keep_pending(&pending) {
-            tracing::warn!("The update's record could not be kept: {error}");
-        }
-        return Start::Proceed;
-    }
-    record.clear_pending();
-    if pending.schema != schema_now() {
-        record.end(
-            at,            Outcome::Failed,
-            &pending.to,
+    let problem = match finished {
+        Err(error) => format!("the new marfa could not be put in place: {error}"),
+        Ok(()) => said
+            .iter()
+            .map(|(name, said)| match said {
+                Some(said) => format!("{name} reports '{said}'"),
+                None => format!("{name} does not run"),
+            })
+            .collect::<Vec<_>>()
+            .join(" and "),
+    };
+    let reinstall = format!(
+        "Install release {to} on this host, then run `marfa server upgrade` for this server."
+    );
+    if schema_now() != pending.schema {
+        end(
+            record,
+            at,
+            Outcome::Failed,
+            to,
             Some(format!(
-                "Release {} did not stay up, and it had changed the database, so release {} cannot be put back. The copy kept before the change is beside the database.",
-                pending.to, pending.from
+                "Release {to} runs, but its programs are not all in place ({problem}), and it has changed the database, so release {from} cannot be put back. {reinstall}"
             )),
         );
-        return Start::Proceed;
+        return Settled::Failed;
     }
-    match put_back(&pending.programs) {
+    let marfa_replaced = said[1].1.as_deref() == Some(format!("{MARFA} {to}").as_str());
+    match put_back(programs, marfa_replaced) {
         Ok(()) => {
-            record.end(
+            if let Err(error) = record.clear_pending() {
+                tracing::warn!("The update's record could not be cleared: {error}");
+            }
+            end(
+                record,
                 at,
                 Outcome::RolledBack,
-                &pending.to,
+                to,
                 Some(format!(
-                    "Release {} did not stay up, so release {} was put back.",
-                    pending.to, pending.from
+                    "Release {to}'s programs were not all in place ({problem}), so release {from} was put back."
                 )),
             );
-            Start::Restart
+            Settled::PutBack
         }
         Err(error) => {
-            record.end(
+            end(
+                record,
                 at,
                 Outcome::Failed,
-                &pending.to,
+                to,
                 Some(format!(
-                    "Release {} did not stay up, and release {} could not be put back: {error}.",
-                    pending.to, pending.from
+                    "Release {to}'s programs were not all in place ({problem}), and release {from} could not be put back: {error}. {reinstall}"
                 )),
             );
-            Start::Proceed
+            Settled::Failed
         }
-    }
-}
-
-pub fn settle(record: &Folder, running: &str, at: &str) {
-    if record
-        .pending()
-        .is_some_and(|pending| pending.to == running)
-    {
-        record.clear_pending();
-        record.end(at, Outcome::Succeeded, running, None);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
     use super::*;
 
     const AT: &str = "2030-01-02T03:04:05.678Z";
 
-    fn scratch(name: &str) -> (PathBuf, Folder) {
-        let dir = std::env::temp_dir().join(format!("marfa-pending-{}-{name}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("bin")).unwrap();
-        let folder = Folder::of(&DatabasePath::File(dir.join("data/marfa.db"))).unwrap();
-        (dir, folder)
+    struct Case {
+        dir: PathBuf,
+        record: Folder,
     }
 
-    fn swapped(dir: &Path, schema: Option<u32>) -> Pending {
-        let bin = dir.join("bin");
-        for name in PROGRAMS {
-            fs::write(bin.join(name), "new").unwrap();
-            fs::write(previous_of(&bin, name), "old").unwrap();
+    impl Case {
+        /// A swap of 0.0.74 to 0.0.75 that put in only the new server, with the new `marfa`
+        /// waiting; each file holds the words its `--version` prints.
+        fn new(name: &str) -> Case {
+            let dir =
+                std::env::temp_dir().join(format!("marfa-settle-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            let bin = dir.join("bin");
+            fs::create_dir_all(&bin).unwrap();
+            for (file, text) in [
+                (SERVER, "marfa-server 0.0.75"),
+                (".marfa-server.previous", "marfa-server 0.0.74"),
+                (MARFA, "marfa 0.0.74"),
+                (".marfa.next", "marfa 0.0.75"),
+            ] {
+                fs::write(bin.join(file), text).unwrap();
+            }
+            let record = Folder::beside(&dir.join("data/marfa.db"));
+            record
+                .keep_pending(&Pending {
+                    from: "0.0.74".into(),
+                    to: "0.0.75".into(),
+                    schema: Some(1),
+                    starts: 1,
+                    programs: bin,
+                })
+                .unwrap();
+            Case { dir, record }
         }
-        Pending {
-            from: "0.0.74".into(),
-            to: "0.0.75".into(),
-            schema,
-            starts: 0,
-            programs: bin,
+
+        fn bin(&self) -> PathBuf {
+            self.dir.join("bin")
+        }
+
+        fn text(&self, name: &str) -> String {
+            fs::read_to_string(self.bin().join(name)).unwrap()
+        }
+
+        fn settle(&self, schema: Option<u32>) -> Settled {
+            settle(&self.record, "0.0.75", AT, &|| schema, &|program| {
+                fs::read_to_string(program).ok()
+            })
+        }
+
+        fn last(&self) -> (String, String) {
+            let last = self.record.last().unwrap().unwrap();
+            (last.outcome, last.reason.unwrap_or_default())
+        }
+    }
+
+    impl Drop for Case {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
         }
     }
 
     #[test]
-    fn a_release_that_stays_up_settles_the_swap_and_the_owner_reads_it() {
-        let (dir, record) = scratch("settles");
-        record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Proceed);
-        assert_eq!(record.pending().unwrap().starts, 1);
-        settle(&record, "0.0.75", AT);
-        assert!(record.pending().is_none());
-        let last = record.last().unwrap();
-        assert_eq!(
-            (last.outcome.as_str(), last.release.as_str()),
-            ("succeeded", "0.0.75")
+    fn a_release_that_stayed_up_puts_its_marfa_in_place_and_settles_once_both_report_it() {
+        let case = Case::new("settles");
+        assert_eq!(case.settle(Some(1)), Settled::Succeeded);
+        assert_eq!(case.text(MARFA), "marfa 0.0.75");
+        assert_eq!(case.text(".marfa.previous"), "marfa 0.0.74");
+        assert!(!next_marfa(&case.bin()).exists());
+        assert_eq!(case.record.pending().unwrap(), None);
+        assert_eq!(case.last(), ("succeeded".into(), String::new()));
+        assert_eq!(case.settle(Some(1)), Settled::Nothing, "nothing is left");
+    }
+
+    #[test]
+    fn a_swap_that_lost_the_new_marfa_is_reported_and_put_back_and_never_called_succeeded() {
+        let case = Case::new("half");
+        fs::remove_file(next_marfa(&case.bin())).unwrap();
+        assert_eq!(case.settle(Some(1)), Settled::PutBack);
+        assert_eq!(case.text(SERVER), "marfa-server 0.0.74");
+        assert_eq!(case.text(MARFA), "marfa 0.0.74");
+        assert_eq!(case.record.pending().unwrap(), None);
+        let (outcome, reason) = case.last();
+        assert_eq!(outcome, "rolled_back");
+        assert!(
+            reason.contains("marfa reports 'marfa 0.0.74'")
+                && reason.contains("0.0.74 was put back"),
+            "{reason}"
         );
-        assert_eq!(last.finished_at, AT);
-        assert_eq!(fs::read_to_string(dir.join("bin/marfa")).unwrap(), "new");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn a_release_that_did_not_stay_up_is_put_back_while_the_database_is_as_it_was() {
-        let (dir, record) = scratch("back");
-        record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Proceed);
-        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Restart);
-        for name in PROGRAMS {
-            assert_eq!(
-                fs::read_to_string(dir.join("bin").join(name)).unwrap(),
-                "old"
-            );
-            assert!(!previous_of(&dir.join("bin"), name).exists());
-        }
-        assert!(record.pending().is_none());
-        assert_eq!(record.last().unwrap().outcome, "rolled_back");
-        let _ = fs::remove_dir_all(&dir);
+    fn a_half_swap_after_the_database_changed_says_how_to_finish_and_keeps_the_record() {
+        let case = Case::new("half-moved");
+        fs::remove_file(next_marfa(&case.bin())).unwrap();
+        assert_eq!(case.settle(Some(2)), Settled::Failed);
+        assert_eq!(
+            case.text(SERVER),
+            "marfa-server 0.0.75",
+            "the running release stays"
+        );
+        let (outcome, reason) = case.last();
+        assert_eq!(outcome, "failed");
+        assert!(
+            reason.contains("cannot be put back") && reason.contains("Install release 0.0.75"),
+            "{reason}"
+        );
+        assert!(
+            case.record.pending().unwrap().is_some(),
+            "the record stays, so marfa server run still starts this release"
+        );
     }
 
     #[test]
-    fn a_release_that_changed_the_database_is_not_put_back_and_the_owner_is_told() {
-        let (dir, record) = scratch("moved");
-        record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(1)), Start::Proceed);
-        assert_eq!(on_start(&record, "0.0.75", AT, &|| Some(2)), Start::Proceed);
-        assert_eq!(fs::read_to_string(dir.join("bin/marfa")).unwrap(), "new");
-        let last = record.last().unwrap();
-        assert_eq!(last.outcome, "failed");
-        assert!(last.reason.unwrap().contains("cannot be put back"));
-        assert!(record.pending().is_none());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_old_release_starting_again_ends_the_record_as_a_rollback() {
-        let (dir, record) = scratch("old");
-        record.keep_pending(&swapped(&dir, Some(1))).unwrap();
-        assert_eq!(on_start(&record, "0.0.74", AT, &|| Some(1)), Start::Proceed);
-        assert!(record.pending().is_none());
-        assert_eq!(record.last().unwrap().outcome, "rolled_back");
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn nothing_pending_changes_nothing_and_a_settle_of_another_release_leaves_the_record() {
-        let (dir, record) = scratch("none");
-        assert_eq!(on_start(&record, "0.0.75", AT, &|| None), Start::Proceed);
-        assert!(record.last().is_none());
-        record.keep_pending(&swapped(&dir, None)).unwrap();
-        settle(&record, "0.0.99", AT);
-        assert!(record.pending().is_some());
-        let _ = fs::remove_dir_all(&dir);
+    fn a_server_of_another_release_settles_nothing() {
+        let case = Case::new("other");
+        let settled = settle(&case.record, "0.0.74", AT, &|| Some(1), &|_| None);
+        assert_eq!(settled, Settled::Nothing);
+        assert!(case.record.pending().unwrap().is_some());
+        assert!(next_marfa(&case.bin()).exists());
     }
 }
