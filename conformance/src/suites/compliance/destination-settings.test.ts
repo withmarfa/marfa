@@ -475,7 +475,7 @@ describe("a destination set through /config", () => {
         const long = `${["b", "c", "d"].map((letter) => letter.repeat(63)).join(".")}.${"e".repeat(50)}.localhost`;
         expect(long).toHaveLength(252);
         expect(`marfa.${long}`.length).toBeGreaterThan(253);
-        // Within 253 once its dots at the end are dropped, as no resolver drops them.
+        // Removing every trailing dot would bring this name under the limit.
         const dotted = `${["b", "c", "d"].map((letter) => letter.repeat(63)).join(".")}.${"e".repeat(40)}.localhost.......`;
         expect(`marfa.${dotted}`.length).toBeGreaterThan(253);
         for (const endpoint of [
@@ -1200,8 +1200,7 @@ describe("a stored store setting that does not read", () => {
             "object_store_path_style",
           );
         }
-        // The witness: these hosts can be made, so the store is tried and
-        // does not answer.
+        // Both names pass validation even though the store is unreachable.
         for (const endpoint of [`http://${longest}:9`, `http://${short}:9`]) {
           expect(await stored(endpoint), endpoint).not.toContain(
             "object_store_path_style",

@@ -121,11 +121,6 @@ async function storeInUse(server: FreshServer): Promise<void> {
   });
 }
 
-/**
- * What holds once the object store is out of use: health says why, no store
- * is attached beside the disk, backups are refused, the file's link is the
- * instance's own and a new file stays on the disk alone.
- */
 async function expectStoreOutOfUse(
   server: FreshServer,
   storeHost: string,
@@ -591,8 +586,7 @@ describe("where the server may send", () => {
         await storeInUse(server);
         const held = await heldInStore(server, storeHost);
 
-        // The switch is turned on, and that change followed, then off, so the
-        // store is taken anew while its host leads to a private address.
+        // Wait for the first change so the second opens a new store client.
         const reopened = async () => {
           await setFrom(socket, { [SWITCH]: true });
           await runJob(operator, "blob-replicate", "either");

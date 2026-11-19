@@ -3488,7 +3488,7 @@ Where `allow_private_addresses` is `false`, if the host the object store is addr
 
 Where `allow_private_addresses` is `false`, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST NOT list an object store as attached in `GET /blobs/stores`.
 
-**Reason:** the server keeps no copy in a store it may not reach, whatever it recorded of that store before.
+**Reason:** recorded copies stay in the detached store so the server can use them again when the store returns.
 
 **Tests:** `compliance/destination-addresses.test.ts › stops using an object store it used once the switch is off and the store's name leads to a private address, and takes it again once the switch is on`, `› stops using an object store it reached by virtual host once the switch is off and the bucket's host leads to a private address, and takes it again once that host is public`.
 

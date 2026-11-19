@@ -278,7 +278,6 @@ fn folder_missing(root: &Path, why: &str) -> Failure {
     ))
 }
 
-/// Why the object store was not taken.
 enum Untaken {
     Failed(Failure),
     /// The private-address guard refused its address, which only a running server can allow.
@@ -487,9 +486,7 @@ async fn taking(
     }
 }
 
-/// A store setting that does not read or cannot make the store's host, or a store at an address
-/// the private-address guard refuses, does not refuse the start: only a running server can
-/// correct it.
+/// The owner needs a running server to correct the destination settings.
 async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<Attached, Failure> {
     let failure = match &wanted {
         Wanted::Bucket(settings) => match caught(object_store(db, settings, Some(root))).await {

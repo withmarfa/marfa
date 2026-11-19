@@ -250,8 +250,7 @@ pub enum Marker {
     None,
     /// No connection, or no answer in time.
     Silent(io::Error),
-    /// The store's address is not public while `allow_private_addresses` is false, so it was
-    /// never asked.
+    /// The guard refused the address before the store could answer.
     Private(io::Error),
     /// An answer that names no store: a refusal, an error or a marker that does not read.
     Refused(io::Error),
