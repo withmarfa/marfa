@@ -343,6 +343,7 @@ describe("where the server may send", () => {
       });
       try {
         const { operator, working } = clientsFor(server);
+        const socket = socketOf(server);
         const backups = async () => {
           const answer = await operator.rawRequest<{
             backups: Record<string, unknown>;
@@ -364,7 +365,7 @@ describe("where the server may send", () => {
           object_store_endpoint: named,
           object_store_path_style: false,
         };
-        await setFrom(operator, {
+        await setFrom(socket, {
           ...settings,
           object_store_prefix: `fixture-${randomUUID()}`,
         });
@@ -377,7 +378,7 @@ describe("where the server may send", () => {
         // The witness: the same store, its host judged public, is taken.
         await server.setFault(`${host}=${PUBLIC_ADDRESS}>127.0.0.1`);
         const prefix = `fixture-${randomUUID()}`;
-        await setFrom(operator, { ...settings, object_store_prefix: prefix });
+        await setFrom(socket, { ...settings, object_store_prefix: prefix });
         await waitFor("the object store to be in use", async () => {
           const said = await backups();
           return said.destination === "bucket" &&

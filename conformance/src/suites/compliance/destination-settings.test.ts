@@ -428,7 +428,7 @@ describe("a destination set through /config", () => {
     async () => {
       const server = await bootFreshServer("destination-virtual-host", DISK);
       try {
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const named = (answer: { error?: { error: { details?: unknown } } }) =>
           (
             (
@@ -437,7 +437,7 @@ describe("a destination set through /config", () => {
             )?.errors ?? []
           ).map((error) => error.path);
         const set = async (changes: Record<string, unknown>) => {
-          const answer = await operator.patchConfig(changes);
+          const answer = await local.patchConfig(changes);
           expect(answer.status, JSON.stringify(answer.error)).toBe(200);
         };
         await set({
@@ -453,7 +453,7 @@ describe("a destination set through /config", () => {
           "my..bucket",
           "b".repeat(64),
         ]) {
-          const refused = await operator.patchConfig({
+          const refused = await local.patchConfig({
             object_store_bucket: bucket,
           });
           expect(refused.status, bucket).toBe(400);
@@ -463,7 +463,7 @@ describe("a destination set through /config", () => {
             object_store_bucket: bucket,
             object_store_path_style: true,
           });
-          const back = await operator.patchConfig({
+          const back = await local.patchConfig({
             object_store_path_style: false,
           });
           expect(back.status, bucket).toBe(400);
@@ -480,7 +480,7 @@ describe("a destination set through /config", () => {
           "http://[::1]:9",
           `http://${long}:9`,
         ]) {
-          const refused = await operator.patchConfig({
+          const refused = await local.patchConfig({
             object_store_bucket: "marfa",
             object_store_endpoint: endpoint,
           });
@@ -1108,7 +1108,7 @@ describe("a stored store setting that does not read", () => {
           );
           rmSync(blobFolder(server), { recursive: true, force: true });
         });
-        const { operator } = clientsFor(server);
+        const { operator, local } = clientsFor(server);
         const told = await storeConcerns(server);
         expect(told).toHaveLength(1);
         expect(told[0]!.description).toContain("object_store_path_style");
@@ -1127,7 +1127,7 @@ describe("a stored store setting that does not read", () => {
         expect((await operator.downloadBlob(hash)).status).toBe(503);
         expect(readdirSync(blobFolder(server))).toEqual([]);
 
-        const set = await operator.patchConfig({
+        const set = await local.patchConfig({
           object_store_path_style: true,
         });
         expect(set.status, JSON.stringify(set.error)).toBe(200);

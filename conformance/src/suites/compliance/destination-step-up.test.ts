@@ -227,7 +227,7 @@ describe("the object store's secret", () => {
   it("is removed by a write that changes object_store_bucket or object_store_endpoint without setting it, and kept through any other change", async () => {
     const store = {
       object_store_bucket: "a-bucket",
-      object_store_endpoint: "http://127.0.0.1:9",
+      object_store_endpoint: "http://s3.localhost:9",
       object_store_access_key_id: "an-access-key",
     };
     await setLocally({
@@ -243,7 +243,7 @@ describe("the object store's secret", () => {
       { object_store_prefix: "elsewhere" },
       { object_store_path_style: false },
       { object_store_access_key_id: "another-access-key" },
-      { object_store_endpoint: "http://127.0.0.1:9/" },
+      { object_store_endpoint: "http://s3.localhost:9/" },
     ]) {
       await setLocally(changes);
       expect(await secretSet(), JSON.stringify(changes)).toBe(true);
@@ -257,14 +257,14 @@ describe("the object store's secret", () => {
     expect(whole.status, JSON.stringify(whole.body)).toBe(200);
     expect(await secretSet()).toBe(true);
 
-    await setLocally({ object_store_endpoint: "http://127.0.0.1:10" });
+    await setLocally({ object_store_endpoint: "http://s3.localhost:10" });
     expect(await secretSet()).toBe(false);
     expect((await stored()).object_store_access_key_id).toBe(
       "another-access-key",
     );
 
     await setLocally({
-      object_store_endpoint: "http://127.0.0.1:9",
+      object_store_endpoint: "http://s3.localhost:9",
       [SECRET]: `second-${randomUUID()}`,
     });
     expect(await secretSet()).toBe(true);
