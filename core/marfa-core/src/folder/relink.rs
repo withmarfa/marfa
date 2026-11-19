@@ -266,7 +266,10 @@ fn contain<T>(result: Result<T>, report: &mut PullReport) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
         Err(
-            error @ (CoreError::StorageFull(_) | CoreError::Store(_) | CoreError::StoreBusy(_)),
+            error @ (CoreError::StorageFull(_)
+            | CoreError::Store(_)
+            | CoreError::StoreBusy(_)
+            | CoreError::Fault(_)),
         ) => Err(error),
         Err(error) => {
             crate::telemetry::unrelinked!(&error);

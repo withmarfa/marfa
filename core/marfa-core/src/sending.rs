@@ -339,6 +339,7 @@ impl Core {
             Err(
                 error @ (CoreError::StorageFull(_)
                 | CoreError::Store(_)
+                | CoreError::Fault(_)
                 | CoreError::CopyExpired { .. }
                 | CoreError::Canceled),
             ) => Err(error),

@@ -176,7 +176,8 @@ mod tests {
         let lines: Vec<&str> = source.lines().collect();
         let mut found = Vec::new();
         for (number, line) in lines.iter().enumerate() {
-            if line.trim() != "#[uniffi::export]" {
+            let attribute = line.trim();
+            if !attribute.starts_with("#[uniffi::export") || attribute.contains("with_foreign") {
                 continue;
             }
             let guarded = lines[..number]
