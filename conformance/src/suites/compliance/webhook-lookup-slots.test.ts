@@ -10,6 +10,8 @@ import { PUBLIC_ONLY } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
+const TIMED_OUT = "The receiver did not answer in time.";
+
 // Unlike a scripted address, localhost exercises the lookup slots.
 let server: FreshServer;
 let receiver: Receiver;
@@ -505,5 +507,52 @@ describe("webhook host-name lookups", () => {
       error:
         "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.",
     });
+  }, 120_000);
+
+  it("ends an attempt as not answered in time when the check of its key outlasts the 10 second bound, sends nothing, and delivers when the same wait is short", async () => {
+    const maker = await makerKey("slow-check");
+    const slow = await subscribe(maker, "localhost", "slow");
+    await server.setFault("hold:webhook:connected");
+    try {
+      await write("written while its check outlasts the bound");
+      await server.waitForHold("hold:webhook:connected", 1);
+      const began = Date.now();
+      const timedOut = await waitFor(
+        "the attempt to be recorded as not answered in time",
+        async () => {
+          const rows = await maker.listWebhookDeliveries(slow);
+          expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+          return rows.data.data[0]?.error === TIMED_OUT
+            ? rows.data.data[0]
+            : undefined;
+        },
+        20_000,
+      );
+      expect(Date.now() - began).toBeGreaterThan(8_000);
+      expect(timedOut).toMatchObject({ status: "pending", succeeded: false });
+      expect(receiver.received).toEqual([]);
+    } finally {
+      await server.clearFault("hold:webhook:connected");
+    }
+
+    // The witness: a short wait at the same point, and the delivery arrives.
+    await maker.deleteWebhook(slow);
+    await subscribe(maker, "localhost", "short");
+    await server.setFault("hold:webhook:connected");
+    try {
+      await write("written while its check waits a short while");
+      await server.waitForHold("hold:webhook:connected", 1);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    } finally {
+      await server.clearFault("hold:webhook:connected");
+    }
+    await waitFor(
+      "the delivery after the short wait",
+      async () =>
+        receiver.received.some((r) => r.path === "/hook/short")
+          ? true
+          : undefined,
+      20_000,
+    );
   }, 120_000);
 });

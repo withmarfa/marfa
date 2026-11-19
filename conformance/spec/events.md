@@ -1491,9 +1491,9 @@ While an attempt for a deleted subscription is in flight, the server MUST NOT ho
 
 If a receiver that has accepted the connection has not answered an attempt 10 seconds after the server started it, then the server MUST end the attempt as not answered in time.
 
-**Reason:** the bound runs from the start of the attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds at most. The record of the attempt is `events/record-error-timeout`.
+**Reason:** the bound runs from the start of the attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds at most. The bound covers connecting, the check of the key's standing once connected (`events/webhook-checked-once-connected`) and the answer, so a check that outlasts it ends the attempt with nothing sent. The record of the attempt is `events/record-error-timeout`.
 
-**Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`.
+**Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`, `compliance/webhook-lookup-slots.test.ts › ends an attempt as not answered in time when the check of its key outlasts the 10 second bound, sends nothing, and delivers when the same wait is short`.
 
 ### `events/retry-server-error`
 

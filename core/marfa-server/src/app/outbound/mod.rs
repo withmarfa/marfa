@@ -267,7 +267,7 @@ static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {
 });
 
 /// Connects, then runs `check`, then sends the request only if `check` passes. The bound covers
-/// connecting, the TLS handshake and the answer, not `check`. Redirects are never followed.
+/// connecting, the TLS handshake, `check` and the answer. Redirects are never followed.
 pub async fn post<T, F>(
     url: &Url,
     targets: &[Target],
@@ -298,17 +298,20 @@ where
     let Ok(request) = request(url, host, outgoing.headers, outgoing.body) else {
         return Ok(Outcome::Unreachable);
     };
-    let began = tokio::time::Instant::now();
-    let connected = match tokio::time::timeout(bound, connect(tls, url, targets)).await {
+    let deadline = tokio::time::Instant::now() + bound;
+    let connected = match tokio::time::timeout_at(deadline, connect(tls, url, targets)).await {
         Ok(Some(connected)) => connected,
         Ok(None) => return Ok(Outcome::Unreachable),
         Err(_) => return Ok(Outcome::TimedOut),
     };
-    let left = bound.saturating_sub(began.elapsed());
-    // A refusal drops the connection, which closes it with nothing sent.
-    check().await?;
+    // A refusal, or a check that runs past the deadline, drops the connection, which closes it
+    // with nothing sent.
+    match tokio::time::timeout_at(deadline, check()).await {
+        Ok(passed) => passed?,
+        Err(_) => return Ok(Outcome::TimedOut),
+    }
     let answer = connected.send(request);
-    Ok(tokio::time::timeout(left, answer)
+    Ok(tokio::time::timeout_at(deadline, answer)
         .await
         .unwrap_or(Outcome::TimedOut))
 }
@@ -992,25 +995,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_time_a_check_takes_is_not_spent_from_the_bound() {
+    async fn a_check_that_runs_past_the_bound_ends_the_attempt_as_timed_out_and_sends_nothing() {
+        let (url, served) = receiver(|mut stream| async move {
+            let (seen, closed) = bytes_until_closed(&mut stream).await;
+            assert!(closed, "the connection was closed");
+            String::from_utf8(seen).unwrap()
+        })
+        .await;
+        let began = Instant::now();
+        let outcome = send_checked(None, &url, &loopback(), Duration::from_millis(300), async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(())
+        })
+        .await;
+        assert_eq!(outcome, Ok(Outcome::TimedOut));
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "the check was cut at the bound"
+        );
+        assert_eq!(served.await.unwrap(), "", "no header and no body arrived");
+    }
+
+    #[tokio::test]
+    async fn the_check_and_the_answer_share_one_bound() {
         let (url, _served) = receiver(|mut stream| async move {
             head(&mut stream).await;
-            stream
-                .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
-                .await
-                .unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
             String::new()
         })
         .await;
+        let began = Instant::now();
         let check = async {
-            tokio::time::sleep(Duration::from_millis(600)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
             Ok(())
         };
         let outcome =
-            send_checked(None, &url, &loopback(), Duration::from_millis(400), check).await;
+            send_checked(None, &url, &loopback(), Duration::from_millis(1_500), check).await;
+        assert_eq!(outcome, Ok(Outcome::TimedOut));
         assert!(
-            matches!(outcome, Ok(Outcome::Answered { status: 204, .. })),
-            "{outcome:?}"
+            began.elapsed() < Duration::from_millis(2_000),
+            "the answer had only what the check left of the bound"
         );
     }
 
