@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::field::{label_issue, normalize_field, validate_member, vocabulary};
+use super::field::{UNUSED_ENUM_VALUES, label_issue, normalize_field, validate_member, vocabulary};
 use super::registry::Lineage;
 use super::resolve::{ChainFault, chain, label_member};
 use super::unread::{unread_column_keys, unread_table_keys};
@@ -65,6 +65,8 @@ pub fn judge_item_columns(
 ) -> Result<Obj, Vec<Issue>> {
     let mut errors = Vec::new();
     validate_columns(columns, OWN_COLUMNS, type_known, &mut errors);
+    // An item's own columns are data a person wrote, so a write that keeps them is not refused for them.
+    errors.retain(|issue| issue.expected != UNUSED_ENUM_VALUES);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -1056,6 +1058,49 @@ mod tests {
         ] {
             assert!(found.iter().any(|f| f == field), "{field}: {found:?}");
         }
+    }
+
+    #[test]
+    fn enum_values_on_a_kind_that_does_not_check_them_is_refused_but_restored_and_kept_on_item_columns()
+     {
+        let kinds = [
+            ("string", None),
+            ("number", None),
+            ("array", Some("string")),
+        ];
+        for (kind, items) in kinds {
+            let mut field = json!({"type": kind, "enum_values": ["a"]});
+            if let Some(items) = items {
+                field["items_type"] = json!(items);
+            }
+            let declared = json!({"id": "user.listed", "fields": {"x": field}});
+            let found = fields_of(declared.clone());
+            assert!(
+                found.iter().any(|f| f == "fields.x.enum_values"),
+                "{kind}: {found:?}"
+            );
+            assert!(
+                validate_restored_type(&declared, &registry()).is_ok(),
+                "{kind}"
+            );
+        }
+        let column = fields_of(with_columns(
+            json!({"c": {"type": "string", "enum_values": ["a"]}}),
+        ));
+        assert!(
+            column
+                .iter()
+                .any(|f| f == "tables.lines.columns.c.enum_values"),
+            "{column:?}"
+        );
+
+        let enums = json!({"id": "user.listed", "fields": {
+            "e": {"type": "enum", "enum_values": ["a"]},
+            "l": {"type": "array", "items_type": "enum", "enum_values": ["a"]}}});
+        assert!(judged(enums).is_ok());
+
+        let own = json!({"c": {"type": "string", "enum_values": ["a"]}});
+        assert!(super::judge_item_columns(Some(&own), &|_| true).is_ok());
     }
 
     #[test]

@@ -11,6 +11,9 @@ use super::{
 use crate::builtin;
 use crate::catalog::{STATUS_GROUPS, api_name};
 
+/// What a refusal of `enum_values` on a field that does not check them expects.
+pub(super) const UNUSED_ENUM_VALUES: &str = "enum_values on an enum field, or on an array of enums";
+
 const ANNOTATING_FORMATS: [&str; 4] = ["bcp47", "iso3166", "currency", "phone"];
 
 pub(super) struct Vocabulary {
@@ -243,6 +246,16 @@ pub(super) fn validate_field_shape(
                     .into(),
             )),
         }
+    }
+    let takes_values =
+        type_word == "enum" || (type_word == "array" && text(fd, "items_type") == Some("enum"));
+    if fd.contains_key("enum_values") && !takes_values && type_word != "status" {
+        errors.push(issue(
+            "enum_values",
+            UNUSED_ENUM_VALUES.into(),
+            format!("enum_values on a {} field", describe(held_kind)),
+            "Only an enum, or an array of enums, checks its values. Set the type to \"enum\", or drop enum_values.".into(),
+        ));
     }
     if type_word == "status" {
         validate_status_values(fd, shape.inherits_status, &path, errors);

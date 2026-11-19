@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use serde_json::{Map, Value, json};
 
 use super::compat::{describe_compatibility_conflict, inherited_shape_conflicts};
-use super::field::{Shape, label_issue, normalize_field, validate_field_shape};
+use super::field::{Shape, UNUSED_ENUM_VALUES, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
 use super::tables::judge_tables;
 use super::{
@@ -343,6 +343,10 @@ fn judge_type(input: &Value, registry: &Registry, naming: Naming) -> Result<Obj,
         registry,
         &mut errors,
     );
+    if naming == Naming::Any {
+        // A type an earlier build accepted restores as the archive holds it.
+        errors.retain(|issue| issue.expected != UNUSED_ENUM_VALUES);
+    }
     if !errors.is_empty() {
         return Err(errors);
     }

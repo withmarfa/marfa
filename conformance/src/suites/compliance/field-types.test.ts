@@ -75,6 +75,54 @@ describe("a field's definition", () => {
       mended: { fields: { x: { type: "enum", enum_values: ["a", "1"] } } },
     },
     {
+      what: "enum_values on a string",
+      bad: { fields: { x: { type: "string", enum_values: ["a"] } } },
+      named: "fields.x.enum_values",
+      mended: { fields: { x: { type: "enum", enum_values: ["a"] } } },
+    },
+    {
+      what: "enum_values on a number",
+      bad: { fields: { x: { type: "number", enum_values: ["a"] } } },
+      named: "fields.x.enum_values",
+      mended: { fields: { x: { type: "number" } } },
+    },
+    {
+      what: "enum_values on an array of strings",
+      bad: {
+        fields: {
+          x: { type: "array", items_type: "string", enum_values: ["a"] },
+        },
+      },
+      named: "fields.x.enum_values",
+      mended: {
+        fields: {
+          x: { type: "array", items_type: "enum", enum_values: ["a"] },
+        },
+      },
+    },
+    {
+      what: "enum_values on a member of a list's entries",
+      bad: {
+        fields: {
+          x: {
+            type: "array",
+            items_type: "object",
+            items_fields: { m: { type: "string", enum_values: ["a"] } },
+          },
+        },
+      },
+      named: "fields.x.items_fields.m.enum_values",
+      mended: {
+        fields: {
+          x: {
+            type: "array",
+            items_type: "object",
+            items_fields: { m: { type: "enum", enum_values: ["a"] } },
+          },
+        },
+      },
+    },
+    {
       what: "an array with no items_type",
       bad: { fields: { x: { type: "array" } } },
       named: "fields.x.items_type",
@@ -188,6 +236,38 @@ describe("a field's definition", () => {
       expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     },
   );
+
+  it("refuses enum_values on a field that is not an enum on a replacement, and keeps the type as it was", async () => {
+    const id = nextId();
+    const registered = await client.registerType({
+      id,
+      fields: { x: { type: "string" } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+    const refused = await client.replaceType(id, {
+      fields: { x: { type: "string", enum_values: ["a", "b"] } },
+    } as never);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const errors = refused.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(names(errors, "fields.x.enum_values"), JSON.stringify(errors)).toBe(
+      true,
+    );
+    expect((await client.getType(id)).data.fields.x).not.toHaveProperty(
+      "enum_values",
+    );
+
+    // The witness: an enum takes its values, and so does an array of enums.
+    const mended = await client.replaceType(id, {
+      fields: {
+        x: { type: "enum", enum_values: ["a", "b"] },
+        y: { type: "array", items_type: "enum", enum_values: ["c"] },
+      },
+    } as never);
+    expect(mended.status, JSON.stringify(mended.error)).toBe(200);
+  });
 
   it("takes a required entry naming a field only an ancestor declares", async () => {
     const parent = nextId();
@@ -549,6 +629,40 @@ describe("an array field", () => {
     });
     expect(ok.status, JSON.stringify(ok.error)).toBe(200);
     expect(ok.data.item.properties.names).toEqual(["b", "7"]);
+  });
+
+  it("refuses an array longer than its max_items, or than 10,000 elements where the field names none, and takes one at the bound", async () => {
+    const DEFAULT_CAP = 10_000;
+    const elements = (count: number) => Array.from({ length: count }, () => "a");
+
+    // The witness: an array at each bound is taken.
+    const atCap = await create({ capped: ["a", "b"] });
+    expect(atCap.status, JSON.stringify(atCap.error)).toBe(201);
+    const atDefault = await create({ names: elements(DEFAULT_CAP) });
+    expect(atDefault.status, JSON.stringify(atDefault.error)).toBe(201);
+
+    const overCap = await create({ capped: ["a", "b", "c"] });
+    expect(overCap.status).toBe(400);
+    expect(overCap.error?.error.code).toBe("invalid_properties");
+    expect(fields(overCap)).toContain("capped");
+
+    const overDefault = await create({ names: elements(DEFAULT_CAP + 1) });
+    expect(overDefault.status).toBe(400);
+    expect(overDefault.error?.error.code).toBe("invalid_properties");
+    expect(fields(overDefault)).toContain("names");
+
+    // An update that grows the array past its bound is refused and leaves the item as it was.
+    const version = atCap.data.item.version;
+    const grown = await client.updateItem(atCap.data.item.id, {
+      version,
+      properties: { capped: ["a", "b", "c"] },
+    });
+    expect(grown.status).toBe(400);
+    expect(grown.error?.error.code).toBe("invalid_properties");
+    expect(fields(grown)).toContain("capped");
+    const kept = await client.getItem(atCap.data.item.id);
+    expect(kept.data.item.version).toBe(version);
+    expect(kept.data.item.properties.capped).toEqual(["a", "b"]);
   });
 
   it("checks the elements of a bulk entry, an upsert by natural key and a bulk upsert", async () => {

@@ -64,7 +64,7 @@ If an item write, or a listing filter whose credential's type map reads the name
 
 ### `types/id-reserved-scope-root`
 
-If a type identifier's first segment is `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors`, `blobs`, `content`, `metadata`, `edge`, `profile` or `space`, then the server MUST refuse it as `types/id-malformed` refuses an identifier the grammar refuses.
+If a type identifier's first segment is `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors`, `blobs`, `backups`, `sign_ins`, `content`, `metadata`, `edge`, `profile` or `space`, then the server MUST refuse it as `types/id-malformed` refuses an identifier the grammar refuses.
 
 **Reason:** each heads a permission or scope family, so a type under it could be written and never granted.
 
@@ -464,6 +464,22 @@ If a type names a field definition with an unknown `type` or `format`, an `enum`
 
 **Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`, `› refuses a name_from_body that is not true or false with invalid_schema, naming the member`.
 
+### `types/enum-values-kind`
+
+If a type names `enum_values` on a field, a member of `items_fields` or a table column whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, then the server MUST answer `400 invalid_schema` naming the member.
+
+**Reason:** only an `enum` takes its values and checks them (`types/array-items`), so a list on any other field would register as though it held and never be enforced.
+
+**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› refuses enum_values on a field that is not an enum on a replacement, and keeps the type as it was`.
+
+### `types/enum-values-restored`
+
+When an archive restore carries a type that names `enum_values` on a field whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST restore the type as the archive holds it, and an item of that type MUST read and take any string in that field.
+
+**Reason:** a registration the server accepted before `types/enum-values-kind` stays valid when exported and restored (`archive/restore-compatible-types`), and the list was never enforced.
+
+**Tests:** `compliance/restore-enum-values.test.ts › restores from an archive, and its items read and take any string`.
+
 ### `types/unknown-key`
 
 If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `max_length`, `max_items`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
@@ -617,6 +633,14 @@ If a write of an item's properties, by a create, an update, an upsert or an entr
 **Reason:** this holds at every door and on the properties the item would stand with after the write, so the item is left as it was, and the refusal names the element. An array already stored with a wrong element stands through a write that leaves it as it is (`types/field-tightened-held`).
 
 **Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› checks the elements on an update, and keeps the item as it was when it refuses`, `› checks the elements of a bulk entry, an upsert by natural key and a bulk upsert`.
+
+### `types/array-length`
+
+If a write of an item's properties leaves an `array` field holding more elements than its `max_items`, or more than 10,000 where the field names no `max_items`, and the write is a create or changes the field's value, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field in `field`.
+
+**Reason:** a bound includes the number it names, so an array of exactly that many elements is taken. The default keeps a field that names no bound from holding an unbounded list. It is a different limit from the cap on a bulk action (`items/bulk-action-cap`).
+
+**Tests:** `compliance/field-types.test.ts › refuses an array longer than its max_items, or than 10,000 elements where the field names none, and takes one at the bound`.
 
 ### `types/array-items-unnamed`
 
